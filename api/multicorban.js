@@ -15,7 +15,7 @@ export default async function handler(req) {
     const res = await fetch('https://api.multicorban.com/offline', {
       method: 'POST',
       headers: {
-        'Authorization': '7ab2aedde1d41a07b52d763e7b351c6a',
+        'Authorization': 'b4ae6d12615103ebe74deaf0c732a3db',
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ beneficio: String(beneficio).trim() })
