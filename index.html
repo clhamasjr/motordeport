@@ -82,7 +82,7 @@ td.right,th.right{text-align:right}td.mono{font-family:monospace;font-size:11px}
 </head>
 <body>
 <div id="loginScreen" class="login-wrap"><div class="login-box"><div class="login-logo"><div class="login-logo-icon">L</div><div><div style="font-size:22px;font-weight:800">Lhamascred</div><div style="font-size:11px;color:var(--t3)">Motor de Portabilidade</div></div></div><div class="login-card" id="loginCard"><div style="font-size:18px;font-weight:700;text-align:center;margin-bottom:4px">Bem-vindo</div><div style="font-size:12px;color:var(--t2);text-align:center;margin-bottom:28px">Entre com suas credenciais</div><div class="form-group"><label class="form-label">Usuário</label><input class="form-input" type="text" id="loginUser" placeholder="Usuário" onkeydown="if(event.key==='Enter')doLogin()"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" type="password" id="loginPass" placeholder="Senha" onkeydown="if(event.key==='Enter')doLogin()"></div><button class="login-btn" onclick="doLogin()">Entrar</button><div class="login-error" id="loginError"></div></div></div></div>
-<div id="appScreen" style="display:none"><header class="header"><div class="logo"><div class="logo-icon">L</div><div><div style="font-size:14px;font-weight:800">Lhamascred</div><div style="font-size:9px;color:var(--t3);font-weight:600">Motor v5</div></div></div><div style="display:flex;align-items:center;gap:6px"><div class="hdr-user" id="hdrUser"></div><div id="headerActions" style="display:flex;gap:6px;align-items:center"><span id="fileName" style="font-size:10px;color:var(--t3);margin-right:4px"></span><button class="btn btn-grn" onclick="exportXLSX()">↓ Exportar</button><button class="btn" style="border-color:var(--ylw);color:var(--ylw)" onclick="salvarProc()">💾 Salvar</button><button class="btn" onclick="resetData()">Nova Base</button></div><button class="btn btn-red btn-sm" onclick="doLogout()">Sair</button></div></header><div class="container" id="appContainer"></div></div>
+<div id="appScreen" style="display:none"><header class="header"><div class="logo" style="cursor:pointer" onclick="resetData()"><div class="logo-icon">L</div><div><div style="font-size:14px;font-weight:800">Lhamascred</div><div style="font-size:9px;color:var(--t3);font-weight:600">Motor v5</div></div></div><div style="display:flex;align-items:center;gap:6px"><div class="hdr-user" id="hdrUser"></div><div id="headerActions" style="display:flex;gap:6px;align-items:center"><span id="fileName" style="font-size:10px;color:var(--t3);margin-right:4px"></span><button class="btn btn-grn" onclick="exportXLSX()">↓ Exportar</button><button class="btn" style="border-color:var(--ylw);color:var(--ylw)" onclick="salvarProc()">💾 Salvar</button><button class="btn" onclick="resetData()">Nova Base</button></div><button class="btn btn-red btn-sm" onclick="doLogout()">Sair</button></div></header><div class="container" id="appContainer"></div></div>
 <div id="changePwModal" class="modal-overlay" style="display:none"><div class="modal-box" style="max-width:420px"><div style="font-size:16px;font-weight:700;margin-bottom:16px">Alterar Senha</div><div class="form-group"><label class="form-label">Atual</label><input class="form-input" type="password" id="cpwOld"></div><div class="form-group"><label class="form-label">Nova</label><input class="form-input" type="password" id="cpwNew"></div><div class="form-group"><label class="form-label">Confirmar</label><input class="form-input" type="password" id="cpwConfirm"></div><div style="display:flex;gap:8px"><button class="login-btn" style="flex:1" onclick="doChangePw()">Salvar</button><button class="btn" style="padding:12px 20px" onclick="document.getElementById('changePwModal').style.display='none'">Cancelar</button></div><div class="login-error" id="cpwError"></div></div></div>
 <div id="phoneModal" class="modal-overlay" style="display:none"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:16px;font-weight:700">📱 Telefones</div><button class="btn btn-sm" onclick="document.getElementById('phoneModal').style.display='none'">✕</button></div><div id="pmName" style="font-size:13px;color:var(--t2);margin-bottom:2px"></div><div id="pmCPF" style="font-size:11px;color:var(--t3);margin-bottom:14px;font-family:monospace"></div><div id="pmContent"></div><div id="pmActions" style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"></div></div></div>
 <div id="batchModal" class="modal-overlay" style="display:none"><div class="modal-box" style="max-width:420px"><div style="font-size:16px;font-weight:700;margin-bottom:12px">⏳ Processando</div><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span id="bCnt" style="font-size:12px;color:var(--t2)">0/0</span><span id="bPct" style="font-size:12px;font-weight:700;color:var(--acc)">0%</span></div><div class="taxa-bar" style="height:8px"><div id="bBar" class="taxa-fill" style="width:0%"></div></div><div id="bStat" style="font-size:11px;color:var(--t2);margin:10px 0"></div><button class="btn btn-red" onclick="bCancel=true">Cancelar</button></div></div>
@@ -340,7 +340,7 @@ function processar(data){
 let S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel"};
 const PER=50;const R$=v=>"R$ "+v.toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});const N=v=>v.toLocaleString("pt-BR");
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
-function handleFile(inp){let f=inp.files[0];if(!f)return;S.fname=f.name;document.getElementById("appContainer").innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:60vh;flex-direction:column;gap:12px"><div style="font-size:30px;animation:pulse 1.2s ease infinite">⚙️</div><div style="font-size:13px;color:var(--t2)">Processando...</div></div>';setTimeout(()=>{let reader=new FileReader();reader.onload=function(e){try{let wb=XLSX.read(e.target.result,{type:"array",cellDates:true});let ws=wb.Sheets[wb.SheetNames[0]];S.data=processar(XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:true}));S.tab="dash";S.pg=0;selected.clear();phoneCache={};wppSent.clear();if(S.data){let tT=S.data.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=S.data.elegiveis.reduce((s,e)=>s+e.vc,0);addHist(S.fname,{contratos:S.data.analise.length,elegiveis:S.data.elegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:S.data.rmcRcc.length})}renderApp()}catch(err){alert("Erro: "+err.message);renderApp()}};reader.readAsArrayBuffer(f)},50)}
+function handleFile(inp){let f=inp.files[0];if(!f)return;S.fname=f.name;document.getElementById("appContainer").innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:60vh;flex-direction:column;gap:12px"><div style="font-size:30px;animation:pulse 1.2s ease infinite">⚙️</div><div style="font-size:13px;color:var(--t2)">Processando...</div></div>';setTimeout(()=>{let reader=new FileReader();reader.onload=function(e){try{let wb=XLSX.read(e.target.result,{type:"array",cellDates:true});let ws=wb.Sheets[wb.SheetNames[0]];S.data=processar(XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:true}));S.tab="dash";S.pg=0;selected.clear();phoneCache={};wppSent.clear();if(S.data){let tT=S.data.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=S.data.elegiveis.reduce((s,e)=>s+e.vc,0);let bens=[...new Set(S.data.analise.map(r=>r.ben).filter(b=>b))].slice(0,20);addHist(S.fname,{contratos:S.data.analise.length,elegiveis:S.data.elegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:S.data.rmcRcc.length,beneficios:bens})}renderApp()}catch(err){alert("Erro: "+err.message);renderApp()}};reader.readAsArrayBuffer(f)},50)}
 function resetData(){S.data=null;S.fname="";selected.clear();phoneCache={};wppSent.clear();renderApp()}
 function setTab(t){S.tab=t;S.sort={c:null,d:"asc"};S.pg=0;renderApp()}
 function setQ(v){S.q=v;S.pg=0;renderApp()}
@@ -357,49 +357,51 @@ function addU(){const n=document.getElementById("nN").value.trim(),u=document.ge
 function dlu(u){if(confirm(`Excluir "${u}"?`)){saveU(getU().filter(x=>x.user!==u));renderApp()}}
 function rpw(u){const p=prompt(`Nova senha para "${u}":`);if(!p||p.length<4)return;let users=getU();let i=users.findIndex(x=>x.user===u);if(i>=0){users[i].pw=hp(p);saveU(users);alert("OK!")}}
 
-// ══════ MULTICORBAN CONSULTA ══════
+// ══════ CONSULTA UNITÁRIA ══════
 function mcToRows(resp){
-  // Convert Multicorban API response to flat rows like the spreadsheet
+  // Convert API response to flat rows — handle multiple response formats
   let d=resp.data||resp;
-  let b=d.Beneficiario||{};
-  let rf=d.ResumoFinanceiro||{};
-  let db=d.DadosBancarios||{};
-  let rmc=d.Rmc||{};
-  let rcc=d.RCC||d.Rcc||{};
-  let emps=d.Emprestimos||[];
+  // If response is array, merge objects
+  if(Array.isArray(d)){let merged={};d.forEach(o=>Object.assign(merged,o));d=merged}
+  // If response is string, try parsing
+  if(typeof d==="string"){try{d=JSON.parse(d)}catch{}}
+
+  let b=d.Beneficiario||d.beneficiario||{};
+  let rf=d.ResumoFinanceiro||d.resumoFinanceiro||{};
+  let db=d.DadosBancarios||d.dadosBancarios||{};
+  let rmc=d.Rmc||d.rmc||d.RMC||{};
+  let rcc=d.RCC||d.Rcc||d.rcc||{};
+  let emps=d.Emprestimos||d.emprestimos||[];
+  // If emps is not array (single object), wrap it
+  if(emps&&!Array.isArray(emps))emps=[emps];
+
   let base={
-    nome:b.Nome||"",cpf:b.CPF||"",ben:String(b.Beneficio||""),esp:b.Especie||"",
-    nasc:b.DataNascimento||"",dib:b.DIB||"",t1:"",t2:"",t3:"",
-    margem:rf.MargemDisponivelEmprestimo||0,
-    rmcBanco:rmc.Banco||"",rmcValor:rmc.Valor_emprestimo||0,rmcContrato:rmc.Contrato||"",
-    rccBanco:rcc.Banco||"",rccValor:rcc.Valor_emprestimo||0,rccContrato:rcc.Contrato||"",
-    uf:b.UF||"",cidade:b.Cidade||"",bloqueado:b.BloqueadoEmprestimo||"0",
-    rl:b.RL||"0",banco:db.Banco||""
+    nome:b.Nome||b.nome||"",cpf:b.CPF||b.cpf||"",ben:String(b.Beneficio||b.beneficio||""),esp:String(b.Especie||b.especie||""),
+    nasc:b.DataNascimento||b.dataNascimento||"",dib:b.DIB||b.dib||"",t1:"",t2:"",t3:"",
+    rmcBanco:String(rmc.Banco||rmc.banco||""),rmcValor:parseFloat(rmc.Valor_emprestimo||rmc.valor_emprestimo||0),rmcContrato:rmc.Contrato||"",
+    rccBanco:String(rcc.Banco||rcc.banco||""),rccValor:parseFloat(rcc.Valor_emprestimo||rcc.valor_emprestimo||0),rccContrato:rcc.Contrato||""
   };
-  // Parse age
   let ai=cAge(base.nasc),idade=ai?ai.age:null;
   let bY=cBY(base.dib);
   let eN=parseInt(base.esp)||0;
   let isInv=ESP_INV.includes(eN);
-  // RMC/RCC entry
   let rmcEntry=null;
   if(base.rmcValor>0||base.rccValor>0){
     rmcEntry={nome:base.nome,cpf:base.cpf,ben:base.ben,esp:base.esp,t1:"",t2:"",t3:"",
-      tRmc:"76 - RMC",cRmc:pC(base.rmcBanco),vRmc:base.rmcValor,
-      tRcc:"44 - RCC",cRcc:pC(base.rccBanco),vRcc:base.rccValor};
+      tRmc:"RMC",cRmc:pC(base.rmcBanco),vRmc:base.rmcValor,
+      tRcc:"RCC",cRcc:pC(base.rccBanco),vRcc:base.rccValor};
   }
-  // Emprestimos -> analise rows
   let rows=[];
   for(let emp of emps){
-    let par=emp.ValorParcela||0;
-    let sal=emp.Quitacao||0;
-    let prazoStr=emp.Prazo||"0";
-    let restStr=emp.ParcelasRestantes||"0";
+    let par=parseFloat(emp.ValorParcela||emp.valorParcela||emp.valor_parcela||0);
+    let sal=parseFloat(emp.Quitacao||emp.quitacao||emp.SaldoQuitacao||emp.saldo_quitacao||0);
+    let prazoStr=String(emp.Prazo||emp.prazo||"0");
+    let restStr=String(emp.ParcelasRestantes||emp.parcelasRestantes||emp.parcelas_restantes||"0");
     let rest=parseInt(restStr)||0;
     let tot=parseInt(prazoStr)||0;
-    let pag=tot-rest;
-    let cod=pC(emp.Banco||"");
-    let con=emp.Contrato||"";
+    let pag=tot>rest?tot-rest:0;
+    let cod=pC(String(emp.Banco||emp.banco||""));
+    let con=String(emp.Contrato||emp.contrato||"");
     let is1p=B1P.includes(cod);
     let res=testar(par,sal,pag,cod,isInv,idade,bY,rest);
     rows.push({
@@ -419,14 +421,13 @@ async function consultarBeneficios(){
   if(!ta)return;
   let text=ta.value.trim();
   if(!text){alert("Cole os números de benefício");return}
-  // Parse: one per line, or comma separated
-  let bens=text.split(/[\n,;]+/).map(s=>s.trim()).filter(s=>s&&/\d/.test(s));
+  let bens=text.split(/[\n,;]+/).map(s=>s.replace(/\D/g,"").trim()).filter(s=>s.length>=1);
   if(!bens.length){alert("Nenhum benefício válido encontrado");return}
-  if(!confirm(`Consultar ${bens.length} benefícios no Multicorban?`))return;
+  if(!confirm(`Consultar ${bens.length} benefício(s)?`))return;
 
   bCancel=false;
   document.getElementById("batchModal").style.display="flex";
-  let done=0,ok=0,fail=0;
+  let done=0,ok=0,fail=0,erros=[];
   let allAnalise=[],allElegiveis=[],allRmc=[];
 
   for(let ben of bens){
@@ -434,15 +435,28 @@ async function consultarBeneficios(){
     document.getElementById("bStat").textContent=`Consultando benefício ${ben}...`;
     try{
       const res=await fetch('/api/multicorban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({beneficio:ben})});
-      const data=await res.json();
-      if(data.success&&data.data){
-        let{rows,rmcEntry}=mcToRows(data);
-        allAnalise.push(...rows);
-        rows.filter(r=>r.ok).forEach(r=>allElegiveis.push(r));
-        if(rmcEntry)allRmc.push(rmcEntry);
-        ok++;
-      }else{fail++}
-    }catch{fail++}
+      if(!res.ok){
+        let errTxt=await res.text().catch(()=>"");
+        erros.push(`${ben}: HTTP ${res.status} ${errTxt.substring(0,100)}`);
+        fail++;
+      }else{
+        const data=await res.json();
+        if(data.success&&data.data){
+          let{rows,rmcEntry}=mcToRows(data);
+          if(rows.length===0){erros.push(`${ben}: ${data.data.Beneficiario?data.data.Beneficiario.Nome||"":"Sem dados"} - 0 contratos`)}
+          allAnalise.push(...rows);
+          rows.filter(r=>r.ok).forEach(r=>allElegiveis.push(r));
+          if(rmcEntry)allRmc.push(rmcEntry);
+          ok++;
+        }else{
+          erros.push(`${ben}: ${data.error||data.detail||"Erro desconhecido"}`);
+          fail++;
+        }
+      }
+    }catch(e){
+      erros.push(`${ben}: ${e.message}`);
+      fail++;
+    }
     done++;
     let p=Math.round(done/bens.length*100);
     document.getElementById("bCnt").textContent=`${done}/${bens.length}`;
@@ -451,9 +465,16 @@ async function consultarBeneficios(){
     await new Promise(r=>setTimeout(r,300));
   }
 
-  document.getElementById("bStat").innerHTML=`<span style="color:var(--grn)">✅ ${ok} sucesso, ${fail} falhas</span>`;
+  // Show detailed results
+  let msg=`✅ ${ok} sucesso, ${fail} falhas\nContratos: ${allAnalise.length} | Elegíveis: ${allElegiveis.length}`;
+  if(erros.length){msg+=`\n\n⚠️ Detalhes das falhas:\n${erros.slice(0,10).join("\n")}${erros.length>10?"\n...":""}`;document.getElementById("bStat").innerHTML=`<span style="color:var(--ylw)">⚠️ ${ok} ok, ${fail} falhas</span>`}
+  else{document.getElementById("bStat").innerHTML=`<span style="color:var(--grn)">✅ ${ok} sucesso</span>`}
 
-  // Build S.data like processar() does
+  if(allAnalise.length===0){
+    setTimeout(()=>{document.getElementById("batchModal").style.display="none";alert("Nenhum contrato encontrado.\n\n"+msg)},1000);
+    return;
+  }
+
   let mapa={};
   for(let e of allElegiveis){
     if(!mapa[e.dest])mapa[e.dest]={banco:e.dest,n:0,total:0,vcTotal:0};
@@ -463,16 +484,19 @@ async function consultarBeneficios(){
   let taxaDist={};for(let e of allElegiveis)taxaDist[e.taxa]=(taxaDist[e.taxa]||0)+1;
 
   S.data={analise:allAnalise,elegiveis:allElegiveis,mapaArr,rmcRcc:allRmc,taxaDist};
-  S.fname=`Multicorban (${bens.length} benefícios)`;
+  S.fname=`Consulta (${bens.length} benefício(s))`;
   S.tab="dash";S.pg=0;
   selected.clear();phoneCache={};wppSent.clear();
 
-  // Save to history
   let tT=allElegiveis.reduce((s,e)=>s+e.troco,0);
   let tVC=allElegiveis.reduce((s,e)=>s+e.vc,0);
-  addHist(S.fname,{contratos:allAnalise.length,elegiveis:allElegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:allRmc.length});
+  addHist(S.fname,{contratos:allAnalise.length,elegiveis:allElegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:allRmc.length,beneficios:bens.slice(0,20)});
 
-  setTimeout(()=>{document.getElementById("batchModal").style.display="none";renderApp()},1500);
+  setTimeout(()=>{
+    document.getElementById("batchModal").style.display="none";
+    renderApp();
+    if(erros.length)alert(msg);
+  },1500);
 }
 
 // ══════ RENDER ══════
@@ -482,21 +506,21 @@ function renderApp(){
     html=`<div style="display:flex;gap:20px;justify-content:center;align-items:flex-start;min-height:${hist.length?'40vh':'72vh'};flex-wrap:wrap;padding-top:40px" class="fi">
       <div class="upload-box" id="uploadBox" onclick="document.getElementById('fileInput').click()" style="flex:1;max-width:380px;padding:40px 30px">
         <div style="font-size:32px;margin-bottom:12px">📊</div>
-        <div style="font-size:15px;font-weight:700;margin-bottom:6px">Upload Planilha</div>
+        <div style="font-size:15px;font-weight:700;margin-bottom:6px">Consulta em Lote</div>
         <div style="font-size:11px;color:var(--t2);margin-bottom:18px">Suba a base completa offline</div>
         <div class="btn-acc" style="font-size:11px;padding:8px 20px">Selecionar Arquivo</div>
         <div style="font-size:9px;color:var(--t3);margin-top:10px">.xlsx .xls .csv</div>
         <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)">
       </div>
       <div style="border:2px solid var(--brd);border-radius:16px;padding:40px 30px;background:var(--sf);flex:1;max-width:380px;text-align:center">
-        <div style="font-size:32px;margin-bottom:12px">📡</div>
-        <div style="font-size:15px;font-weight:700;margin-bottom:6px">Consultar Benefícios</div>
-        <div style="font-size:11px;color:var(--t2);margin-bottom:14px">Cole os números e o Multicorban traz tudo</div>
+        <div style="font-size:32px;margin-bottom:12px">🔍</div>
+        <div style="font-size:15px;font-weight:700;margin-bottom:6px">Consulta Unitária</div>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:14px">Cole o número do benefício e consulte</div>
         <textarea id="mcBenList" placeholder="Cole os benefícios aqui (um por linha)&#10;&#10;252174615&#10;252425510&#10;281454701" style="width:100%;min-height:120px;padding:10px;border-radius:8px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:12px;font-family:monospace;resize:vertical;margin-bottom:12px"></textarea>
-        <button class="btn-acc" style="font-size:11px;padding:8px 20px;width:100%;background:var(--cyan)" onclick="consultarBeneficios()">📡 Consultar no Multicorban</button>
+        <button class="btn-acc" style="font-size:11px;padding:8px 20px;width:100%;background:var(--cyan)" onclick="consultarBeneficios()">🔍 Consultar</button>
       </div>
     </div>`;
-    if(hist.length){html+=`<div class="fi" style="margin-top:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:700">📁 Histórico</div><button class="btn btn-red btn-sm" onclick="clearHist()">Limpar</button></div><div style="display:grid;gap:8px">`;for(let h of hist){let sm=h.summary||{};html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div><div style="font-size:12px;font-weight:700">${esc(h.fname)}</div><div style="font-size:10px;color:var(--t2)">${h.date}${CU&&CU.role==="admin"?` \u2014 <span style="color:var(--cyan)">${esc(h.user)}</span>`:""}</div></div><div style="display:flex;gap:12px"><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):"-"}</div><div style="font-size:8px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--ylw)">${sm.valorContrato?R$(sm.valorContrato):"-"}</div><div style="font-size:8px;color:var(--t3)">VLR CONT</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):"-"}</div><div style="font-size:8px;color:var(--t3)">TROCO</div></div></div><div style="display:flex;gap:4px;align-items:center">${h.saved?`<button class="btn-acc" style="padding:4px 12px;font-size:10px;border-radius:5px" onclick="loadHist(${h.id})">📂 Carregar</button>`:`<span class="pill pill-default">Não salvo</span>`}<button class="btn btn-red btn-sm" onclick="delHist(${h.id})">✕</button></div></div>`}html+=`</div></div>`}
+    if(hist.length){html+=`<div class="fi" style="margin-top:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:700">📁 Histórico</div><button class="btn btn-red btn-sm" onclick="clearHist()">Limpar</button></div><div style="display:grid;gap:8px">`;for(let h of hist){let sm=h.summary||{};let bensStr=sm.beneficios&&sm.beneficios.length?sm.beneficios.slice(0,5).join(", ")+(sm.beneficios.length>5?" ...":""):"";html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div style="flex:1;min-width:180px"><div style="font-size:12px;font-weight:700">${esc(h.fname)}</div><div style="font-size:10px;color:var(--t2)">${h.date}${CU&&CU.role==="admin"?` \u2014 <span style="color:var(--cyan)">${esc(h.user)}</span>`:""}</div>${bensStr?`<div style="font-size:9px;color:var(--t3);margin-top:3px;font-family:monospace">Ben: ${esc(bensStr)}</div>`:""}</div><div style="display:flex;gap:12px"><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):"-"}</div><div style="font-size:8px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--ylw)">${sm.valorContrato?R$(sm.valorContrato):"-"}</div><div style="font-size:8px;color:var(--t3)">VLR CONT</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):"-"}</div><div style="font-size:8px;color:var(--t3)">TROCO</div></div></div><div style="display:flex;gap:4px;align-items:center">${h.saved?`<button class="btn-acc" style="padding:4px 12px;font-size:10px;border-radius:5px" onclick="loadHist(${h.id})">📂 Carregar</button>`:`<span class="pill pill-default">Não salvo</span>`}<button class="btn btn-red btn-sm" onclick="delHist(${h.id})">✕</button></div></div>`}html+=`</div></div>`}
     c.innerHTML=html;let ub=document.getElementById("uploadBox");ub.addEventListener("dragover",e=>{e.preventDefault();ub.classList.add("drag")});ub.addEventListener("dragleave",()=>ub.classList.remove("drag"));ub.addEventListener("drop",e=>{e.preventDefault();ub.classList.remove("drag");if(e.dataTransfer.files[0]){let inp=document.getElementById("fileInput");let dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);inp.files=dt.files;handleFile(inp)}});return}
   document.getElementById("headerActions").style.display="flex";document.getElementById("fileName").textContent="📁 "+S.fname;
   let nSel=selected.size,nHig=[...selected].filter(c=>phoneCache[c]).length,nWpp=[...selected].filter(c=>wppSent.has(c)).length;
