@@ -1,7 +1,6 @@
 export const config = { runtime: 'edge' };
 
 export default async function handler(req) {
-  // CORS
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Content-Type' } });
   }
@@ -13,7 +12,6 @@ export default async function handler(req) {
     const cpf = body.cpf;
     if (!cpf) return new Response(JSON.stringify({ error: 'CPF obrigatório' }), { status: 400, headers: cors });
 
-    // Step 1: Generate Token
     const tokenBody = JSON.stringify({
       credencial: {
         usuario: 'carlos@lhamascred.com.br',
@@ -31,15 +29,12 @@ export default async function handler(req) {
     const tokenText = await tokenRes.text();
     let token = null;
 
-    // Try to extract token from various response formats
     try {
       let parsed = JSON.parse(tokenText);
-      // Format: {"d": "token_string"} or {"d": {"Token": "xxx"}} or {"Token": "xxx"} or just "token"
       if (typeof parsed === 'string') {
         token = parsed;
       } else if (parsed.d) {
         if (typeof parsed.d === 'string') {
-          // Could be JSON inside d
           try {
             let inner = JSON.parse(parsed.d);
             token = inner.Token || inner.token || inner.ACCESS_TOKEN || parsed.d;
@@ -53,7 +48,6 @@ export default async function handler(req) {
         token = parsed.Token || parsed.token || parsed.ACCESS_TOKEN;
       }
     } catch {
-      // Raw text token
       token = tokenText.replace(/["\s]/g, '');
     }
 
@@ -64,7 +58,6 @@ export default async function handler(req) {
       }), { status: 500, headers: cors });
     }
 
-    // Step 2: NVCHECK
     const cleanCPF = cpf.replace(/\D/g, '');
     const checkBody = JSON.stringify({
       nvcheck: { Documento: cleanCPF }
@@ -84,7 +77,6 @@ export default async function handler(req) {
 
     try {
       checkData = JSON.parse(checkText);
-      // Unwrap {"d": "..."} if needed
       if (checkData.d && typeof checkData.d === 'string') {
         try { checkData = JSON.parse(checkData.d); } catch { checkData = { raw: checkData.d }; }
       }
@@ -95,14 +87,12 @@ export default async function handler(req) {
       }), { status: 500, headers: cors });
     }
 
-    // Navigate to data
     const consulta = checkData?.d?.CONSULTA || checkData?.CONSULTA || checkData;
     const cadastrais = consulta?.CADASTRAIS || {};
     const telefones = consulta?.TELEFONES || [];
     const contatosRuins = consulta?.CONTATOSRUINS || [];
     const nome = cadastrais.NOME || '';
 
-    // Filter: remove bad contacts and PROCON
     const badSet = new Set(contatosRuins.map(c => (c.DDD || '') + (c.TELEFONE || '')));
     const goodPhones = telefones.filter(t => {
       const full = (t.DDD || '') + (t.TELEFONE || '');
