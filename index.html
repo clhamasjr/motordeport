@@ -86,7 +86,7 @@ td.right,th.right{text-align:right}td.mono{font-family:monospace;font-size:11px}
 <div id="changePwModal" class="modal-overlay" style="display:none"><div class="modal-box" style="max-width:420px"><div style="font-size:16px;font-weight:700;margin-bottom:16px">Alterar Senha</div><div class="form-group"><label class="form-label">Atual</label><input class="form-input" type="password" id="cpwOld"></div><div class="form-group"><label class="form-label">Nova</label><input class="form-input" type="password" id="cpwNew"></div><div class="form-group"><label class="form-label">Confirmar</label><input class="form-input" type="password" id="cpwConfirm"></div><div style="display:flex;gap:8px"><button class="login-btn" style="flex:1" onclick="doChangePw()">Salvar</button><button class="btn" style="padding:12px 20px" onclick="document.getElementById('changePwModal').style.display='none'">Cancelar</button></div><div class="login-error" id="cpwError"></div></div></div>
 <div id="phoneModal" class="modal-overlay" style="display:none"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:16px;font-weight:700">📱 Telefones</div><button class="btn btn-sm" onclick="document.getElementById('phoneModal').style.display='none'">✕</button></div><div id="pmName" style="font-size:13px;color:var(--t2);margin-bottom:2px"></div><div id="pmCPF" style="font-size:11px;color:var(--t3);margin-bottom:14px;font-family:monospace"></div><div id="pmContent"></div><div id="pmActions" style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"></div></div></div>
 <div id="batchModal" class="modal-overlay" style="display:none"><div class="modal-box" style="max-width:420px"><div style="font-size:16px;font-weight:700;margin-bottom:12px">⏳ Processando</div><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span id="bCnt" style="font-size:12px;color:var(--t2)">0/0</span><span id="bPct" style="font-size:12px;font-weight:700;color:var(--acc)">0%</span></div><div class="taxa-bar" style="height:8px"><div id="bBar" class="taxa-fill" style="width:0%"></div></div><div id="bStat" style="font-size:11px;color:var(--t2);margin:10px 0"></div><button class="btn btn-red" onclick="bCancel=true">Cancelar</button></div></div>
-<div id="wppModal" class="modal-overlay" style="display:none"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:700">💬 Mensagem WhatsApp</div><button class="btn btn-sm" onclick="document.getElementById('wppModal').style.display='none'">✕</button></div><div class="form-group"><label class="form-label">Template da Mensagem</label><textarea class="wpp-tpl" id="wppTpl">Olá {nome}, tudo bem? Aqui é da Lhamascred! Identificamos uma oportunidade de portabilidade do seu contrato com troco de {troco}. Podemos conversar?</textarea></div><div class="form-group"><label class="form-label">Variáveis Disponíveis</label><div class="wpp-vars"><span class="wpp-var" onclick="insertVar('{nome}')">nome</span><span class="wpp-var" onclick="insertVar('{cpf}')">cpf</span><span class="wpp-var" onclick="insertVar('{troco}')">troco</span><span class="wpp-var" onclick="insertVar('{vlr_contrato}')">vlr_contrato</span><span class="wpp-var" onclick="insertVar('{banco}')">banco</span><span class="wpp-var" onclick="insertVar('{destino}')">destino</span></div></div><div id="wppPreview" style="background:var(--card);border-radius:10px;padding:14px;margin-bottom:14px;border:1px solid var(--brd)"><div style="font-size:10px;color:var(--t3);margin-bottom:6px">PRÉ-VISUALIZAÇÃO</div><div id="wppPreviewText" style="font-size:13px;line-height:1.5"></div></div><div id="wppTargetInfo" style="font-size:12px;color:var(--t2);margin-bottom:14px"></div><div style="display:flex;gap:8px"><button class="btn-acc" style="flex:1" onclick="sendWppBatch()">💬 Enviar para Todos</button><button class="btn btn-grn" onclick="exportWppList()">↓ Exportar Lista</button></div></div></div>
+<div id="wppModal" class="modal-overlay" style="display:none"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:700">💬 Mensagem WhatsApp</div><button class="btn btn-sm" onclick="document.getElementById('wppModal').style.display='none'">✕</button></div><div class="form-group"><label class="form-label">Template da Mensagem</label><textarea class="wpp-tpl" id="wppTpl">Olá {nome}, tudo bem? Aqui é da Lhamascred! Identificamos {qtd} oportunidade(s) de portabilidade com troco total de {troco}. Podemos conversar?</textarea></div><div class="form-group"><label class="form-label">Variáveis Disponíveis</label><div class="wpp-vars"><span class="wpp-var" onclick="insertVar('{nome}')">nome</span><span class="wpp-var" onclick="insertVar('{cpf}')">cpf</span><span class="wpp-var" onclick="insertVar('{troco}')">troco</span><span class="wpp-var" onclick="insertVar('{vlr_contrato}')">vlr_contrato</span><span class="wpp-var" onclick="insertVar('{banco}')">banco</span><span class="wpp-var" onclick="insertVar('{destino}')">destino</span><span class="wpp-var" onclick="insertVar('{qtd}')">qtd_contratos</span></div></div><div id="wppPreview" style="background:var(--card);border-radius:10px;padding:14px;margin-bottom:14px;border:1px solid var(--brd)"><div style="font-size:10px;color:var(--t3);margin-bottom:6px">PRÉ-VISUALIZAÇÃO</div><div id="wppPreviewText" style="font-size:13px;line-height:1.5"></div></div><div id="wppTargetInfo" style="font-size:12px;color:var(--t2);margin-bottom:14px"></div><div style="display:flex;gap:8px"><button class="btn-acc" style="flex:1" onclick="sendWppBatch()">💬 Enviar para Todos</button><button class="btn btn-grn" onclick="exportWppList()">↓ Exportar Lista</button></div></div></div>
 
 <script>
 // ══════ AUTH ══════
@@ -103,12 +103,13 @@ function doChangePw(){const o=document.getElementById("cpwOld").value,n=document
 
 // ══════ HISTORY ══════
 function getHist(){try{return JSON.parse(localStorage.getItem("lhm_hist")||"[]")}catch{return[]}}
-function saveHist(h){try{localStorage.setItem("lhm_hist",JSON.stringify(h.slice(0,20)))}catch{}}
-function addHist(fn,sm){let h=getHist();h.unshift({id:Date.now(),fname:fn,user:CU?CU.name:"",date:new Date().toLocaleString("pt-BR"),summary:sm,saved:false});saveHist(h)}
+function getMyHist(){let h=getHist();if(!CU)return[];if(CU.role==="admin")return h;return h.filter(x=>x.userLogin===CU.user)}
+function saveHist(h){try{localStorage.setItem("lhm_hist",JSON.stringify(h.slice(0,50)))}catch{}}
+function addHist(fn,sm){let h=getHist();h.unshift({id:Date.now(),fname:fn,user:CU?CU.name:"",userLogin:CU?CU.user:"",date:new Date().toLocaleString("pt-BR"),summary:sm,saved:false});saveHist(h)}
 function delHist(id){localStorage.removeItem("lhm_data_"+id);saveHist(getHist().filter(x=>x.id!==id));renderApp()}
-function clearHist(){if(confirm("Limpar?")){let h=getHist();h.forEach(x=>localStorage.removeItem("lhm_data_"+x.id));saveHist([]);renderApp()}}
+function clearHist(){if(confirm("Limpar?")){let h=getMyHist();h.forEach(x=>localStorage.removeItem("lhm_data_"+x.id));let all=getHist();let ids=new Set(h.map(x=>x.id));saveHist(all.filter(x=>!ids.has(x.id)));renderApp()}}
 function salvarProc(){
-  if(!S.data)return;let hist=getHist();let cur=hist[0];if(!cur)return;
+  if(!S.data)return;let hist=getHist();let cur=hist.find(h=>h.userLogin===CU.user&&!h.saved)||hist.find(h=>h.userLogin===CU.user);if(!cur)return;
   try{let sv={elegiveis:S.data.elegiveis,mapaArr:S.data.mapaArr,rmcRcc:S.data.rmcRcc,taxaDist:S.data.taxaDist,aLen:S.data.analise.length,phones:{}};
     for(let k of Object.keys(phoneCache))sv.phones[k]=phoneCache[k];
     localStorage.setItem("lhm_data_"+cur.id,JSON.stringify(sv));cur.saved=true;saveHist(hist);alert("Salvo! Consulte no Histórico.");renderApp();
@@ -141,6 +142,16 @@ function selPage(){
 }
 function selNone(){selected.clear();renderApp()}
 function moveToHig(){if(selected.size===0){alert("Selecione pelo menos um contrato");return}S.tab="pipe";S.pipeStage="sel";renderApp()}
+
+// ══════ GROUP BY CLIENT ══════
+function groupByCPF(items){
+  let map={};
+  for(let r of items){
+    if(!map[r.cpf]){map[r.cpf]={cpf:r.cpf,nome:r.nome,t1:r.t1||"",t2:r.t2||"",t3:r.t3||"",contratos:[],qtd:0,trocoTotal:0,vcTotal:0,bancos:new Set()}}
+    let g=map[r.cpf];g.contratos.push(r);g.qtd++;g.trocoTotal+=r.troco;g.vcTotal+=r.vc;g.bancos.add(r.dest);
+  }
+  return Object.values(map).sort((a,b)=>b.trocoTotal-a.trocoTotal);
+}
 
 // ══════ HIGIENIZAÇÃO ══════
 async function higienizarCPF(cpf,nome,bt1,bt2,bt3){
@@ -211,10 +222,11 @@ async function batchHig(){
 function insertVar(v){let ta=document.getElementById("wppTpl");ta.value+=v;updateWppPreview()}
 function updateWppPreview(){
   let tpl=document.getElementById("wppTpl").value;
-  let preview=tpl.replace(/{nome}/g,'<strong>João Silva</strong>').replace(/{cpf}/g,'123.456.789-00').replace(/{troco}/g,'<strong style="color:var(--grn)">R$ 1.250,00</strong>').replace(/{vlr_contrato}/g,'R$ 8.500,00').replace(/{banco}/g,'237').replace(/{destino}/g,'QUALI');
+  let preview=tpl.replace(/{nome}/g,'<strong>João Silva</strong>').replace(/{cpf}/g,'123.456.789-00').replace(/{troco}/g,'<strong style="color:var(--grn)">R$ 1.250,00</strong>').replace(/{vlr_contrato}/g,'R$ 8.500,00').replace(/{banco}/g,'237').replace(/{destino}/g,'QUALI').replace(/{qtd}/g,'<strong>3</strong>');
   document.getElementById("wppPreviewText").innerHTML=preview;
-  let hig=[...selected].filter(c=>phoneCache[c]&&phoneCache[c].telefones.some(t=>t.whatsapp));
-  document.getElementById("wppTargetInfo").innerHTML=`<span class="pill pill-grn">${hig.length}</span> contatos com WhatsApp válido de <span class="pill pill-acc">${selected.size}</span> selecionados`;
+  let grouped=S.data?groupByCPF(S.data.elegiveis.filter(e=>selected.has(e.cpf))):[];
+  let hig=grouped.filter(g=>phoneCache[g.cpf]&&phoneCache[g.cpf].telefones.some(t=>t.whatsapp));
+  document.getElementById("wppTargetInfo").innerHTML=`<span class="pill pill-grn">${hig.length}</span> clientes com WhatsApp de <span class="pill pill-acc">${grouped.length}</span> selecionados`;
 }
 function openWppModal(){document.getElementById("wppModal").style.display="flex";updateWppPreview()}
 function buildMsg(tpl,r){
@@ -224,13 +236,12 @@ function sendWppBatch(){
   if(!S.data)return;
   let tpl=document.getElementById("wppTpl").value;
   let targets=[];
-  for(let cpf of selected){
-    let ph=phoneCache[cpf];if(!ph||!ph.telefones)continue;
+  let grouped=groupByCPF(S.data.elegiveis.filter(e=>selected.has(e.cpf)));
+  for(let g of grouped){
+    let ph=phoneCache[g.cpf];if(!ph||!ph.telefones)continue;
     let wppPhone=ph.telefones.find(t=>t.whatsapp);if(!wppPhone)continue;
-    let el=S.data.elegiveis.find(e=>e.cpf===cpf);if(!el)continue;
-    let msg=buildMsg(tpl,el);
-    let num=`55${wppPhone.ddd}${wppPhone.telefone}`;
-    targets.push({cpf,nome:el.nome,num,msg});
+    let msg=tpl.replace(/{nome}/g,g.nome).replace(/{cpf}/g,g.cpf).replace(/{troco}/g,R$(g.trocoTotal)).replace(/{vlr_contrato}/g,R$(g.vcTotal)).replace(/{qtd}/g,String(g.qtd)).replace(/{banco}/g,[...g.bancos].join(", ")).replace(/{destino}/g,[...g.bancos].join(", "));
+    targets.push({cpf:g.cpf,nome:g.nome,num:`55${wppPhone.ddd}${wppPhone.telefone}`,msg});
   }
   if(!targets.length){alert("Nenhum contato com WhatsApp disponível");return}
   if(!confirm(`Abrir WhatsApp para ${targets.length} contatos?`))return;
@@ -250,18 +261,14 @@ function sendWppBatch(){
 function exportWppList(){
   if(!S.data)return;
   let tpl=document.getElementById("wppTpl")?document.getElementById("wppTpl").value:"";
+  let grouped=groupByCPF(S.data.elegiveis.filter(e=>selected.has(e.cpf)));
   let rows=[];
-  for(let cpf of selected){
-    let el=S.data.elegiveis.find(e=>e.cpf===cpf);if(!el)continue;
-    let ph=phoneCache[cpf];
-    let phones=ph?ph.telefones:[];
-    let wpp=phones.find(t=>t.whatsapp);
-    rows.push({Nome:el.nome,CPF:cpf,Destino:el.dest,Troco:el.troco,"Vlr Contrato":el.vc,
-      "Telefone Wpp":wpp?`(${wpp.ddd}) ${wpp.telefone}`:"",
-      "Numero Wpp":wpp?`55${wpp.ddd}${wpp.telefone}`:"",
-      "Mensagem":tpl?buildMsg(tpl,el):"",
-      "Status":wppSent.has(cpf)?"ENVIADO":phoneCache[cpf]?"HIGIENIZADO":"PENDENTE"
-    });
+  for(let g of grouped){
+    let ph=phoneCache[g.cpf];let phones=ph?ph.telefones:[];let wpp=phones.find(t=>t.whatsapp);
+    let msg=tpl?tpl.replace(/{nome}/g,g.nome).replace(/{cpf}/g,g.cpf).replace(/{troco}/g,R$(g.trocoTotal)).replace(/{vlr_contrato}/g,R$(g.vcTotal)).replace(/{qtd}/g,String(g.qtd)).replace(/{banco}/g,[...g.bancos].join(", ")).replace(/{destino}/g,[...g.bancos].join(", ")):"";
+    rows.push({Nome:g.nome,CPF:g.cpf,"Qtd Contratos":g.qtd,Destinos:[...g.bancos].join(", "),"Troco Total":g.trocoTotal,"Vlr Contrato Total":g.vcTotal,
+      "Tel Wpp":wpp?`(${wpp.ddd}) ${wpp.telefone}`:"","Num Wpp":wpp?`55${wpp.ddd}${wpp.telefone}`:"",
+      Msg:msg,Status:wppSent.has(g.cpf)?"ENVIADO":phoneCache[g.cpf]?"HIGIENIZADO":"PENDENTE"});
   }
   let wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),"WhatsApp");
@@ -337,9 +344,9 @@ function rpw(u){const p=prompt(`Nova senha para "${u}":`);if(!p||p.length<4)retu
 // ══════ RENDER ══════
 function renderApp(){
   let D=S.data,c=document.getElementById("appContainer"),html="";
-  if(!D){document.getElementById("headerActions").style.display="none";let hist=getHist();
+  if(!D){document.getElementById("headerActions").style.display="none";let hist=getMyHist();
     html=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:${hist.length?'40vh':'72vh'}" class="fi"><div class="upload-box" id="uploadBox" onclick="document.getElementById('fileInput').click()"><div style="font-size:36px;margin-bottom:16px">📊</div><div style="font-size:17px;font-weight:700;margin-bottom:6px">Importe sua base</div><div style="font-size:12px;color:var(--t2);margin-bottom:22px">Arraste ou clique</div><div class="btn-acc">Selecionar</div><input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)"></div></div>`;
-    if(hist.length){html+=`<div class="fi" style="margin-top:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:700">📁 Histórico</div><button class="btn btn-red btn-sm" onclick="clearHist()">Limpar</button></div><div style="display:grid;gap:8px">`;for(let h of hist){let sm=h.summary||{};html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div><div style="font-size:12px;font-weight:700">${esc(h.fname)}</div><div style="font-size:10px;color:var(--t2)">${h.date}</div></div><div style="display:flex;gap:12px"><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):"-"}</div><div style="font-size:8px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--ylw)">${sm.valorContrato?R$(sm.valorContrato):"-"}</div><div style="font-size:8px;color:var(--t3)">VLR CONT</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):"-"}</div><div style="font-size:8px;color:var(--t3)">TROCO</div></div></div><div style="display:flex;gap:4px;align-items:center">${h.saved?`<button class="btn-acc" style="padding:4px 12px;font-size:10px;border-radius:5px" onclick="loadHist(${h.id})">📂 Carregar</button>`:`<span class="pill pill-default">Não salvo</span>`}<button class="btn btn-red btn-sm" onclick="delHist(${h.id})">✕</button></div></div>`}html+=`</div></div>`}
+    if(hist.length){html+=`<div class="fi" style="margin-top:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:700">📁 Histórico</div><button class="btn btn-red btn-sm" onclick="clearHist()">Limpar</button></div><div style="display:grid;gap:8px">`;for(let h of hist){let sm=h.summary||{};html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div><div style="font-size:12px;font-weight:700">${esc(h.fname)}</div><div style="font-size:10px;color:var(--t2)">${h.date}${CU&&CU.role==="admin"?` \u2014 <span style="color:var(--cyan)">${esc(h.user)}</span>`:""}</div></div><div style="display:flex;gap:12px"><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):"-"}</div><div style="font-size:8px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--ylw)">${sm.valorContrato?R$(sm.valorContrato):"-"}</div><div style="font-size:8px;color:var(--t3)">VLR CONT</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):"-"}</div><div style="font-size:8px;color:var(--t3)">TROCO</div></div></div><div style="display:flex;gap:4px;align-items:center">${h.saved?`<button class="btn-acc" style="padding:4px 12px;font-size:10px;border-radius:5px" onclick="loadHist(${h.id})">📂 Carregar</button>`:`<span class="pill pill-default">Não salvo</span>`}<button class="btn btn-red btn-sm" onclick="delHist(${h.id})">✕</button></div></div>`}html+=`</div></div>`}
     c.innerHTML=html;let ub=document.getElementById("uploadBox");ub.addEventListener("dragover",e=>{e.preventDefault();ub.classList.add("drag")});ub.addEventListener("dragleave",()=>ub.classList.remove("drag"));ub.addEventListener("drop",e=>{e.preventDefault();ub.classList.remove("drag");if(e.dataTransfer.files[0]){let inp=document.getElementById("fileInput");let dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);inp.files=dt.files;handleFile(inp)}});return}
   document.getElementById("headerActions").style.display="flex";document.getElementById("fileName").textContent="📁 "+S.fname;
   let nSel=selected.size,nHig=[...selected].filter(c=>phoneCache[c]).length,nWpp=[...selected].filter(c=>wppSent.has(c)).length;
@@ -377,48 +384,57 @@ function renderApp(){
     if(!items.length)html+=`<tr><td colspan="12" style="padding:40px;text-align:center;color:var(--t3)">Nenhum</td></tr>`;
     html+=`</tbody></table></div>${pgr(filtered.length)}</div>`}
 
-  // ═══ PIPELINE ═══
+  // ═══ PIPELINE (agrupado por cliente) ═══
   if(S.tab==="pipe"){
     let selItems=D.elegiveis.filter(e=>selected.has(e.cpf));
-    let higItems=selItems.filter(e=>phoneCache[e.cpf]);
-    let wppItems=selItems.filter(e=>wppSent.has(e.cpf));
+    let grouped=groupByCPF(selItems);
+    let grpHig=grouped.filter(g=>phoneCache[g.cpf]);
+    let grpWpp=grouped.filter(g=>wppSent.has(g.cpf));
     let ps=S.pipeStage;
     html+=`<div class="pipe-stages">
-      <div class="pipe-stage ${ps==="sel"?"active":""}" onclick="S.pipeStage='sel';renderApp()">1. Selecionados <span class="pipe-n">${selItems.length}</span></div>
+      <div class="pipe-stage ${ps==="sel"?"active":""}" onclick="S.pipeStage='sel';renderApp()">1. Clientes <span class="pipe-n">${grouped.length}</span></div>
       <div class="pipe-arrow">→</div>
-      <div class="pipe-stage ${ps==="hig"?"active":""}" onclick="S.pipeStage='hig';renderApp()">2. Higienizados <span class="pipe-n">${higItems.length}</span></div>
+      <div class="pipe-stage ${ps==="hig"?"active":""}" onclick="S.pipeStage='hig';renderApp()">2. Higienizados <span class="pipe-n">${grpHig.length}</span></div>
       <div class="pipe-arrow">→</div>
-      <div class="pipe-stage ${ps==="wpp"?"active":""}" onclick="S.pipeStage='wpp';renderApp()">3. WhatsApp <span class="pipe-n">${wppItems.length}</span></div>
+      <div class="pipe-stage ${ps==="wpp"?"active":""}" onclick="S.pipeStage='wpp';renderApp()">3. WhatsApp <span class="pipe-n">${grpWpp.length}</span></div>
+    </div>`;
+    // KPIs do pipeline
+    let totalContratos=selItems.length,totalClientes=grouped.length,totalTroco=grouped.reduce((s,g)=>s+g.trocoTotal,0),totalVC=grouped.reduce((s,g)=>s+g.vcTotal,0);
+    html+=`<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <div class="kpi" style="flex:1;min-width:120px"><div class="kpi-label">Clientes</div><div class="kpi-value" style="color:var(--cyan)">${N(totalClientes)}</div></div>
+      <div class="kpi" style="flex:1;min-width:120px"><div class="kpi-label">Contratos</div><div class="kpi-value" style="color:var(--acc)">${N(totalContratos)}</div></div>
+      <div class="kpi" style="flex:1;min-width:120px"><div class="kpi-label">Vlr Contrato</div><div class="kpi-value" style="color:var(--ylw)">${R$(totalVC)}</div></div>
+      <div class="kpi" style="flex:1;min-width:120px"><div class="kpi-label">Troco Total</div><div class="kpi-value" style="color:var(--grn)">${R$(totalTroco)}</div></div>
     </div>`;
 
-    // Stage 1: Selecionados
+    // Stage 1: Selecionados (agrupados)
     if(ps==="sel"){
-      if(!selItems.length){html+=`<div style="text-align:center;padding:60px;color:var(--t3)"><div style="font-size:28px;margin-bottom:10px">📋</div>Nenhum contrato selecionado.<br>Vá para a aba <strong>Elegíveis</strong> e selecione os contratos.</div>`}
+      if(!grouped.length){html+=`<div style="text-align:center;padding:60px;color:var(--t3)"><div style="font-size:28px;margin-bottom:10px">📋</div>Nenhum cliente selecionado.<br>Vá para <strong>Elegíveis</strong>.</div>`}
       else{
-        html+=`<div class="search-bar"><button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="batchHig()">📱 Higienizar ${selItems.length} Selecionados</button><button class="btn btn-red" onclick="selected.clear();renderApp()">Limpar Seleção</button></div>`;
-        html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Nome</th><th>CPF</th><th>Banco</th><th>Destino</th><th class="right">Vlr Contrato</th><th class="right">Troco</th><th>Status</th><th>Ação</th></tr></thead><tbody>`;
-        for(let r of selItems){let dc=DC[r.dest]||{};let hig=!!phoneCache[r.cpf];let sent=wppSent.has(r.cpf);
-          html+=`<tr class="rh"><td>${esc(r.nome)}</td><td class="mono">${esc(r.cpf)}</td><td><span class="pill pill-default">${r.cod}</span></td><td><span class="pill ${pCls[r.dest]||""}">${r.dest}</span></td><td class="right mono" style="color:var(--ylw)">${R$(r.vc)}</td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(r.troco)}</td><td>${sent?'<span class="pill pill-cyan">ENVIADO</span>':hig?'<span class="pill pill-grn">HIGIENIZADO</span>':'<span class="pill pill-default">PENDENTE</span>'}</td><td><button class="btn btn-sm ${hig?"btn-grn":"btn-cyan"}" onclick="higienizarCPF('${r.cpf}','${esc(r.nome)}','${esc(r.t1||"")}','${esc(r.t2||"")}','${esc(r.t3||"")}')">${hig?"📱 Ver":"📡 Hig"}</button> <button class="btn btn-red btn-sm" onclick="selected.delete('${r.cpf}');renderApp()">✕</button></td></tr>`}
+        html+=`<div class="search-bar"><button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="batchHig()">📱 Higienizar ${grouped.length} Clientes</button><button class="btn btn-red" onclick="selected.clear();renderApp()">Limpar</button></div>`;
+        html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Cliente</th><th>CPF</th><th style="text-align:center">Contratos</th><th>Destinos</th><th class="right">Vlr Contrato</th><th class="right">Troco Total</th><th>Status</th><th>Ação</th></tr></thead><tbody>`;
+        for(let g of grouped){let hig=!!phoneCache[g.cpf];let sent=wppSent.has(g.cpf);let destinos=[...g.bancos].map(b=>`<span class="pill ${pCls[b]||"pill-default"}" style="margin-right:2px">${b}</span>`).join("");
+          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td>${destinos}</td><td class="right mono" style="color:var(--ylw)">${R$(g.vcTotal)}</td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td>${sent?'<span class="pill pill-cyan">ENVIADO</span>':hig?'<span class="pill pill-grn">HIGIENIZADO</span>':'<span class="pill pill-default">PENDENTE</span>'}</td><td><button class="btn btn-sm ${hig?"btn-grn":"btn-cyan"}" onclick="higienizarCPF('${g.cpf}','${esc(g.nome)}','${esc(g.t1)}','${esc(g.t2)}','${esc(g.t3)}')">${hig?"📱 Ver":"📡 Hig"}</button> <button class="btn btn-red btn-sm" onclick="selected.delete('${g.cpf}');renderApp()">✕</button></td></tr>`}
         html+=`</tbody></table></div></div>`}}
 
-    // Stage 2: Higienizados
+    // Stage 2: Higienizados (agrupados)
     if(ps==="hig"){
-      if(!higItems.length){html+=`<div style="text-align:center;padding:60px;color:var(--t3)"><div style="font-size:28px;margin-bottom:10px">📡</div>Nenhum CPF higienizado ainda.<br>Volte para Selecionados e clique em Higienizar.</div>`}
+      if(!grpHig.length){html+=`<div style="text-align:center;padding:60px;color:var(--t3)"><div style="font-size:28px;margin-bottom:10px">📡</div>Nenhum cliente higienizado.<br>Volte para Clientes e clique em Higienizar.</div>`}
       else{
-        let wppReady=higItems.filter(e=>{let ph=phoneCache[e.cpf];return ph&&ph.telefones.some(t=>t.whatsapp)});
-        html+=`<div class="search-bar"><button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="openWppModal()">💬 Disparar WhatsApp (${wppReady.length} com Wpp)</button><button class="btn btn-grn" onclick="exportWppList()">↓ Exportar Lista</button></div>`;
-        html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Nome</th><th>CPF</th><th>Destino</th><th class="right">Troco</th><th>Telefones</th><th>WhatsApp</th><th>Ação</th></tr></thead><tbody>`;
-        for(let r of higItems){let ph=phoneCache[r.cpf];let phones=ph?ph.telefones:[];let wpp=phones.find(t=>t.whatsapp);
-          html+=`<tr class="rh"><td>${esc(r.nome)}</td><td class="mono">${esc(r.cpf)}</td><td><span class="pill ${pCls[r.dest]||""}">${r.dest}</span></td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(r.troco)}</td><td>${phones.length} encontrado(s)</td><td>${wpp?`<span class="pill pill-grn">(${wpp.ddd}) ${wpp.telefone}</span>`:'<span class="pill pill-red">Sem Wpp</span>'}</td><td>${wpp?`<a href="https://wa.me/55${wpp.ddd}${wpp.telefone}" target="_blank" style="text-decoration:none"><span class="pill pill-grn" style="cursor:pointer">💬 Abrir</span></a>`:""} <button class="btn btn-sm btn-cyan" onclick="higienizarCPF('${r.cpf}','${esc(r.nome)}','${esc(r.t1||"")}','${esc(r.t2||"")}','${esc(r.t3||"")}')">📱</button></td></tr>`}
+        let wppReady=grpHig.filter(g=>{let ph=phoneCache[g.cpf];return ph&&ph.telefones.some(t=>t.whatsapp)});
+        html+=`<div class="search-bar"><button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="openWppModal()">💬 WhatsApp (${wppReady.length} com Wpp)</button><button class="btn btn-grn" onclick="exportWppList()">↓ Exportar</button></div>`;
+        html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Cliente</th><th>CPF</th><th style="text-align:center">Contr</th><th class="right">Troco Total</th><th>Telefones</th><th>WhatsApp</th><th>Ação</th></tr></thead><tbody>`;
+        for(let g of grpHig){let ph=phoneCache[g.cpf];let phones=ph?ph.telefones:[];let wpp=phones.find(t=>t.whatsapp);
+          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td>${phones.length} encontrado(s)</td><td>${wpp?`<span class="pill pill-grn">(${wpp.ddd}) ${wpp.telefone}</span>`:'<span class="pill pill-red">Sem Wpp</span>'}</td><td>${wpp?`<a href="https://wa.me/55${wpp.ddd}${wpp.telefone}" target="_blank" style="text-decoration:none"><span class="pill pill-grn" style="cursor:pointer">💬</span></a>`:""} <button class="btn btn-sm btn-cyan" onclick="higienizarCPF('${g.cpf}','${esc(g.nome)}','${esc(g.t1)}','${esc(g.t2)}','${esc(g.t3)}')">📱</button></td></tr>`}
         html+=`</tbody></table></div></div>`}}
 
-    // Stage 3: WhatsApp Enviados
+    // Stage 3: WhatsApp Enviados (agrupados)
     if(ps==="wpp"){
-      if(!wppItems.length){html+=`<div style="text-align:center;padding:60px;color:var(--t3)"><div style="font-size:28px;margin-bottom:10px">💬</div>Nenhum disparo realizado ainda.</div>`}
+      if(!grpWpp.length){html+=`<div style="text-align:center;padding:60px;color:var(--t3)"><div style="font-size:28px;margin-bottom:10px">💬</div>Nenhum disparo realizado.</div>`}
       else{
-        html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Nome</th><th>CPF</th><th>Destino</th><th class="right">Troco</th><th>Telefone</th><th>Status</th></tr></thead><tbody>`;
-        for(let r of wppItems){let ph=phoneCache[r.cpf];let wpp=ph?ph.telefones.find(t=>t.whatsapp):null;
-          html+=`<tr class="rh"><td>${esc(r.nome)}</td><td class="mono">${esc(r.cpf)}</td><td><span class="pill ${pCls[r.dest]||""}">${r.dest}</span></td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(r.troco)}</td><td class="mono">${wpp?`(${wpp.ddd}) ${wpp.telefone}`:"-"}</td><td><span class="pill pill-cyan">✅ ENVIADO</span></td></tr>`}
+        html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Cliente</th><th>CPF</th><th style="text-align:center">Contr</th><th class="right">Troco Total</th><th>Telefone</th><th>Status</th></tr></thead><tbody>`;
+        for(let g of grpWpp){let ph=phoneCache[g.cpf];let wpp=ph?ph.telefones.find(t=>t.whatsapp):null;
+          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td class="mono">${wpp?`(${wpp.ddd}) ${wpp.telefone}`:"-"}</td><td><span class="pill pill-cyan">✅ ENVIADO</span></td></tr>`}
         html+=`</tbody></table></div></div>`}}}
 
   // ═══ MAPA ═══
