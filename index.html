@@ -358,6 +358,8 @@ function dlu(u){if(confirm(`Excluir "${u}"?`)){saveU(getU().filter(x=>x.user!==u
 function rpw(u){const p=prompt(`Nova senha para "${u}":`);if(!p||p.length<4)return;let users=getU();let i=users.findIndex(x=>x.user===u);if(i>=0){users[i].pw=hp(p);saveU(users);alert("OK!")}}
 
 // ══════ CONSULTA UNITÁRIA ══════
+function detectTipo(v){let d=v.replace(/\D/g,"");if(d.length===11)return"cpf";if(d.length>=1)return"ben";return""}
+function updMcLabel(){let inp=document.getElementById("mcBenInput");let lbl=document.getElementById("mcTipoLabel");if(!inp||!lbl)return;let v=inp.value.replace(/\D/g,"");let t=detectTipo(inp.value);if(t==="cpf")lbl.innerHTML=`<span style="color:var(--cyan)">📋 Detectado: <strong>CPF</strong> (${v.substring(0,3)}.${v.substring(3,6)}.${v.substring(6,9)}-${v.substring(9)})</span>`;else if(t==="ben")lbl.innerHTML=`<span style="color:var(--grn)">🔢 Detectado: <strong>Benefício</strong></span>`;else lbl.innerHTML=""}
 function mcToRows(resp){
   // Convert API response to flat rows — handle multiple response formats
   let d=resp.data||resp;
@@ -416,87 +418,74 @@ function mcToRows(resp){
   return{rows,rmcEntry};
 }
 
-async function consultarBeneficios(){
-  let ta=document.getElementById("mcBenList");
-  if(!ta)return;
-  let text=ta.value.trim();
-  if(!text){alert("Cole os números de benefício");return}
-  let bens=text.split(/[\n,;]+/).map(s=>s.replace(/\D/g,"").trim()).filter(s=>s.length>=1);
-  if(!bens.length){alert("Nenhum benefício válido encontrado");return}
-  if(!confirm(`Consultar ${bens.length} benefício(s)?`))return;
+async function consultarBeneficio(){
+  let inp=document.getElementById("mcBenInput");
+  if(!inp)return;
+  let raw=inp.value.replace(/\D/g,"").trim();
+  if(!raw){alert("Digite um CPF ou número de benefício");return}
+  let tipo=detectTipo(inp.value);
+  let label=tipo==="cpf"?`CPF ${raw.substring(0,3)}.***.***-${raw.substring(9)}`:`Benefício ${raw}`;
 
-  bCancel=false;
   document.getElementById("batchModal").style.display="flex";
-  let done=0,ok=0,fail=0,erros=[];
-  let allAnalise=[],allElegiveis=[],allRmc=[];
+  document.getElementById("bCnt").textContent="1/1";
+  document.getElementById("bPct").textContent="...";
+  document.getElementById("bBar").style.width="50%";
+  document.getElementById("bStat").textContent=`Consultando ${label}...`;
 
-  for(let ben of bens){
-    if(bCancel)break;
-    document.getElementById("bStat").textContent=`Consultando benefício ${ben}...`;
-    try{
-      const res=await fetch('/api/multicorban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({beneficio:ben})});
-      if(!res.ok){
-        let errTxt=await res.text().catch(()=>"");
-        erros.push(`${ben}: HTTP ${res.status} ${errTxt.substring(0,100)}`);
-        fail++;
-      }else{
-        const data=await res.json();
-        if(data.success&&data.data){
-          let{rows,rmcEntry}=mcToRows(data);
-          if(rows.length===0){erros.push(`${ben}: ${data.data.Beneficiario?data.data.Beneficiario.Nome||"":"Sem dados"} - 0 contratos`)}
-          allAnalise.push(...rows);
-          rows.filter(r=>r.ok).forEach(r=>allElegiveis.push(r));
-          if(rmcEntry)allRmc.push(rmcEntry);
-          ok++;
-        }else{
-          erros.push(`${ben}: ${data.error||data.detail||"Erro desconhecido"}`);
-          fail++;
-        }
-      }
-    }catch(e){
-      erros.push(`${ben}: ${e.message}`);
-      fail++;
+  try{
+    const res=await fetch('/api/multicorban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({beneficio:raw})});
+    if(!res.ok){
+      let errTxt=await res.text().catch(()=>"");
+      document.getElementById("batchModal").style.display="none";
+      alert(`Erro HTTP ${res.status}\n${errTxt.substring(0,200)}`);
+      return;
     }
-    done++;
-    let p=Math.round(done/bens.length*100);
-    document.getElementById("bCnt").textContent=`${done}/${bens.length}`;
-    document.getElementById("bPct").textContent=p+"%";
-    document.getElementById("bBar").style.width=p+"%";
-    await new Promise(r=>setTimeout(r,300));
-  }
+    const data=await res.json();
+    if(!data.success||!data.data){
+      document.getElementById("batchModal").style.display="none";
+      alert(`Erro: ${data.error||data.detail||"Resposta inválida"}`);
+      return;
+    }
 
-  // Show detailed results
-  let msg=`✅ ${ok} sucesso, ${fail} falhas\nContratos: ${allAnalise.length} | Elegíveis: ${allElegiveis.length}`;
-  if(erros.length){msg+=`\n\n⚠️ Detalhes das falhas:\n${erros.slice(0,10).join("\n")}${erros.length>10?"\n...":""}`;document.getElementById("bStat").innerHTML=`<span style="color:var(--ylw)">⚠️ ${ok} ok, ${fail} falhas</span>`}
-  else{document.getElementById("bStat").innerHTML=`<span style="color:var(--grn)">✅ ${ok} sucesso</span>`}
+    let{rows,rmcEntry}=mcToRows(data);
+    let elegiveis=rows.filter(r=>r.ok);
+    let allRmc=rmcEntry?[rmcEntry]:[];
 
-  if(allAnalise.length===0){
-    setTimeout(()=>{document.getElementById("batchModal").style.display="none";alert("Nenhum contrato encontrado.\n\n"+msg)},1000);
-    return;
-  }
+    if(rows.length===0){
+      document.getElementById("batchModal").style.display="none";
+      let nome=data.data.Beneficiario?data.data.Beneficiario.Nome:"";
+      alert(`${label}${nome?" — "+nome:""}\nNenhum contrato encontrado.`);
+      return;
+    }
 
-  let mapa={};
-  for(let e of allElegiveis){
-    if(!mapa[e.dest])mapa[e.dest]={banco:e.dest,n:0,total:0,vcTotal:0};
-    mapa[e.dest].n++;mapa[e.dest].total+=e.troco;mapa[e.dest].vcTotal+=e.vc;
-  }
-  let mapaArr=ORDEM.map(b=>mapa[b]||{banco:b,n:0,total:0,vcTotal:0}).filter(m=>m.n>0).map(m=>({...m,med:m.n?m.total/m.n:0,vcMed:m.n?m.vcTotal/m.n:0}));
-  let taxaDist={};for(let e of allElegiveis)taxaDist[e.taxa]=(taxaDist[e.taxa]||0)+1;
+    let mapa={};
+    for(let e of elegiveis){
+      if(!mapa[e.dest])mapa[e.dest]={banco:e.dest,n:0,total:0,vcTotal:0};
+      mapa[e.dest].n++;mapa[e.dest].total+=e.troco;mapa[e.dest].vcTotal+=e.vc;
+    }
+    let mapaArr=ORDEM.map(b=>mapa[b]||{banco:b,n:0,total:0,vcTotal:0}).filter(m=>m.n>0).map(m=>({...m,med:m.n?m.total/m.n:0,vcMed:m.n?m.vcTotal/m.n:0}));
+    let taxaDist={};for(let e of elegiveis)taxaDist[e.taxa]=(taxaDist[e.taxa]||0)+1;
 
-  S.data={analise:allAnalise,elegiveis:allElegiveis,mapaArr,rmcRcc:allRmc,taxaDist};
-  S.fname=`Consulta (${bens.length} benefício(s))`;
-  S.tab="dash";S.pg=0;
-  selected.clear();phoneCache={};wppSent.clear();
+    S.data={analise:rows,elegiveis,mapaArr,rmcRcc:allRmc,taxaDist};
+    let nome=rows[0]?rows[0].nome:"";
+    let ben=rows[0]?rows[0].ben:raw;
+    S.fname=`${tipo==="cpf"?"CPF":"Ben"} ${ben}${nome?" — "+nome:""}`;
+    S.tab="dash";S.pg=0;
+    selected.clear();phoneCache={};wppSent.clear();
 
-  let tT=allElegiveis.reduce((s,e)=>s+e.troco,0);
-  let tVC=allElegiveis.reduce((s,e)=>s+e.vc,0);
-  addHist(S.fname,{contratos:allAnalise.length,elegiveis:allElegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:allRmc.length,beneficios:bens.slice(0,20)});
+    let tT=elegiveis.reduce((s,e)=>s+e.troco,0);
+    let tVC=elegiveis.reduce((s,e)=>s+e.vc,0);
+    addHist(S.fname,{contratos:rows.length,elegiveis:elegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:allRmc.length,beneficios:[ben],tipo});
 
-  setTimeout(()=>{
+    document.getElementById("bPct").textContent="100%";
+    document.getElementById("bBar").style.width="100%";
+    document.getElementById("bStat").innerHTML=`<span style="color:var(--grn)">✅ ${nome} — ${rows.length} contratos, ${elegiveis.length} elegíveis</span>`;
+    setTimeout(()=>{document.getElementById("batchModal").style.display="none";renderApp()},1200);
+
+  }catch(e){
     document.getElementById("batchModal").style.display="none";
-    renderApp();
-    if(erros.length)alert(msg);
-  },1500);
+    alert(`Erro de conexão: ${e.message}\n\nVerifique se o arquivo api/multicorban.js existe no GitHub.`);
+  }
 }
 
 // ══════ RENDER ══════
@@ -515,9 +504,10 @@ function renderApp(){
       <div style="border:2px solid var(--brd);border-radius:16px;padding:40px 30px;background:var(--sf);flex:1;max-width:380px;text-align:center">
         <div style="font-size:32px;margin-bottom:12px">🔍</div>
         <div style="font-size:15px;font-weight:700;margin-bottom:6px">Consulta Unitária</div>
-        <div style="font-size:11px;color:var(--t2);margin-bottom:14px">Cole o número do benefício e consulte</div>
-        <textarea id="mcBenList" placeholder="Cole os benefícios aqui (um por linha)&#10;&#10;252174615&#10;252425510&#10;281454701" style="width:100%;min-height:120px;padding:10px;border-radius:8px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:12px;font-family:monospace;resize:vertical;margin-bottom:12px"></textarea>
-        <button class="btn-acc" style="font-size:11px;padding:8px 20px;width:100%;background:var(--cyan)" onclick="consultarBeneficios()">🔍 Consultar</button>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:14px">CPF ou número do benefício</div>
+        <input id="mcBenInput" type="text" placeholder="CPF ou Benefício" style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:16px;font-family:monospace;text-align:center;margin-bottom:6px;letter-spacing:1px" oninput="updMcLabel()" onkeydown="if(event.key==='Enter')consultarBeneficio()">
+        <div id="mcTipoLabel" style="font-size:10px;color:var(--t3);margin-bottom:10px;text-align:center;min-height:14px"></div>
+        <button class="btn-acc" style="font-size:11px;padding:8px 20px;width:100%;background:var(--cyan)" onclick="consultarBeneficio()">🔍 Consultar</button>
       </div>
     </div>`;
     if(hist.length){html+=`<div class="fi" style="margin-top:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:700">📁 Histórico</div><button class="btn btn-red btn-sm" onclick="clearHist()">Limpar</button></div><div style="display:grid;gap:8px">`;for(let h of hist){let sm=h.summary||{};let bensStr=sm.beneficios&&sm.beneficios.length?sm.beneficios.slice(0,5).join(", ")+(sm.beneficios.length>5?" ...":""):"";html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div style="flex:1;min-width:180px"><div style="font-size:12px;font-weight:700">${esc(h.fname)}</div><div style="font-size:10px;color:var(--t2)">${h.date}${CU&&CU.role==="admin"?` \u2014 <span style="color:var(--cyan)">${esc(h.user)}</span>`:""}</div>${bensStr?`<div style="font-size:9px;color:var(--t3);margin-top:3px;font-family:monospace">Ben: ${esc(bensStr)}</div>`:""}</div><div style="display:flex;gap:12px"><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):"-"}</div><div style="font-size:8px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--ylw)">${sm.valorContrato?R$(sm.valorContrato):"-"}</div><div style="font-size:8px;color:var(--t3)">VLR CONT</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):"-"}</div><div style="font-size:8px;color:var(--t3)">TROCO</div></div></div><div style="display:flex;gap:4px;align-items:center">${h.saved?`<button class="btn-acc" style="padding:4px 12px;font-size:10px;border-radius:5px" onclick="loadHist(${h.id})">📂 Carregar</button>`:`<span class="pill pill-default">Não salvo</span>`}<button class="btn btn-red btn-sm" onclick="delHist(${h.id})">✕</button></div></div>`}html+=`</div></div>`}
