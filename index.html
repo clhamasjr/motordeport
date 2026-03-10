@@ -82,7 +82,7 @@ td.right,th.right{text-align:right}td.mono{font-family:monospace;font-size:11px}
 </head>
 <body>
 <div id="loginScreen" class="login-wrap"><div class="login-box"><div class="login-logo"><div class="login-logo-icon">L</div><div><div style="font-size:22px;font-weight:800">Lhamascred</div><div style="font-size:11px;color:var(--t3)">Motor de Portabilidade</div></div></div><div class="login-card" id="loginCard"><div style="font-size:18px;font-weight:700;text-align:center;margin-bottom:4px">Bem-vindo</div><div style="font-size:12px;color:var(--t2);text-align:center;margin-bottom:28px">Entre com suas credenciais</div><div class="form-group"><label class="form-label">Usuário</label><input class="form-input" type="text" id="loginUser" placeholder="Usuário" onkeydown="if(event.key==='Enter')doLogin()"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" type="password" id="loginPass" placeholder="Senha" onkeydown="if(event.key==='Enter')doLogin()"></div><button class="login-btn" onclick="doLogin()">Entrar</button><div class="login-error" id="loginError"></div></div></div></div>
-<div id="appScreen" style="display:none"><header class="header"><div class="logo" style="cursor:pointer" onclick="resetData()"><div class="logo-icon">L</div><div><div style="font-size:14px;font-weight:800">Lhamascred</div><div style="font-size:9px;color:var(--t3);font-weight:600">Motor v5</div></div></div><div style="display:flex;align-items:center;gap:6px"><div class="hdr-user" id="hdrUser"></div><div id="headerActions" style="display:flex;gap:6px;align-items:center"><span id="fileName" style="font-size:10px;color:var(--t3);margin-right:4px"></span><button class="btn btn-grn" onclick="exportXLSX()">↓ Exportar</button><button class="btn" style="border-color:var(--ylw);color:var(--ylw)" onclick="salvarProc()">💾 Salvar</button><button class="btn" onclick="resetData()">Nova Base</button></div><button class="btn btn-red btn-sm" onclick="doLogout()">Sair</button></div></header><div class="container" id="appContainer"></div></div>
+<div id="appScreen" style="display:none"><header class="header"><div class="logo" style="cursor:pointer" onclick="resetData()"><div class="logo-icon">L</div><div><div style="font-size:14px;font-weight:800">Lhamascred</div><div style="font-size:9px;color:var(--t3);font-weight:600">Motor v5</div></div></div><div style="display:flex;align-items:center;gap:6px"><div class="hdr-user" id="hdrUser"></div><div id="headerActions" style="display:flex;gap:6px;align-items:center"><span id="fileName" style="font-size:10px;color:var(--t3);margin-right:4px"></span><button class="btn btn-grn" onclick="exportXLSX()">↓ Exportar</button><button class="btn" onclick="resetData()">Nova Base</button></div><button class="btn btn-red btn-sm" onclick="doLogout()">Sair</button></div></header><div class="container" id="appContainer"></div></div>
 <div id="changePwModal" class="modal-overlay" style="display:none"><div class="modal-box" style="max-width:420px"><div style="font-size:16px;font-weight:700;margin-bottom:16px">Alterar Senha</div><div class="form-group"><label class="form-label">Atual</label><input class="form-input" type="password" id="cpwOld"></div><div class="form-group"><label class="form-label">Nova</label><input class="form-input" type="password" id="cpwNew"></div><div class="form-group"><label class="form-label">Confirmar</label><input class="form-input" type="password" id="cpwConfirm"></div><div style="display:flex;gap:8px"><button class="login-btn" style="flex:1" onclick="doChangePw()">Salvar</button><button class="btn" style="padding:12px 20px" onclick="document.getElementById('changePwModal').style.display='none'">Cancelar</button></div><div class="login-error" id="cpwError"></div></div></div>
 <div id="phoneModal" class="modal-overlay" style="display:none"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:16px;font-weight:700">📱 Telefones</div><button class="btn btn-sm" onclick="document.getElementById('phoneModal').style.display='none'">✕</button></div><div id="pmName" style="font-size:13px;color:var(--t2);margin-bottom:2px"></div><div id="pmCPF" style="font-size:11px;color:var(--t3);margin-bottom:14px;font-family:monospace"></div><div id="pmContent"></div><div id="pmActions" style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"></div></div></div>
 <div id="batchModal" class="modal-overlay" style="display:none"><div class="modal-box" style="max-width:420px"><div style="font-size:16px;font-weight:700;margin-bottom:12px">⏳ Processando</div><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span id="bCnt" style="font-size:12px;color:var(--t2)">0/0</span><span id="bPct" style="font-size:12px;font-weight:700;color:var(--acc)">0%</span></div><div class="taxa-bar" style="height:8px"><div id="bBar" class="taxa-fill" style="width:0%"></div></div><div id="bStat" style="font-size:11px;color:var(--t2);margin:10px 0"></div><button class="btn btn-red" onclick="bCancel=true">Cancelar</button></div></div>
@@ -104,27 +104,28 @@ function doChangePw(){const o=document.getElementById("cpwOld").value,n=document
 // ══════ HISTORY ══════
 function getHist(){try{return JSON.parse(localStorage.getItem("lhm_hist")||"[]")}catch{return[]}}
 function getMyHist(){let h=getHist();if(!CU)return[];if(CU.role==="admin")return h;return h.filter(x=>x.userLogin===CU.user)}
-function saveHist(h){try{localStorage.setItem("lhm_hist",JSON.stringify(h.slice(0,50)))}catch{}}
-function addHist(fn,sm){let h=getHist();h.unshift({id:Date.now(),fname:fn,user:CU?CU.name:"",userLogin:CU?CU.user:"",date:new Date().toLocaleString("pt-BR"),summary:sm,saved:false});saveHist(h)}
+function saveHist(h){try{localStorage.setItem("lhm_hist",JSON.stringify(h.slice(0,30)))}catch{}}
+function addHist(fn,sm,data){
+  let id=Date.now();
+  let h=getHist();h.unshift({id,fname:fn,user:CU?CU.name:"",userLogin:CU?CU.user:"",date:new Date().toLocaleString("pt-BR"),summary:sm});saveHist(h);
+  // Auto-save data
+  if(data){try{
+    let sv={elegiveis:data.elegiveis,mapaArr:data.mapaArr,rmcRcc:data.rmcRcc||[],taxaDist:data.taxaDist||{},aLen:data.analise?data.analise.length:data.elegiveis.length,phones:{}};
+    for(let k of Object.keys(phoneCache))sv.phones[k]=phoneCache[k];
+    localStorage.setItem("lhm_data_"+id,JSON.stringify(sv));
+  }catch(e){try{
+    let m={elegiveis:data.elegiveis.slice(0,1500),mapaArr:data.mapaArr,aLen:data.analise?data.analise.length:data.elegiveis.length,phones:{}};
+    localStorage.setItem("lhm_data_"+id,JSON.stringify(m));
+  }catch{}}}
+}
 function delHist(id){localStorage.removeItem("lhm_data_"+id);saveHist(getHist().filter(x=>x.id!==id));renderApp()}
 function clearHist(){if(confirm("Limpar?")){let h=getMyHist();h.forEach(x=>localStorage.removeItem("lhm_data_"+x.id));let all=getHist();let ids=new Set(h.map(x=>x.id));saveHist(all.filter(x=>!ids.has(x.id)));renderApp()}}
-function salvarProc(){
-  if(!S.data)return;let hist=getHist();let cur=hist.find(h=>h.userLogin===CU.user&&!h.saved)||hist.find(h=>h.userLogin===CU.user);if(!cur)return;
-  try{let sv={elegiveis:S.data.elegiveis,mapaArr:S.data.mapaArr,rmcRcc:S.data.rmcRcc,taxaDist:S.data.taxaDist,aLen:S.data.analise.length,phones:{}};
-    for(let k of Object.keys(phoneCache))sv.phones[k]=phoneCache[k];
-    localStorage.setItem("lhm_data_"+cur.id,JSON.stringify(sv));cur.saved=true;saveHist(hist);alert("Salvo! Consulte no Histórico.");renderApp();
-  }catch(e){try{let m={elegiveis:S.data.elegiveis.slice(0,1500),mapaArr:S.data.mapaArr,aLen:S.data.analise.length,phones:{}};
-    for(let k of Object.keys(phoneCache))m.phones[k]=phoneCache[k];localStorage.setItem("lhm_data_"+cur.id,JSON.stringify(m));cur.saved=true;saveHist(hist);alert("Salvo (parcial).");renderApp();
-  }catch{alert("Sem espaço. Limpe processamentos antigos.")}}
-}
-function loadHist(id){try{let raw=localStorage.getItem("lhm_data_"+id);if(!raw){alert("Não salvo. Clique 💾 Salvar antes.");return}
+function loadHist(id){try{let raw=localStorage.getItem("lhm_data_"+id);if(!raw){alert("Dados não disponíveis.");return}
   let sv=JSON.parse(raw);if(sv.phones)for(let k of Object.keys(sv.phones))phoneCache[k]=sv.phones[k];
-  // Build analise as array with proper length for dashboard
   let eleg=sv.elegiveis||[];
   S.data={analise:eleg,elegiveis:eleg,mapaArr:sv.mapaArr||[],rmcRcc:sv.rmcRcc||[],taxaDist:sv.taxaDist||{},totalAnalise:sv.aLen||eleg.length};
   let hist=getHist(),h=hist.find(x=>x.id===id);S.fname=h?h.fname+" (histórico)":"Histórico";S.tab="dash";S.pg=0;renderApp();
-  alert("✅ Processamento carregado com "+eleg.length+" elegíveis"+(Object.keys(sv.phones||{}).length?" e "+Object.keys(sv.phones).length+" telefones higienizados":""));
-}catch(e){alert("Erro ao carregar: "+e.message)}}
+}catch(e){alert("Erro: "+e.message)}}
 
 // ══════ PIPELINE STATE ══════
 let selected=new Set(); // CPFs selected for pipeline
@@ -340,7 +341,7 @@ function processar(data){
 let S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel"};
 const PER=50;const R$=v=>"R$ "+v.toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});const N=v=>v.toLocaleString("pt-BR");
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
-function handleFile(inp){let f=inp.files[0];if(!f)return;S.fname=f.name;document.getElementById("appContainer").innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:60vh;flex-direction:column;gap:12px"><div style="font-size:30px;animation:pulse 1.2s ease infinite">⚙️</div><div style="font-size:13px;color:var(--t2)">Processando...</div></div>';setTimeout(()=>{let reader=new FileReader();reader.onload=function(e){try{let wb=XLSX.read(e.target.result,{type:"array",cellDates:true});let ws=wb.Sheets[wb.SheetNames[0]];S.data=processar(XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:true}));S.tab="dash";S.pg=0;selected.clear();phoneCache={};wppSent.clear();if(S.data){let tT=S.data.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=S.data.elegiveis.reduce((s,e)=>s+e.vc,0);let bens=[...new Set(S.data.analise.map(r=>r.ben).filter(b=>b))].slice(0,20);addHist(S.fname,{contratos:S.data.analise.length,elegiveis:S.data.elegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:S.data.rmcRcc.length,beneficios:bens})}renderApp()}catch(err){alert("Erro: "+err.message);renderApp()}};reader.readAsArrayBuffer(f)},50)}
+function handleFile(inp){let f=inp.files[0];if(!f)return;S.fname=f.name;document.getElementById("appContainer").innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:60vh;flex-direction:column;gap:12px"><div style="font-size:30px;animation:pulse 1.2s ease infinite">⚙️</div><div style="font-size:13px;color:var(--t2)">Processando...</div></div>';setTimeout(()=>{let reader=new FileReader();reader.onload=function(e){try{let wb=XLSX.read(e.target.result,{type:"array",cellDates:true});let ws=wb.Sheets[wb.SheetNames[0]];S.data=processar(XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:true}));S.tab="dash";S.pg=0;selected.clear();phoneCache={};wppSent.clear();if(S.data){let tT=S.data.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=S.data.elegiveis.reduce((s,e)=>s+e.vc,0);let bens=[...new Set(S.data.analise.map(r=>r.ben).filter(b=>b))].slice(0,20);addHist(S.fname,{contratos:S.data.analise.length,elegiveis:S.data.elegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:S.data.rmcRcc.length,beneficios:bens},S.data)}renderApp()}catch(err){alert("Erro: "+err.message);renderApp()}};reader.readAsArrayBuffer(f)},50)}
 function resetData(){S.data=null;S.fname="";selected.clear();phoneCache={};wppSent.clear();renderApp()}
 function setTab(t){S.tab=t;S.sort={c:null,d:"asc"};S.pg=0;renderApp()}
 function setQ(v){S.q=v;S.pg=0;renderApp()}
@@ -357,160 +358,12 @@ function addU(){const n=document.getElementById("nN").value.trim(),u=document.ge
 function dlu(u){if(confirm(`Excluir "${u}"?`)){saveU(getU().filter(x=>x.user!==u));renderApp()}}
 function rpw(u){const p=prompt(`Nova senha para "${u}":`);if(!p||p.length<4)return;let users=getU();let i=users.findIndex(x=>x.user===u);if(i>=0){users[i].pw=hp(p);saveU(users);alert("OK!")}}
 
-// ══════ CONSULTA UNITÁRIA ══════
-function detectTipo(v){let d=v.replace(/\D/g,"");if(d.length===11)return"cpf";if(d.length>=1)return"ben";return""}
-function updMcLabel(){let inp=document.getElementById("mcBenInput");let lbl=document.getElementById("mcTipoLabel");if(!inp||!lbl)return;let v=inp.value.replace(/\D/g,"");let t=detectTipo(inp.value);if(t==="cpf")lbl.innerHTML=`<span style="color:var(--cyan)">📋 Detectado: <strong>CPF</strong> (${v.substring(0,3)}.${v.substring(3,6)}.${v.substring(6,9)}-${v.substring(9)})</span>`;else if(t==="ben")lbl.innerHTML=`<span style="color:var(--grn)">🔢 Detectado: <strong>Benefício</strong></span>`;else lbl.innerHTML=""}
-function mcToRows(resp){
-  // Convert API response to flat rows — handle multiple response formats
-  let d=resp.data||resp;
-  // If response is array, merge objects
-  if(Array.isArray(d)){let merged={};d.forEach(o=>Object.assign(merged,o));d=merged}
-  // If response is string, try parsing
-  if(typeof d==="string"){try{d=JSON.parse(d)}catch{}}
-
-  let b=d.Beneficiario||d.beneficiario||{};
-  let rf=d.ResumoFinanceiro||d.resumoFinanceiro||{};
-  let db=d.DadosBancarios||d.dadosBancarios||{};
-  let rmc=d.Rmc||d.rmc||d.RMC||{};
-  let rcc=d.RCC||d.Rcc||d.rcc||{};
-  let emps=d.Emprestimos||d.emprestimos||[];
-  // If emps is not array (single object), wrap it
-  if(emps&&!Array.isArray(emps))emps=[emps];
-
-  let base={
-    nome:b.Nome||b.nome||"",cpf:b.CPF||b.cpf||"",ben:String(b.Beneficio||b.beneficio||""),esp:String(b.Especie||b.especie||""),
-    nasc:b.DataNascimento||b.dataNascimento||"",dib:b.DIB||b.dib||"",t1:"",t2:"",t3:"",
-    rmcBanco:String(rmc.Banco||rmc.banco||""),rmcValor:parseFloat(rmc.Valor_emprestimo||rmc.valor_emprestimo||0),rmcContrato:rmc.Contrato||"",
-    rccBanco:String(rcc.Banco||rcc.banco||""),rccValor:parseFloat(rcc.Valor_emprestimo||rcc.valor_emprestimo||0),rccContrato:rcc.Contrato||""
-  };
-  let ai=cAge(base.nasc),idade=ai?ai.age:null;
-  let bY=cBY(base.dib);
-  let eN=parseInt(base.esp)||0;
-  let isInv=ESP_INV.includes(eN);
-  let rmcEntry=null;
-  if(base.rmcValor>0||base.rccValor>0){
-    rmcEntry={nome:base.nome,cpf:base.cpf,ben:base.ben,esp:base.esp,t1:"",t2:"",t3:"",
-      tRmc:"RMC",cRmc:pC(base.rmcBanco),vRmc:base.rmcValor,
-      tRcc:"RCC",cRcc:pC(base.rccBanco),vRcc:base.rccValor};
-  }
-  let rows=[];
-  for(let emp of emps){
-    let par=parseFloat(emp.ValorParcela||emp.valorParcela||emp.valor_parcela||0);
-    let sal=parseFloat(emp.Quitacao||emp.quitacao||emp.SaldoQuitacao||emp.saldo_quitacao||0);
-    let prazoStr=String(emp.Prazo||emp.prazo||"0");
-    let restStr=String(emp.ParcelasRestantes||emp.parcelasRestantes||emp.parcelas_restantes||"0");
-    let rest=parseInt(restStr)||0;
-    let tot=parseInt(prazoStr)||0;
-    let pag=tot>rest?tot-rest:0;
-    let cod=pC(String(emp.Banco||emp.banco||""));
-    let con=String(emp.Contrato||emp.contrato||"");
-    let is1p=B1P.includes(cod);
-    let res=testar(par,sal,pag,cod,isInv,idade,bY,rest);
-    rows.push({
-      nome:base.nome,cpf:base.cpf,ben:base.ben,esp:base.esp,con,cod,
-      par:Math.round(par*100)/100,sal:Math.round(sal*100)/100,
-      prazo:`${rest}/${tot}`,pag,idade:idade??"-",isInv,is1p,
-      dest:res?res.banco:"-",troco:res?Math.round(res.troco*100)/100:0,
-      vc:res?Math.round(res.vc*100)/100:0,taxa:res?res.taxa:"-",ok:!!res,
-      t1:"",t2:"",t3:""
-    });
-  }
-  return{rows,rmcEntry};
-}
-
-async function consultarBeneficio(){
-  let inp=document.getElementById("mcBenInput");
-  if(!inp)return;
-  let raw=inp.value.replace(/\D/g,"").trim();
-  if(!raw){alert("Digite um CPF ou número de benefício");return}
-  let tipo=detectTipo(inp.value);
-  let label=tipo==="cpf"?`CPF ${raw.substring(0,3)}.***.***-${raw.substring(9)}`:`Benefício ${raw}`;
-
-  document.getElementById("batchModal").style.display="flex";
-  document.getElementById("bCnt").textContent="1/1";
-  document.getElementById("bPct").textContent="...";
-  document.getElementById("bBar").style.width="50%";
-  document.getElementById("bStat").textContent=`Consultando ${label}...`;
-
-  try{
-    const res=await fetch('/api/multicorban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({beneficio:raw})});
-    if(!res.ok){
-      let errTxt=await res.text().catch(()=>"");
-      document.getElementById("batchModal").style.display="none";
-      alert(`Erro HTTP ${res.status}\n${errTxt.substring(0,200)}`);
-      return;
-    }
-    const data=await res.json();
-    if(!data.success||!data.data){
-      document.getElementById("batchModal").style.display="none";
-      alert(`Erro: ${data.error||data.detail||"Resposta inválida"}`);
-      return;
-    }
-
-    let{rows,rmcEntry}=mcToRows(data);
-    let elegiveis=rows.filter(r=>r.ok);
-    let allRmc=rmcEntry?[rmcEntry]:[];
-
-    if(rows.length===0){
-      document.getElementById("batchModal").style.display="none";
-      let nome=data.data.Beneficiario?data.data.Beneficiario.Nome:"";
-      alert(`${label}${nome?" — "+nome:""}\nNenhum contrato encontrado.`);
-      return;
-    }
-
-    let mapa={};
-    for(let e of elegiveis){
-      if(!mapa[e.dest])mapa[e.dest]={banco:e.dest,n:0,total:0,vcTotal:0};
-      mapa[e.dest].n++;mapa[e.dest].total+=e.troco;mapa[e.dest].vcTotal+=e.vc;
-    }
-    let mapaArr=ORDEM.map(b=>mapa[b]||{banco:b,n:0,total:0,vcTotal:0}).filter(m=>m.n>0).map(m=>({...m,med:m.n?m.total/m.n:0,vcMed:m.n?m.vcTotal/m.n:0}));
-    let taxaDist={};for(let e of elegiveis)taxaDist[e.taxa]=(taxaDist[e.taxa]||0)+1;
-
-    S.data={analise:rows,elegiveis,mapaArr,rmcRcc:allRmc,taxaDist};
-    let nome=rows[0]?rows[0].nome:"";
-    let ben=rows[0]?rows[0].ben:raw;
-    S.fname=`${tipo==="cpf"?"CPF":"Ben"} ${ben}${nome?" — "+nome:""}`;
-    S.tab="dash";S.pg=0;
-    selected.clear();phoneCache={};wppSent.clear();
-
-    let tT=elegiveis.reduce((s,e)=>s+e.troco,0);
-    let tVC=elegiveis.reduce((s,e)=>s+e.vc,0);
-    addHist(S.fname,{contratos:rows.length,elegiveis:elegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:allRmc.length,beneficios:[ben],tipo});
-
-    document.getElementById("bPct").textContent="100%";
-    document.getElementById("bBar").style.width="100%";
-    document.getElementById("bStat").innerHTML=`<span style="color:var(--grn)">✅ ${nome} — ${rows.length} contratos, ${elegiveis.length} elegíveis</span>`;
-    setTimeout(()=>{document.getElementById("batchModal").style.display="none";renderApp()},1200);
-
-  }catch(e){
-    document.getElementById("batchModal").style.display="none";
-    alert(`Erro de conexão: ${e.message}\n\nVerifique se o arquivo api/multicorban.js existe no GitHub.`);
-  }
-}
-
 // ══════ RENDER ══════
 function renderApp(){
   let D=S.data,c=document.getElementById("appContainer"),html="";
   if(!D){document.getElementById("headerActions").style.display="none";let hist=getMyHist();
-    html=`<div style="display:flex;gap:20px;justify-content:center;align-items:flex-start;min-height:${hist.length?'40vh':'72vh'};flex-wrap:wrap;padding-top:40px" class="fi">
-      <div class="upload-box" id="uploadBox" onclick="document.getElementById('fileInput').click()" style="flex:1;max-width:380px;padding:40px 30px">
-        <div style="font-size:32px;margin-bottom:12px">📊</div>
-        <div style="font-size:15px;font-weight:700;margin-bottom:6px">Consulta em Lote</div>
-        <div style="font-size:11px;color:var(--t2);margin-bottom:18px">Suba a base completa offline</div>
-        <div class="btn-acc" style="font-size:11px;padding:8px 20px">Selecionar Arquivo</div>
-        <div style="font-size:9px;color:var(--t3);margin-top:10px">.xlsx .xls .csv</div>
-        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)">
-      </div>
-      <div style="border:2px solid var(--brd);border-radius:16px;padding:40px 30px;background:var(--sf);flex:1;max-width:380px;text-align:center">
-        <div style="font-size:32px;margin-bottom:12px">🔍</div>
-        <div style="font-size:15px;font-weight:700;margin-bottom:6px">Consulta Unitária</div>
-        <div style="font-size:11px;color:var(--t2);margin-bottom:14px">CPF ou número do benefício</div>
-        <input id="mcBenInput" type="text" placeholder="CPF ou Benefício" style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:16px;font-family:monospace;text-align:center;margin-bottom:6px;letter-spacing:1px" oninput="updMcLabel()" onkeydown="if(event.key==='Enter')consultarBeneficio()">
-        <div id="mcTipoLabel" style="font-size:10px;color:var(--t3);margin-bottom:10px;text-align:center;min-height:14px"></div>
-        <button class="btn-acc" style="font-size:11px;padding:8px 20px;width:100%;background:var(--cyan)" onclick="consultarBeneficio()">🔍 Consultar</button>
-      </div>
-    </div>`;
-    if(hist.length){html+=`<div class="fi" style="margin-top:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:700">📁 Histórico</div><button class="btn btn-red btn-sm" onclick="clearHist()">Limpar</button></div><div style="display:grid;gap:8px">`;for(let h of hist){let sm=h.summary||{};let bensStr=sm.beneficios&&sm.beneficios.length?sm.beneficios.slice(0,5).join(", ")+(sm.beneficios.length>5?" ...":""):"";html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div style="flex:1;min-width:180px"><div style="font-size:12px;font-weight:700">${esc(h.fname)}</div><div style="font-size:10px;color:var(--t2)">${h.date}${CU&&CU.role==="admin"?` \u2014 <span style="color:var(--cyan)">${esc(h.user)}</span>`:""}</div>${bensStr?`<div style="font-size:9px;color:var(--t3);margin-top:3px;font-family:monospace">Ben: ${esc(bensStr)}</div>`:""}</div><div style="display:flex;gap:12px"><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):"-"}</div><div style="font-size:8px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--ylw)">${sm.valorContrato?R$(sm.valorContrato):"-"}</div><div style="font-size:8px;color:var(--t3)">VLR CONT</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):"-"}</div><div style="font-size:8px;color:var(--t3)">TROCO</div></div></div><div style="display:flex;gap:4px;align-items:center">${h.saved?`<button class="btn-acc" style="padding:4px 12px;font-size:10px;border-radius:5px" onclick="loadHist(${h.id})">📂 Carregar</button>`:`<span class="pill pill-default">Não salvo</span>`}<button class="btn btn-red btn-sm" onclick="delHist(${h.id})">✕</button></div></div>`}html+=`</div></div>`}
+    html=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:${hist.length?'40vh':'72vh'}" class="fi"><div class="upload-box" id="uploadBox" onclick="document.getElementById('fileInput').click()"><div style="font-size:36px;margin-bottom:16px">📊</div><div style="font-size:17px;font-weight:700;margin-bottom:6px">Consulta em Lote</div><div style="font-size:12px;color:var(--t2);margin-bottom:22px">Suba a base completa offline</div><div class="btn-acc">Selecionar Arquivo</div><div style="font-size:9px;color:var(--t3);margin-top:10px">.xlsx .xls .csv</div><input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)"></div></div>`;
+    if(hist.length){html+=`<div class="fi" style="margin-top:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:700">📁 Histórico</div><button class="btn btn-red btn-sm" onclick="clearHist()">Limpar</button></div><div style="display:grid;gap:8px">`;for(let h of hist){let sm=h.summary||{};let bensStr=sm.beneficios&&sm.beneficios.length?sm.beneficios.slice(0,5).join(", ")+(sm.beneficios.length>5?" ...":""):"";html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div style="flex:1;min-width:180px"><div style="font-size:12px;font-weight:700">${esc(h.fname)}</div><div style="font-size:10px;color:var(--t2)">${h.date}${CU&&CU.role==="admin"?` \u2014 <span style="color:var(--cyan)">${esc(h.user)}</span>`:""}</div>${bensStr?`<div style="font-size:9px;color:var(--t3);margin-top:3px;font-family:monospace">Ben: ${esc(bensStr)}</div>`:""}</div><div style="display:flex;gap:12px"><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):"-"}</div><div style="font-size:8px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--ylw)">${sm.valorContrato?R$(sm.valorContrato):"-"}</div><div style="font-size:8px;color:var(--t3)">VLR CONT</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):"-"}</div><div style="font-size:8px;color:var(--t3)">TROCO</div></div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn-acc" style="padding:4px 12px;font-size:10px;border-radius:5px" onclick="loadHist(${h.id})">📂 Carregar</button><button class="btn btn-red btn-sm" onclick="delHist(${h.id})">✕</button></div></div>`}html+=`</div></div>`}
     c.innerHTML=html;let ub=document.getElementById("uploadBox");ub.addEventListener("dragover",e=>{e.preventDefault();ub.classList.add("drag")});ub.addEventListener("dragleave",()=>ub.classList.remove("drag"));ub.addEventListener("drop",e=>{e.preventDefault();ub.classList.remove("drag");if(e.dataTransfer.files[0]){let inp=document.getElementById("fileInput");let dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);inp.files=dt.files;handleFile(inp)}});return}
   document.getElementById("headerActions").style.display="flex";document.getElementById("fileName").textContent="📁 "+S.fname;
   let nSel=selected.size,nHig=[...selected].filter(c=>phoneCache[c]).length,nWpp=[...selected].filter(c=>wppSent.has(c)).length;
