@@ -133,6 +133,13 @@ let bCancel=false;
 
 function toggleSel(cpf){if(selected.has(cpf))selected.delete(cpf);else selected.add(cpf);renderApp()}
 function toggleSelAll(){if(!S.data)return;let all=S.data.elegiveis.map(e=>e.cpf);if(selected.size>=all.length){selected.clear()}else{all.forEach(c=>selected.add(c))}renderApp()}
+function selPage(){
+  if(!S.data)return;let filtered=filt(S.data.elegiveis);
+  let pageItems=filtered.slice(S.pg*PER,(S.pg+1)*PER);
+  let allChecked=pageItems.every(r=>selected.has(r.cpf));
+  pageItems.forEach(r=>{if(allChecked)selected.delete(r.cpf);else selected.add(r.cpf)});renderApp()
+}
+function selNone(){selected.clear();renderApp()}
 function moveToHig(){if(selected.size===0){alert("Selecione pelo menos um contrato");return}S.tab="pipe";S.pipeStage="sel";renderApp()}
 
 // ══════ HIGIENIZAÇÃO ══════
@@ -354,8 +361,9 @@ function renderApp(){
   // ═══ ELEGÍVEIS (com checkbox) ═══
   if(S.tab==="el"){
     let filtered=filt(D.elegiveis),items=filtered.slice(S.pg*PER,(S.pg+1)*PER);
-    html+=`<div class="search-bar"><input type="text" placeholder="Buscar..." value="${esc(S.q)}" oninput="setQ(this.value)"><button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="moveToHig()">🔄 Pipeline (${selected.size})</button><span style="font-size:10px;color:var(--t3)">${selected.size} selecionados</span></div>`;
-    html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th style="width:30px"><input type="checkbox" class="chk" onclick="toggleSelAll()" ${selected.size>=D.elegiveis.length?"checked":""}></th>${TH("nome","Nome")}${TH("cpf","CPF")}${TH("cod","Banco")}${TH("par","Parcela",1)}${TH("sal","Saldo",1)}${TH("prazo","Prazo")}${TH("dest","Destino")}${TH("vc","Vlr Cont",1)}${TH("troco","Troco",1)}${TH("taxa","Taxa")}</tr></thead><tbody>`;
+    html+=`<div class="search-bar"><input type="text" placeholder="Buscar..." value="${esc(S.q)}" oninput="setQ(this.value)"><div style="display:flex;gap:4px;align-items:center;background:var(--card);border:1px solid var(--brd);border-radius:6px;padding:3px"><button class="btn btn-sm" style="font-size:9px;border:none;padding:3px 8px;color:var(--acc)" onclick="selPage()">☑ Página ${S.pg+1}</button><button class="btn btn-sm" style="font-size:9px;border:none;padding:3px 8px;color:var(--grn)" onclick="toggleSelAll()">☑ Todos (${D.elegiveis.length})</button><button class="btn btn-sm" style="font-size:9px;border:none;padding:3px 8px;color:var(--red)" onclick="selNone()">✕ Limpar</button></div><button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="moveToHig()">🔄 Pipeline (${selected.size})</button><span style="font-size:10px;color:var(--t3)">${selected.size} selecionados</span></div>`;
+    let pgItems=filtered.slice(S.pg*PER,(S.pg+1)*PER);let pgAllCk=pgItems.length>0&&pgItems.every(r=>selected.has(r.cpf));
+    html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th style="width:30px"><input type="checkbox" class="chk" onclick="selPage()" ${pgAllCk?"checked":""}></th>${TH("nome","Nome")}${TH("cpf","CPF")}${TH("cod","Banco")}${TH("par","Parcela",1)}${TH("sal","Saldo",1)}${TH("prazo","Prazo")}${TH("dest","Destino")}${TH("vc","Vlr Cont",1)}${TH("troco","Troco",1)}${TH("taxa","Taxa")}</tr></thead><tbody>`;
     for(let r of items){let dc=r.dest!=="-"?DC[r.dest]:null;let ck=selected.has(r.cpf);
       html+=`<tr class="rh" style="${ck?"background:rgba(59,130,246,0.06)":""}"><td><input type="checkbox" class="chk" ${ck?"checked":""} onclick="toggleSel('${r.cpf}')"></td><td>${esc(r.nome)}</td><td class="mono">${esc(r.cpf)}</td><td><span class="pill pill-default">${esc(r.cod)}</span></td><td class="right mono">${R$(r.par)}</td><td class="right mono">${R$(r.sal)}</td><td class="mono">${esc(r.prazo)}</td><td>${dc?`<span class="pill ${pCls[r.dest]}">${r.dest}</span>`:"—"}</td><td class="right mono" style="color:var(--ylw)">${R$(r.vc)}</td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(r.troco)}</td><td>${r.taxa!=="-"?r.taxa+"%":"—"}</td></tr>`}
     if(!items.length)html+=`<tr><td colspan="11" style="padding:40px;text-align:center;color:var(--t3)">Nenhum</td></tr>`;
