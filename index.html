@@ -131,6 +131,7 @@ let selected=new Set(); // CPFs selected for pipeline
 let phoneCache={}; // Hygienized phone data
 let wppSent=new Set(); // CPFs with WPP sent
 let bCancel=false;
+let phoneMode="base"; // "base"=telefone da planilha, "api"=NovaVida (tem custo)
 
 function toggleSel(cpf){if(selected.has(cpf))selected.delete(cpf);else selected.add(cpf);renderApp()}
 function toggleSelAll(){if(!S.data)return;let all=S.data.elegiveis.map(e=>e.cpf);if(selected.size>=all.length){selected.clear()}else{all.forEach(c=>selected.add(c))}renderApp()}
@@ -225,8 +226,10 @@ function updateWppPreview(){
   let preview=tpl.replace(/{nome}/g,'<strong>João Silva</strong>').replace(/{cpf}/g,'123.456.789-00').replace(/{troco}/g,'<strong style="color:var(--grn)">R$ 1.250,00</strong>').replace(/{vlr_contrato}/g,'R$ 8.500,00').replace(/{banco}/g,'237').replace(/{destino}/g,'QUALI').replace(/{qtd}/g,'<strong>3</strong>');
   document.getElementById("wppPreviewText").innerHTML=preview;
   let grouped=S.data?groupByCPF(S.data.elegiveis.filter(e=>selected.has(e.cpf))):[];
-  let hig=grouped.filter(g=>phoneCache[g.cpf]&&phoneCache[g.cpf].telefones.some(t=>t.whatsapp));
-  document.getElementById("wppTargetInfo").innerHTML=`<span class="pill pill-grn">${hig.length}</span> clientes com WhatsApp de <span class="pill pill-acc">${grouped.length}</span> selecionados`;
+  let ready=0;
+  if(phoneMode==="base"){ready=grouped.filter(g=>{let t=(g.t1||g.t2||g.t3||"").replace(/\D/g,"");return t.length>=10}).length}
+  else{ready=grouped.filter(g=>phoneCache[g.cpf]&&phoneCache[g.cpf].telefones.some(t=>t.whatsapp)).length}
+  document.getElementById("wppTargetInfo").innerHTML=`<span class="pill pill-grn">${ready}</span> contatos com telefone (modo: ${phoneMode==="base"?"📋 Base":"📡 NovaVida"}) de <span class="pill pill-acc">${grouped.length}</span> selecionados`;
 }
 function openWppModal(){document.getElementById("wppModal").style.display="flex";updateWppPreview()}
 function buildMsg(tpl,r){
@@ -238,14 +241,20 @@ function sendWppBatch(){
   let targets=[];
   let grouped=groupByCPF(S.data.elegiveis.filter(e=>selected.has(e.cpf)));
   for(let g of grouped){
-    let ph=phoneCache[g.cpf];if(!ph||!ph.telefones)continue;
-    let wppPhone=ph.telefones.find(t=>t.whatsapp);if(!wppPhone)continue;
     let msg=tpl.replace(/{nome}/g,g.nome).replace(/{cpf}/g,g.cpf).replace(/{troco}/g,R$(g.trocoTotal)).replace(/{vlr_contrato}/g,R$(g.vcTotal)).replace(/{qtd}/g,String(g.qtd)).replace(/{banco}/g,[...g.bancos].join(", ")).replace(/{destino}/g,[...g.bancos].join(", "));
-    targets.push({cpf:g.cpf,nome:g.nome,num:`55${wppPhone.ddd}${wppPhone.telefone}`,msg});
+    let num="";
+    if(phoneMode==="base"){
+      let tel=(g.t1||g.t2||g.t3||"").replace(/\D/g,"");
+      if(tel.length>=10)num="55"+tel;
+    }else{
+      let ph=phoneCache[g.cpf];if(!ph||!ph.telefones)continue;
+      let wpp=ph.telefones.find(t=>t.whatsapp);if(!wpp)continue;
+      num=`55${wpp.ddd}${wpp.telefone}`;
+    }
+    if(num)targets.push({cpf:g.cpf,nome:g.nome,num,msg});
   }
-  if(!targets.length){alert("Nenhum contato com WhatsApp disponível");return}
+  if(!targets.length){alert("Nenhum contato com telefone válido");return}
   if(!confirm(`Abrir WhatsApp para ${targets.length} contatos?`))return;
-  // Open in batches of 5 with delay
   let i=0;
   function openNext(){
     if(i>=targets.length)return;
@@ -264,11 +273,18 @@ function exportWppList(){
   let grouped=groupByCPF(S.data.elegiveis.filter(e=>selected.has(e.cpf)));
   let rows=[];
   for(let g of grouped){
-    let ph=phoneCache[g.cpf];let phones=ph?ph.telefones:[];let wpp=phones.find(t=>t.whatsapp);
     let msg=tpl?tpl.replace(/{nome}/g,g.nome).replace(/{cpf}/g,g.cpf).replace(/{troco}/g,R$(g.trocoTotal)).replace(/{vlr_contrato}/g,R$(g.vcTotal)).replace(/{qtd}/g,String(g.qtd)).replace(/{banco}/g,[...g.bancos].join(", ")).replace(/{destino}/g,[...g.bancos].join(", ")):"";
+    let telBase=g.t1||g.t2||g.t3||"";
+    let telBaseNum=telBase.replace(/\D/g,"");
+    let ph=phoneCache[g.cpf];let apiPhones=ph?ph.telefones:[];let wppApi=apiPhones.find(t=>t.whatsapp);
+    let telUsar=phoneMode==="base"?telBase:(wppApi?`(${wppApi.ddd}) ${wppApi.telefone}`:"");
+    let numUsar=phoneMode==="base"?(telBaseNum.length>=10?"55"+telBaseNum:""):(wppApi?`55${wppApi.ddd}${wppApi.telefone}`:"");
     rows.push({Nome:g.nome,CPF:g.cpf,"Qtd Contratos":g.qtd,Destinos:[...g.bancos].join(", "),"Troco Total":g.trocoTotal,"Vlr Contrato Total":g.vcTotal,
-      "Tel Wpp":wpp?`(${wpp.ddd}) ${wpp.telefone}`:"","Num Wpp":wpp?`55${wpp.ddd}${wpp.telefone}`:"",
-      Msg:msg,Status:wppSent.has(g.cpf)?"ENVIADO":phoneCache[g.cpf]?"HIGIENIZADO":"PENDENTE"});
+      "Tel Base 1":g.t1||"","Tel Base 2":g.t2||"","Tel Base 3":g.t3||"",
+      "Tel Higienizado":wppApi?`(${wppApi.ddd}) ${wppApi.telefone}`:"",
+      "Telefone Usado":telUsar,"Num WhatsApp":numUsar,
+      Msg:msg,Modo:phoneMode==="base"?"BASE":"NOVAVIDA",
+      Status:wppSent.has(g.cpf)?"ENVIADO":phoneCache[g.cpf]?"HIGIENIZADO":"PENDENTE"});
   }
   let wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),"WhatsApp");
@@ -341,11 +357,145 @@ function addU(){const n=document.getElementById("nN").value.trim(),u=document.ge
 function dlu(u){if(confirm(`Excluir "${u}"?`)){saveU(getU().filter(x=>x.user!==u));renderApp()}}
 function rpw(u){const p=prompt(`Nova senha para "${u}":`);if(!p||p.length<4)return;let users=getU();let i=users.findIndex(x=>x.user===u);if(i>=0){users[i].pw=hp(p);saveU(users);alert("OK!")}}
 
+// ══════ MULTICORBAN CONSULTA ══════
+function mcToRows(resp){
+  // Convert Multicorban API response to flat rows like the spreadsheet
+  let d=resp.data||resp;
+  let b=d.Beneficiario||{};
+  let rf=d.ResumoFinanceiro||{};
+  let db=d.DadosBancarios||{};
+  let rmc=d.Rmc||{};
+  let rcc=d.RCC||d.Rcc||{};
+  let emps=d.Emprestimos||[];
+  let base={
+    nome:b.Nome||"",cpf:b.CPF||"",ben:String(b.Beneficio||""),esp:b.Especie||"",
+    nasc:b.DataNascimento||"",dib:b.DIB||"",t1:"",t2:"",t3:"",
+    margem:rf.MargemDisponivelEmprestimo||0,
+    rmcBanco:rmc.Banco||"",rmcValor:rmc.Valor_emprestimo||0,rmcContrato:rmc.Contrato||"",
+    rccBanco:rcc.Banco||"",rccValor:rcc.Valor_emprestimo||0,rccContrato:rcc.Contrato||"",
+    uf:b.UF||"",cidade:b.Cidade||"",bloqueado:b.BloqueadoEmprestimo||"0",
+    rl:b.RL||"0",banco:db.Banco||""
+  };
+  // Parse age
+  let ai=cAge(base.nasc),idade=ai?ai.age:null;
+  let bY=cBY(base.dib);
+  let eN=parseInt(base.esp)||0;
+  let isInv=ESP_INV.includes(eN);
+  // RMC/RCC entry
+  let rmcEntry=null;
+  if(base.rmcValor>0||base.rccValor>0){
+    rmcEntry={nome:base.nome,cpf:base.cpf,ben:base.ben,esp:base.esp,t1:"",t2:"",t3:"",
+      tRmc:"76 - RMC",cRmc:pC(base.rmcBanco),vRmc:base.rmcValor,
+      tRcc:"44 - RCC",cRcc:pC(base.rccBanco),vRcc:base.rccValor};
+  }
+  // Emprestimos -> analise rows
+  let rows=[];
+  for(let emp of emps){
+    let par=emp.ValorParcela||0;
+    let sal=emp.Quitacao||0;
+    let prazoStr=emp.Prazo||"0";
+    let restStr=emp.ParcelasRestantes||"0";
+    let rest=parseInt(restStr)||0;
+    let tot=parseInt(prazoStr)||0;
+    let pag=tot-rest;
+    let cod=pC(emp.Banco||"");
+    let con=emp.Contrato||"";
+    let is1p=B1P.includes(cod);
+    let res=testar(par,sal,pag,cod,isInv,idade,bY,rest);
+    rows.push({
+      nome:base.nome,cpf:base.cpf,ben:base.ben,esp:base.esp,con,cod,
+      par:Math.round(par*100)/100,sal:Math.round(sal*100)/100,
+      prazo:`${rest}/${tot}`,pag,idade:idade??"-",isInv,is1p,
+      dest:res?res.banco:"-",troco:res?Math.round(res.troco*100)/100:0,
+      vc:res?Math.round(res.vc*100)/100:0,taxa:res?res.taxa:"-",ok:!!res,
+      t1:"",t2:"",t3:""
+    });
+  }
+  return{rows,rmcEntry};
+}
+
+async function consultarBeneficios(){
+  let ta=document.getElementById("mcBenList");
+  if(!ta)return;
+  let text=ta.value.trim();
+  if(!text){alert("Cole os números de benefício");return}
+  // Parse: one per line, or comma separated
+  let bens=text.split(/[\n,;]+/).map(s=>s.trim()).filter(s=>s&&/\d/.test(s));
+  if(!bens.length){alert("Nenhum benefício válido encontrado");return}
+  if(!confirm(`Consultar ${bens.length} benefícios no Multicorban?`))return;
+
+  bCancel=false;
+  document.getElementById("batchModal").style.display="flex";
+  let done=0,ok=0,fail=0;
+  let allAnalise=[],allElegiveis=[],allRmc=[];
+
+  for(let ben of bens){
+    if(bCancel)break;
+    document.getElementById("bStat").textContent=`Consultando benefício ${ben}...`;
+    try{
+      const res=await fetch('/api/multicorban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({beneficio:ben})});
+      const data=await res.json();
+      if(data.success&&data.data){
+        let{rows,rmcEntry}=mcToRows(data);
+        allAnalise.push(...rows);
+        rows.filter(r=>r.ok).forEach(r=>allElegiveis.push(r));
+        if(rmcEntry)allRmc.push(rmcEntry);
+        ok++;
+      }else{fail++}
+    }catch{fail++}
+    done++;
+    let p=Math.round(done/bens.length*100);
+    document.getElementById("bCnt").textContent=`${done}/${bens.length}`;
+    document.getElementById("bPct").textContent=p+"%";
+    document.getElementById("bBar").style.width=p+"%";
+    await new Promise(r=>setTimeout(r,300));
+  }
+
+  document.getElementById("bStat").innerHTML=`<span style="color:var(--grn)">✅ ${ok} sucesso, ${fail} falhas</span>`;
+
+  // Build S.data like processar() does
+  let mapa={};
+  for(let e of allElegiveis){
+    if(!mapa[e.dest])mapa[e.dest]={banco:e.dest,n:0,total:0,vcTotal:0};
+    mapa[e.dest].n++;mapa[e.dest].total+=e.troco;mapa[e.dest].vcTotal+=e.vc;
+  }
+  let mapaArr=ORDEM.map(b=>mapa[b]||{banco:b,n:0,total:0,vcTotal:0}).filter(m=>m.n>0).map(m=>({...m,med:m.n?m.total/m.n:0,vcMed:m.n?m.vcTotal/m.n:0}));
+  let taxaDist={};for(let e of allElegiveis)taxaDist[e.taxa]=(taxaDist[e.taxa]||0)+1;
+
+  S.data={analise:allAnalise,elegiveis:allElegiveis,mapaArr,rmcRcc:allRmc,taxaDist};
+  S.fname=`Multicorban (${bens.length} benefícios)`;
+  S.tab="dash";S.pg=0;
+  selected.clear();phoneCache={};wppSent.clear();
+
+  // Save to history
+  let tT=allElegiveis.reduce((s,e)=>s+e.troco,0);
+  let tVC=allElegiveis.reduce((s,e)=>s+e.vc,0);
+  addHist(S.fname,{contratos:allAnalise.length,elegiveis:allElegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:allRmc.length});
+
+  setTimeout(()=>{document.getElementById("batchModal").style.display="none";renderApp()},1500);
+}
+
 // ══════ RENDER ══════
 function renderApp(){
   let D=S.data,c=document.getElementById("appContainer"),html="";
   if(!D){document.getElementById("headerActions").style.display="none";let hist=getMyHist();
-    html=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:${hist.length?'40vh':'72vh'}" class="fi"><div class="upload-box" id="uploadBox" onclick="document.getElementById('fileInput').click()"><div style="font-size:36px;margin-bottom:16px">📊</div><div style="font-size:17px;font-weight:700;margin-bottom:6px">Importe sua base</div><div style="font-size:12px;color:var(--t2);margin-bottom:22px">Arraste ou clique</div><div class="btn-acc">Selecionar</div><input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)"></div></div>`;
+    html=`<div style="display:flex;gap:20px;justify-content:center;align-items:flex-start;min-height:${hist.length?'40vh':'72vh'};flex-wrap:wrap;padding-top:40px" class="fi">
+      <div class="upload-box" id="uploadBox" onclick="document.getElementById('fileInput').click()" style="flex:1;max-width:380px;padding:40px 30px">
+        <div style="font-size:32px;margin-bottom:12px">📊</div>
+        <div style="font-size:15px;font-weight:700;margin-bottom:6px">Upload Planilha</div>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:18px">Suba a base completa offline</div>
+        <div class="btn-acc" style="font-size:11px;padding:8px 20px">Selecionar Arquivo</div>
+        <div style="font-size:9px;color:var(--t3);margin-top:10px">.xlsx .xls .csv</div>
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)">
+      </div>
+      <div style="border:2px solid var(--brd);border-radius:16px;padding:40px 30px;background:var(--sf);flex:1;max-width:380px;text-align:center">
+        <div style="font-size:32px;margin-bottom:12px">📡</div>
+        <div style="font-size:15px;font-weight:700;margin-bottom:6px">Consultar Benefícios</div>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:14px">Cole os números e o Multicorban traz tudo</div>
+        <textarea id="mcBenList" placeholder="Cole os benefícios aqui (um por linha)&#10;&#10;252174615&#10;252425510&#10;281454701" style="width:100%;min-height:120px;padding:10px;border-radius:8px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:12px;font-family:monospace;resize:vertical;margin-bottom:12px"></textarea>
+        <button class="btn-acc" style="font-size:11px;padding:8px 20px;width:100%;background:var(--cyan)" onclick="consultarBeneficios()">📡 Consultar no Multicorban</button>
+      </div>
+    </div>`;
     if(hist.length){html+=`<div class="fi" style="margin-top:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:700">📁 Histórico</div><button class="btn btn-red btn-sm" onclick="clearHist()">Limpar</button></div><div style="display:grid;gap:8px">`;for(let h of hist){let sm=h.summary||{};html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div><div style="font-size:12px;font-weight:700">${esc(h.fname)}</div><div style="font-size:10px;color:var(--t2)">${h.date}${CU&&CU.role==="admin"?` \u2014 <span style="color:var(--cyan)">${esc(h.user)}</span>`:""}</div></div><div style="display:flex;gap:12px"><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):"-"}</div><div style="font-size:8px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--ylw)">${sm.valorContrato?R$(sm.valorContrato):"-"}</div><div style="font-size:8px;color:var(--t3)">VLR CONT</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):"-"}</div><div style="font-size:8px;color:var(--t3)">TROCO</div></div></div><div style="display:flex;gap:4px;align-items:center">${h.saved?`<button class="btn-acc" style="padding:4px 12px;font-size:10px;border-radius:5px" onclick="loadHist(${h.id})">📂 Carregar</button>`:`<span class="pill pill-default">Não salvo</span>`}<button class="btn btn-red btn-sm" onclick="delHist(${h.id})">✕</button></div></div>`}html+=`</div></div>`}
     c.innerHTML=html;let ub=document.getElementById("uploadBox");ub.addEventListener("dragover",e=>{e.preventDefault();ub.classList.add("drag")});ub.addEventListener("dragleave",()=>ub.classList.remove("drag"));ub.addEventListener("drop",e=>{e.preventDefault();ub.classList.remove("drag");if(e.dataTransfer.files[0]){let inp=document.getElementById("fileInput");let dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);inp.files=dt.files;handleFile(inp)}});return}
   document.getElementById("headerActions").style.display="flex";document.getElementById("fileName").textContent="📁 "+S.fname;
@@ -411,21 +561,45 @@ function renderApp(){
     if(ps==="sel"){
       if(!grouped.length){html+=`<div style="text-align:center;padding:60px;color:var(--t3)"><div style="font-size:28px;margin-bottom:10px">📋</div>Nenhum cliente selecionado.<br>Vá para <strong>Elegíveis</strong>.</div>`}
       else{
-        html+=`<div class="search-bar"><button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="batchHig()">📱 Higienizar ${grouped.length} Clientes</button><button class="btn btn-red" onclick="selected.clear();renderApp()">Limpar</button></div>`;
-        html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Cliente</th><th>CPF</th><th style="text-align:center">Contratos</th><th>Destinos</th><th class="right">Vlr Contrato</th><th class="right">Troco Total</th><th>Status</th><th>Ação</th></tr></thead><tbody>`;
+        // Phone mode toggle
+        html+=`<div style="background:var(--sf);border:1px solid var(--brd);border-radius:10px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div style="font-size:12px;font-weight:700;color:var(--t2)">📱 Origem do Telefone:</div>
+          <div style="display:flex;gap:4px;background:var(--card);border-radius:6px;padding:3px;border:1px solid var(--brd)">
+            <button class="sel-btn" style="color:${phoneMode==="base"?"var(--grn)":"var(--t3)"};${phoneMode==="base"?"background:rgba(34,197,94,0.1);border-radius:4px":""}" onclick="phoneMode='base';renderApp()">📋 Telefone da Base</button>
+            <button class="sel-btn" style="color:${phoneMode==="api"?"var(--cyan)":"var(--t3)"};${phoneMode==="api"?"background:rgba(6,182,212,0.1);border-radius:4px":""}" onclick="if(confirm('⚠️ A higienização via NovaVida tem CUSTO por consulta.\\n\\nDeseja continuar?')){phoneMode='api';renderApp()}">📡 NovaVida (custo)</button>
+          </div>
+          <span style="font-size:10px;color:var(--t3)">${phoneMode==="base"?"Usando telefones da planilha":"Usando API NovaVida (custo por consulta)"}</span>
+        </div>`;
+        html+=`<div class="search-bar">${phoneMode==="api"?`<button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="if(confirm('⚠️ Serão consultados ${grouped.length} CPFs na NovaVida.\\nIsso tem CUSTO. Confirma?'))batchHig()">📡 Higienizar ${grouped.length} (NovaVida)</button>`:"<span></span>"}<button class="btn btn-red" onclick="selected.clear();renderApp()">Limpar Seleção</button></div>`;
+        html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Cliente</th><th>CPF</th><th style="text-align:center">Contr</th><th>Destinos</th><th class="right">Vlr Contrato</th><th class="right">Troco Total</th><th>Tel Base</th><th>Status</th><th>Ação</th></tr></thead><tbody>`;
         for(let g of grouped){let hig=!!phoneCache[g.cpf];let sent=wppSent.has(g.cpf);let destinos=[...g.bancos].map(b=>`<span class="pill ${pCls[b]||"pill-default"}" style="margin-right:2px">${b}</span>`).join("");
-          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td>${destinos}</td><td class="right mono" style="color:var(--ylw)">${R$(g.vcTotal)}</td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td>${sent?'<span class="pill pill-cyan">ENVIADO</span>':hig?'<span class="pill pill-grn">HIGIENIZADO</span>':'<span class="pill pill-default">PENDENTE</span>'}</td><td><button class="btn btn-sm ${hig?"btn-grn":"btn-cyan"}" onclick="higienizarCPF('${g.cpf}','${esc(g.nome)}','${esc(g.t1)}','${esc(g.t2)}','${esc(g.t3)}')">${hig?"📱 Ver":"📡 Hig"}</button> <button class="btn btn-red btn-sm" onclick="selected.delete('${g.cpf}');renderApp()">✕</button></td></tr>`}
+          let telBase=g.t1||g.t2||g.t3||"";
+          let telNum=telBase.replace(/\D/g,"");
+          let wppBase=telNum.length>=10?`https://wa.me/55${telNum}`:"";
+          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td>${destinos}</td><td class="right mono" style="color:var(--ylw)">${R$(g.vcTotal)}</td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td class="mono">${telBase?`${esc(telBase)} ${wppBase?`<a href="${wppBase}" target="_blank" style="text-decoration:none"><span class="pill pill-grn" style="cursor:pointer">💬</span></a>`:""}`:'<span style="color:var(--t3)">—</span>'}</td><td>${sent?'<span class="pill pill-cyan">ENVIADO</span>':hig?'<span class="pill pill-grn">HIGIENIZADO</span>':`<span class="pill ${telBase?"pill-org":"pill-default"}">${telBase?"TEM TEL":"SEM TEL"}</span>`}</td><td>${phoneMode==="api"?`<button class="btn btn-sm ${hig?"btn-grn":"btn-cyan"}" onclick="higienizarCPF('${g.cpf}','${esc(g.nome)}','${esc(g.t1)}','${esc(g.t2)}','${esc(g.t3)}')">${hig?"📱 Ver":"📡 Hig"}</button> `:""}${wppBase&&phoneMode==="base"?`<a href="${wppBase}" target="_blank" style="text-decoration:none"><span class="pill pill-grn" style="cursor:pointer">💬 Wpp</span></a> `:""}<button class="btn btn-red btn-sm" onclick="selected.delete('${g.cpf}');renderApp()">✕</button></td></tr>`}
         html+=`</tbody></table></div></div>`}}
 
-    // Stage 2: Higienizados (agrupados)
+    // Stage 2: Higienizados / Pronto p/ WhatsApp
     if(ps==="hig"){
-      if(!grpHig.length){html+=`<div style="text-align:center;padding:60px;color:var(--t3)"><div style="font-size:28px;margin-bottom:10px">📡</div>Nenhum cliente higienizado.<br>Volte para Clientes e clique em Higienizar.</div>`}
+      // In base mode, all selected are "ready" if they have a phone
+      let readyItems=phoneMode==="base"?grouped.filter(g=>{let t=(g.t1||g.t2||g.t3||"").replace(/\D/g,"");return t.length>=10}):grpHig;
+      if(!readyItems.length){html+=`<div style="text-align:center;padding:60px;color:var(--t3)"><div style="font-size:28px;margin-bottom:10px">${phoneMode==="base"?"📋":"📡"}</div>${phoneMode==="base"?"Nenhum cliente com telefone na base.":"Nenhum cliente higienizado. Volte e clique Higienizar."}</div>`}
       else{
-        let wppReady=grpHig.filter(g=>{let ph=phoneCache[g.cpf];return ph&&ph.telefones.some(t=>t.whatsapp)});
-        html+=`<div class="search-bar"><button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="openWppModal()">💬 WhatsApp (${wppReady.length} com Wpp)</button><button class="btn btn-grn" onclick="exportWppList()">↓ Exportar</button></div>`;
-        html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Cliente</th><th>CPF</th><th style="text-align:center">Contr</th><th class="right">Troco Total</th><th>Telefones</th><th>WhatsApp</th><th>Ação</th></tr></thead><tbody>`;
-        for(let g of grpHig){let ph=phoneCache[g.cpf];let phones=ph?ph.telefones:[];let wpp=phones.find(t=>t.whatsapp);
-          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td>${phones.length} encontrado(s)</td><td>${wpp?`<span class="pill pill-grn">(${wpp.ddd}) ${wpp.telefone}</span>`:'<span class="pill pill-red">Sem Wpp</span>'}</td><td>${wpp?`<a href="https://wa.me/55${wpp.ddd}${wpp.telefone}" target="_blank" style="text-decoration:none"><span class="pill pill-grn" style="cursor:pointer">💬</span></a>`:""} <button class="btn btn-sm btn-cyan" onclick="higienizarCPF('${g.cpf}','${esc(g.nome)}','${esc(g.t1)}','${esc(g.t2)}','${esc(g.t3)}')">📱</button></td></tr>`}
+        let wppCount=readyItems.length;
+        html+=`<div class="search-bar"><button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="openWppModal()">💬 WhatsApp (${wppCount} contatos)</button><button class="btn btn-grn" onclick="exportWppList()">↓ Exportar</button><span style="font-size:10px;color:var(--t3)">Usando: ${phoneMode==="base"?"telefone da base":"NovaVida"}</span></div>`;
+        html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Cliente</th><th>CPF</th><th style="text-align:center">Contr</th><th class="right">Troco Total</th><th>Telefone</th><th>WhatsApp</th><th>Ação</th></tr></thead><tbody>`;
+        for(let g of readyItems){
+          let telFinal="",wppLink="";
+          if(phoneMode==="base"){
+            telFinal=g.t1||g.t2||g.t3||"";
+            let num=telFinal.replace(/\D/g,"");
+            if(num.length>=10)wppLink=`https://wa.me/55${num}`;
+          }else{
+            let ph=phoneCache[g.cpf];let phones=ph?ph.telefones:[];let wpp=phones.find(t=>t.whatsapp);
+            telFinal=wpp?`(${wpp.ddd}) ${wpp.telefone}`:phones[0]?`(${phones[0].ddd}) ${phones[0].telefone}`:"";
+            if(wpp)wppLink=`https://wa.me/55${wpp.ddd}${wpp.telefone}`;
+          }
+          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td class="mono">${telFinal?esc(telFinal):'<span style="color:var(--t3)">—</span>'}</td><td>${wppLink?`<span class="pill pill-grn">SIM</span>`:'<span class="pill pill-red">NÃO</span>'}</td><td>${wppLink?`<a href="${wppLink}" target="_blank" style="text-decoration:none"><span class="pill pill-grn" style="cursor:pointer">💬 Abrir</span></a> `:""}<button class="btn btn-sm btn-cyan" onclick="higienizarCPF('${g.cpf}','${esc(g.nome)}','${esc(g.t1)}','${esc(g.t2)}','${esc(g.t3)}')">📱</button></td></tr>`}
         html+=`</tbody></table></div></div>`}}
 
     // Stage 3: WhatsApp Enviados (agrupados)
@@ -433,8 +607,11 @@ function renderApp(){
       if(!grpWpp.length){html+=`<div style="text-align:center;padding:60px;color:var(--t3)"><div style="font-size:28px;margin-bottom:10px">💬</div>Nenhum disparo realizado.</div>`}
       else{
         html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Cliente</th><th>CPF</th><th style="text-align:center">Contr</th><th class="right">Troco Total</th><th>Telefone</th><th>Status</th></tr></thead><tbody>`;
-        for(let g of grpWpp){let ph=phoneCache[g.cpf];let wpp=ph?ph.telefones.find(t=>t.whatsapp):null;
-          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td class="mono">${wpp?`(${wpp.ddd}) ${wpp.telefone}`:"-"}</td><td><span class="pill pill-cyan">✅ ENVIADO</span></td></tr>`}
+        for(let g of grpWpp){
+          let telShow="";
+          if(phoneMode==="base"){telShow=g.t1||g.t2||g.t3||""}
+          else{let ph=phoneCache[g.cpf];let wpp=ph?ph.telefones.find(t=>t.whatsapp):null;telShow=wpp?`(${wpp.ddd}) ${wpp.telefone}`:"-"}
+          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td class="mono">${esc(telShow)}</td><td><span class="pill pill-cyan">✅ ENVIADO</span></td></tr>`}
         html+=`</tbody></table></div></div>`}}}
 
   // ═══ MAPA ═══
