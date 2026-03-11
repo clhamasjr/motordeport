@@ -310,20 +310,39 @@ function processar(data){
   if(!data||data.length<2)return null;let H=data[0].map(h=>h?String(h).trim():""),rows=data.slice(1);
   let cNm=findFirst(H,["Nome"]),cCP=findFirst(H,["CPF"]),cBn=findFirst(H,["Beneficio"]),cEs=findFirst(H,["Especie"]),cNs=findFirst(H,["Data Nascimento"]),cDI=findFirst(H,["DIB"]),cT1=findFirst(H,["Telefone1"]),cT2=findFirst(H,["Telefone2"]),cT3=findFirst(H,["Telefone3"]);
   let allTE=findAllPos(H,"Tipo Emprestimo"),allCon=findAllPos(H,"Contrato"),allCod=findAllPos(H,"Codigo"),allVE=findAllPos(H,"Valor Emprestimo"),allMC=findAllPos(H,"Margem Cartao"),allVP=findAllPos(H,"Valor Parcela"),allPr=findAllPos(H,"Prazo"),allSQ=findAllPos(H,"Saldo Quitacao");
-  let cardBlocks=[];for(let te of allTE){let mc=allMC.find(m=>m>te&&m<te+8);if(mc!==undefined)cardBlocks.push(te)}
+  let cardBlocks=[];for(let te of allTE){let mc=allMC.find(m=>m>te&&m<te+8);if(mc!==undefined)cardBlocks.push({te,mc})}
   let rmcB=null,rccB=null;
-  if(cardBlocks.length>=1){let te=cardBlocks[0];rmcB={tipo:te,con:allCon.find(c=>c>te&&c<te+8),cod:allCod.find(c=>c>te&&c<te+8),val:allVE.find(v=>v>te&&v<te+8)}}
-  if(cardBlocks.length>=2){let te=cardBlocks[1];rccB={tipo:te,con:allCon.find(c=>c>te&&c<te+8),cod:allCod.find(c=>c>te&&c<te+8),val:allVE.find(v=>v>te&&v<te+8)}}
+  if(cardBlocks.length>=1){let{te,mc}=cardBlocks[0];rmcB={tipo:te,con:allCon.find(c=>c>te&&c<te+8),cod:allCod.find(c=>c>te&&c<te+8),val:allVE.find(v=>v>te&&v<te+8),mc}}
+  if(cardBlocks.length>=2){let{te,mc}=cardBlocks[1];rccB={tipo:te,con:allCon.find(c=>c>te&&c<te+8),cod:allCod.find(c=>c>te&&c<te+8),val:allVE.find(v=>v>te&&v<te+8),mc}}
   let lbs=[];for(let vp of allVP){let con=allCon.filter(c=>c<vp).pop(),cod=allCod.find(c=>c>con-1&&c<vp),prz=allPr.find(p=>p>vp&&p<vp+4),sq=allSQ.find(s=>s>vp&&s<vp+5);if(con!==undefined)lbs.push({cc:con,ck:cod,cp:vp,cz:prz,cs:sq})}
   let analise=[],elegiveis=[],rmcAll=[];
   let g=(r,c)=>c!=null&&c>=0&&r[c]!=null?String(r[c]).trim():"",gv=(r,c)=>c!=null&&c>=0?pV(r[c]):0,gr=(r,c)=>c!=null&&c>=0?r[c]:null;
+  const COEF185=0.02299;
   for(let row of rows){
     let nome=g(row,cNm),cpf=g(row,cCP);if(!nome&&!cpf)continue;
     let ben=g(row,cBn),esp=g(row,cEs),t1=g(row,cT1),t2=g(row,cT2),t3=g(row,cT3);
     let eN=pEN(esp),isInv=ESP_INV.includes(eN),ai=cAge(gr(row,cNs)),idade=ai?ai.age:null,bY=cBY(gr(row,cDI));
     let tRmc=rmcB?g(row,rmcB.tipo):"",cRmc=rmcB?pC(gr(row,rmcB.cod)??""):"",vRmc=rmcB?gv(row,rmcB.val):0;
     let tRcc=rccB?g(row,rccB.tipo):"",cRcc=rccB?pC(gr(row,rccB.cod)??""):"",vRcc=rccB?gv(row,rccB.val):0;
-    if(tRmc.toUpperCase().includes("RMC")||tRcc.toUpperCase().includes("RCC")||vRmc>0||vRcc>0)rmcAll.push({nome,cpf,ben,esp,t1,t2,t3,tRmc,cRmc,vRmc:Math.round(vRmc*100)/100,tRcc,cRcc,vRcc:Math.round(vRcc*100)/100});
+    // Margem Cartão (valor disponível)
+    let mRmc=rmcB&&rmcB.mc!=null?gv(row,rmcB.mc):0;
+    let mRcc=rccB&&rccB.mc!=null?gv(row,rccB.mc):0;
+    let margemCartao=Math.max(mRmc,mRcc);
+    // Margem Nova Empréstimo: margem / coef 1.85%
+    let margemEmpNova=0; // will get from first loan block's available margin if exists
+    // Margem Nova Cartão: margem × 29 × 70%
+    let margemCartNova=0;
+    let temRmc=tRmc.toUpperCase().includes("RMC")||vRmc>0||cRmc;
+    let temRcc=tRcc.toUpperCase().includes("RCC")||vRcc>0||cRcc;
+    if(margemCartao>0){
+      margemCartNova=Math.round(margemCartao*29*0.70*100)/100;
+      if(!temRmc&&!temRcc){margemEmpNova=Math.round((margemCartao/COEF185)*100)/100}
+    }
+    // Add to rmcAll: clients WITH rmc/rcc OR with margin available
+    if(temRmc||temRcc||vRmc>0||vRcc>0||margemCartao>0){
+      rmcAll.push({nome,cpf,ben,esp,t1,t2,t3,tRmc,cRmc,vRmc:Math.round(vRmc*100)/100,tRcc,cRcc,vRcc:Math.round(vRcc*100)/100,
+        mrgCart:margemCartao,mrgCartNova:margemCartNova,mrgEmpNova:margemEmpNova,temRmc:!!temRmc,temRcc:!!temRcc});
+    }
     for(let lb of lbs){
       let con=g(row,lb.cc),par=gv(row,lb.cp),sal=gv(row,lb.cs);let[rest,tot,pag]=lb.cz!=null?pP(row[lb.cz]):[0,0,0];let cod=lb.ck!=null?pC(gr(row,lb.ck)??""):"";
       if(!con&&par===0&&sal===0)continue;let i1=B1P.includes(cod);let res=testar(par,sal,pag,cod,isInv,idade,bY,rest);
@@ -380,7 +399,11 @@ function renderApp(){
     html+=`</div></div><div><div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:10px;text-transform:uppercase">Taxas</div><div style="background:var(--card);border-radius:10px;border:1px solid var(--brd);padding:16px">`;
     for(let[t,cnt]of Object.entries(D.taxaDist).sort((a,b)=>b[0]-a[0])){let pct=D.elegiveis.length?(cnt/D.elegiveis.length)*100:0;html+=`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;font-weight:700">${t}%</span><span style="font-size:11px;color:var(--t2)">${N(cnt)} (${pct.toFixed(1)}%)</span></div><div class="taxa-bar"><div class="taxa-fill" style="width:${pct}%"></div></div></div>`}
     html+=`</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px"><div style="background:var(--card);border-radius:8px;padding:12px;border:1px solid var(--brd)"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">1 Paga</div><div style="font-size:16px;font-weight:800;color:var(--org)">${N(D.elegiveis.filter(e=>e.is1p).length)}</div></div><div style="background:var(--card);border-radius:8px;padding:12px;border:1px solid var(--brd)"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Invalidez</div><div style="font-size:16px;font-weight:800;color:var(--pnk)">${N(D.elegiveis.filter(e=>e.isInv).length)}</div></div></div></div></div>`;
-    let bC={PAN:"var(--org)",BMG:"var(--acc)",Daycoval:"var(--pnk)"};html+=`<div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:10px;text-transform:uppercase">RMC/RCC</div><div class="rmc-grid">`;for(let[n,cod]of Object.entries(CARTAO)){let f=D.rmcRcc.filter(r=>r.cRmc===cod||r.cRcc===cod);html+=`<div style="background:var(--card);border-radius:10px;padding:16px;border:1px solid var(--brd);border-left:3px solid ${bC[n]}"><div style="font-size:15px;font-weight:800;color:${bC[n]};margin-bottom:6px">${n}</div><div style="font-size:22px;font-weight:800">${f.length}</div></div>`}html+=`</div>`}
+    let bC={PAN:"var(--org)",BMG:"var(--acc)",Daycoval:"var(--pnk)"};let mrgTotal=D.rmcRcc.reduce((s,r)=>s+(r.mrgCartNova||0),0);let mrgEmpTotal=D.rmcRcc.reduce((s,r)=>s+(r.mrgEmpNova||0),0);let mrgClients=D.rmcRcc.filter(r=>r.mrgCart>0&&!r.temRmc&&!r.temRcc).length;
+    html+=`<div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:10px;text-transform:uppercase">RMC/RCC & Margem Nova</div><div class="rmc-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">`;
+    for(let[n,cod]of Object.entries(CARTAO)){let f=D.rmcRcc.filter(r=>r.cRmc===cod||r.cRcc===cod);html+=`<div style="background:var(--card);border-radius:10px;padding:16px;border:1px solid var(--brd);border-left:3px solid ${bC[n]}"><div style="font-size:15px;font-weight:800;color:${bC[n]};margin-bottom:6px">${n}</div><div style="font-size:22px;font-weight:800">${f.length}</div></div>`}
+    html+=`<div style="background:var(--card);border-radius:10px;padding:16px;border:1px solid var(--brd);border-left:3px solid var(--cyan)"><div style="font-size:12px;font-weight:700;color:var(--cyan);margin-bottom:4px">Margem Nova</div><div style="font-size:10px;color:var(--t3)">Cart: <span style="color:var(--ylw);font-weight:700">${R$(mrgTotal)}</span></div><div style="font-size:10px;color:var(--t3)">Emp: <span style="color:var(--org);font-weight:700">${R$(mrgEmpTotal)}</span></div><div style="font-size:10px;color:var(--t3);margin-top:4px">${mrgClients} clientes sem cartão</div></div>`;
+    html+=`</div>`}
 
   // ═══ ELEGÍVEIS (com checkbox) ═══
   if(S.tab==="el"){
@@ -485,11 +508,26 @@ function renderApp(){
   if(S.tab==="mp"){let rules={QUALI:"Saldo≥2000 | Troco≥250",FACTA:"Parcela≥50 | Troco≥100 | Taxa 1.70-1.85",BRB:"Saldo≥3000 | Troco≥250 | Coef 0.02130",DIGIO:"Saldo≥4500 | Troco≥250 | Pagas≥12(ou 1P)"};html+=`<div class="mapa-grid">`;for(let b of ORDEM){let m=D.mapaArr.find(x=>x.banco===b);let dc=DC[b];html+=`<div style="border-radius:12px;padding:22px;border:1px solid var(--brd);background:${dc.bg}"><div style="font-size:22px;font-weight:900;color:${dc.c};margin-bottom:16px">${b}</div><div style="margin-bottom:12px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Contratos</div><div style="font-size:28px;font-weight:800">${m?N(m.n):0}</div></div><div style="margin-bottom:12px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Vlr Contrato</div><div style="font-size:16px;font-weight:700;color:var(--ylw)">${m?R$(m.vcTotal||0):"R$ 0"}</div></div><div style="margin-bottom:12px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Troco</div><div style="font-size:16px;font-weight:700;color:${dc.c}">${m?R$(m.total):"R$ 0"}</div></div><div style="border-top:1px solid var(--brd);padding-top:10px;font-size:11px;color:var(--t2)">${rules[b]}</div></div>`}html+=`</div>`}
 
   // ═══ RMC/RCC ═══
-  if(S.tab==="rc"){let src=D.rmcRcc;if(S.rmcF!=="ALL"){let cod=CARTAO[S.rmcF==="DAYCOVAL"?"Daycoval":S.rmcF];src=src.filter(r=>r.cRmc===cod||r.cRcc===cod)}let filtered=S.q?src.filter(r=>r.nome.toLowerCase().includes(S.q.toLowerCase())||r.cpf.includes(S.q)):src;let items=filtered.slice(S.pg*PER,(S.pg+1)*PER);
-    html+=`<div class="search-bar"><input type="text" placeholder="Buscar..." value="${esc(S.q)}" oninput="setQ(this.value)"><select onchange="S.rmcF=this.value;S.pg=0;renderApp()"><option value="ALL"${S.rmcF==="ALL"?" selected":""}>Todos</option><option value="PAN"${S.rmcF==="PAN"?" selected":""}>PAN</option><option value="BMG"${S.rmcF==="BMG"?" selected":""}>BMG</option><option value="DAYCOVAL"${S.rmcF==="DAYCOVAL"?" selected":""}>Daycoval</option></select></div>`;
-    html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Nome</th><th>CPF</th><th>Espécie</th><th>Tel 1</th><th>Tipo RMC</th><th>Banco RMC</th><th class="right">Valor RMC</th><th>Tipo RCC</th><th>Banco RCC</th><th class="right">Valor RCC</th></tr></thead><tbody>`;
-    for(let r of items)html+=`<tr class="rh"><td>${esc(r.nome)}</td><td class="mono">${esc(r.cpf)}</td><td>${esc(r.esp)}</td><td class="mono">${esc(r.t1)}</td><td>${esc(r.tRmc)}</td><td><span class="pill pill-default">${esc(r.cRmc)}</span></td><td class="right mono" style="color:${r.vRmc>0?"var(--grn)":"var(--t3)"}">${r.vRmc>0?R$(r.vRmc):"—"}</td><td>${esc(r.tRcc)}</td><td><span class="pill pill-default">${esc(r.cRcc)}</span></td><td class="right mono" style="color:${r.vRcc>0?"var(--pur)":"var(--t3)"}">${r.vRcc>0?R$(r.vRcc):"—"}</td></tr>`;
-    if(!items.length)html+=`<tr><td colspan="10" style="padding:40px;text-align:center;color:var(--t3)">Nenhum</td></tr>`;
+  if(S.tab==="rc"){let src=D.rmcRcc;
+    if(S.rmcF==="MARGEM")src=src.filter(r=>r.mrgCart>0&&!r.temRmc&&!r.temRcc);
+    else if(S.rmcF!=="ALL"){let cod=CARTAO[S.rmcF==="DAYCOVAL"?"Daycoval":S.rmcF];src=src.filter(r=>r.cRmc===cod||r.cRcc===cod)}
+    let filtered=S.q?src.filter(r=>r.nome.toLowerCase().includes(S.q.toLowerCase())||r.cpf.includes(S.q)):src;let items=filtered.slice(S.pg*PER,(S.pg+1)*PER);
+    // KPIs de margem
+    let totMrgCart=D.rmcRcc.reduce((s,r)=>s+(r.mrgCartNova||0),0);
+    let totMrgEmp=D.rmcRcc.reduce((s,r)=>s+(r.mrgEmpNova||0),0);
+    let cliComMargem=D.rmcRcc.filter(r=>r.mrgCart>0).length;
+    let cliSemCartao=D.rmcRcc.filter(r=>r.mrgCart>0&&!r.temRmc&&!r.temRcc).length;
+    html+=`<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <div class="kpi" style="flex:1;min-width:130px"><div class="kpi-label">Total Clientes</div><div class="kpi-value" style="color:var(--acc)">${N(D.rmcRcc.length)}</div></div>
+      <div class="kpi" style="flex:1;min-width:130px"><div class="kpi-label">Com Margem</div><div class="kpi-value" style="color:var(--cyan)">${N(cliComMargem)}</div></div>
+      <div class="kpi" style="flex:1;min-width:130px"><div class="kpi-label">Sem Cartão (oportunidade)</div><div class="kpi-value" style="color:var(--ylw)">${N(cliSemCartao)}</div></div>
+      <div class="kpi" style="flex:1;min-width:130px"><div class="kpi-label">💰 Margem Cartão Nova</div><div class="kpi-value" style="color:var(--grn)">${R$(totMrgCart)}</div></div>
+      <div class="kpi" style="flex:1;min-width:130px"><div class="kpi-label">💰 Margem Emp Nova</div><div class="kpi-value" style="color:var(--org)">${R$(totMrgEmp)}</div></div>
+    </div>`;
+    html+=`<div class="search-bar"><input type="text" placeholder="Buscar..." value="${esc(S.q)}" oninput="setQ(this.value)"><select onchange="S.rmcF=this.value;S.pg=0;renderApp()"><option value="ALL"${S.rmcF==="ALL"?" selected":""}>Todos</option><option value="PAN"${S.rmcF==="PAN"?" selected":""}>PAN</option><option value="BMG"${S.rmcF==="BMG"?" selected":""}>BMG</option><option value="DAYCOVAL"${S.rmcF==="DAYCOVAL"?" selected":""}>Daycoval</option><option value="MARGEM"${S.rmcF==="MARGEM"?" selected":""}>📊 Só Margem (sem cartão)</option></select></div>`;
+    html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Nome</th><th>CPF</th><th>Esp</th><th>Tel 1</th><th>Banco RMC</th><th class="right">Vlr RMC</th><th>Banco RCC</th><th class="right">Vlr RCC</th><th class="right">Margem Disp</th><th class="right">Cart Nova</th><th class="right">Emp Nova</th></tr></thead><tbody>`;
+    for(let r of items)html+=`<tr class="rh"><td>${esc(r.nome)}</td><td class="mono">${esc(r.cpf)}</td><td>${esc(r.esp)}</td><td class="mono">${esc(r.t1)}</td><td><span class="pill pill-default">${esc(r.cRmc)}</span></td><td class="right mono" style="color:${r.vRmc>0?"var(--grn)":"var(--t3)"}">${r.vRmc>0?R$(r.vRmc):"—"}</td><td><span class="pill pill-default">${esc(r.cRcc)}</span></td><td class="right mono" style="color:${r.vRcc>0?"var(--pur)":"var(--t3)"}">${r.vRcc>0?R$(r.vRcc):"—"}</td><td class="right mono" style="color:${r.mrgCart>0?"var(--cyan)":"var(--t3)"}">${r.mrgCart>0?R$(r.mrgCart):"—"}</td><td class="right mono" style="color:${r.mrgCartNova>0?"var(--ylw)":"var(--t3)"}">${r.mrgCartNova>0?R$(r.mrgCartNova):"—"}</td><td class="right mono" style="color:${r.mrgEmpNova>0?"var(--org)":"var(--t3)"}">${r.mrgEmpNova>0?R$(r.mrgEmpNova):"—"}</td></tr>`;
+    if(!items.length)html+=`<tr><td colspan="11" style="padding:40px;text-align:center;color:var(--t3)">Nenhum</td></tr>`;
     html+=`</tbody></table></div>${pgr(filtered.length)}</div>`}
   c.innerHTML=html}
 
@@ -497,8 +535,9 @@ function exportXLSX(){let D=S.data;if(!D)return;let wb=XLSX.utils.book_new(),mk=
   mk(D.analise.map(r=>({Nome:r.nome,CPF:r.cpf,Espécie:r.esp,Idade:r.idade,Invalidez:r.isInv?"SIM":"NÃO","1Paga":r.is1p?"SIM":"NÃO",Contrato:r.con,"Banco Origem":r.cod,Parcela:r.par,"Saldo Quit.":r.sal,Prazo:r.prazo,Pagas:r.pag,Destino:r.dest,"Vlr Contrato":r.vc,Troco:r.troco,Taxa:r.taxa,Elegível:r.ok?"SIM":"NÃO"})),"Análise Completa");
   mk(D.elegiveis.map(r=>{let ph=phoneCache[r.cpf],phs=ph?ph.telefones:[],wps=phs.filter(t=>t.whatsapp);return{Nome:r.nome,CPF:r.cpf,Contrato:r.con,"Banco Origem":r.cod,Parcela:r.par,"Saldo Quit.":r.sal,Prazo:r.prazo,Destino:r.dest,"Vlr Contrato":r.vc,Troco:r.troco,Taxa:r.taxa,"Tel Base 1":r.t1||"","Tel Base 2":r.t2||"","Tel Base 3":r.t3||"","Tel Hig 1":phs[0]?`(${phs[0].ddd}) ${phs[0].telefone}`:"","Tel Hig 2":phs[1]?`(${phs[1].ddd}) ${phs[1].telefone}`:"","WhatsApp":wps[0]?`55${wps[0].ddd}${wps[0].telefone}`:"",Higienizado:ph?"SIM":"NÃO"}}),"Elegíveis");
   mk(D.mapaArr.map(m=>({"Banco":m.banco,Contratos:m.n,"Vlr Contrato":m.vcTotal,"Troco Total":m.total})),"Mapa");
-  mk(D.rmcRcc.map(r=>({Nome:r.nome,CPF:r.cpf,Espécie:r.esp,Tel1:r.t1,"Tipo RMC":r.tRmc,"Banco RMC":r.cRmc,"Valor RMC":r.vRmc,"Tipo RCC":r.tRcc,"Banco RCC":r.cRcc,"Valor RCC":r.vRcc})),"RMC-RCC");
-  for(let[n,cod]of Object.entries(CARTAO))mk(D.rmcRcc.filter(r=>r.cRmc===cod||r.cRcc===cod).map(r=>({Nome:r.nome,CPF:r.cpf,Tel1:r.t1,"Tipo RMC":r.tRmc,"Banco RMC":r.cRmc,"Valor RMC":r.vRmc,"Tipo RCC":r.tRcc,"Banco RCC":r.cRcc,"Valor RCC":r.vRcc})),`RMC ${n}`);
+  mk(D.rmcRcc.map(r=>({Nome:r.nome,CPF:r.cpf,Espécie:r.esp,Tel1:r.t1,"Banco RMC":r.cRmc,"Valor RMC":r.vRmc,"Banco RCC":r.cRcc,"Valor RCC":r.vRcc,"Margem Disp":r.mrgCart||0,"Cart Nova (×29×70%)":r.mrgCartNova||0,"Emp Nova (÷1.85%)":r.mrgEmpNova||0,"Tem RMC":r.temRmc?"SIM":"NÃO","Tem RCC":r.temRcc?"SIM":"NÃO"})),"RMC-RCC");
+  for(let[n,cod]of Object.entries(CARTAO))mk(D.rmcRcc.filter(r=>r.cRmc===cod||r.cRcc===cod).map(r=>({Nome:r.nome,CPF:r.cpf,Tel1:r.t1,"Banco RMC":r.cRmc,"Valor RMC":r.vRmc,"Banco RCC":r.cRcc,"Valor RCC":r.vRcc,"Margem Disp":r.mrgCart||0,"Cart Nova":r.mrgCartNova||0})),`RMC ${n}`);
+  mk(D.rmcRcc.filter(r=>r.mrgCart>0&&!r.temRmc&&!r.temRcc).map(r=>({Nome:r.nome,CPF:r.cpf,Espécie:r.esp,Tel1:r.t1,"Margem Disponível":r.mrgCart,"Cartão Nova (×29×70%)":r.mrgCartNova,"Empréstimo Novo (÷1.85%)":r.mrgEmpNova})),"Margem Nova");
   XLSX.writeFile(wb,"lhamascred_resultado.xlsx")}
 
 (function(){initU();let s=getSess();if(s){let u=getU()||[];let f=u.find(x=>x.user===s.user);if(f){CU=f;showApp();return}}document.getElementById("loginScreen").style.display="flex"})();
