@@ -3,90 +3,96 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Lhamascred — Motor de Portabilidade</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%233B82F6'/><text x='8' y='24' font-size='22' font-weight='900' fill='white'>L</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<title>CredWave — Motor Consignado</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%233B82F6'/><text x='3' y='23' font-size='16' font-weight='900' fill='white'>CW</text></svg>">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#060A10;--sf:#0C1118;--card:#131A24;--brd:#1C2536;--acc:#3B82F6;--grn:#22C55E;--red:#EF4444;--ylw:#EAB308;--pur:#A78BFA;--org:#F97316;--pnk:#EC4899;--t1:#E2E8F0;--t2:#8896AB;--t3:#4A5568;--cyan:#06B6D4}
-body{background:var(--bg);color:var(--t1);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
-::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--brd);border-radius:3px}
-::selection{background:var(--acc);color:#000}
+:root{--bg:#05080F;--sf:#0A1120;--card:#111827;--brd:#1E293B;--acc:#3B82F6;--grn:#22C55E;--red:#EF4444;--ylw:#EAB308;--pur:#A78BFA;--org:#F97316;--pnk:#EC4899;--t1:#F1F5F9;--t2:#94A3B8;--t3:#64748B;--cyan:#06B6D4;--glow:0 0 20px rgba(59,130,246,.08)}
+body{background:var(--bg);color:var(--t1);font-family:'Inter','Segoe UI',system-ui,sans-serif;min-height:100vh;font-size:14px;line-height:1.5}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--brd);border-radius:3px}
+::selection{background:var(--acc);color:#fff}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
 .fi{animation:fadeIn .35s ease both}.shake{animation:shake .3s ease}
-button{font-family:inherit;cursor:pointer;transition:all .12s;border:none;background:none}button:hover{filter:brightness(1.15)}
-input,select,textarea{font-family:inherit;outline:none}.rh:hover{background:rgba(59,130,246,0.03)!important}
-.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.login-box{width:100%;max-width:400px;animation:fadeIn .4s ease}
-.login-logo{display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:36px}
-.login-logo-icon{width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,var(--acc),var(--pur));display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#fff}
-.login-card{background:var(--sf);border:1px solid var(--brd);border-radius:16px;padding:36px 32px}
-.form-group{margin-bottom:18px}.form-label{display:block;font-size:11px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
-.form-input{width:100%;padding:11px 14px;border-radius:8px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:13px}.form-input:focus{border-color:var(--acc)}
-.login-btn{width:100%;padding:12px;border-radius:8px;background:var(--acc);color:#fff;font-size:14px;font-weight:700;cursor:pointer;margin-top:6px}
-.login-error{color:var(--red);font-size:12px;text-align:center;margin-top:14px;min-height:18px}
-.header{background:var(--sf);border-bottom:1px solid var(--brd);padding:0 24px;height:52px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
-.logo{display:flex;align-items:center;gap:10px}
-.logo-icon{width:30px;height:30px;border-radius:7px;background:linear-gradient(135deg,var(--acc),var(--pur));display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;color:#fff}
-.hdr-user{display:flex;align-items:center;gap:8px;padding:4px 10px;border-radius:6px;background:var(--card);border:1px solid var(--brd);margin-right:6px}
-.hdr-user-icon{width:22px;height:22px;border-radius:50%;background:var(--acc);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#fff}
-.btn{padding:5px 13px;border-radius:6px;font-size:10px;font-weight:700;border:1px solid var(--brd);color:var(--t2);background:transparent}
+button{font-family:inherit;cursor:pointer;transition:all .15s;border:none;background:none}button:hover{filter:brightness(1.15)}
+input,select,textarea{font-family:inherit;outline:none;font-size:14px}.rh:hover{background:rgba(59,130,246,0.04)!important}
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:radial-gradient(ellipse at top,rgba(59,130,246,.06),transparent 60%)}
+.login-box{width:100%;max-width:440px;animation:fadeIn .5s ease}
+.login-logo{display:flex;align-items:center;gap:14px;justify-content:center;margin-bottom:40px}
+.login-logo-icon{width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#0EA5E9,var(--acc));display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:#fff;letter-spacing:-1px;box-shadow:0 8px 32px rgba(59,130,246,.3)}
+.login-card{background:var(--sf);border:1px solid var(--brd);border-radius:20px;padding:40px 36px;box-shadow:0 0 20px rgba(59,130,246,.08)}
+.form-group{margin-bottom:20px}.form-label{display:block;font-size:12px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+.form-input{width:100%;padding:13px 16px;border-radius:10px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:14px;transition:border .2s}.form-input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(59,130,246,.1)}
+.login-btn{width:100%;padding:14px;border-radius:10px;background:linear-gradient(135deg,#0EA5E9,var(--acc));color:#fff;font-size:15px;font-weight:700;cursor:pointer;margin-top:8px;box-shadow:0 4px 12px rgba(59,130,246,.3)}
+.login-error{color:var(--red);font-size:13px;text-align:center;margin-top:16px;min-height:20px}
+.header{background:rgba(10,17,32,.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--brd);padding:0 28px;height:60px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
+.logo{display:flex;align-items:center;gap:12px}
+.logo-icon{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#0EA5E9,var(--acc));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;color:#fff;letter-spacing:-1px}
+.hdr-user{display:flex;align-items:center;gap:10px;padding:6px 14px;border-radius:10px;background:var(--card);border:1px solid var(--brd);margin-right:8px}
+.hdr-user-icon{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#0EA5E9,var(--acc));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff}
+.btn{padding:7px 16px;border-radius:8px;font-size:12px;font-weight:700;border:1px solid var(--brd);color:var(--t2);background:transparent}
 .btn-grn{border-color:var(--grn);color:var(--grn)}.btn-red{border-color:var(--red);color:var(--red)}.btn-cyan{border-color:var(--cyan);color:var(--cyan)}
-.btn-acc{background:var(--acc);color:#fff;border:none;padding:9px 24px;border-radius:8px;font-size:12px;font-weight:700}
-.btn-sm{padding:4px 10px;font-size:10px;border-radius:5px}
-.container{max-width:1440px;margin:0 auto;padding:20px 24px}
-.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px}
-.modal-box{background:var(--sf);border:1px solid var(--brd);border-radius:14px;padding:28px;max-width:560px;width:100%;animation:fadeIn .25s ease;max-height:90vh;overflow-y:auto}
-.table-wrap{background:var(--card);border-radius:10px;border:1px solid var(--brd);overflow:hidden}
+.btn-acc{background:linear-gradient(135deg,#0EA5E9,var(--acc));color:#fff;border:none;padding:10px 28px;border-radius:10px;font-size:13px;font-weight:700;box-shadow:0 4px 12px rgba(59,130,246,.2)}
+.btn-sm{padding:5px 12px;font-size:11px;border-radius:6px}
+.container{max-width:1520px;margin:0 auto;padding:24px 28px}
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px}
+.modal-box{background:var(--sf);border:1px solid var(--brd);border-radius:18px;padding:32px;max-width:600px;width:100%;animation:fadeIn .25s ease;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.table-wrap{background:var(--card);border-radius:14px;border:1px solid var(--brd);overflow:hidden;box-shadow:0 0 20px rgba(59,130,246,.08)}
 .table-scroll{overflow:auto;max-height:62vh}
 table{width:100%;border-collapse:collapse}
-th{padding:10px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--brd);cursor:pointer;user-select:none;position:sticky;top:0;background:var(--card);z-index:2;white-space:nowrap}
-td{padding:7px 12px;font-size:12px;color:var(--t1);border-bottom:1px solid var(--brd);white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
-td.right,th.right{text-align:right}td.mono{font-family:monospace;font-size:11px}
-.pill{display:inline-block;padding:2px 9px;border-radius:5px;font-size:10px;font-weight:700}
-.pill-default{background:rgba(255,255,255,.05);color:var(--t2)}.pill-acc{background:rgba(59,130,246,.1);color:var(--acc)}.pill-pur{background:rgba(167,139,250,.1);color:var(--pur)}.pill-ylw{background:rgba(234,179,8,.1);color:var(--ylw)}.pill-grn{background:rgba(34,197,94,.12);color:var(--grn)}.pill-red{background:rgba(239,68,68,.1);color:var(--red)}.pill-org{background:rgba(249,115,22,.12);color:var(--org)}.pill-pnk{background:rgba(236,72,153,.12);color:var(--pnk)}.pill-cyan{background:rgba(6,182,212,.12);color:var(--cyan)}
-.pager{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-top:1px solid var(--brd);background:var(--sf);font-size:11px}
-.pager-btns{display:flex;gap:3px;align-items:center}.pager-btns button{padding:3px 9px;border-radius:4px;border:1px solid var(--brd);background:var(--card);color:var(--t2);font-size:12px}
-.search-bar{display:flex;gap:8px;margin-bottom:14px;align-items:center;flex-wrap:wrap}
-.search-bar input{padding:7px 12px;border-radius:6px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:12px;width:220px}
-.search-bar select{padding:7px 10px;border-radius:6px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:12px}
-.kpi-grid{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
-.kpi{background:var(--card);border-radius:10px;padding:14px 16px;border:1px solid var(--brd);flex:1 1 150px;min-width:130px}
-.kpi-label{font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px;font-weight:600}.kpi-value{font-size:17px;font-weight:800}
-.dash-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
-.tabs{display:flex;gap:2px;margin-bottom:18px;background:var(--sf);border-radius:9px;padding:3px;border:1px solid var(--brd);flex-wrap:wrap}
-.tab{padding:7px 14px;border-radius:6px;font-weight:700;font-size:11px;color:var(--t2)}.tab.active{background:var(--acc);color:#fff}
-.tab-badge{margin-left:4px;padding:0 5px;border-radius:3px;font-size:9px}.tab.active .tab-badge{background:rgba(255,255,255,.2)}.tab:not(.active) .tab-badge{background:var(--brd)}
-.upload-box{border:2px dashed var(--brd);border-radius:16px;padding:56px 44px;text-align:center;cursor:pointer;background:var(--sf);max-width:480px;width:100%}.upload-box:hover,.upload-box.drag{border-color:var(--acc)}
-.mapa-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
-.rmc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-.taxa-bar{height:6px;border-radius:3px;background:var(--brd);overflow:hidden}.taxa-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--acc),var(--pur))}
-/* Pipeline */
-.pipe-stages{display:flex;gap:4px;margin-bottom:20px;align-items:center}
-.pipe-stage{padding:8px 18px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--brd);background:var(--card);color:var(--t2);transition:all .15s}
-.pipe-stage.active{background:var(--acc);color:#fff;border-color:var(--acc)}
-.pipe-stage .pipe-n{margin-left:6px;padding:1px 6px;border-radius:4px;font-size:9px}
-.pipe-stage.active .pipe-n{background:rgba(255,255,255,.2)}
-.pipe-stage:not(.active) .pipe-n{background:var(--brd)}
-.pipe-arrow{color:var(--t3);font-size:16px}
-/* Checkbox */
-.chk{width:16px;height:16px;accent-color:var(--acc);cursor:pointer}
-/* WPP template */
-.wpp-tpl{width:100%;min-height:100px;padding:12px;border-radius:8px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:13px;resize:vertical}
-.wpp-vars{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
-.wpp-var{padding:3px 8px;border-radius:4px;background:var(--card);border:1px solid var(--brd);font-size:10px;color:var(--cyan);cursor:pointer}
-@media(max-width:900px){.dash-grid{grid-template-columns:1fr}.rmc-grid,.mapa-grid{grid-template-columns:1fr}.container{padding:12px}.header{padding:0 12px}.pipe-stages{flex-wrap:wrap}}
+th{padding:12px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;border-bottom:1px solid var(--brd);cursor:pointer;user-select:none;position:sticky;top:0;background:var(--card);z-index:2;white-space:nowrap}
+td{padding:10px 14px;font-size:13px;color:var(--t1);border-bottom:1px solid var(--brd);white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+td.right,th.right{text-align:right}td.mono{font-family:monospace;font-size:12px}
+.pill{display:inline-block;padding:3px 11px;border-radius:6px;font-size:11px;font-weight:700}
+.pill-default{background:rgba(255,255,255,.06);color:var(--t2)}.pill-acc{background:rgba(59,130,246,.12);color:var(--acc)}.pill-pur{background:rgba(167,139,250,.12);color:var(--pur)}.pill-ylw{background:rgba(234,179,8,.12);color:var(--ylw)}.pill-grn{background:rgba(34,197,94,.14);color:var(--grn)}.pill-red{background:rgba(239,68,68,.12);color:var(--red)}.pill-org{background:rgba(249,115,22,.14);color:var(--org)}.pill-pnk{background:rgba(236,72,153,.14);color:var(--pnk)}.pill-cyan{background:rgba(6,182,212,.14);color:var(--cyan)}
+.pager{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-top:1px solid var(--brd);background:var(--sf);font-size:13px}
+.pager-btns{display:flex;gap:4px;align-items:center}.pager-btns button{padding:5px 12px;border-radius:6px;border:1px solid var(--brd);background:var(--card);color:var(--t2);font-size:13px}
+.search-bar{display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
+.search-bar input{padding:9px 14px;border-radius:10px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:13px;width:260px}
+.search-bar select{padding:9px 14px;border-radius:10px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:13px}
+.kpi-grid{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:24px}
+.kpi{background:var(--card);border-radius:14px;padding:18px 20px;border:1px solid var(--brd);flex:1 1 160px;min-width:140px;box-shadow:0 0 20px rgba(59,130,246,.08)}
+.kpi-label{font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;font-weight:600}.kpi-value{font-size:22px;font-weight:800}
+.dash-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:24px}
+.tabs{display:flex;gap:3px;margin-bottom:22px;background:var(--sf);border-radius:12px;padding:4px;border:1px solid var(--brd);flex-wrap:wrap}
+.tab{padding:10px 20px;border-radius:9px;font-weight:700;font-size:13px;color:var(--t2);transition:all .15s}.tab.active{background:linear-gradient(135deg,#0EA5E9,var(--acc));color:#fff;box-shadow:0 2px 8px rgba(59,130,246,.3)}
+.tab-badge{margin-left:5px;padding:1px 7px;border-radius:5px;font-size:11px}.tab.active .tab-badge{background:rgba(255,255,255,.2)}.tab:not(.active) .tab-badge{background:var(--brd)}
+.upload-box{border:2px dashed var(--brd);border-radius:20px;padding:60px 48px;text-align:center;cursor:pointer;background:var(--sf);max-width:500px;width:100%;transition:all .2s}.upload-box:hover,.upload-box.drag{border-color:var(--acc);box-shadow:0 0 30px rgba(59,130,246,.1)}
+.mapa-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.rmc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.taxa-bar{height:8px;border-radius:4px;background:var(--brd);overflow:hidden}.taxa-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--acc),var(--pur))}
+.pipe-stages{display:flex;gap:6px;margin-bottom:22px;align-items:center}
+.pipe-stage{padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid var(--brd);background:var(--card);color:var(--t2);transition:all .15s}
+.pipe-stage.active{background:linear-gradient(135deg,#0EA5E9,var(--acc));color:#fff;border-color:transparent;box-shadow:0 4px 12px rgba(59,130,246,.3)}
+.pipe-stage .pipe-n{margin-left:7px;padding:2px 8px;border-radius:5px;font-size:11px}
+.pipe-stage.active .pipe-n{background:rgba(255,255,255,.2)}.pipe-stage:not(.active) .pipe-n{background:var(--brd)}
+.pipe-arrow{color:var(--t3);font-size:18px}
+.chk{width:18px;height:18px;accent-color:var(--acc);cursor:pointer}
+.wpp-tpl{width:100%;min-height:110px;padding:14px;border-radius:10px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:14px;resize:vertical}
+.wpp-vars{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.wpp-var{padding:4px 10px;border-radius:6px;background:var(--card);border:1px solid var(--brd);font-size:12px;color:var(--cyan);cursor:pointer}
+.sel-btn{font-size:11px;border:none;padding:5px 12px;border-radius:6px;font-weight:700;background:transparent;cursor:pointer;white-space:nowrap}
+/* Global CPF search */
+.gsearch{position:relative;margin-left:auto;margin-right:12px}
+.gsearch input{padding:8px 14px 8px 34px;border-radius:10px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:13px;width:180px;transition:all .3s}
+.gsearch input:focus{width:280px;border-color:var(--acc);box-shadow:0 0 0 3px rgba(59,130,246,.1)}
+.gsearch-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--t3);pointer-events:none}
+.gsearch-results{position:absolute;top:calc(100% + 6px);left:0;right:-60px;background:var(--sf);border:1px solid var(--brd);border-radius:14px;max-height:420px;overflow-y:auto;z-index:60;box-shadow:0 12px 40px rgba(0,0,0,.6);display:none}
+.gsr-item{padding:14px 18px;border-bottom:1px solid var(--brd);cursor:pointer;transition:background .1s}.gsr-item:hover{background:rgba(59,130,246,.06)}
+.gsr-item:last-child{border-bottom:none}
+@media(max-width:900px){.dash-grid{grid-template-columns:1fr}.rmc-grid,.mapa-grid{grid-template-columns:1fr}.container{padding:14px}.header{padding:0 14px}.pipe-stages{flex-wrap:wrap}.gsearch input{width:120px}}
 </style>
 </head>
 <body>
-<div id="loginScreen" class="login-wrap"><div class="login-box"><div class="login-logo"><div class="login-logo-icon">L</div><div><div style="font-size:22px;font-weight:800">Lhamascred</div><div style="font-size:11px;color:var(--t3)">Motor de Portabilidade</div></div></div><div class="login-card" id="loginCard"><div style="font-size:18px;font-weight:700;text-align:center;margin-bottom:4px">Bem-vindo</div><div style="font-size:12px;color:var(--t2);text-align:center;margin-bottom:28px">Entre com suas credenciais</div><div class="form-group"><label class="form-label">Usuário</label><input class="form-input" type="text" id="loginUser" placeholder="Usuário" onkeydown="if(event.key==='Enter')doLogin()"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" type="password" id="loginPass" placeholder="Senha" onkeydown="if(event.key==='Enter')doLogin()"></div><button class="login-btn" onclick="doLogin()">Entrar</button><div class="login-error" id="loginError"></div></div></div></div>
-<div id="appScreen" style="display:none"><header class="header"><div class="logo" style="cursor:pointer" onclick="resetData()"><div class="logo-icon">L</div><div><div style="font-size:14px;font-weight:800">Lhamascred</div><div style="font-size:9px;color:var(--t3);font-weight:600">Motor v5</div></div></div><div style="display:flex;align-items:center;gap:6px"><div class="hdr-user" id="hdrUser"></div><div id="headerActions" style="display:flex;gap:6px;align-items:center"><span id="fileName" style="font-size:10px;color:var(--t3);margin-right:4px"></span><button class="btn btn-grn" onclick="exportXLSX()">↓ Exportar</button><button class="btn" onclick="resetData()">Nova Base</button></div><button class="btn btn-red btn-sm" onclick="doLogout()">Sair</button></div></header><div class="container" id="appContainer"></div></div>
+<div id="loginScreen" class="login-wrap"><div class="login-box"><div class="login-logo"><div class="login-logo-icon">CW</div><div><div style="font-size:26px;font-weight:800">CredWave</div><div style="font-size:13px;color:var(--t3)">Motor Consignado</div></div></div><div class="login-card" id="loginCard"><div style="font-size:20px;font-weight:700;text-align:center;margin-bottom:4px">Bem-vindo</div><div style="font-size:12px;color:var(--t2);text-align:center;margin-bottom:28px">Entre com suas credenciais</div><div class="form-group"><label class="form-label">Usuário</label><input class="form-input" type="text" id="loginUser" placeholder="Usuário" onkeydown="if(event.key==='Enter')doLogin()"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" type="password" id="loginPass" placeholder="Senha" onkeydown="if(event.key==='Enter')doLogin()"></div><button class="login-btn" onclick="doLogin()">Entrar</button><div class="login-error" id="loginError"></div></div></div></div>
+<div id="appScreen" style="display:none"><header class="header"><div class="logo" style="cursor:pointer" onclick="resetData()"><div class="logo-icon">CW</div><div><div style="font-size:15px;font-weight:800">CredWave</div><div style="font-size:10px;color:var(--t3);font-weight:600">Motor Consignado</div></div></div><div style="display:flex;align-items:center;gap:6px"><div class="gsearch" id="gsearchBox"><span class="gsearch-icon">🔍</span><input type="text" id="gsearchInput" placeholder="Buscar CPF..." oninput="globalSearch(this.value)" onfocus="this.parentElement.querySelector('.gsearch-results').style.display='block'" onblur="setTimeout(()=>{document.querySelector('.gsearch-results').style.display='none'},200)"><div class="gsearch-results" id="gsearchResults"></div></div><div class="hdr-user" id="hdrUser"></div><div id="headerActions" style="display:flex;gap:6px;align-items:center"><span id="fileName" style="font-size:10px;color:var(--t3);margin-right:4px"></span><button class="btn btn-grn" onclick="exportXLSX()">↓ Exportar</button><button class="btn" onclick="resetData()">Nova Base</button></div><button class="btn btn-red btn-sm" onclick="doLogout()">Sair</button></div></header><div class="container" id="appContainer"></div></div>
 <div id="changePwModal" class="modal-overlay" style="display:none"><div class="modal-box" style="max-width:420px"><div style="font-size:16px;font-weight:700;margin-bottom:16px">Alterar Senha</div><div class="form-group"><label class="form-label">Atual</label><input class="form-input" type="password" id="cpwOld"></div><div class="form-group"><label class="form-label">Nova</label><input class="form-input" type="password" id="cpwNew"></div><div class="form-group"><label class="form-label">Confirmar</label><input class="form-input" type="password" id="cpwConfirm"></div><div style="display:flex;gap:8px"><button class="login-btn" style="flex:1" onclick="doChangePw()">Salvar</button><button class="btn" style="padding:12px 20px" onclick="document.getElementById('changePwModal').style.display='none'">Cancelar</button></div><div class="login-error" id="cpwError"></div></div></div>
 <div id="phoneModal" class="modal-overlay" style="display:none"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:16px;font-weight:700">📱 Telefones</div><button class="btn btn-sm" onclick="document.getElementById('phoneModal').style.display='none'">✕</button></div><div id="pmName" style="font-size:13px;color:var(--t2);margin-bottom:2px"></div><div id="pmCPF" style="font-size:11px;color:var(--t3);margin-bottom:14px;font-family:monospace"></div><div id="pmContent"></div><div id="pmActions" style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"></div></div></div>
 <div id="batchModal" class="modal-overlay" style="display:none"><div class="modal-box" style="max-width:420px"><div style="font-size:16px;font-weight:700;margin-bottom:12px">⏳ Processando</div><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span id="bCnt" style="font-size:12px;color:var(--t2)">0/0</span><span id="bPct" style="font-size:12px;font-weight:700;color:var(--acc)">0%</span></div><div class="taxa-bar" style="height:8px"><div id="bBar" class="taxa-fill" style="width:0%"></div></div><div id="bStat" style="font-size:11px;color:var(--t2);margin:10px 0"></div><button class="btn btn-red" onclick="bCancel=true">Cancelar</button></div></div>
-<div id="wppModal" class="modal-overlay" style="display:none"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:700">💬 Mensagem WhatsApp</div><button class="btn btn-sm" onclick="document.getElementById('wppModal').style.display='none'">✕</button></div><div class="form-group"><label class="form-label">Template da Mensagem</label><textarea class="wpp-tpl" id="wppTpl">Olá {nome}, tudo bem? Aqui é da Lhamascred! Identificamos {qtd} oportunidade(s) de portabilidade com troco total de {troco}. Podemos conversar?</textarea></div><div class="form-group"><label class="form-label">Variáveis Disponíveis</label><div class="wpp-vars"><span class="wpp-var" onclick="insertVar('{nome}')">nome</span><span class="wpp-var" onclick="insertVar('{cpf}')">cpf</span><span class="wpp-var" onclick="insertVar('{troco}')">troco</span><span class="wpp-var" onclick="insertVar('{vlr_contrato}')">vlr_contrato</span><span class="wpp-var" onclick="insertVar('{banco}')">banco</span><span class="wpp-var" onclick="insertVar('{destino}')">destino</span><span class="wpp-var" onclick="insertVar('{qtd}')">qtd_contratos</span></div></div><div id="wppPreview" style="background:var(--card);border-radius:10px;padding:14px;margin-bottom:14px;border:1px solid var(--brd)"><div style="font-size:10px;color:var(--t3);margin-bottom:6px">PRÉ-VISUALIZAÇÃO</div><div id="wppPreviewText" style="font-size:13px;line-height:1.5"></div></div><div id="wppTargetInfo" style="font-size:12px;color:var(--t2);margin-bottom:14px"></div><div style="display:flex;gap:8px"><button class="btn-acc" style="flex:1" onclick="sendWppBatch()">💬 Enviar para Todos</button><button class="btn btn-grn" onclick="exportWppList()">↓ Exportar Lista</button></div></div></div>
+<div id="wppModal" class="modal-overlay" style="display:none"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:700">💬 Mensagem WhatsApp</div><button class="btn btn-sm" onclick="document.getElementById('wppModal').style.display='none'">✕</button></div><div class="form-group"><label class="form-label">Template da Mensagem</label><textarea class="wpp-tpl" id="wppTpl">Olá {nome}, tudo bem? Aqui é da CredWave! Identificamos {qtd} oportunidade(s) de portabilidade com troco total de {troco}. Podemos conversar?</textarea></div><div class="form-group"><label class="form-label">Variáveis Disponíveis</label><div class="wpp-vars"><span class="wpp-var" onclick="insertVar('{nome}')">nome</span><span class="wpp-var" onclick="insertVar('{cpf}')">cpf</span><span class="wpp-var" onclick="insertVar('{troco}')">troco</span><span class="wpp-var" onclick="insertVar('{vlr_contrato}')">vlr_contrato</span><span class="wpp-var" onclick="insertVar('{banco}')">banco</span><span class="wpp-var" onclick="insertVar('{destino}')">destino</span><span class="wpp-var" onclick="insertVar('{qtd}')">qtd_contratos</span></div></div><div id="wppPreview" style="background:var(--card);border-radius:10px;padding:14px;margin-bottom:14px;border:1px solid var(--brd)"><div style="font-size:10px;color:var(--t3);margin-bottom:6px">PRÉ-VISUALIZAÇÃO</div><div id="wppPreviewText" style="font-size:13px;line-height:1.5"></div></div><div id="wppTargetInfo" style="font-size:12px;color:var(--t2);margin-bottom:14px"></div><div style="display:flex;gap:8px"><button class="btn-acc" style="flex:1" onclick="sendWppBatch()">💬 Enviar para Todos</button><button class="btn btn-grn" onclick="exportWppList()">↓ Exportar Lista</button></div></div></div>
 
 <script>
 // ══════ AUTH ══════
@@ -331,7 +337,7 @@ function exportWppList(){
   }
   let wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),"WhatsApp");
-  XLSX.writeFile(wb,"lhamascred_whatsapp.xlsx");
+  XLSX.writeFile(wb,"credwave_whatsapp.xlsx");
 }
 
 // ══════ ENGINE ══════
@@ -428,19 +434,125 @@ function addU(){const n=document.getElementById("nN").value.trim(),u=document.ge
 function dlu(u){if(confirm(`Excluir "${u}"?`)){saveU(getU().filter(x=>x.user!==u));renderApp()}}
 function rpw(u){const p=prompt(`Nova senha para "${u}":`);if(!p||p.length<4)return;let users=getU();let i=users.findIndex(x=>x.user===u);if(i>=0){users[i].pw=hp(p);saveU(users);alert("OK!")}}
 
+// ══════ GLOBAL CPF SEARCH ══════
+function globalSearch(q){
+  let res=document.getElementById("gsearchResults");if(!res)return;
+  let v=q.replace(/\D/g,"").trim();
+  if(v.length<3){res.style.display="none";res.innerHTML="";return}
+  // Search across all history data
+  let results=[];
+  let hist=getHist();
+  for(let h of hist){
+    try{
+      let raw=localStorage.getItem("lhm_data_"+h.id);if(!raw)continue;
+      let sv=JSON.parse(raw);
+      let eleg=sv.elegiveis||[];
+      for(let e of eleg){
+        if((e.cpf||"").includes(v)||(e.ben||"").includes(v)){
+          results.push({...e,fonte:h.fname,histId:h.id,date:h.date});
+        }
+      }
+    }catch{}
+  }
+  // Also search current data
+  if(S.data){
+    for(let e of S.data.analise||[]){
+      if((e.cpf||"").includes(v)||(e.ben||"").includes(v)){
+        if(!results.find(r=>r.cpf===e.cpf&&r.con===e.con))results.push({...e,fonte:"Atual",histId:null})
+      }
+    }
+  }
+  if(!results.length){res.innerHTML=`<div style="padding:18px;text-align:center;color:var(--t3);font-size:13px">Nenhum resultado para "${v}"</div>`;res.style.display="block";return}
+  // Group by CPF
+  let grp={};for(let r of results){if(!grp[r.cpf])grp[r.cpf]={nome:r.nome,cpf:r.cpf,ben:r.ben,contratos:[],fontes:new Set()};grp[r.cpf].contratos.push(r);grp[r.cpf].fontes.add(r.fonte)}
+  let html="";for(let cpf of Object.keys(grp).slice(0,10)){
+    let g=grp[cpf];let tTroco=g.contratos.reduce((s,c)=>s+c.troco,0);let tVC=g.contratos.reduce((s,c)=>s+c.vc,0);let nEleg=g.contratos.filter(c=>c.ok).length;
+    html+=`<div class="gsr-item" onclick="showCPFDetail('${cpf}')">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><div style="font-weight:700;font-size:14px">${esc(g.nome)}</div><div style="font-size:12px;color:var(--t2);font-family:monospace;margin-top:2px">CPF: ${cpf} ${g.ben?"| Ben: "+g.ben:""}</div></div>
+        <div style="text-align:right"><div style="font-size:13px;font-weight:700;color:var(--grn)">${R$(tTroco)}</div><div style="font-size:10px;color:var(--t3)">${g.contratos.length} contr | ${nEleg} eleg</div></div>
+      </div>
+      <div style="font-size:10px;color:var(--t3);margin-top:4px">Fonte: ${[...g.fontes].join(", ")}</div>
+    </div>`;
+  }
+  if(Object.keys(grp).length>10)html+=`<div style="padding:10px;text-align:center;font-size:11px;color:var(--t3)">+${Object.keys(grp).length-10} resultados...</div>`;
+  res.innerHTML=html;res.style.display="block";
+}
+function showCPFDetail(cpf){
+  // Find all data for this CPF across history
+  let allRows=[];
+  let hist=getHist();
+  for(let h of hist){try{let raw=localStorage.getItem("lhm_data_"+h.id);if(!raw)continue;let sv=JSON.parse(raw);for(let e of(sv.elegiveis||[]))if(e.cpf===cpf)allRows.push(e)}catch{}}
+  if(S.data)for(let e of(S.data.analise||[]))if(e.cpf===cpf&&!allRows.find(r=>r.con===e.con))allRows.push(e);
+  if(!allRows.length){alert("Nenhum dado encontrado para "+cpf);return}
+  let nome=allRows[0].nome,ben=allRows[0].ben;
+  let tTroco=allRows.reduce((s,r)=>s+r.troco,0),tVC=allRows.reduce((s,r)=>s+r.vc,0);
+  let html=`<div style="font-size:18px;font-weight:800;margin-bottom:4px">${esc(nome)}</div>
+    <div style="font-size:13px;color:var(--t2);font-family:monospace;margin-bottom:16px">CPF: ${cpf} ${ben?"| Benefício: "+ben:""}</div>
+    <div style="display:flex;gap:12px;margin-bottom:16px">
+      <div class="kpi" style="flex:1"><div class="kpi-label">Contratos</div><div class="kpi-value" style="color:var(--acc)">${allRows.length}</div></div>
+      <div class="kpi" style="flex:1"><div class="kpi-label">Elegíveis</div><div class="kpi-value" style="color:var(--grn)">${allRows.filter(r=>r.ok).length}</div></div>
+      <div class="kpi" style="flex:1"><div class="kpi-label">Troco Total</div><div class="kpi-value" style="color:var(--grn)">${R$(tTroco)}</div></div>
+    </div>
+    <table style="width:100%"><thead><tr><th>Contrato</th><th>Banco</th><th class="right">Parcela</th><th class="right">Saldo</th><th>Destino</th><th class="right">Vlr Contrato</th><th class="right">Troco</th></tr></thead><tbody>`;
+  for(let r of allRows){let dc=r.dest!=="-"?pCls[r.dest]:"";
+    html+=`<tr><td class="mono">${esc(r.con)}</td><td><span class="pill pill-default">${r.cod}</span></td><td class="right mono">${R$(r.par)}</td><td class="right mono">${R$(r.sal)}</td><td>${dc?`<span class="pill ${dc}">${r.dest}</span>`:"—"}</td><td class="right mono" style="color:var(--ylw)">${r.vc>0?R$(r.vc):"—"}</td><td class="right mono" style="color:var(--grn);font-weight:700">${r.troco>0?R$(r.troco):"—"}</td></tr>`}
+  html+=`</tbody></table>`;
+  document.getElementById("pmName").textContent="";
+  document.getElementById("pmCPF").textContent="";
+  document.getElementById("pmContent").innerHTML=html;
+  document.getElementById("pmActions").innerHTML=`<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar</button>`;
+  document.getElementById("phoneModal").style.display="flex";
+}
+
+// ══════ CAMPANHAS ══════
+function getCamp(){try{return JSON.parse(localStorage.getItem("lhm_camp")||"[]")}catch{return[]}}
+function saveCamp(c){localStorage.setItem("lhm_camp",JSON.stringify(c))}
+function addCampanha(){
+  let nome=prompt("Nome da campanha:");if(!nome)return;
+  let c=getCamp();c.push({id:Date.now(),nome:nome.trim(),users:[],created:new Date().toLocaleString("pt-BR"),createdBy:CU?CU.name:""});saveCamp(c);renderApp()
+}
+function delCampanha(id){if(confirm("Excluir campanha?")){saveCamp(getCamp().filter(c=>c.id!==id));renderApp()}}
+function toggleCampUser(campId,userLogin){
+  let camps=getCamp();let c=camps.find(x=>x.id===campId);if(!c)return;
+  let idx=c.users.indexOf(userLogin);if(idx>=0)c.users.splice(idx,1);else c.users.push(userLogin);
+  saveCamp(camps);renderApp()
+}
+function renderCampanhas(){
+  let camps=getCamp();let users=getU()||[];
+  let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><div style="font-size:18px;font-weight:800">📋 Campanhas</div><button class="btn-acc" style="padding:8px 20px;font-size:12px" onclick="addCampanha()">+ Nova Campanha</button></div>`;
+  if(!camps.length){html+=`<div style="text-align:center;padding:40px;color:var(--t3);font-size:14px">Nenhuma campanha criada</div>`;return html}
+  for(let c of camps){
+    html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:20px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div><div style="font-size:16px;font-weight:700">${esc(c.nome)}</div><div style="font-size:11px;color:var(--t3)">Criada em ${c.created} por ${esc(c.createdBy||"")}</div></div>
+        <button class="btn btn-red btn-sm" onclick="delCampanha(${c.id})">Excluir</button>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:8px">Usuários atribuídos:</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">`;
+    for(let u of users){
+      let assigned=c.users.includes(u.user);
+      html+=`<button class="btn btn-sm ${assigned?"btn-grn":""}" style="${assigned?"background:rgba(34,197,94,.1)":""}" onclick="toggleCampUser(${c.id},'${u.user}')">${assigned?"✅ ":""}${esc(u.name)}</button>`;
+    }
+    html+=`</div></div>`;
+  }
+  return html;
+}
+
 // ══════ RENDER ══════
 function renderApp(){
   let D=S.data,c=document.getElementById("appContainer"),html="";
   if(!D){document.getElementById("headerActions").style.display="none";let hist=getMyHist();
-    html=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:${hist.length?'40vh':'72vh'}" class="fi"><div class="upload-box" id="uploadBox" onclick="document.getElementById('fileInput').click()"><div style="font-size:36px;margin-bottom:16px">📊</div><div style="font-size:17px;font-weight:700;margin-bottom:6px">Consulta em Lote</div><div style="font-size:12px;color:var(--t2);margin-bottom:22px">Suba a base completa offline</div><div class="btn-acc">Selecionar Arquivo</div><div style="font-size:9px;color:var(--t3);margin-top:10px">.xlsx .xls .csv</div><input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)"></div></div>`;
+    html=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:${hist.length?'40vh':'72vh'}" class="fi"><div class="upload-box" id="uploadBox" onclick="document.getElementById('fileInput').click()"><div style="font-size:36px;margin-bottom:16px">📊</div><div style="font-size:19px;font-weight:700;margin-bottom:8px">Consulta em Lote</div><div style="font-size:14px;color:var(--t2);margin-bottom:24px">Suba a base completa offline</div><div class="btn-acc">Selecionar Arquivo</div><div style="font-size:9px;color:var(--t3);margin-top:10px">.xlsx .xls .csv</div><input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)"></div></div>`;
     if(hist.length){html+=`<div class="fi" style="margin-top:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:700">📁 Histórico</div><button class="btn btn-red btn-sm" onclick="clearHist()">Limpar</button></div><div style="display:grid;gap:8px">`;for(let h of hist){let sm=h.summary||{};let bensStr=sm.beneficios&&sm.beneficios.length?sm.beneficios.slice(0,5).join(", ")+(sm.beneficios.length>5?" ...":""):"";html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div style="flex:1;min-width:180px"><div style="font-size:12px;font-weight:700">${esc(h.fname)}</div><div style="font-size:10px;color:var(--t2)">${h.date}${CU&&CU.role==="admin"?` \u2014 <span style="color:var(--cyan)">${esc(h.user)}</span>`:""}</div>${bensStr?`<div style="font-size:9px;color:var(--t3);margin-top:3px;font-family:monospace">Ben: ${esc(bensStr)}</div>`:""}</div><div style="display:flex;gap:12px"><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):"-"}</div><div style="font-size:8px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--ylw)">${sm.valorContrato?R$(sm.valorContrato):"-"}</div><div style="font-size:8px;color:var(--t3)">VLR CONT</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):"-"}</div><div style="font-size:8px;color:var(--t3)">TROCO</div></div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn-acc" style="padding:4px 12px;font-size:10px;border-radius:5px" onclick="loadHist(${h.id})">📂 Carregar</button><button class="btn btn-red btn-sm" onclick="delHist(${h.id})">✕</button></div></div>`}html+=`</div></div>`}
     c.innerHTML=html;let ub=document.getElementById("uploadBox");ub.addEventListener("dragover",e=>{e.preventDefault();ub.classList.add("drag")});ub.addEventListener("dragleave",()=>ub.classList.remove("drag"));ub.addEventListener("drop",e=>{e.preventDefault();ub.classList.remove("drag");if(e.dataTransfer.files[0]){let inp=document.getElementById("fileInput");let dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);inp.files=dt.files;handleFile(inp)}});return}
   document.getElementById("headerActions").style.display="flex";document.getElementById("fileName").textContent="📁 "+S.fname;
   let nSel=selected.size,nHig=[...selected].filter(c=>phoneCache[c]).length,nWpp=[...selected].filter(c=>wppSent.has(c)).length;
   let tabs=[{k:"dash",l:"Dashboard"},{k:"an",l:"Análise",n:N((D.totalAnalise||D.analise.length))},{k:"el",l:"✅ Elegíveis",n:N(D.elegiveis.length)},{k:"pipe",l:"🔄 Pipeline",n:nSel||""},{k:"mp",l:"Mapa"},{k:"rc",l:"RMC/RCC",n:N(D.rmcRcc.length)}];
-  if(CU&&CU.role==="admin")tabs.push({k:"admin",l:"👥"});
+  if(CU&&CU.role==="admin"){tabs.push({k:"camp",l:"📋 Campanhas"});tabs.push({k:"admin",l:"👥"})}
   html+=`<div class="tabs">${tabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
   if(S.tab==="admin"){c.innerHTML=html+renderAdmin();return}
+  if(S.tab==="camp"){c.innerHTML=html+renderCampanhas();return}
 
   // ═══ DASHBOARD ═══
   if(S.tab==="dash"){let tT=D.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=D.elegiveis.reduce((s,e)=>s+e.vc,0);
@@ -608,7 +720,7 @@ function exportXLSX(){let D=S.data;if(!D)return;let wb=XLSX.utils.book_new(),mk=
   mk(D.rmcRcc.map(r=>({Nome:r.nome,CPF:r.cpf,Espécie:r.esp,Tel1:r.t1,"Banco RMC":r.cRmc,"Valor RMC":r.vRmc,"Banco RCC":r.cRcc,"Valor RCC":r.vRcc,"Margem Disp":r.mrgCart||0,"Cart Nova (×29×70%)":r.mrgCartNova||0,"Emp Nova (÷1.85%)":r.mrgEmpNova||0,"Tem RMC":r.temRmc?"SIM":"NÃO","Tem RCC":r.temRcc?"SIM":"NÃO"})),"RMC-RCC");
   for(let[n,cod]of Object.entries(CARTAO))mk(D.rmcRcc.filter(r=>r.cRmc===cod||r.cRcc===cod).map(r=>({Nome:r.nome,CPF:r.cpf,Tel1:r.t1,"Banco RMC":r.cRmc,"Valor RMC":r.vRmc,"Banco RCC":r.cRcc,"Valor RCC":r.vRcc,"Margem Disp":r.mrgCart||0,"Cart Nova":r.mrgCartNova||0})),`RMC ${n}`);
   mk(D.rmcRcc.filter(r=>r.mrgCart>0&&!r.temRmc&&!r.temRcc).map(r=>({Nome:r.nome,CPF:r.cpf,Espécie:r.esp,Tel1:r.t1,"Margem Disponível":r.mrgCart,"Cartão Nova (×29×70%)":r.mrgCartNova,"Empréstimo Novo (÷1.85%)":r.mrgEmpNova})),"Margem Nova");
-  XLSX.writeFile(wb,"lhamascred_resultado.xlsx")}
+  XLSX.writeFile(wb,"credwave_resultado.xlsx")}
 
 (function(){initU();let s=getSess();if(s){let u=getU()||[];let f=u.find(x=>x.user===s.user);if(f){CU=f;showApp();return}}document.getElementById("loginScreen").style.display="flex"})();
 </script>
