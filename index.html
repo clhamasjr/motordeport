@@ -343,7 +343,7 @@ function exportWppList(){
 // ══════ ENGINE ══════
 const COEFS=[{t:1.85,c:0.02299},{t:1.80,c:0.02451},{t:1.78,c:0.02250},{t:1.75,c:0.021985},{t:1.72,c:0.02175},{t:1.70,c:0.021604},{t:1.68,c:0.02145},{t:1.66,c:0.02130}];
 const BD={QUALI:{sMin:2000,tMin:250,pMin:0,pgMin:0,faixa:null,coefF:null,block:["359","246","025","047","063","070","320","394","422","654","212","626","935","753","330","149","012","752","082","079","329","643","243"]},FACTA:{sMin:0,tMin:100,pMin:50,pgMin:0,faixa:[1.70,1.85],coefF:null,block:["070","071","925","935","149","012","611","643","917"]},BRB:{sMin:3000,tMin:250,pMin:0,pgMin:0,faixa:null,coefF:0.02130,block:["070","623","935","149","012","071","925","380","079"]},DIGIO:{sMin:4500,tMin:250,pMin:0,pgMin:12,faixa:null,coefF:null,block:["237","001","041"]}};
-const ORDEM=["QUALI","FACTA","BRB","DIGIO"],B1P=["149","422","739","925","380","033","326","290","041","389","121"],ESP_INV=[4,5,6,32,33,34,51,83,92],CARTAO={PAN:"623",BMG:"318",Daycoval:"707"};
+const ORDEM=["QUALI","FACTA","BRB","DIGIO"],B1P=["149","422","739","925","380","033","326","290","041","389","121"],ESP_INV=[4,5,6,32,33,34,51,83,92],ESP_AUX=[31,36,91,94],CARTAO={PAN:"623",BMG:"318",Daycoval:"707"};
 function pV(v){if(v==null||v==="")return 0;if(typeof v==="number")return v;let s=String(v).replace(/R\$\s*/g,"").replace(/\s/g,"");if(s.includes(","))return parseFloat(s.replace(/\./g,"").replace(",","."))||0;if(s.includes("."))return parseFloat(s)||0;let n=parseInt(s,10);return isNaN(n)?0:n>99?n/100:n}
 function pP(v){if(v==null||v==="")return[0,0,0];let m=String(v).match(/(\d+)\s*[/\\]\s*(\d+)/);if(m){let r=+m[1],t=+m[2];return[r,t,t-r]}let n=parseInt(v,10);return[n||0,n||0,0]}
 function pC(v){if(v==null||v==="")return"";return String(typeof v==="number"?Math.floor(v):v).trim().padStart(3,"0")}
@@ -373,7 +373,8 @@ function processar(data){
   for(let row of rows){
     let nome=g(row,cNm),cpf=g(row,cCP);if(!nome&&!cpf)continue;
     let ben=g(row,cBn),esp=g(row,cEs),t1=g(row,cT1),t2=g(row,cT2),t3=g(row,cT3);
-    let eN=pEN(esp),isInv=ESP_INV.includes(eN),ai=cAge(gr(row,cNs)),idade=ai?ai.age:null,bY=cBY(gr(row,cDI));
+    let eN=pEN(esp),isInv=ESP_INV.includes(eN),isAux=ESP_AUX.includes(eN)||String(esp).toUpperCase().includes("AUXIL"),ai=cAge(gr(row,cNs)),idade=ai?ai.age:null,bY=cBY(gr(row,cDI));
+    if(isAux)continue; // Skip AUXILIO species entirely
     let tRmc=rmcB?g(row,rmcB.tipo):"",cRmc=rmcB?pC(gr(row,rmcB.cod)??""):"",vRmc=rmcB?gv(row,rmcB.val):0;
     let tRcc=rccB?g(row,rccB.tipo):"",cRcc=rccB?pC(gr(row,rccB.cod)??""):"",vRcc=rccB?gv(row,rccB.val):0;
     // Read main Margem column (next to Beneficio)
@@ -586,21 +587,20 @@ function renderApp(){
     for(let[t,cnt]of Object.entries(D.taxaDist).sort((a,b)=>b[0]-a[0])){let pct=D.elegiveis.length?(cnt/D.elegiveis.length)*100:0;html+=`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;font-weight:700">${t}%</span><span style="font-size:11px;color:var(--t2)">${N(cnt)} (${pct.toFixed(1)}%)</span></div><div class="taxa-bar"><div class="taxa-fill" style="width:${pct}%"></div></div></div>`}
     html+=`</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px"><div style="background:var(--card);border-radius:8px;padding:12px;border:1px solid var(--brd)"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">1 Paga</div><div style="font-size:16px;font-weight:800;color:var(--org)">${N(D.elegiveis.filter(e=>e.is1p).length)}</div></div><div style="background:var(--card);border-radius:8px;padding:12px;border:1px solid var(--brd)"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Invalidez</div><div style="font-size:16px;font-weight:800;color:var(--pnk)">${N(D.elegiveis.filter(e=>e.isInv).length)}</div></div></div></div></div>`;
     let bC={PAN:"var(--org)",BMG:"var(--acc)",Daycoval:"var(--pnk)"};let mrgTotal=D.rmcRcc.reduce((s,r)=>s+(r.mrgCartNova||0),0);let mrgEmpTotal=D.rmcRcc.reduce((s,r)=>s+(r.mrgEmpNova||0),0);let mrgClients=D.rmcRcc.filter(r=>r.mrgCart>0&&!r.temRmc&&!r.temRcc).length;let mrgCartClients=D.rmcRcc.filter(r=>r.mrgCart>0).length;
-    html+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:24px">
-      <div style="background:linear-gradient(135deg,rgba(6,182,212,.08),rgba(59,130,246,.04));border:1px solid rgba(6,182,212,.25);border-radius:16px;padding:24px">
-        <div style="font-size:14px;font-weight:700;color:var(--cyan);margin-bottom:16px">\U0001F4B3 OPORTUNIDADE CART\u00c3O & MARGEM</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-          <div><div style="font-size:12px;color:var(--t3)">Clientes com Margem</div><div style="font-size:28px;font-weight:800;color:var(--cyan)">${N(mrgCartClients)}</div></div>
-          <div><div style="font-size:12px;color:var(--t3)">Sem Cart\u00e3o (oportunidade)</div><div style="font-size:28px;font-weight:800;color:var(--ylw)">${N(mrgClients)}</div></div>
-          <div style="background:rgba(34,197,94,.06);border-radius:10px;padding:12px"><div style="font-size:11px;color:var(--t3)">Potencial Cart\u00e3o Nova</div><div style="font-size:22px;font-weight:800;color:var(--grn)">${R$(mrgTotal)}</div><div style="font-size:10px;color:var(--t3)">margem \u00d7 29 \u00d7 70%</div></div>
-          <div style="background:rgba(249,115,22,.06);border-radius:10px;padding:12px"><div style="font-size:11px;color:var(--t3)">Potencial Empr\u00e9stimo</div><div style="font-size:22px;font-weight:800;color:var(--org)">${R$(mrgEmpTotal)}</div><div style="font-size:10px;color:var(--t3)">margem \u00f7 coef 1.85%</div></div>
-        </div>
+    // === MARGEM & CARTÃO (full width, prominent) ===
+    html+=`<div style="background:linear-gradient(135deg,rgba(6,182,212,.12),rgba(59,130,246,.06));border:2px solid rgba(6,182,212,.3);border-radius:18px;padding:28px;margin-bottom:24px">
+      <div style="font-size:16px;font-weight:800;color:var(--cyan);margin-bottom:20px;display:flex;align-items:center;gap:10px"><span style="font-size:24px">💳</span> OPORTUNIDADE DE CARTÃO & MARGEM</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px">
+        <div style="background:rgba(6,182,212,.08);border:1px solid rgba(6,182,212,.2);border-radius:14px;padding:18px;text-align:center"><div style="font-size:12px;color:var(--t3);margin-bottom:6px">Clientes com Margem</div><div style="font-size:34px;font-weight:900;color:var(--cyan)">${N(mrgCartClients)}</div></div>
+        <div style="background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.2);border-radius:14px;padding:18px;text-align:center"><div style="font-size:12px;color:var(--t3);margin-bottom:6px">Sem Cartão (oportunidade)</div><div style="font-size:34px;font-weight:900;color:var(--ylw)">${N(mrgClients)}</div></div>
+        <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:14px;padding:18px;text-align:center"><div style="font-size:12px;color:var(--t3);margin-bottom:6px">Potencial Cartão Nova</div><div style="font-size:28px;font-weight:900;color:var(--grn)">${R$(mrgTotal)}</div><div style="font-size:11px;color:var(--t3);margin-top:4px">margem × 29 × 70%</div></div>
+        <div style="background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.2);border-radius:14px;padding:18px;text-align:center"><div style="font-size:12px;color:var(--t3);margin-bottom:6px">Potencial Empréstimo</div><div style="font-size:28px;font-weight:900;color:var(--org)">${R$(mrgEmpTotal)}</div><div style="font-size:11px;color:var(--t3);margin-top:4px">margem ÷ coef 1.85%</div></div>
       </div>
-      <div style="background:var(--card);border:1px solid var(--brd);border-radius:16px;padding:24px">
-        <div style="font-size:14px;font-weight:700;color:var(--t2);margin-bottom:16px">\U0001F3E6 RMC / RCC POR BANCO</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">`;
-    for(let[n,cod]of Object.entries(CARTAO)){let f=D.rmcRcc.filter(r=>r.cRmc===cod||r.cRcc===cod);html+=`<div style="background:var(--sf);border-radius:10px;padding:14px;border-left:3px solid ${bC[n]}"><div style="font-size:14px;font-weight:800;color:${bC[n]};margin-bottom:4px">${n}</div><div style="font-size:26px;font-weight:800">${f.length}</div></div>`}
-    html+=`</div></div></div>`}
+    </div>`;
+    // === RMC/RCC por banco ===
+    html+=`<div style="font-size:14px;font-weight:700;color:var(--t2);margin-bottom:12px">🏦 RMC / RCC POR BANCO</div><div class="rmc-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">`;
+    for(let[n,cod]of Object.entries(CARTAO)){let f=D.rmcRcc.filter(r=>r.cRmc===cod||r.cRcc===cod);html+=`<div style="background:var(--card);border-radius:14px;padding:20px;border:1px solid var(--brd);border-left:4px solid ${bC[n]}"><div style="font-size:16px;font-weight:800;color:${bC[n]};margin-bottom:6px">${n}</div><div style="font-size:30px;font-weight:800">${f.length}</div></div>`}
+    html+=`</div>`}
 
   // ═══ ELEGÍVEIS (com checkbox) ═══
   if(S.tab==="el"){
