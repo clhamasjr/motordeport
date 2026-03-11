@@ -518,24 +518,47 @@ function toggleCampUser(campId,userLogin){
   let idx=c.users.indexOf(userLogin);if(idx>=0)c.users.splice(idx,1);else c.users.push(userLogin);
   saveCamp(camps);renderApp()
 }
+function assignToCamp(campId){
+  if(!S.data||!selected.size){alert("Selecione clientes na aba Elegíveis primeiro");return}
+  let camps=getCamp();let c=camps.find(x=>x.id===campId);if(!c)return;
+  if(!c.cpfs)c.cpfs=[];
+  let grouped=groupByCPF(S.data.elegiveis.filter(e=>selected.has(e.cpf)));
+  let added=0;
+  for(let g of grouped){if(!c.cpfs.find(x=>x.cpf===g.cpf)){c.cpfs.push({cpf:g.cpf,nome:g.nome,qtd:g.qtd,troco:g.trocoTotal,vc:g.vcTotal,t1:g.t1});added++}}
+  saveCamp(camps);renderApp();alert(`${added} cliente(s) adicionado(s) à campanha "${c.nome}"`);
+}
+function removeCampCpf(campId,cpf){let camps=getCamp();let c=camps.find(x=>x.id===campId);if(!c||!c.cpfs)return;c.cpfs=c.cpfs.filter(x=>x.cpf!==cpf);saveCamp(camps);renderApp()}
+function exportCamp(campId){
+  let camps=getCamp();let c=camps.find(x=>x.id===campId);if(!c||!c.cpfs||!c.cpfs.length){alert("Campanha sem clientes");return}
+  let wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(c.cpfs.map(x=>({Nome:x.nome,CPF:x.cpf,"Qtd Contratos":x.qtd,"Troco Total":x.troco,"Vlr Contrato":x.vc,"Tel 1":x.t1||""}))),"Campanha");
+  XLSX.writeFile(wb,`credwave_campanha_${c.nome.replace(/[^a-zA-Z0-9]/g,"_")}.xlsx`);
+}
 function renderCampanhas(){
   let camps=getCamp();let users=getU()||[];
   let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><div style="font-size:18px;font-weight:800">📋 Campanhas</div><button class="btn-acc" style="padding:8px 20px;font-size:12px" onclick="addCampanha()">+ Nova Campanha</button></div>`;
+  if(selected.size>0)html+=`<div style="background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:12px"><span style="font-size:13px;color:var(--acc);font-weight:700">${selected.size} clientes selecionados</span><span style="font-size:12px;color:var(--t3)">→ Clique em "+ Atribuir" na campanha desejada</span></div>`;
   if(!camps.length){html+=`<div style="text-align:center;padding:40px;color:var(--t3);font-size:14px">Nenhuma campanha criada</div>`;return html}
-  for(let c of camps){
-    html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:20px;margin-bottom:14px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-        <div><div style="font-size:16px;font-weight:700">${esc(c.nome)}</div><div style="font-size:11px;color:var(--t3)">Criada em ${c.created} por ${esc(c.createdBy||"")}</div></div>
-        <button class="btn btn-red btn-sm" onclick="delCampanha(${c.id})">Excluir</button>
+  for(let camp of camps){
+    let nCpfs=camp.cpfs?camp.cpfs.length:0;let totalTroco=camp.cpfs?camp.cpfs.reduce((s,x)=>s+(x.troco||0),0):0;
+    html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:22px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+        <div><div style="font-size:17px;font-weight:700">${esc(camp.nome)}</div><div style="font-size:11px;color:var(--t3)">Criada em ${camp.created} por ${esc(camp.createdBy||"")}</div></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${selected.size?`<button class="btn-acc btn-sm" onclick="assignToCamp(${camp.id})">+ Atribuir ${selected.size}</button>`:""}<button class="btn btn-grn btn-sm" onclick="exportCamp(${camp.id})">↓ Exportar</button><button class="btn btn-red btn-sm" onclick="delCampanha(${camp.id})">Excluir</button></div>
       </div>
-      <div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:8px">Usuários atribuídos:</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">`;
-    for(let u of users){
-      let assigned=c.users.includes(u.user);
-      html+=`<button class="btn btn-sm ${assigned?"btn-grn":""}" style="${assigned?"background:rgba(34,197,94,.1)":""}" onclick="toggleCampUser(${c.id},'${u.user}')">${assigned?"✅ ":""}${esc(u.name)}</button>`;
-    }
-    html+=`</div></div>`;
-  }
+      <div style="display:flex;gap:14px;margin-bottom:16px">
+        <div class="kpi" style="flex:1;padding:12px 16px"><div class="kpi-label">Clientes</div><div class="kpi-value" style="color:var(--acc)">${nCpfs}</div></div>
+        <div class="kpi" style="flex:1;padding:12px 16px"><div class="kpi-label">Troco Total</div><div class="kpi-value" style="color:var(--grn)">${R$(totalTroco)}</div></div>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:8px">Operadores:</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">`;
+    for(let u of users){let assigned=camp.users.includes(u.user);
+      html+=`<button class="btn btn-sm ${assigned?"btn-grn":""}" style="${assigned?"background:rgba(34,197,94,.1)":""}" onclick="toggleCampUser(${camp.id},'${u.user}')">${assigned?"✅ ":""}${esc(u.name)}</button>`}
+    html+=`</div>`;
+    if(nCpfs>0){
+      html+=`<div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:8px">Clientes (${nCpfs}):</div><div class="table-wrap"><div class="table-scroll" style="max-height:220px"><table><thead><tr><th>Nome</th><th>CPF</th><th style="text-align:center">Contr</th><th class="right">Troco</th><th>Tel</th><th>Ação</th></tr></thead><tbody>`;
+      for(let x of camp.cpfs)html+=`<tr><td>${esc(x.nome)}</td><td class="mono">${esc(x.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${x.qtd||0}</span></td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(x.troco||0)}</td><td class="mono">${esc(x.t1||"")}</td><td><button class="btn btn-red btn-sm" onclick="removeCampCpf(${camp.id},'${x.cpf}')">✕</button></td></tr>`;
+      html+=`</tbody></table></div></div>`}
+    html+=`</div>`}
   return html;
 }
 
@@ -562,11 +585,22 @@ function renderApp(){
     html+=`</div></div><div><div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:10px;text-transform:uppercase">Taxas</div><div style="background:var(--card);border-radius:10px;border:1px solid var(--brd);padding:16px">`;
     for(let[t,cnt]of Object.entries(D.taxaDist).sort((a,b)=>b[0]-a[0])){let pct=D.elegiveis.length?(cnt/D.elegiveis.length)*100:0;html+=`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;font-weight:700">${t}%</span><span style="font-size:11px;color:var(--t2)">${N(cnt)} (${pct.toFixed(1)}%)</span></div><div class="taxa-bar"><div class="taxa-fill" style="width:${pct}%"></div></div></div>`}
     html+=`</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px"><div style="background:var(--card);border-radius:8px;padding:12px;border:1px solid var(--brd)"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">1 Paga</div><div style="font-size:16px;font-weight:800;color:var(--org)">${N(D.elegiveis.filter(e=>e.is1p).length)}</div></div><div style="background:var(--card);border-radius:8px;padding:12px;border:1px solid var(--brd)"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Invalidez</div><div style="font-size:16px;font-weight:800;color:var(--pnk)">${N(D.elegiveis.filter(e=>e.isInv).length)}</div></div></div></div></div>`;
-    let bC={PAN:"var(--org)",BMG:"var(--acc)",Daycoval:"var(--pnk)"};let mrgTotal=D.rmcRcc.reduce((s,r)=>s+(r.mrgCartNova||0),0);let mrgEmpTotal=D.rmcRcc.reduce((s,r)=>s+(r.mrgEmpNova||0),0);let mrgClients=D.rmcRcc.filter(r=>r.mrgCart>0&&!r.temRmc&&!r.temRcc).length;
-    html+=`<div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:10px;text-transform:uppercase">RMC/RCC & Margem Nova</div><div class="rmc-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">`;
-    for(let[n,cod]of Object.entries(CARTAO)){let f=D.rmcRcc.filter(r=>r.cRmc===cod||r.cRcc===cod);html+=`<div style="background:var(--card);border-radius:10px;padding:16px;border:1px solid var(--brd);border-left:3px solid ${bC[n]}"><div style="font-size:15px;font-weight:800;color:${bC[n]};margin-bottom:6px">${n}</div><div style="font-size:22px;font-weight:800">${f.length}</div></div>`}
-    html+=`<div style="background:var(--card);border-radius:10px;padding:16px;border:1px solid var(--brd);border-left:3px solid var(--cyan)"><div style="font-size:12px;font-weight:700;color:var(--cyan);margin-bottom:4px">Margem Nova</div><div style="font-size:10px;color:var(--t3)">Cart: <span style="color:var(--ylw);font-weight:700">${R$(mrgTotal)}</span></div><div style="font-size:10px;color:var(--t3)">Emp: <span style="color:var(--org);font-weight:700">${R$(mrgEmpTotal)}</span></div><div style="font-size:10px;color:var(--t3);margin-top:4px">${mrgClients} clientes sem cartão</div></div>`;
-    html+=`</div>`}
+    let bC={PAN:"var(--org)",BMG:"var(--acc)",Daycoval:"var(--pnk)"};let mrgTotal=D.rmcRcc.reduce((s,r)=>s+(r.mrgCartNova||0),0);let mrgEmpTotal=D.rmcRcc.reduce((s,r)=>s+(r.mrgEmpNova||0),0);let mrgClients=D.rmcRcc.filter(r=>r.mrgCart>0&&!r.temRmc&&!r.temRcc).length;let mrgCartClients=D.rmcRcc.filter(r=>r.mrgCart>0).length;
+    html+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:24px">
+      <div style="background:linear-gradient(135deg,rgba(6,182,212,.08),rgba(59,130,246,.04));border:1px solid rgba(6,182,212,.25);border-radius:16px;padding:24px">
+        <div style="font-size:14px;font-weight:700;color:var(--cyan);margin-bottom:16px">\U0001F4B3 OPORTUNIDADE CART\u00c3O & MARGEM</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div><div style="font-size:12px;color:var(--t3)">Clientes com Margem</div><div style="font-size:28px;font-weight:800;color:var(--cyan)">${N(mrgCartClients)}</div></div>
+          <div><div style="font-size:12px;color:var(--t3)">Sem Cart\u00e3o (oportunidade)</div><div style="font-size:28px;font-weight:800;color:var(--ylw)">${N(mrgClients)}</div></div>
+          <div style="background:rgba(34,197,94,.06);border-radius:10px;padding:12px"><div style="font-size:11px;color:var(--t3)">Potencial Cart\u00e3o Nova</div><div style="font-size:22px;font-weight:800;color:var(--grn)">${R$(mrgTotal)}</div><div style="font-size:10px;color:var(--t3)">margem \u00d7 29 \u00d7 70%</div></div>
+          <div style="background:rgba(249,115,22,.06);border-radius:10px;padding:12px"><div style="font-size:11px;color:var(--t3)">Potencial Empr\u00e9stimo</div><div style="font-size:22px;font-weight:800;color:var(--org)">${R$(mrgEmpTotal)}</div><div style="font-size:10px;color:var(--t3)">margem \u00f7 coef 1.85%</div></div>
+        </div>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--brd);border-radius:16px;padding:24px">
+        <div style="font-size:14px;font-weight:700;color:var(--t2);margin-bottom:16px">\U0001F3E6 RMC / RCC POR BANCO</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">`;
+    for(let[n,cod]of Object.entries(CARTAO)){let f=D.rmcRcc.filter(r=>r.cRmc===cod||r.cRcc===cod);html+=`<div style="background:var(--sf);border-radius:10px;padding:14px;border-left:3px solid ${bC[n]}"><div style="font-size:14px;font-weight:800;color:${bC[n]};margin-bottom:4px">${n}</div><div style="font-size:26px;font-weight:800">${f.length}</div></div>`}
+    html+=`</div></div></div>`}
 
   // ═══ ELEGÍVEIS (com checkbox) ═══
   if(S.tab==="el"){
@@ -706,13 +740,20 @@ function renderApp(){
       <div class="kpi" style="flex:1;min-width:130px"><div class="kpi-label">💰 Margem Cartão Nova</div><div class="kpi-value" style="color:var(--grn)">${R$(totMrgCart)}</div></div>
       <div class="kpi" style="flex:1;min-width:130px"><div class="kpi-label">💰 Margem Emp Nova</div><div class="kpi-value" style="color:var(--org)">${R$(totMrgEmp)}</div></div>
     </div>`;
-    html+=`<div class="search-bar"><input type="text" placeholder="Buscar..." value="${esc(S.q)}" oninput="setQ(this.value)"><select onchange="S.rmcF=this.value;S.pg=0;renderApp()"><option value="ALL"${S.rmcF==="ALL"?" selected":""}>Todos</option><option value="PAN"${S.rmcF==="PAN"?" selected":""}>PAN</option><option value="BMG"${S.rmcF==="BMG"?" selected":""}>BMG</option><option value="DAYCOVAL"${S.rmcF==="DAYCOVAL"?" selected":""}>Daycoval</option><option value="MARGEM"${S.rmcF==="MARGEM"?" selected":""}>📊 Só Margem (sem cartão)</option></select></div>`;
+    html+=`<div class="search-bar"><input type="text" placeholder="Buscar..." value="${esc(S.q)}" oninput="setQ(this.value)"><select onchange="S.rmcF=this.value;S.pg=0;renderApp()"><option value="ALL"${S.rmcF==="ALL"?" selected":""}>Todos</option><option value="PAN"${S.rmcF==="PAN"?" selected":""}>PAN</option><option value="BMG"${S.rmcF==="BMG"?" selected":""}>BMG</option><option value="DAYCOVAL"${S.rmcF==="DAYCOVAL"?" selected":""}>Daycoval</option><option value="MARGEM"${S.rmcF==="MARGEM"?" selected":""}>📊 Só Margem</option></select><button class="btn btn-grn" onclick="exportRMC()">↓ Exportar RMC/RCC</button></div>`;
     html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Nome</th><th>CPF</th><th>Esp</th><th>Tel 1</th><th>Banco RMC</th><th class="right">Vlr RMC</th><th>Banco RCC</th><th class="right">Vlr RCC</th><th class="right">Margem Disp</th><th class="right">Cart Nova</th><th class="right">Emp Nova</th></tr></thead><tbody>`;
     for(let r of items)html+=`<tr class="rh"><td>${esc(r.nome)}</td><td class="mono">${esc(r.cpf)}</td><td>${esc(r.esp)}</td><td class="mono">${esc(r.t1)}</td><td><span class="pill pill-default">${esc(r.cRmc)}</span></td><td class="right mono" style="color:${r.vRmc>0?"var(--grn)":"var(--t3)"}">${r.vRmc>0?R$(r.vRmc):"—"}</td><td><span class="pill pill-default">${esc(r.cRcc)}</span></td><td class="right mono" style="color:${r.vRcc>0?"var(--pur)":"var(--t3)"}">${r.vRcc>0?R$(r.vRcc):"—"}</td><td class="right mono" style="color:${r.mrgCart>0?"var(--cyan)":"var(--t3)"}">${r.mrgCart>0?R$(r.mrgCart):"—"}</td><td class="right mono" style="color:${r.mrgCartNova>0?"var(--ylw)":"var(--t3)"}">${r.mrgCartNova>0?R$(r.mrgCartNova):"—"}</td><td class="right mono" style="color:${r.mrgEmpNova>0?"var(--org)":"var(--t3)"}">${r.mrgEmpNova>0?R$(r.mrgEmpNova):"—"}</td></tr>`;
     if(!items.length)html+=`<tr><td colspan="11" style="padding:40px;text-align:center;color:var(--t3)">Nenhum</td></tr>`;
     html+=`</tbody></table></div>${pgr(filtered.length)}</div>`}
   c.innerHTML=html}
 
+function exportRMC(){
+  let D=S.data;if(!D)return;let wb=XLSX.utils.book_new(),mk=(a,n)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(a),n);
+  mk(D.rmcRcc.map(r=>({Nome:r.nome,CPF:r.cpf,"Espécie":r.esp,Tel1:r.t1,"Banco RMC":r.cRmc,"Valor RMC":r.vRmc,"Banco RCC":r.cRcc,"Valor RCC":r.vRcc,"Margem Disp":r.mrgCart||0,"Cart Nova":r.mrgCartNova||0,"Emp Nova":r.mrgEmpNova||0,"Tem RMC":r.temRmc?"SIM":"NÃO","Tem RCC":r.temRcc?"SIM":"NÃO"})),"Todos");
+  for(let[n,cod]of Object.entries(CARTAO))mk(D.rmcRcc.filter(r=>r.cRmc===cod||r.cRcc===cod).map(r=>({Nome:r.nome,CPF:r.cpf,Tel1:r.t1,"Valor RMC":r.vRmc,"Valor RCC":r.vRcc,"Margem":r.mrgCart||0,"Cart Nova":r.mrgCartNova||0})),n);
+  mk(D.rmcRcc.filter(r=>r.mrgCart>0&&!r.temRmc&&!r.temRcc).map(r=>({Nome:r.nome,CPF:r.cpf,"Espécie":r.esp,Tel1:r.t1,"Margem":r.mrgCart,"Cartão Nova":r.mrgCartNova,"Empréstimo Novo":r.mrgEmpNova})),"Margem Nova");
+  XLSX.writeFile(wb,"credwave_rmc_rcc.xlsx");
+}
 function exportXLSX(){let D=S.data;if(!D)return;let wb=XLSX.utils.book_new(),mk=(a,n)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(a),n);
   mk(D.analise.map(r=>({Nome:r.nome,CPF:r.cpf,Espécie:r.esp,Idade:r.idade,Invalidez:r.isInv?"SIM":"NÃO","1Paga":r.is1p?"SIM":"NÃO",Contrato:r.con,"Banco Origem":r.cod,Parcela:r.par,"Saldo Quit.":r.sal,Prazo:r.prazo,Pagas:r.pag,Destino:r.dest,"Vlr Contrato":r.vc,Troco:r.troco,Taxa:r.taxa,Elegível:r.ok?"SIM":"NÃO"})),"Análise Completa");
   mk(D.elegiveis.map(r=>{let ph=phoneCache[r.cpf],phs=ph?ph.telefones:[],wps=phs.filter(t=>t.whatsapp);return{Nome:r.nome,CPF:r.cpf,Contrato:r.con,"Banco Origem":r.cod,Parcela:r.par,"Saldo Quit.":r.sal,Prazo:r.prazo,Destino:r.dest,"Vlr Contrato":r.vc,Troco:r.troco,Taxa:r.taxa,"Tel Base 1":r.t1||"","Tel Base 2":r.t2||"","Tel Base 3":r.t3||"","Tel Hig 1":phs[0]?`(${phs[0].ddd}) ${phs[0].telefone}`:"","Tel Hig 2":phs[1]?`(${phs[1].ddd}) ${phs[1].telefone}`:"","WhatsApp":wps[0]?`55${wps[0].ddd}${wps[0].telefone}`:"",Higienizado:ph?"SIM":"NÃO"}}),"Elegíveis");
