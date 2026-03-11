@@ -145,6 +145,48 @@ function selPage(){
 function selNone(){selected.clear();renderApp()}
 function moveToHig(){if(selected.size===0){alert("Selecione pelo menos um contrato");return}S.tab="pipe";S.pipeStage="sel";renderApp()}
 
+// ══════ SMART FILTERS ══════
+function selByMargem(){
+  if(!S.data)return;
+  let rmcMap={};for(let r of S.data.rmcRcc)rmcMap[r.cpf]=r;
+  let count=0;
+  for(let e of S.data.elegiveis){let r=rmcMap[e.cpf];if(r&&r.mrgCart>0){selected.add(e.cpf);count++}}
+  renderApp();alert(`${count} contratos selecionados de clientes com margem disponível`);
+}
+function selByCartao(){
+  if(!S.data)return;
+  let rmcMap={};for(let r of S.data.rmcRcc)rmcMap[r.cpf]=r;
+  let count=0;
+  for(let e of S.data.elegiveis){let r=rmcMap[e.cpf];if(r&&!r.temRmc&&!r.temRcc&&r.mrgCart>0){selected.add(e.cpf);count++}}
+  renderApp();alert(`${count} contratos selecionados de clientes SEM cartão (oportunidade)`);
+}
+function selByTroco(){
+  if(!S.data)return;
+  let val=prompt("Selecionar clientes com troco total acima de:");
+  if(!val)return;
+  let min=parseFloat(val.replace(/[^\d.,]/g,"").replace(",","."));
+  if(isNaN(min)||min<=0){alert("Valor inválido");return}
+  let grouped=groupByCPF(S.data.elegiveis);
+  let count=0;
+  for(let g of grouped){if(g.trocoTotal>=min){for(let c of g.contratos)selected.add(c.cpf);count+=g.contratos.length}}
+  renderApp();alert(`${count} contratos selecionados (clientes com troco total ≥ ${R$(min)})`);
+}
+function selByCombo(){
+  if(!S.data)return;
+  let rmcMap={};for(let r of S.data.rmcRcc)rmcMap[r.cpf]=r;
+  let grouped=groupByCPF(S.data.elegiveis);
+  let count=0;
+  for(let g of grouped){
+    let r=rmcMap[g.cpf];
+    let temMargem=r&&r.mrgCart>0;
+    let semCartao=r&&!r.temRmc&&!r.temRcc;
+    if(temMargem&&semCartao&&g.trocoTotal>0){
+      for(let c of g.contratos)selected.add(c.cpf);count+=g.contratos.length;
+    }
+  }
+  renderApp();alert(`${count} contratos: clientes com troco + margem + sem cartão`);
+}
+
 // ══════ GROUP BY CLIENT ══════
 function groupByCPF(items){
   let map={};
@@ -417,7 +459,26 @@ function renderApp(){
   // ═══ ELEGÍVEIS (com checkbox) ═══
   if(S.tab==="el"){
     let filtered=filt(D.elegiveis),items=filtered.slice(S.pg*PER,(S.pg+1)*PER);
-    html+=`<div class="search-bar"><input type="text" placeholder="Buscar..." value="${esc(S.q)}" oninput="setQ(this.value)"><div style="display:flex;gap:4px;align-items:center;background:var(--card);border:1px solid var(--brd);border-radius:6px;padding:3px"><button class="btn btn-sm" style="font-size:9px;border:none;padding:3px 8px;color:var(--acc)" onclick="selPage()">☑ Página ${S.pg+1}</button><button class="btn btn-sm" style="font-size:9px;border:none;padding:3px 8px;color:var(--grn)" onclick="toggleSelAll()">☑ Todos (${D.elegiveis.length})</button><button class="btn btn-sm" style="font-size:9px;border:none;padding:3px 8px;color:var(--red)" onclick="selNone()">✕ Limpar</button></div><button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="moveToHig()">🔄 Pipeline (${selected.size})</button><span style="font-size:10px;color:var(--t3)">${selected.size} selecionados</span></div>`;
+    let rmcMap={};if(D.rmcRcc)for(let r of D.rmcRcc)rmcMap[r.cpf]=r;
+    let cMarg=D.elegiveis.filter(e=>{let r=rmcMap[e.cpf];return r&&r.mrgCart>0}).length;
+    let cCart=D.elegiveis.filter(e=>{let r=rmcMap[e.cpf];return r&&!r.temRmc&&!r.temRcc&&r.mrgCart>0}).length;
+    html+=`<div class="search-bar">
+      <input type="text" placeholder="Buscar..." value="${esc(S.q)}" oninput="setQ(this.value)">
+      <div style="display:flex;gap:4px;align-items:center;background:var(--card);border:1px solid var(--brd);border-radius:6px;padding:3px">
+        <button class="btn btn-sm" style="font-size:9px;border:none;padding:3px 8px;color:var(--acc)" onclick="selPage()">☑ Pág ${S.pg+1}</button>
+        <button class="btn btn-sm" style="font-size:9px;border:none;padding:3px 8px;color:var(--grn)" onclick="toggleSelAll()">☑ Todos</button>
+        <button class="btn btn-sm" style="font-size:9px;border:none;padding:3px 8px;color:var(--red)" onclick="selNone()">✕</button>
+      </div>
+      <button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="moveToHig()">🔄 Pipeline (${selected.size})</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:10px;color:var(--t3);font-weight:700">FILTRAR:</span>
+      <button class="btn btn-sm" style="border-color:var(--cyan);color:var(--cyan)" onclick="selByMargem()">📊 Com Margem (${cMarg})</button>
+      <button class="btn btn-sm" style="border-color:var(--ylw);color:var(--ylw)" onclick="selByCartao()">💳 Sem Cartão (${cCart})</button>
+      <button class="btn btn-sm" style="border-color:var(--grn);color:var(--grn)" onclick="selByTroco()">💰 Troco acima de...</button>
+      <button class="btn btn-sm" style="border-color:var(--org);color:var(--org)" onclick="selByCombo()">⭐ Troco + Margem + Sem Cartão</button>
+      <span style="font-size:10px;color:var(--t2)">${selected.size} selecionados</span>
+    </div>`;
     let pgItems=filtered.slice(S.pg*PER,(S.pg+1)*PER);let pgAllCk=pgItems.length>0&&pgItems.every(r=>selected.has(r.cpf));
     html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th style="width:30px"><input type="checkbox" class="chk" onclick="selPage()" ${pgAllCk?"checked":""}></th>${TH("nome","Nome")}${TH("cpf","CPF")}${TH("cod","Banco")}${TH("par","Parcela",1)}${TH("sal","Saldo",1)}${TH("prazo","Prazo")}${TH("dest","Destino")}${TH("vc","Vlr Cont",1)}${TH("troco","Troco",1)}${TH("taxa","Taxa")}</tr></thead><tbody>`;
     for(let r of items){let dc=r.dest!=="-"?DC[r.dest]:null;let ck=selected.has(r.cpf);
