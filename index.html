@@ -309,6 +309,7 @@ function findFirst(H,ns){for(let nm of ns){let n=nm.toLowerCase().replace(/[^a-z
 function processar(data){
   if(!data||data.length<2)return null;let H=data[0].map(h=>h?String(h).trim():""),rows=data.slice(1);
   let cNm=findFirst(H,["Nome"]),cCP=findFirst(H,["CPF"]),cBn=findFirst(H,["Beneficio"]),cEs=findFirst(H,["Especie"]),cNs=findFirst(H,["Data Nascimento"]),cDI=findFirst(H,["DIB"]),cT1=findFirst(H,["Telefone1"]),cT2=findFirst(H,["Telefone2"]),cT3=findFirst(H,["Telefone3"]);
+  let cMg=findFirst(H,["Margem"]);
   let allTE=findAllPos(H,"Tipo Emprestimo"),allCon=findAllPos(H,"Contrato"),allCod=findAllPos(H,"Codigo"),allVE=findAllPos(H,"Valor Emprestimo"),allMC=findAllPos(H,"Margem Cartao"),allVP=findAllPos(H,"Valor Parcela"),allPr=findAllPos(H,"Prazo"),allSQ=findAllPos(H,"Saldo Quitacao");
   let cardBlocks=[];for(let te of allTE){let mc=allMC.find(m=>m>te&&m<te+8);if(mc!==undefined)cardBlocks.push({te,mc})}
   let rmcB=null,rccB=null;
@@ -327,25 +328,29 @@ function processar(data){
     let eN=pEN(esp),isInv=ESP_INV.includes(eN),ai=cAge(gr(row,cNs)),idade=ai?ai.age:null,bY=cBY(gr(row,cDI));
     let tRmc=rmcB?g(row,rmcB.tipo):"",cRmc=rmcB?pC(gr(row,rmcB.cod)??""):"",vRmc=rmcB?gv(row,rmcB.val):0;
     let tRcc=rccB?g(row,rccB.tipo):"",cRcc=rccB?pC(gr(row,rccB.cod)??""):"",vRcc=rccB?gv(row,rccB.val):0;
-    // Read margins from card blocks
+    // Read main Margem column (next to Beneficio)
+    let margemBase=cMg>=0?gv(row,cMg):0;
+    // Also try card block margins as fallback
     let mRmc=rmcB&&rmcB.mc!=null?gv(row,rmcB.mc):0;
     let mRcc=rccB&&rccB.mc!=null?gv(row,rccB.mc):0;
-    // Also try standalone margin columns
     let mDE=cMDE>=0?gv(row,cMDE):0;
     let mDR=cMDR>=0?gv(row,cMDR):0;
-    let margemCartao=Math.max(mRmc,mRcc,mDR);
-    let margemEmp=Math.max(mDE,mRmc,mRcc);
-    // Detect REAL RMC/RCC (has actual bank code that's not 000 AND has value)
+    let margem=margemBase>0?margemBase:Math.max(mRmc,mRcc,mDE,mDR);
+    // Detect REAL RMC/RCC
     let realRmc=cRmc&&cRmc!=="000"&&(vRmc>0||tRmc.toUpperCase().includes("RMC"));
     let realRcc=cRcc&&cRcc!=="000"&&(vRcc>0||tRcc.toUpperCase().includes("RCC"));
-    // Calculate new margins
+    // Calculate new margins from Margem column
     let margemCartNova=0,margemEmpNova=0;
-    if(margemCartao>0){margemCartNova=Math.round(margemCartao*29*0.70*100)/100}
-    if(margemEmp>0&&!realRmc&&!realRcc){margemEmpNova=Math.round((margemEmp/COEF185)*100)/100}
-    // Add ALL clients that have RMC/RCC data OR margin OR card values
-    if(realRmc||realRcc||vRmc>0||vRcc>0||margemCartao>0||margemEmp>0||margemCartNova>0){
+    if(margem>0){
+      // Margem Empréstimo Nova: margem / coef 1.85%
+      margemEmpNova=Math.round((margem/COEF185)*100)/100;
+      // Margem Cartão Nova: margem × 29 × 70%
+      margemCartNova=Math.round(margem*29*0.70*100)/100;
+    }
+    // Add to rmcAll: ALL clients with card data OR margin
+    if(realRmc||realRcc||vRmc>0||vRcc>0||margem>0){
       rmcAll.push({nome,cpf,ben,esp,t1,t2,t3,tRmc,cRmc:realRmc?cRmc:"",vRmc:Math.round(vRmc*100)/100,tRcc,cRcc:realRcc?cRcc:"",vRcc:Math.round(vRcc*100)/100,
-        mrgCart:Math.round(margemCartao*100)/100,mrgCartNova:margemCartNova,mrgEmpNova:margemEmpNova,temRmc:!!realRmc,temRcc:!!realRcc});
+        mrgCart:Math.round(margem*100)/100,mrgCartNova:margemCartNova,mrgEmpNova:margemEmpNova,temRmc:!!realRmc,temRcc:!!realRcc});
     }
     for(let lb of lbs){
       let con=g(row,lb.cc),par=gv(row,lb.cp),sal=gv(row,lb.cs);let[rest,tot,pag]=lb.cz!=null?pP(row[lb.cz]):[0,0,0];let cod=lb.ck!=null?pC(gr(row,lb.ck)??""):"";
