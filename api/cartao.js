@@ -1,156 +1,108 @@
 export const config = { runtime: 'edge' };
 
-const API_KEY = '29956blw5ek9xne3';
+const API_KEY = 'dak_8a4b38fd181b6784a6718bc2bf5fbb62_4d066b97';
 const BASE = 'https://api.dataconsulta.com.br';
-const USER = 'fabricio.bomfim';
-const PASS = 'fabricio@26';
 
-async function tryAuth(path, cpf, mat, headers, label) {
+const BANCOS = {
+  BMG: {
+    login: '/v1/bmg/saquecartao/login',
+    query: '/v1/bmg/saquecartao',
+    logout: '/v1/bmg/saquecartao/logout',
+    user: 'sp.56863.34921564876',
+    pass: 'Fabri15*/4'
+  },
+  DAYCOVAL: {
+    login: '/v1/bmg/saquecartao/login',
+    query: '/v1/bmg/saquecartao',
+    logout: '/v1/bmg/saquecartao/logout',
+    user: 'DCE-LHAMASCRE0046',
+    pass: 'MelhorMelhor26@'
+  }
+};
+
+async function consultarBanco(banco, cpf, matricula) {
+  const cfg = BANCOS[banco];
+  if (!cfg) return { ok: false, banco, error: 'Banco nao configurado' };
   try {
-    const r = await fetch(`${BASE}${path}`, {
+    // Login
+    const lr = await fetch(BASE + cfg.login, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...headers },
-      body: JSON.stringify({ convenio: '1581', cpf, matricula: mat || '', valorParcela: 0, dadosCadastrais: true })
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Api-Key': API_KEY },
+      body: JSON.stringify({ login: cfg.user, senha: cfg.pass })
     });
-    const t = await r.text();
-    let d = null; try { d = JSON.parse(t); } catch {}
-    return { ok: r.ok, status: r.status, label, data: d, raw: t.substring(0, 500) };
-  } catch (e) { return { ok: false, status: 0, label, error: e.message }; }
+    const lt = await lr.text();
+    let ld = {}; try { ld = JSON.parse(lt); } catch {}
+    let token = ld.token || ld.accessToken || ld.access_token || '';
+
+    if (!lr.ok && !token) {
+      // Try usuario/senha format
+      const lr2 = await fetch(BASE + cfg.login, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Api-Key': API_KEY },
+        body: JSON.stringify({ usuario: cfg.user, senha: cfg.pass })
+      });
+      const lt2 = await lr2.text();
+      try { ld = JSON.parse(lt2); } catch {}
+      token = ld.token || ld.accessToken || '';
+      if (!lr2.ok && !token) return { ok: false, banco, error: 'Login ' + lr.status + '/' + lr2.status, debug: lt.substring(0, 200) + ' | ' + lt2.substring(0, 200) };
+    }
+
+    // Query
+    let qh = { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Api-Key': API_KEY };
+    if (token) qh['Authorization'] = 'Bearer ' + token;
+    const cookie = lr.headers.get('set-cookie');
+    if (cookie) qh['Cookie'] = cookie.split(';')[0];
+
+    const qr = await fetch(BASE + cfg.query, {
+      method: 'POST', headers: qh,
+      body: JSON.stringify({ convenio: '1581', cpf, matricula: matricula || '', valorParcela: 0, dadosCadastrais: true })
+    });
+    const qt = await qr.text();
+    let qd = {}; try { qd = JSON.parse(qt); } catch {}
+
+    // Logout
+    fetch(BASE + cfg.logout, { method: 'POST', headers: qh, body: '{}' }).catch(() => {});
+
+    if (!qr.ok) return { ok: false, banco, error: 'Query ' + qr.status, debug: qt.substring(0, 300) };
+
+    return { ok: true, banco, cartoes: qd.cartoes || [], telefones: qd.telefones || [], dados: qd.dadoCadastral || {}, enderecos: qd.enderecos || [] };
+  } catch (e) { return { ok: false, banco, error: e.message }; }
 }
 
 export default async function handler(req) {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Content-Type' } });
   const cors = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' };
-
   try {
     const body = await req.json();
     const cpf = (body.cpf || '').replace(/\D/g, '');
-    const mat = body.matricula || '';
-    if (!cpf) return new Response(JSON.stringify({ error: 'CPF obrigatório' }), { status: 400, headers: cors });
+    const matricula = body.matricula || '';
+    const bancos = body.bancos || ['BMG', 'DAYCOVAL'];
+    if (!cpf) return new Response(JSON.stringify({ error: 'CPF obrigatorio' }), { status: 400, headers: cors });
 
-    const path = '/v1/bmg/saquecartao';
-    const basic = btoa(USER + ':' + PASS);
+    const results = await Promise.all(bancos.filter(b => BANCOS[b]).map(b => consultarBanco(b, cpf, matricula)));
 
-    // Try 5 direct auth methods
-    const methods = [
-      [{ 'X-Api-Key': API_KEY }, 'ApiKey'],
-      [{ 'X-Api-Key': API_KEY, 'Authorization': 'Bearer ' + API_KEY }, 'ApiKey+BearerKey'],
-      [{ 'X-Api-Key': API_KEY, 'Authorization': 'Basic ' + basic }, 'ApiKey+Basic'],
-      [{ 'Authorization': 'Bearer ' + API_KEY }, 'BearerKey'],
-      [{ 'Authorization': 'Basic ' + basic }, 'Basic'],
-    ];
-
-    let attempts = [];
-    for (const [h, l] of methods) {
-      const r = await tryAuth(path, cpf, mat, h, l);
-      attempts.push(r);
-      if (r.ok && r.data) {
-        const d = r.data;
-        return new Response(JSON.stringify({
-          success: true, authMethod: l, cpf,
-          nome: (d.dadoCadastral || {}).nome || '',
-          fontes: ['BMG'],
-          cartoes: (d.cartoes || []).map(c => ({
-            banco: c.banco || '', margem: c.margem || 0, limiteCartao: c.limiteCartao || 0,
-            limiteSaqueTotal: c.limiteSaqueTotal || 0, limiteSaqueDisp: c.limiteSaqueDisponivel || 0,
-            minimoSaque: c.minimoSaque || 0, limiteUtilizado: c.limiteUtilizado || 0,
-            saldoDevedor: c.saldoDevedor || 0, statusCartao: c.statusCartao || '',
-            produto: c.produto || '', matricula: c.matricula || '', observacao: c.observacao || ''
-          })),
-          telefones: d.telefones || [], dados: d.dadoCadastral || {}, enderecos: d.enderecos || []
-        }), { status: 200, headers: cors });
-      }
+    let allCartoes = [], telefones = [], dados = {}, fontes = [], errors = [];
+    for (const r of results) {
+      if (r.ok) {
+        fontes.push(r.banco);
+        for (const c of r.cartoes) { c._fonte = r.banco; if (!allCartoes.find(x => x.banco === c.banco && x.matricula === c.matricula)) allCartoes.push(c); }
+        for (const t of r.telefones) { if (!telefones.find(x => x.ddd === t.ddd && x.telefone === t.telefone)) telefones.push(t); }
+        if (r.dados && r.dados.nome) dados = r.dados;
+      } else { errors.push(r.banco + ': ' + r.error + (r.debug ? ' | ' + r.debug : '')); }
     }
 
-    // Try login flow
-    let loginDebug = {};
-    try {
-      // Login with credentials in body
-      const lr = await fetch(BASE + path + '/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Api-Key': API_KEY },
-        body: JSON.stringify({ usuario: USER, senha: PASS })
-      });
-      const lt = await lr.text();
-      loginDebug.body_auth = { status: lr.status, response: lt.substring(0, 400) };
-
-      let ld = {}; try { ld = JSON.parse(lt); } catch {}
-      const token = ld.token || ld.accessToken || ld.access_token;
-      const cookie = lr.headers.get('set-cookie');
-
-      if (token || lr.ok) {
-        let h2 = { 'X-Api-Key': API_KEY };
-        if (token) h2['Authorization'] = 'Bearer ' + token;
-        if (cookie) h2['Cookie'] = cookie.split(';')[0];
-
-        const r = await tryAuth(path, cpf, mat, h2, 'LoginToken');
-        attempts.push(r);
-        if (r.ok && r.data) {
-          fetch(BASE + path + '/logout', { method: 'POST', headers: h2, body: '{}' }).catch(() => {});
-          const d = r.data;
-          return new Response(JSON.stringify({
-            success: true, authMethod: 'LoginToken', cpf,
-            nome: (d.dadoCadastral || {}).nome || '', fontes: ['BMG'],
-            cartoes: (d.cartoes || []).map(c => ({
-              banco: c.banco || '', margem: c.margem || 0, limiteCartao: c.limiteCartao || 0,
-              limiteSaqueTotal: c.limiteSaqueTotal || 0, limiteSaqueDisp: c.limiteSaqueDisponivel || 0,
-              minimoSaque: c.minimoSaque || 0, limiteUtilizado: c.limiteUtilizado || 0,
-              saldoDevedor: c.saldoDevedor || 0, statusCartao: c.statusCartao || '',
-              produto: c.produto || '', matricula: c.matricula || '', observacao: c.observacao || ''
-            })),
-            telefones: d.telefones || [], dados: d.dadoCadastral || {}
-          }), { status: 200, headers: cors });
-        }
-      }
-
-      // Also try login with empty body + basic auth header
-      const lr2 = await fetch(BASE + path + '/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Api-Key': API_KEY, 'Authorization': 'Basic ' + basic },
-        body: '{}'
-      });
-      const lt2 = await lr2.text();
-      loginDebug.basic_auth = { status: lr2.status, response: lt2.substring(0, 400) };
-      let ld2 = {}; try { ld2 = JSON.parse(lt2); } catch {}
-      const token2 = ld2.token || ld2.accessToken;
-
-      if (token2 || lr2.ok) {
-        let h3 = { 'X-Api-Key': API_KEY };
-        if (token2) h3['Authorization'] = 'Bearer ' + token2;
-        const cookie2 = lr2.headers.get('set-cookie');
-        if (cookie2) h3['Cookie'] = cookie2.split(';')[0];
-
-        const r = await tryAuth(path, cpf, mat, h3, 'LoginBasic');
-        attempts.push(r);
-        if (r.ok && r.data) {
-          const d = r.data;
-          return new Response(JSON.stringify({
-            success: true, authMethod: 'LoginBasic', cpf,
-            nome: (d.dadoCadastral || {}).nome || '', fontes: ['BMG'],
-            cartoes: (d.cartoes || []).map(c => ({
-              banco: c.banco || '', margem: c.margem || 0, limiteCartao: c.limiteCartao || 0,
-              limiteSaqueTotal: c.limiteSaqueTotal || 0, limiteSaqueDisp: c.limiteSaqueDisponivel || 0,
-              minimoSaque: c.minimoSaque || 0, limiteUtilizado: c.limiteUtilizado || 0,
-              saldoDevedor: c.saldoDevedor || 0, statusCartao: c.statusCartao || '',
-              produto: c.produto || '', matricula: c.matricula || '', observacao: c.observacao || ''
-            })),
-            telefones: d.telefones || [], dados: d.dadoCadastral || {}
-          }), { status: 200, headers: cors });
-        }
-      }
-    } catch (e) { loginDebug.error = e.message; }
-
-    // Nothing worked
     return new Response(JSON.stringify({
-      success: false,
-      error: 'Nenhum método de autenticação funcionou',
-      debug: {
-        login: loginDebug,
-        attempts: attempts.map(a => ({ method: a.label, status: a.status, response: (a.raw || a.error || '').substring(0, 300) }))
-      }
+      success: fontes.length > 0,
+      cpf, nome: dados.nome || '', fontes,
+      cartoes: allCartoes.map(c => ({
+        banco: c.banco || '', fonte: c._fonte || '', margem: c.margem || 0,
+        limiteCartao: c.limiteCartao || 0, limiteSaqueTotal: c.limiteSaqueTotal || 0,
+        limiteSaqueDisp: c.limiteSaqueDisponivel || 0, minimoSaque: c.minimoSaque || 0,
+        limiteUtilizado: c.limiteUtilizado || 0, saldoDevedor: c.saldoDevedor || 0,
+        statusCartao: c.statusCartao || '', produto: c.produto || '',
+        matricula: c.matricula || '', observacao: c.observacao || ''
+      })),
+      telefones, dados, errors: errors.length ? errors : undefined
     }), { status: 200, headers: cors });
-
-  } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: cors });
-  }
+  } catch (err) { return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: cors }); }
 }
