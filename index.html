@@ -413,7 +413,7 @@ function processar(data){
 }
 
 // ══════ STATE ══════
-let S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel"};
+let S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel",crmFilter:"",crmQ:""};
 const PER=50;const R$=v=>"R$ "+v.toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});const N=v=>v.toLocaleString("pt-BR");
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
 function handleFile(inp){let f=inp.files[0];if(!f)return;S.fname=f.name;document.getElementById("appContainer").innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:60vh;flex-direction:column;gap:12px"><div style="font-size:30px;animation:pulse 1.2s ease infinite">⚙️</div><div style="font-size:13px;color:var(--t2)">Processando...</div></div>';setTimeout(()=>{let reader=new FileReader();reader.onload=function(e){try{let wb=XLSX.read(e.target.result,{type:"array",cellDates:true});let ws=wb.Sheets[wb.SheetNames[0]];S.data=processar(XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:true}));S.tab="dash";S.pg=0;selected.clear();phoneCache={};wppSent.clear();if(S.data){let tT=S.data.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=S.data.elegiveis.reduce((s,e)=>s+e.vc,0);let bens=[...new Set(S.data.analise.map(r=>r.ben).filter(b=>b))].slice(0,20);addHist(S.fname,{contratos:S.data.analise.length,elegiveis:S.data.elegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:S.data.rmcRcc.length,beneficios:bens},S.data)}renderApp()}catch(err){alert("Erro: "+err.message);renderApp()}};reader.readAsArrayBuffer(f)},50)}
@@ -428,7 +428,65 @@ const pCls={QUALI:"pill-acc",FACTA:"pill-pur",BRB:"pill-ylw",DIGIO:"pill-grn"};
 function si(col){if(S.sort.c!==col)return'<span style="opacity:.2;margin-left:3px;font-size:8px">⇅</span>';return`<span style="margin-left:3px;font-size:8px">${S.sort.d==="asc"?"▲":"▼"}</span>`}
 function TH(col,l,right){return`<th class="${right?"right":""}" onclick="doSort('${col}')">${l}${si(col)}</th>`}
 function pgr(cnt){let tot=Math.ceil(cnt/PER)||1;return`<div class="pager"><span style="color:var(--t3)">${N(cnt)} registros</span><div class="pager-btns"><button onclick="setPg(Math.max(0,S.pg-1))" ${S.pg===0?"disabled":""}>‹</button><span style="color:var(--t2);padding:0 6px;font-size:11px">${S.pg+1}/${tot}</span><button onclick="setPg(Math.min(${tot-1},S.pg+1))" ${S.pg>=tot-1?"disabled":""}>›</button></div></div>`}
-function renderAdmin(){if(!CU||CU.role!=="admin")return"";const users=getU()||[];let rows=users.map(u=>`<tr><td><strong>${esc(u.name)}</strong></td><td style="font-family:monospace;font-size:11px">${esc(u.user)}</td><td><span class="${u.role==="admin"?"role-admin":"role-user"}">${u.role==="admin"?"Admin":"Op"}</span></td><td>${u.user==="admin"?"—":`<button class="btn btn-sm" onclick="rpw('${u.user}')">Reset</button> <button class="btn btn-red btn-sm" onclick="dlu('${u.user}')">Excluir</button>`}</td></tr>`).join("");return`<div class="admin-panel fi"><div style="font-size:16px;font-weight:800;margin-bottom:16px">👥 Usuários</div><table class="users-table"><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table><div class="add-user-form"><div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="nN"></div><div class="form-group"><label class="form-label">Login</label><input class="form-input" id="nU"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" id="nP" type="password"></div><div class="form-group"><label class="form-label">Perfil</label><select class="form-input" id="nR"><option value="user">Operador</option><option value="admin">Admin</option></select></div><button class="btn-acc" style="height:36px;padding:0 20px;font-size:11px" onclick="addU()">+ Add</button></div><div class="login-error" id="aErr" style="text-align:left;margin-top:8px"></div></div>`}
+// ══════ CREDENCIAIS DE BANCOS (Admin) ══════
+function getBankCreds(){try{return JSON.parse(localStorage.getItem("ff_bank_creds")||"{}")}catch{return{}}}
+function saveBankCreds(c){localStorage.setItem("ff_bank_creds",JSON.stringify(c))}
+const BANK_LIST=[
+  {id:"BMG",nome:"BMG",cor:"var(--acc)"},
+  {id:"DAYCOVAL",nome:"Daycoval",cor:"var(--pnk)"},
+  {id:"C6",nome:"C6 Bank",cor:"var(--cyan)"},
+  {id:"FACTA",nome:"Facta",cor:"var(--grn)"},
+  {id:"SAFRA",nome:"Safra",cor:"var(--ylw)"},
+  {id:"ITAU",nome:"Itaú (IC 360)",cor:"var(--org)"},
+  {id:"BRADESCO",nome:"Bradesco (Digio)",cor:"var(--pur)"},
+  {id:"BRB",nome:"BRB – Inconta",cor:"var(--red)"},
+  {id:"BSEGURO",nome:"Banco Seguro",cor:"var(--t2)"}
+];
+function saveBankCred(bankId){
+  let u=document.getElementById("bc_user_"+bankId);
+  let p=document.getElementById("bc_pass_"+bankId);
+  if(!u||!p)return;
+  let creds=getBankCreds();
+  if(!u.value.trim()&&!p.value.trim()){delete creds[bankId]}
+  else{creds[bankId]={user:u.value.trim(),pass:p.value.trim(),active:true}}
+  saveBankCreds(creds);renderApp();
+}
+function toggleBankActive(bankId){
+  let creds=getBankCreds();
+  if(creds[bankId])creds[bankId].active=!creds[bankId].active;
+  saveBankCreds(creds);renderApp();
+}
+function getActiveBanks(){let c=getBankCreds();return Object.entries(c).filter(([k,v])=>v.active&&v.user&&v.pass).map(([k])=>k)}
+
+function renderAdmin(){if(!CU||CU.role!=="admin")return"";const users=getU()||[];let rows=users.map(u=>`<tr><td><strong>${esc(u.name)}</strong></td><td style="font-family:monospace;font-size:11px">${esc(u.user)}</td><td><span class="${u.role==="admin"?"role-admin":"role-user"}">${u.role==="admin"?"Admin":"Op"}</span></td><td>${u.user==="admin"?"—":`<button class="btn btn-sm" onclick="rpw('${u.user}')">Reset</button> <button class="btn btn-red btn-sm" onclick="dlu('${u.user}')">Excluir</button>`}</td></tr>`).join("");
+  // Bank credentials section
+  let creds=getBankCreds();let activeBanks=getActiveBanks();
+  let bankHtml=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:22px;margin-top:24px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="font-size:16px;font-weight:800">🏦 Credenciais de Bancos (API DataConsulta)</div>
+      <span class="pill pill-acc">${activeBanks.length} banco(s) ativo(s)</span>
+    </div>
+    <div style="font-size:12px;color:var(--t3);margin-bottom:16px">Configure usuário e senha de cada banco. Somente bancos com credenciais ativas serão consultados.</div>
+    <div style="display:grid;gap:10px">`;
+  for(let b of BANK_LIST){
+    let c=creds[b.id]||{};let hasCredl=c.user&&c.pass;let isActive=c.active&&hasCredl;
+    bankHtml+=`<div style="background:var(--sf);border-radius:10px;padding:14px;border:1px solid var(--brd);border-left:4px solid ${isActive?b.cor:'var(--brd)'}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:14px;font-weight:800;color:${b.cor}">${b.nome}</span>
+          ${isActive?'<span class="pill pill-grn">● Ativo</span>':hasCredl?'<span class="pill pill-ylw">Inativo</span>':'<span class="pill pill-default">Não configurado</span>'}
+        </div>
+        ${hasCredl?`<button class="btn btn-sm ${isActive?'btn-red':'btn-grn'}" onclick="toggleBankActive('${b.id}')">${isActive?'Desativar':'Ativar'}</button>`:''}
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="bc_user_${b.id}" placeholder="Usuário" value="${esc(c.user||'')}" style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:12px">
+        <input type="password" id="bc_pass_${b.id}" placeholder="Senha" value="${esc(c.pass||'')}" style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:12px">
+        <button class="btn-acc btn-sm" onclick="saveBankCred('${b.id}')">Salvar</button>
+      </div>
+    </div>`;
+  }
+  bankHtml+=`</div></div>`;
+  return`<div class="admin-panel fi"><div style="font-size:16px;font-weight:800;margin-bottom:16px">👥 Usuários</div><table class="users-table"><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table><div class="add-user-form"><div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="nN"></div><div class="form-group"><label class="form-label">Login</label><input class="form-input" id="nU"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" id="nP" type="password"></div><div class="form-group"><label class="form-label">Perfil</label><select class="form-input" id="nR"><option value="user">Operador</option><option value="admin">Admin</option></select></div><button class="btn-acc" style="height:36px;padding:0 20px;font-size:11px" onclick="addU()">+ Add</button></div><div class="login-error" id="aErr" style="text-align:left;margin-top:8px"></div></div>${bankHtml}`}
 function addU(){const n=document.getElementById("nN").value.trim(),u=document.getElementById("nU").value.trim().toLowerCase(),p=document.getElementById("nP").value,r=document.getElementById("nR").value,err=document.getElementById("aErr");if(!n||!u||!p){err.style.color="var(--red)";err.textContent="Preencha tudo";return}let users=getU()||[];if(users.find(x=>x.user===u)){err.style.color="var(--red)";err.textContent="Já existe";return}users.push({id:Date.now(),user:u,name:n,pw:hp(p),role:r,created:Date.now()});saveU(users);err.style.color="var(--grn)";err.textContent="Criado!";setTimeout(renderApp,500)}
 function dlu(u){if(confirm(`Excluir "${u}"?`)){saveU(getU().filter(x=>x.user!==u));renderApp()}}
 function rpw(u){const p=prompt(`Nova senha para "${u}":`);if(!p||p.length<4)return;let users=getU();let i=users.findIndex(x=>x.user===u);if(i>=0){users[i].pw=hp(p);saveU(users);alert("OK!")}}
@@ -507,9 +565,17 @@ function showCPFDetail(cpf){
 // ══════ CAMPANHAS ══════
 function getCamp(){try{return JSON.parse(localStorage.getItem("lhm_camp")||"[]")}catch{return[]}}
 function saveCamp(c){localStorage.setItem("lhm_camp",JSON.stringify(c))}
-function addCampanha(){
+const CAMP_TIPOS=[
+  {k:"port",l:"Portabilidade",icon:"🔄",desc:"Só troco de portabilidade",color:"var(--grn)"},
+  {k:"saque",l:"Saque Complementar",icon:"💳",desc:"Clientes com saque liberado",color:"var(--pur)"},
+  {k:"cartao_margem",l:"Cartão Novo (com margem)",icon:"🆕",desc:"Sem RMC/RCC + com margem",color:"var(--cyan)"},
+  {k:"cartao_sem",l:"Cartão Novo (sem margem)",icon:"📋",desc:"Sem RMC/RCC + sem margem",color:"var(--ylw)"},
+  {k:"emp_novo",l:"Empréstimo Novo",icon:"💰",desc:"Sem RMC/RCC + com margem",color:"var(--org)"},
+  {k:"completa",l:"Completa",icon:"⭐",desc:"Todas as oportunidades",color:"var(--acc)"}
+];
+function addCampanha(tipo){
   let nome=prompt("Nome da campanha:");if(!nome)return;
-  let c=getCamp();c.push({id:Date.now(),nome:nome.trim(),users:[],created:new Date().toLocaleString("pt-BR"),createdBy:CU?CU.name:""});saveCamp(c);renderApp()
+  let c=getCamp();c.push({id:Date.now(),nome:nome.trim(),tipo:tipo||"completa",users:[],cpfs:[],created:new Date().toLocaleString("pt-BR"),createdBy:CU?CU.name:""});saveCamp(c);renderApp()
 }
 function delCampanha(id){if(confirm("Excluir campanha?")){saveCamp(getCamp().filter(c=>c.id!==id));renderApp()}}
 function toggleCampUser(campId,userLogin){
@@ -522,31 +588,51 @@ function assignToCamp(campId){
   let camps=getCamp();let c=camps.find(x=>x.id===campId);if(!c)return;
   if(!c.cpfs)c.cpfs=[];
   let grouped=groupByCPF(S.data.elegiveis.filter(e=>selected.has(e.cpf)));
+  let rmcMap={};if(S.data.rmcRcc)for(let r of S.data.rmcRcc)rmcMap[r.cpf]=r;
   let added=0;
-  for(let g of grouped){if(!c.cpfs.find(x=>x.cpf===g.cpf)){c.cpfs.push({cpf:g.cpf,nome:g.nome,qtd:g.qtd,troco:g.trocoTotal,vc:g.vcTotal,t1:g.t1});added++}}
+  for(let g of grouped){if(!c.cpfs.find(x=>x.cpf===g.cpf)){
+    let rm=rmcMap[g.cpf]||{};let cc=cardCache[g.cpf];
+    let saqueDisp=0;if(cc&&cc.cartoes)for(let cd of cc.cartoes)saqueDisp+=(cd.limiteSaqueDisp||0);
+    c.cpfs.push({cpf:g.cpf,nome:g.nome,qtd:g.qtd,troco:g.trocoTotal,vc:g.vcTotal,t1:g.t1,
+      mrgCartNova:rm.mrgCartNova||0,mrgEmpNova:rm.mrgEmpNova||0,saqueDisp,temCartao:!!rm.temCartao});added++}}
   saveCamp(camps);renderApp();alert(`${added} cliente(s) adicionado(s) à campanha "${c.nome}"`);
 }
 function removeCampCpf(campId,cpf){let camps=getCamp();let c=camps.find(x=>x.id===campId);if(!c||!c.cpfs)return;c.cpfs=c.cpfs.filter(x=>x.cpf!==cpf);saveCamp(camps);renderApp()}
 function exportCamp(campId){
   let camps=getCamp();let c=camps.find(x=>x.id===campId);if(!c||!c.cpfs||!c.cpfs.length){alert("Campanha sem clientes");return}
-  let wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(c.cpfs.map(x=>({Nome:x.nome,CPF:x.cpf,"Qtd Contratos":x.qtd,"Troco Total":x.troco,"Vlr Contrato":x.vc,"Tel 1":x.t1||""}))),"Campanha");
+  let crm=getCrmData();
+  let wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(c.cpfs.map(x=>{let st=crm[x.cpf];return{Nome:x.nome,CPF:x.cpf,"Qtd Contratos":x.qtd,"Troco Port":x.troco||0,"Saque Complementar":x.saqueDisp||0,"Cartão Nova":x.mrgCartNova||0,"Emp Novo":x.mrgEmpNova||0,"Total":Math.round(((x.troco||0)+(x.saqueDisp||0)+(x.mrgCartNova||0)+(x.mrgEmpNova||0))*100)/100,"Tel 1":x.t1||"",Status:st?st.status:"",Obs:st?st.obs:""}})),"Campanha");
   XLSX.writeFile(wb,`flowforce_campanha_${c.nome.replace(/[^a-zA-Z0-9]/g,"_")}.xlsx`);
 }
 function renderCampanhas(){
   let camps=getCamp();let users=getU()||[];
-  let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><div style="font-size:18px;font-weight:800">📋 Campanhas</div><button class="btn-acc" style="padding:8px 20px;font-size:12px" onclick="addCampanha()">+ Nova Campanha</button></div>`;
-  if(selected.size>0)html+=`<div style="background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:12px"><span style="font-size:13px;color:var(--acc);font-weight:700">${selected.size} clientes selecionados</span><span style="font-size:12px;color:var(--t3)">→ Clique em "+ Atribuir" na campanha desejada</span></div>`;
-  if(!camps.length){html+=`<div style="text-align:center;padding:40px;color:var(--t3);font-size:14px">Nenhuma campanha criada</div>`;return html}
+  let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><div style="font-size:18px;font-weight:800">📋 Campanhas</div></div>`;
+  // Create campaign buttons by type
+  html+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:20px">`;
+  for(let t of CAMP_TIPOS){
+    html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:16px;cursor:pointer;border-left:3px solid ${t.color}" onclick="addCampanha('${t.k}')">
+      <div style="font-size:13px;font-weight:700;color:${t.color};margin-bottom:4px">${t.icon} ${t.l}</div>
+      <div style="font-size:11px;color:var(--t3)">${t.desc}</div>
+      <div style="font-size:10px;color:var(--acc);margin-top:6px">+ Criar campanha</div>
+    </div>`}
+  html+=`</div>`;
+  if(selected.size>0)html+=`<div style="background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:12px"><span style="font-size:13px;color:var(--acc);font-weight:700">${selected.size} clientes selecionados</span><span style="font-size:12px;color:var(--t3)">→ Clique em "+ Atribuir" na campanha</span></div>`;
+  if(!camps.length){html+=`<div style="text-align:center;padding:30px;color:var(--t3);font-size:14px">Nenhuma campanha criada. Clique num tipo acima.</div>`;return html}
   for(let camp of camps){
+    let tipo=CAMP_TIPOS.find(t=>t.k===camp.tipo)||CAMP_TIPOS[5];
     let nCpfs=camp.cpfs?camp.cpfs.length:0;let totalTroco=camp.cpfs?camp.cpfs.reduce((s,x)=>s+(x.troco||0),0):0;
-    html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:22px;margin-bottom:16px">
+    let totalSaque=camp.cpfs?camp.cpfs.reduce((s,x)=>s+(x.saqueDisp||0),0):0;
+    let totalCart=camp.cpfs?camp.cpfs.reduce((s,x)=>s+(x.mrgCartNova||0),0):0;
+    html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:22px;margin-bottom:16px;border-left:4px solid ${tipo.color}">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
-        <div><div style="font-size:17px;font-weight:700">${esc(camp.nome)}</div><div style="font-size:11px;color:var(--t3)">Criada em ${camp.created} por ${esc(camp.createdBy||"")}</div></div>
+        <div><div style="font-size:17px;font-weight:700">${tipo.icon} ${esc(camp.nome)}</div><div style="font-size:11px;color:var(--t3)">${tipo.l} — ${camp.created} por ${esc(camp.createdBy||"")}</div></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">${selected.size?`<button class="btn-acc btn-sm" onclick="assignToCamp(${camp.id})">+ Atribuir ${selected.size}</button>`:""}<button class="btn btn-grn btn-sm" onclick="exportCamp(${camp.id})">↓ Exportar</button><button class="btn btn-red btn-sm" onclick="delCampanha(${camp.id})">Excluir</button></div>
       </div>
-      <div style="display:flex;gap:14px;margin-bottom:16px">
-        <div class="kpi" style="flex:1;padding:12px 16px"><div class="kpi-label">Clientes</div><div class="kpi-value" style="color:var(--acc)">${nCpfs}</div></div>
-        <div class="kpi" style="flex:1;padding:12px 16px"><div class="kpi-label">Troco Total</div><div class="kpi-value" style="color:var(--grn)">${R$(totalTroco)}</div></div>
+      <div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+        <div class="kpi" style="flex:1;padding:10px 14px;min-width:100px"><div class="kpi-label">Clientes</div><div class="kpi-value" style="color:var(--acc)">${nCpfs}</div></div>
+        <div class="kpi" style="flex:1;padding:10px 14px;min-width:100px"><div class="kpi-label">Troco Port</div><div class="kpi-value" style="color:var(--grn)">${R$(totalTroco)}</div></div>
+        <div class="kpi" style="flex:1;padding:10px 14px;min-width:100px"><div class="kpi-label">Saque Comp</div><div class="kpi-value" style="color:var(--pur)">${R$(totalSaque)}</div></div>
+        <div class="kpi" style="flex:1;padding:10px 14px;min-width:100px"><div class="kpi-label">Cartão Novo</div><div class="kpi-value" style="color:var(--cyan)">${R$(totalCart)}</div></div>
       </div>
       <div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:8px">Operadores:</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">`;
@@ -554,8 +640,10 @@ function renderCampanhas(){
       html+=`<button class="btn btn-sm ${assigned?"btn-grn":""}" style="${assigned?"background:rgba(34,197,94,.1)":""}" onclick="toggleCampUser(${camp.id},'${u.user}')">${assigned?"✅ ":""}${esc(u.name)}</button>`}
     html+=`</div>`;
     if(nCpfs>0){
-      html+=`<div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:8px">Clientes (${nCpfs}):</div><div class="table-wrap"><div class="table-scroll" style="max-height:220px"><table><thead><tr><th>Nome</th><th>CPF</th><th style="text-align:center">Contr</th><th class="right">Troco</th><th>Tel</th><th>Ação</th></tr></thead><tbody>`;
-      for(let x of camp.cpfs)html+=`<tr><td>${esc(x.nome)}</td><td class="mono">${esc(x.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${x.qtd||0}</span></td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(x.troco||0)}</td><td class="mono">${esc(x.t1||"")}</td><td><button class="btn btn-red btn-sm" onclick="removeCampCpf(${camp.id},'${x.cpf}')">✕</button></td></tr>`;
+      let crm=getCrmData();
+      html+=`<div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:8px">Clientes (${nCpfs}):</div><div class="table-wrap"><div class="table-scroll" style="max-height:220px"><table><thead><tr><th>Nome</th><th>CPF</th><th class="right">Troco</th><th class="right">Saque</th><th class="right">Cartão</th><th>Status</th><th>Ação</th></tr></thead><tbody>`;
+      for(let x of camp.cpfs){let st=crm[x.cpf];let stLabel=st?CRM_LABELS.find(l=>l.k===st.status):null;
+        html+=`<tr><td>${esc(x.nome)}</td><td class="mono">${esc(x.cpf)}</td><td class="right mono" style="color:var(--grn)">${R$(x.troco||0)}</td><td class="right mono" style="color:var(--pur)">${x.saqueDisp>0?R$(x.saqueDisp):"—"}</td><td class="right mono" style="color:var(--cyan)">${x.mrgCartNova>0?R$(x.mrgCartNova):"—"}</td><td>${stLabel?`<span class="pill" style="background:${stLabel.bg};color:${stLabel.c}">${stLabel.icon} ${stLabel.l}</span>`:'<span class="pill pill-default">—</span>'}</td><td style="display:flex;gap:4px"><button class="btn btn-sm btn-cyan" onclick="wppStartChat('${x.t1||""}')">💬</button><button class="btn btn-sm" onclick="openCrmModal('${x.cpf}','${esc(x.nome)}')">🏷️</button><button class="btn btn-red btn-sm" onclick="removeCampCpf(${camp.id},'${x.cpf}')">✕</button></td></tr>`}
       html+=`</tbody></table></div></div>`}
     html+=`</div>`}
   return html;
@@ -836,6 +924,78 @@ function renderWhatsApp(){
 
 function filterWppChats(q){let items=document.querySelectorAll('#wppChatList > div');for(let item of items)item.style.display=!q||item.textContent.toLowerCase().includes(q.toLowerCase())?'block':'none'}
 
+// ══════ CRM ══════
+const CRM_LABELS=[
+  {k:"fechado",l:"Fechado",icon:"✅",c:"#22C55E",bg:"rgba(34,197,94,.12)"},
+  {k:"negociacao",l:"Em Negociação",icon:"🟡",c:"#EAB308",bg:"rgba(234,179,8,.12)"},
+  {k:"sem_sucesso",l:"Sem Sucesso",icon:"❌",c:"#EF4444",bg:"rgba(239,68,68,.12)"},
+  {k:"nao_atende",l:"Não Atende",icon:"📵",c:"#F97316",bg:"rgba(249,115,22,.12)"},
+  {k:"aguardando",l:"Aguardando Retorno",icon:"⏳",c:"#06B6D4",bg:"rgba(6,182,212,.12)"},
+  {k:"recusou",l:"Recusou",icon:"🚫",c:"#A78BFA",bg:"rgba(167,139,250,.12)"}
+];
+function getCrmData(){try{return JSON.parse(localStorage.getItem("ff_crm")||"{}")}catch{return{}}}
+function saveCrmData(d){localStorage.setItem("ff_crm",JSON.stringify(d))}
+function setCrmStatus(cpf,status,obs,nome){let d=getCrmData();d[cpf]={status,obs:obs||"",nome:nome||d[cpf]&&d[cpf].nome||"",date:new Date().toLocaleString("pt-BR"),user:CU?CU.name:""};saveCrmData(d);renderApp()}
+function removeCrm(cpf){let d=getCrmData();delete d[cpf];saveCrmData(d);renderApp()}
+function openCrmModal(cpf,nome){
+  let d=getCrmData();let cur=d[cpf]||{};
+  let html=`<div style="font-size:16px;font-weight:800;margin-bottom:4px">${esc(nome)}</div>
+    <div style="font-size:12px;color:var(--t2);font-family:monospace;margin-bottom:18px">${cpf}</div>
+    <div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:10px">Selecione o status:</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:18px">`;
+  for(let lb of CRM_LABELS){
+    let isActive=cur.status===lb.k;
+    html+=`<button onclick="setCrmStatus('${cpf}','${lb.k}',document.getElementById('crmObs').value,'${esc(nome)}');document.getElementById('phoneModal').style.display='none'" style="padding:14px;border-radius:10px;border:2px solid ${isActive?lb.c:'var(--brd)'};background:${isActive?lb.bg:'var(--card)'};cursor:pointer;text-align:center">
+      <div style="font-size:18px;margin-bottom:4px">${lb.icon}</div>
+      <div style="font-size:12px;font-weight:700;color:${lb.c}">${lb.l}</div>
+    </button>`}
+  html+=`</div>
+    <div class="form-group"><label class="form-label">Observação</label>
+    <textarea id="crmObs" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--brd);background:var(--card);color:var(--t1);font-size:13px;min-height:60px;resize:vertical">${esc(cur.obs||"")}</textarea></div>
+    ${cur.status?`<div style="font-size:11px;color:var(--t3)">Última atualização: ${cur.date||""} por ${cur.user||""}</div>`:""}`;
+  document.getElementById("pmName").textContent="";
+  document.getElementById("pmCPF").textContent="";
+  document.getElementById("pmContent").innerHTML=html;
+  document.getElementById("pmActions").innerHTML=`${cur.status?`<button class="btn btn-red btn-sm" onclick="removeCrm('${cpf}');document.getElementById('phoneModal').style.display='none'">Remover Status</button>`:""}<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar</button>`;
+  document.getElementById("phoneModal").style.display="flex";
+}
+function renderCRM(){
+  let crm=getCrmData();let entries=Object.entries(crm);
+  let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+    <div style="font-size:18px;font-weight:800">🏷️ CRM — Acompanhamento de Clientes</div>
+    <div style="font-size:13px;color:var(--t2)">${entries.length} clientes etiquetados</div>
+  </div>`;
+  // KPI per status
+  html+=`<div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">`;
+  for(let lb of CRM_LABELS){let count=entries.filter(([,v])=>v.status===lb.k).length;
+    html+=`<div style="background:${lb.bg};border-radius:12px;padding:14px 18px;min-width:120px;cursor:pointer;border:1px solid ${count>0?lb.c:'transparent'}" onclick="S.crmFilter=S.crmFilter==='${lb.k}'?'':'${lb.k}';renderApp()">
+      <div style="font-size:22px;text-align:center">${lb.icon}</div>
+      <div style="font-size:22px;font-weight:900;text-align:center;color:${lb.c}">${count}</div>
+      <div style="font-size:11px;text-align:center;color:${lb.c};font-weight:600">${lb.l}</div>
+    </div>`}
+  html+=`</div>`;
+  // Filter
+  let filtered=entries;
+  if(S.crmFilter)filtered=filtered.filter(([,v])=>v.status===S.crmFilter);
+  let activeLb=S.crmFilter?CRM_LABELS.find(l=>l.k===S.crmFilter):null;
+  if(activeLb)html+=`<div style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="pill" style="background:${activeLb.bg};color:${activeLb.c}">${activeLb.icon} ${activeLb.l}</span><button class="btn btn-sm" onclick="S.crmFilter='';renderApp()">✕ Limpar filtro</button></div>`;
+  // Search
+  html+=`<div class="search-bar"><input type="text" placeholder="Buscar por nome ou CPF..." value="${esc(S.crmQ||"")}" oninput="S.crmQ=this.value;renderApp()"></div>`;
+  if(S.crmQ){let q=S.crmQ.toLowerCase();filtered=filtered.filter(([cpf,v])=>cpf.includes(q)||(v.nome||"").toLowerCase().includes(q))}
+  if(!filtered.length){html+=`<div style="text-align:center;padding:40px;color:var(--t3)">Nenhum cliente${S.crmFilter?" com esse status":""}</div>`;return html}
+  // Table
+  html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Nome</th><th>CPF</th><th>Status</th><th>Observação</th><th>Data</th><th>Por</th><th>Ações</th></tr></thead><tbody>`;
+  for(let[cpf,v] of filtered.sort((a,b)=>(b[1].date||"").localeCompare(a[1].date||""))){
+    let lb=CRM_LABELS.find(l=>l.k===v.status)||{icon:"?",l:"?",c:"var(--t3)",bg:"transparent"};
+    // Try to find name from current data or campaigns
+    let nome=v.nome||"";
+    if(!nome&&S.data){let e=S.data.analise.find(x=>x.cpf===cpf);if(e)nome=e.nome}
+    if(!nome){let camps=getCamp();for(let c of camps)for(let x of(c.cpfs||[]))if(x.cpf===cpf){nome=x.nome;break}}
+    html+=`<tr><td>${esc(nome)}</td><td class="mono">${cpf}</td><td><span class="pill" style="background:${lb.bg};color:${lb.c}">${lb.icon} ${lb.l}</span></td><td style="max-width:300px;white-space:normal;font-size:12px">${esc(v.obs||"—")}</td><td style="font-size:11px;color:var(--t3)">${v.date||""}</td><td style="font-size:11px">${esc(v.user||"")}</td><td style="display:flex;gap:4px"><button class="btn btn-sm btn-cyan" onclick="wppStartChat('${cpf}')">💬</button><button class="btn btn-sm" onclick="openCrmModal('${cpf}','${esc(nome)}')">🏷️</button></td></tr>`}
+  html+=`</tbody></table></div></div>`;
+  return html;
+}
+
 // ══════ RENDER ══════
 function renderApp(){
   let D=S.data,c=document.getElementById("appContainer"),html="";
@@ -847,11 +1007,15 @@ function renderApp(){
   let nSel=selected.size,nHig=[...selected].filter(c=>phoneCache[c]).length,nWpp=[...selected].filter(c=>wppSent.has(c)).length;
   let tabs=[{k:"dash",l:"Dashboard"},{k:"an",l:"Análise",n:N((D.totalAnalise||D.analise.length))},{k:"el",l:"✅ Elegíveis",n:N(D.elegiveis.length)},{k:"pipe",l:"🔄 Pipeline",n:nSel||""},{k:"mp",l:"Mapa"},{k:"rc",l:"RMC/RCC",n:N(D.rmcRcc.length)}];
   tabs.push({k:"wpp",l:"💬 WhatsApp"});
-  if(CU&&CU.role==="admin"){tabs.push({k:"camp",l:"📋 Campanhas"});tabs.push({k:"admin",l:"👥"})}
+  let crmCount=Object.keys(getCrmData()).length;
+  if(CU&&CU.role==="admin"){tabs.push({k:"camp",l:"📋 Campanhas"})}
+  tabs.push({k:"crm",l:"🏷️ CRM",n:crmCount||""});
+  if(CU&&CU.role==="admin"){tabs.push({k:"admin",l:"👥"})}
   html+=`<div class="tabs">${tabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
   if(S.tab==="admin"){c.innerHTML=html+renderAdmin();return}
   if(S.tab==="camp"){c.innerHTML=html+renderCampanhas();return}
   if(S.tab==="wpp"){c.innerHTML=html+renderWhatsApp();return}
+  if(S.tab==="crm"){c.innerHTML=html+renderCRM();return}
 
   // ═══ DASHBOARD ═══
   if(S.tab==="dash"){let tT=D.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=D.elegiveis.reduce((s,e)=>s+e.vc,0);
@@ -1036,6 +1200,15 @@ function renderApp(){
   c.innerHTML=html}
 
 // ══════ SAQUE PIPELINE ══════
+// Helper: call cartao API with active bank credentials
+async function cartaoCall(cpf,matricula){
+  let creds=getBankCreds();let activeCreds={};
+  for(let[k,v]of Object.entries(creds)){if(v.active&&v.user&&v.pass)activeCreds[k]={user:v.user,pass:v.pass}}
+  if(!Object.keys(activeCreds).length){throw new Error("Nenhum banco configurado. Admin → 👥 → Credenciais de Bancos")}
+  const res=await fetch('/api/cartao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf.replace(/\D/g,''),matricula:matricula||'',creds:activeCreds})});
+  return res.json();
+}
+
 async function batchSaquePipeline(){
   if(!S.data||!selected.size){alert("Selecione clientes primeiro");return}
   let cpfs=[...new Set([...selected])];
