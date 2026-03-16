@@ -680,14 +680,37 @@ async function wppLoadInstances(){
 }
 
 async function wppCreateInstance(){
-  let name=prompt("Nome da instância (ex: operador_joao):");
+  let name=prompt("Nome da instância (ex: CB30, WB40):");
   if(!name)return;name=name.trim().replace(/[^a-zA-Z0-9_-]/g,'');
   if(!name){alert("Nome inválido");return}
   wppState.loading=true;renderApp();
   try{
     const d=await wppCall('create',{name,instance:''});
-    if(d.qrcode){wppState.qr=d.qrcode.base64||null}
-    await wppLoadInstances();
+    console.log('Create response:',JSON.stringify(d));
+    // Extract QR from response (proxy normalizes to d.qrcode)
+    let qr=d.qrcode||null;
+    if(!qr&&d.instance&&d.instance.qrcode)qr=d.instance.qrcode;
+    if(qr){
+      wppState.qr=qr;
+      // Auto-assign to current user
+      let a=getWppAssign();a[CU.user]=name;saveWppAssign(a);
+      wppState.myInst=name;
+      wppState.loading=false;renderApp();
+      // Poll for connection
+      let tries=0;
+      let poll=setInterval(async()=>{
+        tries++;if(tries>40){clearInterval(poll);return}
+        try{const s=await wppCall('status',{instance:name});
+        if((s.instance&&s.instance.state==='open')||(s.state==='open')){
+          clearInterval(poll);wppState.connected=true;wppState.qr=null;wppLoadChats();
+        }}catch{}
+      },3000);
+    }else{
+      // No QR returned — instance created but needs manual connect
+      wppState.loading=false;
+      await wppLoadInstances();
+      alert(`Instância "${name}" criada! Atribua a um operador e clique "Conectar" para gerar o QR Code.`);
+    }
   }catch(e){wppState.loading=false;alert("Erro: "+e.message);renderApp()}
 }
 
@@ -713,7 +736,9 @@ async function wppConnect(){
   let inst=getMyInstance();if(!inst){alert("Nenhuma instância atribuída");wppState.loading=false;renderApp();return}
   try{
     const d=await wppCall('connect');
-    wppState.qr=d.base64||d.qrcode&&d.qrcode.base64||null;
+    console.log('Connect response:',JSON.stringify(d));
+    // Proxy normalizes QR to d.qrcode field
+    wppState.qr=d.qrcode||d.base64||null;
     wppState.loading=false;renderApp();
     let tries=0;
     let poll=setInterval(async()=>{
@@ -833,7 +858,7 @@ function renderWhatsApp(){
   if(wppState.qr&&!wppState.connected){
     html+=`<div style="text-align:center;padding:30px;background:var(--card);border-radius:16px;border:1px solid var(--brd)">
       <div style="font-size:15px;font-weight:700;margin-bottom:16px">📱 Escaneie o QR Code no WhatsApp</div>
-      <img src="${wppState.qr}" style="width:280px;height:280px;border-radius:12px;border:4px solid var(--acc)">
+      <img src="${wppState.qr.startsWith('data:')?wppState.qr:'data:image/png;base64,'+wppState.qr}" style="width:280px;height:280px;border-radius:12px;border:4px solid var(--acc)">
       <div style="font-size:12px;color:var(--t3);margin-top:12px">WhatsApp → Dispositivos conectados → Conectar dispositivo</div>
       <div style="font-size:11px;color:var(--t2);margin-top:8px;animation:pulse 1.2s ease infinite">Aguardando conexão...</div>
     </div>`;
