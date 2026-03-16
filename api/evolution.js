@@ -3,107 +3,123 @@ export const config = { runtime: 'edge' };
 const EVO_URL = 'https://evo.cbdw.com.br';
 const EVO_KEY = '660BEFC543E9-43D5-914A-E4B264E976B9';
 
+const H = { 'Content-Type': 'application/json', 'apikey': EVO_KEY };
+
+async function evo(method, path, body) {
+  const opts = { method, headers: { ...H } };
+  if (body && method !== 'GET') opts.body = JSON.stringify(body);
+  const r = await fetch(EVO_URL + path, opts);
+  const t = await r.text();
+  let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 500) }; }
+  return { ok: r.ok, status: r.status, data: d };
+}
+
 export default async function handler(req) {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST,GET', 'Access-Control-Allow-Headers': 'Content-Type' } });
   const cors = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' };
 
   try {
     const body = req.method === 'POST' ? await req.json() : {};
-    const action = body.action || new URL(req.url).searchParams.get('action') || '';
-    const instance = body.instance || 'CB20';
+    const action = body.action || '';
+    const inst = body.instance || '';
 
-    const headers = { 'Content-Type': 'application/json', 'apikey': EVO_KEY };
-
-    // === CONNECTION ===
-    if (action === 'status') {
-      const r = await fetch(`${EVO_URL}/instance/connectionState/${instance}`, { headers });
-      const d = await r.json();
-      return new Response(JSON.stringify(d), { headers: cors });
+    // List all instances
+    if (action === 'list') {
+      const r = await evo('GET', '/instance/fetchInstances');
+      return new Response(JSON.stringify(r.data), { headers: cors });
     }
 
-    if (action === 'qrcode') {
-      const r = await fetch(`${EVO_URL}/instance/connect/${instance}`, { headers });
-      const d = await r.json();
-      return new Response(JSON.stringify(d), { headers: cors });
-    }
-
+    // Create instance
     if (action === 'create') {
-      const r = await fetch(`${EVO_URL}/instance/create`, {
-        method: 'POST', headers,
-        body: JSON.stringify({ instanceName: body.name || 'FlowForce', integration: 'WHATSAPP-BAILEYS', qrcode: true })
+      const name = body.name || '';
+      if (!name) return new Response(JSON.stringify({ error: 'Nome obrigatório' }), { status: 400, headers: cors });
+      const r = await evo('POST', '/instance/create', {
+        instanceName: name,
+        integration: 'WHATSAPP-BAILEYS',
+        qrcode: true,
+        rejectCall: false,
+        groupsIgnore: true
       });
-      const d = await r.json();
-      return new Response(JSON.stringify(d), { headers: cors });
+      return new Response(JSON.stringify(r.data), { headers: cors });
     }
 
+    // Delete instance
+    if (action === 'delete') {
+      if (!inst) return new Response(JSON.stringify({ error: 'instance obrigatório' }), { status: 400, headers: cors });
+      const r = await evo('DELETE', '/instance/delete/' + inst);
+      return new Response(JSON.stringify(r.data), { headers: cors });
+    }
+
+    // Connection state
+    if (action === 'status') {
+      if (!inst) return new Response(JSON.stringify({ error: 'instance obrigatório' }), { status: 400, headers: cors });
+      const r = await evo('GET', '/instance/connectionState/' + inst);
+      return new Response(JSON.stringify(r.data), { headers: cors });
+    }
+
+    // Connect (get QR)
+    if (action === 'connect') {
+      if (!inst) return new Response(JSON.stringify({ error: 'instance obrigatório' }), { status: 400, headers: cors });
+      const r = await evo('GET', '/instance/connect/' + inst);
+      return new Response(JSON.stringify(r.data), { headers: cors });
+    }
+
+    // Restart
+    if (action === 'restart') {
+      if (!inst) return new Response(JSON.stringify({ error: 'instance obrigatório' }), { status: 400, headers: cors });
+      const r = await evo('PUT', '/instance/restart/' + inst);
+      return new Response(JSON.stringify(r.data), { headers: cors });
+    }
+
+    // Logout (disconnect WhatsApp)
     if (action === 'logout') {
-      const r = await fetch(`${EVO_URL}/instance/logout/${instance}`, { method: 'DELETE', headers });
-      const d = await r.json();
-      return new Response(JSON.stringify(d), { headers: cors });
+      if (!inst) return new Response(JSON.stringify({ error: 'instance obrigatório' }), { status: 400, headers: cors });
+      const r = await evo('DELETE', '/instance/logout/' + inst);
+      return new Response(JSON.stringify(r.data), { headers: cors });
     }
 
-    // === CHATS ===
+    // Fetch chats
     if (action === 'chats') {
-      const r = await fetch(`${EVO_URL}/chat/findChats/${instance}`, { method: 'POST', headers, body: JSON.stringify({}) });
-      const d = await r.json();
-      return new Response(JSON.stringify(d), { headers: cors });
+      const r = await evo('POST', '/chat/findChats/' + inst, {});
+      return new Response(JSON.stringify(r.data), { headers: cors });
     }
 
-    // === MESSAGES ===
+    // Fetch messages
     if (action === 'messages') {
-      const jid = body.jid || '';
-      const r = await fetch(`${EVO_URL}/chat/findMessages/${instance}`, {
-        method: 'POST', headers,
-        body: JSON.stringify({ where: { key: { remoteJid: jid } }, limit: body.limit || 50 })
+      const r = await evo('POST', '/chat/findMessages/' + inst, {
+        where: { key: { remoteJid: body.jid || '' } },
+        limit: body.limit || 50
       });
-      const d = await r.json();
-      return new Response(JSON.stringify(d), { headers: cors });
+      return new Response(JSON.stringify(r.data), { headers: cors });
     }
 
-    // === SEND TEXT ===
+    // Send text
     if (action === 'send') {
       const number = (body.number || '').replace(/\D/g, '');
       const text = body.text || '';
       if (!number || !text) return new Response(JSON.stringify({ error: 'number e text obrigatórios' }), { status: 400, headers: cors });
-      const r = await fetch(`${EVO_URL}/message/sendText/${instance}`, {
-        method: 'POST', headers,
-        body: JSON.stringify({ number, text })
-      });
-      const d = await r.json();
-      return new Response(JSON.stringify(d), { headers: cors });
+      const r = await evo('POST', '/message/sendText/' + inst, { number, text });
+      return new Response(JSON.stringify(r.data), { headers: cors });
     }
 
-    // === SEND BULK (pipeline) ===
+    // Send bulk
     if (action === 'sendBulk') {
-      const messages = body.messages || []; // [{number, text}]
+      const messages = body.messages || [];
       const results = [];
       for (const m of messages) {
         try {
-          const r = await fetch(`${EVO_URL}/message/sendText/${instance}`, {
-            method: 'POST', headers,
-            body: JSON.stringify({ number: (m.number || '').replace(/\D/g, ''), text: m.text })
+          const r = await evo('POST', '/message/sendText/' + inst, {
+            number: (m.number || '').replace(/\D/g, ''),
+            text: m.text
           });
-          const d = await r.json();
-          results.push({ number: m.number, ok: r.ok, data: d });
+          results.push({ number: m.number, ok: r.ok, data: r.data });
         } catch (e) { results.push({ number: m.number, ok: false, error: e.message }); }
-        await new Promise(r => setTimeout(r, 1500)); // rate limit
+        await new Promise(r => setTimeout(r, 1500));
       }
       return new Response(JSON.stringify({ results }), { headers: cors });
     }
 
-    // === PROFILE PIC ===
-    if (action === 'pic') {
-      const number = (body.number || '').replace(/\D/g, '');
-      const r = await fetch(`${EVO_URL}/chat/fetchProfilePictureUrl/${instance}`, {
-        method: 'POST', headers,
-        body: JSON.stringify({ number })
-      });
-      const d = await r.json();
-      return new Response(JSON.stringify(d), { headers: cors });
-    }
-
-    return new Response(JSON.stringify({ error: 'action inválida', actions: ['status', 'qrcode', 'create', 'logout', 'chats', 'messages', 'send', 'sendBulk', 'pic'] }), { status: 400, headers: cors });
-
+    return new Response(JSON.stringify({ error: 'action inválida' }), { status: 400, headers: cors });
   } catch (err) {
     return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: cors });
   }
