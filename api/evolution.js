@@ -1,7 +1,7 @@
 export const config = { runtime: 'edge' };
 
 const EVO_URL = 'https://evo.cbdw.com.br';
-const EVO_KEY = '17441d2e2da8e81a3b0499cfe6a22d14';
+const EVO_KEY = 'cd60bd4c73b2da9c3a35bede3a9a9504';
 
 const H = { 'Content-Type': 'application/json', 'apikey': EVO_KEY };
 
@@ -10,7 +10,7 @@ async function evo(method, path, body) {
   if (body && method !== 'GET') opts.body = JSON.stringify(body);
   const r = await fetch(EVO_URL + path, opts);
   const t = await r.text();
-  let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 500) }; }
+  let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 1000) }; }
   return { ok: r.ok, status: r.status, data: d };
 }
 
@@ -29,7 +29,7 @@ export default async function handler(req) {
       return new Response(JSON.stringify(r.data), { headers: cors });
     }
 
-    // Create instance
+    // Create instance — returns full response including QR
     if (action === 'create') {
       const name = body.name || '';
       if (!name) return new Response(JSON.stringify({ error: 'Nome obrigatório' }), { status: 400, headers: cors });
@@ -38,9 +38,31 @@ export default async function handler(req) {
         integration: 'WHATSAPP-BAILEYS',
         qrcode: true,
         rejectCall: false,
-        groupsIgnore: true
+        groupsIgnore: true,
+        alwaysOnline: false,
+        readMessages: false,
+        readStatus: false,
+        syncFullHistory: false
       });
-      return new Response(JSON.stringify(r.data), { headers: cors });
+      // Extract QR from various possible response formats
+      let qrBase64 = null;
+      const d = r.data;
+      if (d) {
+        // Format 1: d.qrcode.base64
+        if (d.qrcode && d.qrcode.base64) qrBase64 = d.qrcode.base64;
+        // Format 2: d.base64
+        else if (d.base64) qrBase64 = d.base64;
+        // Format 3: nested in array
+        else if (Array.isArray(d) && d[0] && d[0].qrcode) qrBase64 = d[0].qrcode.base64;
+      }
+      return new Response(JSON.stringify({
+        success: r.ok,
+        name,
+        qrcode: qrBase64,
+        instance: d.instance || d,
+        hash: d.hash || null,
+        _raw: r.ok ? undefined : d
+      }), { headers: cors });
     }
 
     // Delete instance
@@ -57,11 +79,22 @@ export default async function handler(req) {
       return new Response(JSON.stringify(r.data), { headers: cors });
     }
 
-    // Connect (get QR)
+    // Connect (get QR) — for existing instances that need reconnection
     if (action === 'connect') {
       if (!inst) return new Response(JSON.stringify({ error: 'instance obrigatório' }), { status: 400, headers: cors });
       const r = await evo('GET', '/instance/connect/' + inst);
-      return new Response(JSON.stringify(r.data), { headers: cors });
+      const d = r.data;
+      let qrBase64 = null;
+      if (d) {
+        if (d.base64) qrBase64 = d.base64;
+        else if (d.qrcode && d.qrcode.base64) qrBase64 = d.qrcode.base64;
+        else if (d.code) qrBase64 = d.code; // some versions return code as base64
+      }
+      return new Response(JSON.stringify({
+        ...d,
+        qrcode: qrBase64,
+        _debug: r.ok ? undefined : { status: r.status, data: d }
+      }), { headers: cors });
     }
 
     // Restart
