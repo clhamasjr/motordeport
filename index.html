@@ -299,7 +299,7 @@ function sendWppBatch(){
   if(!targets.length){alert("Nenhum contato com telefone válido");return}
   // Use Evolution API if connected
   if(wppState.connected){
-    if(!confirm(`Enviar ${targets.length} mensagens via Evolution API?\n\nInstância: ${wppState.instance}`))return;
+    if(!confirm(`Enviar ${targets.length} mensagens via Evolution API?\n\nInstância: ${getMyInstance()}`))return;
     (async()=>{
       let ok=0,fail=0;
       for(let t of targets){
@@ -562,40 +562,84 @@ function renderCampanhas(){
 }
 
 // ══════ WHATSAPP (Evolution API) ══════
-let wppState={connected:false,loading:false,chats:[],activeChat:null,messages:[],qr:null,instance:'CB20'};
+let wppState={instances:[],myInst:null,connected:false,loading:false,chats:[],activeChat:null,messages:[],qr:null};
+
+function getWppAssign(){try{return JSON.parse(localStorage.getItem("ff_wpp_assign")||"{}")}catch{return{}}}
+function saveWppAssign(a){localStorage.setItem("ff_wpp_assign",JSON.stringify(a))}
+function getMyInstance(){let a=getWppAssign();return CU?a[CU.user]||null:null}
 
 async function wppCall(action,data={}){
-  const res=await fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,instance:wppState.instance,...data})});
+  let inst=data.instance||getMyInstance()||'';
+  const res=await fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,instance:inst,...data})});
   return res.json();
 }
 
-async function wppCheckStatus(){
+async function wppLoadInstances(){
   wppState.loading=true;renderApp();
   try{
-    const d=await wppCall('status');
-    wppState.connected=(d.instance&&d.instance.state==='open')||(d.state==='open');
-    wppState.loading=false;
-    if(wppState.connected&&!wppState.chats.length)wppLoadChats();
-    else renderApp();
-  }catch(e){wppState.connected=false;wppState.loading=false;renderApp()}
+    const d=await wppCall('list',{instance:''});
+    wppState.instances=Array.isArray(d)?d:[];
+    wppState.myInst=getMyInstance();
+    // Check my instance status
+    if(wppState.myInst){
+      try{
+        const s=await wppCall('status');
+        wppState.connected=(s.instance&&s.instance.state==='open')||(s.state==='open');
+      }catch{wppState.connected=false}
+    }
+    wppState.loading=false;renderApp();
+  }catch(e){wppState.loading=false;wppState.instances=[];renderApp()}
+}
+
+async function wppCreateInstance(){
+  let name=prompt("Nome da instância (ex: operador_joao):");
+  if(!name)return;name=name.trim().replace(/[^a-zA-Z0-9_-]/g,'');
+  if(!name){alert("Nome inválido");return}
+  wppState.loading=true;renderApp();
+  try{
+    const d=await wppCall('create',{name,instance:''});
+    if(d.qrcode){wppState.qr=d.qrcode.base64||null}
+    await wppLoadInstances();
+  }catch(e){wppState.loading=false;alert("Erro: "+e.message);renderApp()}
+}
+
+async function wppDeleteInstance(name){
+  if(!confirm(`Excluir instância "${name}"? Isso desconecta o WhatsApp.`))return;
+  try{
+    await wppCall('delete',{instance:name});
+    // Remove assignments
+    let a=getWppAssign();for(let k of Object.keys(a))if(a[k]===name)delete a[k];saveWppAssign(a);
+    await wppLoadInstances();
+  }catch(e){alert("Erro: "+e.message)}
+}
+
+function wppAssignUser(instName,userLogin){
+  let a=getWppAssign();
+  if(a[userLogin]===instName)delete a[userLogin];
+  else a[userLogin]=instName;
+  saveWppAssign(a);renderApp();
 }
 
 async function wppConnect(){
   wppState.loading=true;wppState.qr=null;renderApp();
+  let inst=getMyInstance();if(!inst){alert("Nenhuma instância atribuída");wppState.loading=false;renderApp();return}
   try{
-    const d=await wppCall('qrcode');
+    const d=await wppCall('connect');
     wppState.qr=d.base64||d.qrcode&&d.qrcode.base64||null;
     wppState.loading=false;renderApp();
-    // Poll for connection
     let tries=0;
     let poll=setInterval(async()=>{
-      tries++;if(tries>30){clearInterval(poll);return}
-      const s=await wppCall('status');
+      tries++;if(tries>40){clearInterval(poll);return}
+      try{const s=await wppCall('status');
       if((s.instance&&s.instance.state==='open')||(s.state==='open')){
         clearInterval(poll);wppState.connected=true;wppState.qr=null;wppLoadChats();
-      }
+      }}catch{}
     },3000);
   }catch(e){wppState.loading=false;alert('Erro: '+e.message);renderApp()}
+}
+
+async function wppDisconnect(){
+  try{await wppCall('logout');wppState.connected=false;wppState.chats=[];wppState.activeChat=null;renderApp()}catch(e){alert("Erro: "+e.message)}
 }
 
 async function wppLoadChats(){
@@ -604,7 +648,7 @@ async function wppLoadChats(){
     wppState.chats=Array.isArray(d)?d.filter(c=>c.id&&!c.id.includes('@g.us')).slice(0,100):[];
     wppState.chats.sort((a,b)=>(b.lastMsgTimestamp||0)-(a.lastMsgTimestamp||0));
     renderApp();
-  }catch(e){renderApp()}
+  }catch{renderApp()}
 }
 
 async function wppOpenChat(jid,name){
@@ -614,10 +658,10 @@ async function wppOpenChat(jid,name){
     wppState.messages=Array.isArray(d)?d.reverse():Array.isArray(d.messages)?d.messages.reverse():[];
     renderApp();
     setTimeout(()=>{let el=document.getElementById('wppMsgList');if(el)el.scrollTop=el.scrollHeight},100);
-  }catch(e){renderApp()}
+  }catch{renderApp()}
 }
 
-async function wppSend(){
+async function wppSendMsg(){
   let inp=document.getElementById('wppMsgInput');if(!inp||!inp.value.trim())return;
   let text=inp.value.trim();inp.value='';
   let number=wppState.activeChat.jid.replace('@s.whatsapp.net','');
@@ -629,46 +673,28 @@ async function wppSend(){
   }catch(e){alert('Erro: '+e.message)}
 }
 
-async function wppSendToNumber(number,text){
-  if(!wppState.connected){alert('WhatsApp não conectado. Vá na aba WhatsApp e conecte.');return}
-  try{await wppCall('send',{number,text});return true}catch(e){alert('Erro: '+e.message);return false}
-}
-
-async function wppSendBulkPipeline(){
-  if(!wppState.connected){alert('WhatsApp não conectado!');return}
-  if(!S.data||!selected.size){alert('Selecione clientes primeiro');return}
-  let tpl=document.getElementById('wppTpl');if(!tpl){alert('Configure o template');return}
-  let template=tpl.value;
-  let grouped=groupByCPF(S.data.elegiveis.filter(e=>selected.has(e.cpf)));
-  let msgs=[];
-  for(let g of grouped){
-    let phone=g.t1||'';if(!phone)continue;
-    phone=phone.replace(/\D/g,'');if(phone.length<10)continue;
-    if(!phone.startsWith('55'))phone='55'+phone;
-    let text=template.replace('{nome}',g.nome).replace('{cpf}',g.cpf).replace('{troco}',R$(g.trocoTotal)).replace('{vlr_contrato}',R$(g.vcTotal)).replace('{qtd}',g.qtd);
-    msgs.push({number:phone,text});
-  }
-  if(!msgs.length){alert('Nenhum cliente com telefone válido');return}
-  if(!confirm(`Enviar ${msgs.length} mensagens via WhatsApp Evolution?\n\nInstância: ${wppState.instance}`))return;
-  try{
-    const d=await wppCall('sendBulk',{messages:msgs});
-    let ok=d.results?d.results.filter(r=>r.ok).length:0;
-    alert(`✅ ${ok}/${msgs.length} mensagens enviadas!`);
-    for(let r of(d.results||[]))if(r.ok)wppSent.add(r.number);
-    renderApp();
-  }catch(e){alert('Erro: '+e.message)}
+async function wppStartChat(number){
+  if(!wppState.connected){alert('WhatsApp não conectado');return}
+  number=String(number).replace(/\D/g,'');
+  if(!number.startsWith('55')&&number.length<=11)number='55'+number;
+  let jid=number+'@s.whatsapp.net';
+  S.tab='wpp';wppOpenChat(jid,number);
 }
 
 function renderWhatsApp(){
   let html='';
-  // Connection status bar
-  html+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+  let isAdmin=CU&&CU.role==='admin';
+  let myInst=getMyInstance();
+  let assign=getWppAssign();
+
+  // Header
+  html+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px">
     <div style="font-size:18px;font-weight:800">💬 WhatsApp</div>
-    <div style="display:flex;gap:8px;align-items:center">
-      <span style="font-size:12px;color:var(--t3)">Instância: <span style="font-family:monospace;color:var(--t1)">${wppState.instance}</span></span>
-      <span class="pill ${wppState.connected?'pill-grn':'pill-red'}">${wppState.connected?'● Conectado':'● Desconectado'}</span>
-      <button class="btn btn-sm btn-cyan" onclick="wppCheckStatus()">🔄 Status</button>
-      ${wppState.connected?`<button class="btn btn-sm btn-red" onclick="wppCall('logout').then(()=>{wppState.connected=false;wppState.chats=[];wppState.activeChat=null;renderApp()})">Desconectar</button>`:`<button class="btn-acc btn-sm" onclick="wppConnect()">📱 Conectar</button>`}
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      ${myInst?`<span style="font-size:12px;color:var(--t2)">Instância: <span style="font-family:monospace;color:var(--acc);font-weight:700">${myInst}</span></span>
+      <span class="pill ${wppState.connected?'pill-grn':'pill-red'}">${wppState.connected?'● Conectado':'● Desconectado'}</span>`:'<span class="pill pill-ylw">⚠️ Sem instância</span>'}
+      <button class="btn btn-sm btn-cyan" onclick="wppLoadInstances()">🔄 Atualizar</button>
+      ${wppState.connected?`<button class="btn btn-sm btn-red" onclick="wppDisconnect()">Desconectar</button>`:myInst?`<button class="btn-acc btn-sm" onclick="wppConnect()">📱 Conectar</button>`:''}
     </div>
   </div>`;
 
@@ -677,97 +703,138 @@ function renderWhatsApp(){
     return html;
   }
 
+  // === ADMIN: Instance Manager ===
+  if(isAdmin){
+    let users=getU()||[];
+    html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:20px;margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div style="font-size:15px;font-weight:700">🔧 Gerenciar Instâncias</div>
+        <button class="btn-acc btn-sm" onclick="wppCreateInstance()">+ Nova Instância</button>
+      </div>`;
+    if(!wppState.instances.length){
+      html+=`<div style="text-align:center;padding:20px;color:var(--t3)">Nenhuma instância. Clique em "Atualizar" ou crie uma nova.</div>`;
+    }else{
+      html+=`<div style="display:grid;gap:10px">`;
+      for(let inst of wppState.instances){
+        let name=inst.instance&&inst.instance.instanceName||inst.instanceName||inst.name||'?';
+        let state=inst.instance&&inst.instance.state||inst.state||'unknown';
+        let stColor=state==='open'?'pill-grn':state==='close'?'pill-red':'pill-ylw';
+        let assignedUsers=Object.entries(assign).filter(([k,v])=>v===name).map(([k])=>k);
+        html+=`<div style="background:var(--sf);border-radius:10px;padding:14px;border:1px solid var(--brd);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:14px;font-weight:700;font-family:monospace">${esc(name)}</span>
+            <span class="pill ${stColor}">${state}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span style="font-size:11px;color:var(--t3)">Atribuir:</span>`;
+        for(let u of users){
+          let isAssigned=assign[u.user]===name;
+          html+=`<button class="btn btn-sm ${isAssigned?'btn-grn':''}" style="font-size:10px;${isAssigned?'background:rgba(34,197,94,.1)':''}" onclick="wppAssignUser('${esc(name)}','${u.user}')">${isAssigned?'✅ ':''}${esc(u.name)}</button>`;
+        }
+        html+=` <button class="btn btn-sm btn-red" onclick="wppDeleteInstance('${esc(name)}')">🗑️</button>
+          </div>
+          ${assignedUsers.length?`<div style="font-size:10px;color:var(--cyan);width:100%">→ ${assignedUsers.join(', ')}</div>`:''}
+        </div>`;
+      }
+      html+=`</div>`;
+    }
+    html+=`</div>`;
+  }
+
   // QR Code
   if(wppState.qr&&!wppState.connected){
     html+=`<div style="text-align:center;padding:30px;background:var(--card);border-radius:16px;border:1px solid var(--brd)">
       <div style="font-size:15px;font-weight:700;margin-bottom:16px">📱 Escaneie o QR Code no WhatsApp</div>
       <img src="${wppState.qr}" style="width:280px;height:280px;border-radius:12px;border:4px solid var(--acc)">
       <div style="font-size:12px;color:var(--t3);margin-top:12px">WhatsApp → Dispositivos conectados → Conectar dispositivo</div>
+      <div style="font-size:11px;color:var(--t2);margin-top:8px;animation:pulse 1.2s ease infinite">Aguardando conexão...</div>
     </div>`;
     return html;
   }
 
-  // Not connected
+  // Not connected & no instance
+  if(!wppState.connected&&!myInst){
+    html+=`<div style="text-align:center;padding:60px;background:var(--card);border-radius:16px;border:1px solid var(--brd)">
+      <div style="font-size:48px;margin-bottom:16px">📱</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:8px">Nenhuma instância atribuída</div>
+      <div style="font-size:13px;color:var(--t2)">Peça ao administrador para criar e atribuir uma instância a você.</div>
+    </div>`;
+    return html;
+  }
+
+  // Not connected but has instance
   if(!wppState.connected){
     html+=`<div style="text-align:center;padding:60px;background:var(--card);border-radius:16px;border:1px solid var(--brd)">
       <div style="font-size:48px;margin-bottom:16px">📱</div>
-      <div style="font-size:16px;font-weight:700;margin-bottom:8px">WhatsApp não conectado</div>
-      <div style="font-size:13px;color:var(--t2);margin-bottom:20px">Clique em "Conectar" para escanear o QR Code</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:8px">WhatsApp desconectado</div>
+      <div style="font-size:13px;color:var(--t2);margin-bottom:20px">Instância: <strong>${myInst}</strong></div>
       <button class="btn-acc" onclick="wppConnect()">📱 Conectar WhatsApp</button>
     </div>`;
     return html;
   }
 
-  // === CONNECTED: Chat interface ===
-  html+=`<div style="display:grid;grid-template-columns:320px 1fr;gap:0;height:calc(100vh - 200px);background:var(--card);border-radius:16px;border:1px solid var(--brd);overflow:hidden">`;
+  // === CONNECTED: Chat UI ===
+  html+=`<div style="display:grid;grid-template-columns:320px 1fr;gap:0;height:calc(100vh - ${isAdmin?'420':'220'}px);background:var(--card);border-radius:16px;border:1px solid var(--brd);overflow:hidden">`;
 
   // Left: Chat list
   html+=`<div style="border-right:1px solid var(--brd);display:flex;flex-direction:column">
-    <div style="padding:14px;border-bottom:1px solid var(--brd)">
-      <input type="text" id="wppChatSearch" placeholder="Buscar conversa..." style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:13px" oninput="filterWppChats(this.value)">
+    <div style="padding:12px;border-bottom:1px solid var(--brd);display:flex;gap:6px">
+      <input type="text" placeholder="Buscar..." style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:13px" oninput="filterWppChats(this.value)">
+      <button class="btn btn-sm btn-cyan" onclick="wppLoadChats()">🔄</button>
     </div>
     <div style="overflow-y:auto;flex:1" id="wppChatList">`;
-  let chats=wppState.chats;
-  for(let ch of chats){
+  for(let ch of wppState.chats){
     let name=ch.name||ch.pushName||ch.id.replace('@s.whatsapp.net','');
-    let lastMsg=ch.lastMessage||'';
     let isActive=wppState.activeChat&&wppState.activeChat.jid===ch.id;
     let time=ch.lastMsgTimestamp?new Date(ch.lastMsgTimestamp*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
-    html+=`<div onclick="wppOpenChat('${ch.id}','${esc(name)}')" style="padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--brd);background:${isActive?'rgba(59,130,246,.08)':'transparent'};transition:background .1s" onmouseover="this.style.background='rgba(59,130,246,.04)'" onmouseout="this.style.background='${isActive?'rgba(59,130,246,.08)':'transparent'}'">
+    let unread=ch.unreadMessages||0;
+    html+=`<div onclick="wppOpenChat('${ch.id}','${esc(name)}')" style="padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--brd);background:${isActive?'rgba(59,130,246,.08)':'transparent'}">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <div style="font-size:13px;font-weight:700;color:${isActive?'var(--acc)':'var(--t1)'}">${esc(name)}</div>
-        <div style="font-size:10px;color:var(--t3)">${time}</div>
+        <div style="font-size:13px;font-weight:${isActive?'800':'600'};color:${isActive?'var(--acc)':'var(--t1)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px">${esc(name)}</div>
+        <div style="display:flex;align-items:center;gap:6px">${unread>0?`<span style="background:var(--grn);color:#000;font-size:10px;font-weight:800;padding:1px 6px;border-radius:10px">${unread}</span>`:''}<span style="font-size:10px;color:var(--t3)">${time}</span></div>
       </div>
-      ${lastMsg?`<div style="font-size:11px;color:var(--t3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px">${esc(String(lastMsg).substring(0,60))}</div>`:''}
     </div>`;
   }
-  if(!chats.length)html+=`<div style="padding:20px;text-align:center;color:var(--t3);font-size:12px">Nenhuma conversa</div>`;
+  if(!wppState.chats.length)html+=`<div style="padding:20px;text-align:center;color:var(--t3);font-size:12px">Carregando... <button class="btn btn-sm" onclick="wppLoadChats()">🔄</button></div>`;
   html+=`</div></div>`;
 
   // Right: Messages
   html+=`<div style="display:flex;flex-direction:column;background:var(--sf)">`;
   if(wppState.activeChat){
-    // Header
-    html+=`<div style="padding:14px 18px;border-bottom:1px solid var(--brd);display:flex;align-items:center;gap:10px;background:var(--card)">
-      <div style="width:36px;height:36px;border-radius:50%;background:var(--acc);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#fff">${(wppState.activeChat.name||'?')[0].toUpperCase()}</div>
-      <div><div style="font-size:14px;font-weight:700">${esc(wppState.activeChat.name)}</div><div style="font-size:10px;color:var(--t3);font-family:monospace">${wppState.activeChat.jid.replace('@s.whatsapp.net','')}</div></div>
-      <button class="btn btn-sm" style="margin-left:auto" onclick="wppOpenChat('${wppState.activeChat.jid}','${esc(wppState.activeChat.name)}')">🔄</button>
+    let chatNum=wppState.activeChat.jid.replace('@s.whatsapp.net','');
+    html+=`<div style="padding:12px 18px;border-bottom:1px solid var(--brd);display:flex;align-items:center;gap:10px;background:var(--card)">
+      <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--acc),var(--pur));display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#fff">${(wppState.activeChat.name||'?')[0].toUpperCase()}</div>
+      <div style="flex:1"><div style="font-size:14px;font-weight:700">${esc(wppState.activeChat.name)}</div><div style="font-size:10px;color:var(--t3);font-family:monospace">${chatNum}</div></div>
+      <button class="btn btn-sm" onclick="wppOpenChat('${wppState.activeChat.jid}','${esc(wppState.activeChat.name)}')">🔄</button>
     </div>`;
-
-    // Messages
     html+=`<div id="wppMsgList" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:6px">`;
     for(let m of wppState.messages){
       let fromMe=m.key&&m.key.fromMe;
-      let text=m.message?(m.message.conversation||m.message.extendedTextMessage&&m.message.extendedTextMessage.text||'[mídia]'):'';
-      let time=m.messageTimestamp?new Date(m.messageTimestamp*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+      let text=m.message?(m.message.conversation||m.message.extendedTextMessage&&m.message.extendedTextMessage.text||''):'';
       if(!text)continue;
-      html+=`<div style="align-self:${fromMe?'flex-end':'flex-start'};max-width:70%;padding:10px 14px;border-radius:12px;background:${fromMe?'rgba(59,130,246,.15)':'var(--card)'};border:1px solid ${fromMe?'rgba(59,130,246,.2)':'var(--brd)'}">
+      let time=m.messageTimestamp?new Date(m.messageTimestamp*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+      html+=`<div style="align-self:${fromMe?'flex-end':'flex-start'};max-width:70%;padding:10px 14px;border-radius:${fromMe?'12px 12px 2px 12px':'12px 12px 12px 2px'};background:${fromMe?'rgba(14,165,233,.12)':'var(--card)'};border:1px solid ${fromMe?'rgba(14,165,233,.2)':'var(--brd)'}">
         <div style="font-size:13px;color:var(--t1);white-space:pre-wrap;word-break:break-word">${esc(text)}</div>
-        <div style="font-size:9px;color:var(--t3);text-align:right;margin-top:4px">${time}</div>
+        <div style="font-size:9px;color:var(--t3);text-align:${fromMe?'right':'left'};margin-top:4px">${time}${fromMe?' ✓':''}</div>
       </div>`;
     }
-    if(!wppState.messages.length)html+=`<div style="text-align:center;padding:30px;color:var(--t3);font-size:12px">Carregando mensagens...</div>`;
+    if(!wppState.messages.length)html+=`<div style="text-align:center;padding:30px;color:var(--t3)">Carregando mensagens...</div>`;
     html+=`</div>`;
-
-    // Input
     html+=`<div style="padding:12px 16px;border-top:1px solid var(--brd);display:flex;gap:10px;background:var(--card)">
-      <input type="text" id="wppMsgInput" placeholder="Digite uma mensagem..." style="flex:1;padding:10px 14px;border-radius:10px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:14px" onkeydown="if(event.key==='Enter')wppSend()">
-      <button class="btn-acc" style="padding:10px 20px" onclick="wppSend()">Enviar</button>
+      <input type="text" id="wppMsgInput" placeholder="Digite uma mensagem..." style="flex:1;padding:10px 14px;border-radius:10px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:14px" onkeydown="if(event.key==='Enter')wppSendMsg()">
+      <button class="btn-acc" style="padding:10px 20px" onclick="wppSendMsg()">➤</button>
     </div>`;
   }else{
     html+=`<div style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px">
-      <div style="font-size:40px">💬</div>
-      <div style="font-size:14px;color:var(--t3)">Selecione uma conversa</div>
+      <div style="font-size:48px;opacity:.3">💬</div>
+      <div style="font-size:14px;color:var(--t3)">Selecione uma conversa ou inicie pelo Pipeline</div>
     </div>`;
   }
   html+=`</div></div>`;
   return html;
 }
 
-function filterWppChats(q){
-  let items=document.querySelectorAll('#wppChatList > div');
-  for(let item of items){item.style.display=!q||item.textContent.toLowerCase().includes(q.toLowerCase())?'block':'none'}
-}
+function filterWppChats(q){let items=document.querySelectorAll('#wppChatList > div');for(let item of items)item.style.display=!q||item.textContent.toLowerCase().includes(q.toLowerCase())?'block':'none'}
 
 // ══════ RENDER ══════
 function renderApp(){
