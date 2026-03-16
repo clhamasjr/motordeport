@@ -3,48 +3,45 @@ export const config = { runtime: 'edge' };
 const API_KEY = 'dak_8a4b38fd181b6784a6718bc2bf5fbb62_4d066b97';
 const BASE = 'https://api.dataconsulta.com.br';
 
-const BANCOS = {
-  BMG: {
-    login: '/v1/bmg/saquecartao/login',
-    query: '/v1/bmg/saquecartao',
-    logout: '/v1/bmg/saquecartao/logout',
-    user: 'sp.56863.34921564876',
-    pass: 'Fabri15*/4'
-  },
-  DAYCOVAL: {
-    login: '/v1/bmg/saquecartao/login',
-    query: '/v1/bmg/saquecartao',
-    logout: '/v1/bmg/saquecartao/logout',
-    user: 'DCE-LHAMASCRE0046',
-    pass: 'MelhorMelhor26@'
-  }
+// Endpoint mapping per bank
+const ENDPOINTS = {
+  BMG:      { login: '/v1/bmg/saquecartao/login', query: '/v1/bmg/saquecartao', logout: '/v1/bmg/saquecartao/logout' },
+  DAYCOVAL: { login: '/v1/bmg/saquecartao/login', query: '/v1/bmg/saquecartao', logout: '/v1/bmg/saquecartao/logout' },
+  C6:       { login: '/v1/bmg/saquecartao/login', query: '/v1/bmg/saquecartao', logout: '/v1/bmg/saquecartao/logout' },
+  FACTA:    { login: '/v1/bmg/saquecartao/login', query: '/v1/bmg/saquecartao', logout: '/v1/bmg/saquecartao/logout' },
+  SAFRA:    { login: '/v1/bmg/saquecartao/login', query: '/v1/bmg/saquecartao', logout: '/v1/bmg/saquecartao/logout' },
+  ITAU:     { login: '/v1/bmg/saquecartao/login', query: '/v1/bmg/saquecartao', logout: '/v1/bmg/saquecartao/logout' },
+  BRADESCO: { login: '/v1/bmg/saquecartao/login', query: '/v1/bmg/saquecartao', logout: '/v1/bmg/saquecartao/logout' },
+  BRB:      { login: '/v1/bmg/saquecartao/login', query: '/v1/bmg/saquecartao', logout: '/v1/bmg/saquecartao/logout' },
+  BSEGURO:  { login: '/v1/bmg/saquecartao/login', query: '/v1/bmg/saquecartao', logout: '/v1/bmg/saquecartao/logout' }
 };
 
-async function consultarBanco(banco, cpf, matricula) {
-  const cfg = BANCOS[banco];
-  if (!cfg) return { ok: false, banco, error: 'Banco nao configurado' };
+async function consultarBanco(banco, cred, cpf, matricula) {
+  const ep = ENDPOINTS[banco];
+  if (!ep || !cred || !cred.user || !cred.pass) return { ok: false, banco, error: 'Sem credenciais' };
+
   try {
-    // Login
-    const lr = await fetch(BASE + cfg.login, {
+    // Login with bank credentials
+    const lr = await fetch(BASE + ep.login, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Api-Key': API_KEY },
-      body: JSON.stringify({ login: cfg.user, senha: cfg.pass })
+      body: JSON.stringify({ login: cred.user, senha: cred.pass })
     });
     const lt = await lr.text();
     let ld = {}; try { ld = JSON.parse(lt); } catch {}
     let token = ld.token || ld.accessToken || ld.access_token || '';
 
+    // Try alternative login format
     if (!lr.ok && !token) {
-      // Try usuario/senha format
-      const lr2 = await fetch(BASE + cfg.login, {
+      const lr2 = await fetch(BASE + ep.login, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Api-Key': API_KEY },
-        body: JSON.stringify({ usuario: cfg.user, senha: cfg.pass })
+        body: JSON.stringify({ usuario: cred.user, senha: cred.pass })
       });
       const lt2 = await lr2.text();
       try { ld = JSON.parse(lt2); } catch {}
       token = ld.token || ld.accessToken || '';
-      if (!lr2.ok && !token) return { ok: false, banco, error: 'Login ' + lr.status + '/' + lr2.status, debug: lt.substring(0, 200) + ' | ' + lt2.substring(0, 200) };
+      if (!lr2.ok && !token) return { ok: false, banco, error: 'Login ' + lr.status + '/' + lr2.status, debug: lt.substring(0, 150) };
     }
 
     // Query
@@ -53,7 +50,7 @@ async function consultarBanco(banco, cpf, matricula) {
     const cookie = lr.headers.get('set-cookie');
     if (cookie) qh['Cookie'] = cookie.split(';')[0];
 
-    const qr = await fetch(BASE + cfg.query, {
+    const qr = await fetch(BASE + ep.query, {
       method: 'POST', headers: qh,
       body: JSON.stringify({ convenio: '1581', cpf, matricula: matricula || '', valorParcela: 0, dadosCadastrais: true })
     });
@@ -61,25 +58,30 @@ async function consultarBanco(banco, cpf, matricula) {
     let qd = {}; try { qd = JSON.parse(qt); } catch {}
 
     // Logout
-    fetch(BASE + cfg.logout, { method: 'POST', headers: qh, body: '{}' }).catch(() => {});
+    fetch(BASE + ep.logout, { method: 'POST', headers: qh, body: '{}' }).catch(() => {});
 
-    if (!qr.ok) return { ok: false, banco, error: 'Query ' + qr.status, debug: qt.substring(0, 300) };
+    if (!qr.ok) return { ok: false, banco, error: 'Query ' + qr.status, debug: qt.substring(0, 200) };
 
-    return { ok: true, banco, cartoes: qd.cartoes || [], telefones: qd.telefones || [], dados: qd.dadoCadastral || {}, enderecos: qd.enderecos || [] };
+    return { ok: true, banco, cartoes: qd.cartoes || [], telefones: qd.telefones || [], dados: qd.dadoCadastral || {} };
   } catch (e) { return { ok: false, banco, error: e.message }; }
 }
 
 export default async function handler(req) {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Content-Type' } });
   const cors = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' };
+
   try {
     const body = await req.json();
     const cpf = (body.cpf || '').replace(/\D/g, '');
     const matricula = body.matricula || '';
-    const bancos = body.bancos || ['BMG', 'DAYCOVAL'];
-    if (!cpf) return new Response(JSON.stringify({ error: 'CPF obrigatorio' }), { status: 400, headers: cors });
+    const bankCreds = body.creds || {}; // {BMG: {user, pass}, DAYCOVAL: {user, pass}}
+    if (!cpf) return new Response(JSON.stringify({ error: 'CPF obrigatório' }), { status: 400, headers: cors });
 
-    const results = await Promise.all(bancos.filter(b => BANCOS[b]).map(b => consultarBanco(b, cpf, matricula)));
+    // Only query banks that have credentials
+    const banksToQuery = Object.keys(bankCreds).filter(b => bankCreds[b] && bankCreds[b].user && bankCreds[b].pass && ENDPOINTS[b]);
+    if (!banksToQuery.length) return new Response(JSON.stringify({ error: 'Nenhum banco configurado' }), { status: 400, headers: cors });
+
+    const results = await Promise.all(banksToQuery.map(b => consultarBanco(b, bankCreds[b], cpf, matricula)));
 
     let allCartoes = [], telefones = [], dados = {}, fontes = [], errors = [];
     for (const r of results) {
@@ -92,8 +94,7 @@ export default async function handler(req) {
     }
 
     return new Response(JSON.stringify({
-      success: fontes.length > 0,
-      cpf, nome: dados.nome || '', fontes,
+      success: fontes.length > 0, cpf, nome: dados.nome || '', fontes,
       cartoes: allCartoes.map(c => ({
         banco: c.banco || '', fonte: c._fonte || '', margem: c.margem || 0,
         limiteCartao: c.limiteCartao || 0, limiteSaqueTotal: c.limiteSaqueTotal || 0,
