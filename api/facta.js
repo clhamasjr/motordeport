@@ -14,7 +14,7 @@ export const config = { runtime: 'edge' };
 //   Métodos Complementares (combos)
 // ═══════════════════════════════════════════════════════════════
 
-const BASE = 'https://webservice.facta.com.br';
+const BASE = 'https://webservice-homol.facta.com.br';
 const AUTH = 'Basic OTM1OTY6ZDNtNXFxMXM0dmp5cDJ2YjZqdnk=';
 const LOGIN_CERT = '93596';
 
