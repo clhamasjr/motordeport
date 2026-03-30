@@ -47,14 +47,14 @@ async function fGet(path, params) {
 // POST com form-data (multipart) — como a FACTA espera
 async function fPost(path, fields) {
   const token = await getToken();
-  const fd = new FormData();
+  const params = new URLSearchParams();
   for (const [k, v] of Object.entries(fields)) {
-    if (v !== undefined && v !== null && v !== '') fd.append(k, String(v));
+    if (v !== undefined && v !== null && v !== '') params.append(k, String(v));
   }
   const r = await fetch(BASE + path, {
     method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + token },
-    body: fd
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString()
   });
   const t = await r.text();
   let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 3000) }; }
