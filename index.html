@@ -84,11 +84,14 @@ td.right,th.right{text-align:right}td.mono{font-family:monospace;font-size:12px}
 .gsr-item{padding:14px 18px;border-bottom:1px solid var(--brd);cursor:pointer;transition:background .1s}.gsr-item:hover{background:rgba(59,130,246,.06)}
 .gsr-item:last-child{border-bottom:none}
 @media(max-width:900px){.dash-grid{grid-template-columns:1fr}.rmc-grid,.mapa-grid{grid-template-columns:1fr}.container{padding:14px}.header{padding:0 14px}.pipe-stages{flex-wrap:wrap}.gsearch input{width:120px}}
+.role-admin{background:rgba(239,68,68,.12);color:var(--red);padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700}
+.role-gestor{background:rgba(234,179,8,.12);color:var(--ylw);padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700}
+.role-user,.role-operador{background:rgba(59,130,246,.12);color:var(--acc);padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700}
 </style>
 </head>
 <body>
 <div id="loginScreen" class="login-wrap"><div class="login-box"><div class="login-logo"><div class="login-logo-icon">FF</div><div><div style="font-size:26px;font-weight:800">FlowForce</div><div style="font-size:13px;color:var(--t3)">Motor de Operações</div></div></div><div class="login-card" id="loginCard"><div style="font-size:20px;font-weight:700;text-align:center;margin-bottom:4px">Bem-vindo</div><div style="font-size:12px;color:var(--t2);text-align:center;margin-bottom:28px">Entre com suas credenciais</div><div class="form-group"><label class="form-label">Usuário</label><input class="form-input" type="text" id="loginUser" placeholder="Usuário" onkeydown="if(event.key==='Enter')doLogin()"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" type="password" id="loginPass" placeholder="Senha" onkeydown="if(event.key==='Enter')doLogin()"></div><button class="login-btn" onclick="doLogin()">Entrar</button><div class="login-error" id="loginError"></div></div></div></div>
-<div id="appScreen" style="display:none"><header class="header"><div class="logo" style="cursor:pointer" onclick="resetData()"><div class="logo-icon">FF</div><div><div style="font-size:15px;font-weight:800">FlowForce</div><div style="font-size:10px;color:var(--t3);font-weight:600">Motor de Operações</div></div></div><div style="display:flex;align-items:center;gap:6px"><div class="gsearch" id="gsearchBox"><span class="gsearch-icon">🔍</span><input type="text" id="gsearchInput" placeholder="Buscar CPF..." oninput="globalSearch(this.value)" onfocus="this.parentElement.querySelector('.gsearch-results').style.display='block'" onblur="setTimeout(()=>{document.querySelector('.gsearch-results').style.display='none'},200)"><div class="gsearch-results" id="gsearchResults"></div></div><div class="hdr-user" id="hdrUser"></div><div id="headerActions" style="display:flex;gap:6px;align-items:center"><span id="fileName" style="font-size:10px;color:var(--t3);margin-right:4px"></span><button class="btn btn-grn" onclick="exportXLSX()">↓ Exportar</button><button class="btn" onclick="resetData()">Nova Base</button></div><button class="btn btn-red btn-sm" onclick="doLogout()">Sair</button></div></header><div class="container" id="appContainer"></div></div>
+<div id="appScreen" style="display:none"><header class="header"><div class="logo" style="cursor:pointer" onclick="resetData()"><div class="logo-icon">FF</div><div><div style="font-size:15px;font-weight:800">FlowForce</div><div style="font-size:10px;color:var(--t3);font-weight:600">Motor de Operações</div></div></div><div style="display:flex;align-items:center;gap:6px"><div class="gsearch" id="gsearchBox"><span class="gsearch-icon">🔍</span><input type="text" id="gsearchInput" placeholder="Buscar CPF ou Nome..." oninput="globalSearch(this.value)" onfocus="this.parentElement.querySelector('.gsearch-results').style.display='block'" onblur="setTimeout(()=>{document.querySelector('.gsearch-results').style.display='none'},200)"><div class="gsearch-results" id="gsearchResults"></div></div><div class="hdr-user" id="hdrUser"></div><div id="headerActions" style="display:flex;gap:6px;align-items:center"><span id="fileName" style="font-size:10px;color:var(--t3);margin-right:4px"></span><button class="btn btn-grn" onclick="exportXLSX()">↓ Exportar</button><button class="btn" onclick="resetData()">Nova Base</button></div><button class="btn btn-red btn-sm" onclick="doLogout()">Sair</button></div></header><div class="container" id="appContainer"></div></div>
 <div id="changePwModal" class="modal-overlay" style="display:none"><div class="modal-box" style="max-width:420px"><div style="font-size:16px;font-weight:700;margin-bottom:16px">Alterar Senha</div><div class="form-group"><label class="form-label">Atual</label><input class="form-input" type="password" id="cpwOld"></div><div class="form-group"><label class="form-label">Nova</label><input class="form-input" type="password" id="cpwNew"></div><div class="form-group"><label class="form-label">Confirmar</label><input class="form-input" type="password" id="cpwConfirm"></div><div style="display:flex;gap:8px"><button class="login-btn" style="flex:1" onclick="doChangePw()">Salvar</button><button class="btn" style="padding:12px 20px" onclick="document.getElementById('changePwModal').style.display='none'">Cancelar</button></div><div class="login-error" id="cpwError"></div></div></div>
 <div id="phoneModal" class="modal-overlay" style="display:none"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:16px;font-weight:700">📱 Telefones</div><button class="btn btn-sm" onclick="document.getElementById('phoneModal').style.display='none'">✕</button></div><div id="pmName" style="font-size:13px;color:var(--t2);margin-bottom:2px"></div><div id="pmCPF" style="font-size:11px;color:var(--t3);margin-bottom:14px;font-family:monospace"></div><div id="pmContent"></div><div id="pmActions" style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"></div></div></div>
 <div id="batchModal" class="modal-overlay" style="display:none"><div class="modal-box" style="max-width:420px"><div style="font-size:16px;font-weight:700;margin-bottom:12px">⏳ Processando</div><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span id="bCnt" style="font-size:12px;color:var(--t2)">0/0</span><span id="bPct" style="font-size:12px;font-weight:700;color:var(--acc)">0%</span></div><div class="taxa-bar" style="height:8px"><div id="bBar" class="taxa-fill" style="width:0%"></div></div><div id="bStat" style="font-size:11px;color:var(--t2);margin:10px 0"></div><button class="btn btn-red" onclick="bCancel=true">Cancelar</button></div></div>
@@ -99,12 +102,15 @@ td.right,th.right{text-align:right}td.mono{font-family:monospace;font-size:12px}
 function hp(p){let h=0;const s=p+"lhamas2024";for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0}return"H"+Math.abs(h).toString(36)}
 function getU(){try{return JSON.parse(localStorage.getItem("lhm_users"))}catch{return null}}
 function saveU(u){localStorage.setItem("lhm_users",JSON.stringify(u))}
-function initU(){let u=getU();if(!u){u=[{id:1,user:"admin",name:"Administrador",pw:hp("admin123"),role:"admin",created:Date.now()},{id:2,user:"operador",name:"Operador",pw:hp("op123"),role:"user",created:Date.now()}];saveU(u)}return u}
+function initU(){let u=getU();if(!u){u=[{id:1,user:"admin",name:"Administrador",pw:hp("admin123"),role:"admin",created:Date.now()},{id:2,user:"gestor",name:"Gestor",pw:hp("gestor123"),role:"gestor",created:Date.now()},{id:3,user:"operador",name:"Operador",pw:hp("op123"),role:"operador",created:Date.now()}];saveU(u)}
+  // Migrate old 'user' role to 'operador'
+  let changed=false;for(let x of u)if(x.role==="user"){x.role="operador";changed=true}if(changed)saveU(u);
+  return u}
 function getSess(){try{let s=JSON.parse(localStorage.getItem("lhm_sess"));if(!s||Date.now()-s.ts>864e5)return null;return s}catch{return null}}
 let CU=null;
 function doLogin(){const u=document.getElementById("loginUser").value.trim().toLowerCase(),p=document.getElementById("loginPass").value,err=document.getElementById("loginError");if(!u||!p){err.textContent="Preencha todos os campos";return}const users=initU(),f=users.find(x=>x.user.toLowerCase()===u&&x.pw===hp(p));if(!f){err.textContent="Usuário ou senha incorretos";document.getElementById("loginCard").classList.add("shake");setTimeout(()=>document.getElementById("loginCard").classList.remove("shake"),350);return}CU=f;localStorage.setItem("lhm_sess",JSON.stringify({user:f.user,name:f.name,role:f.role,ts:Date.now()}));showApp()}
 function doLogout(){localStorage.removeItem("lhm_sess");CU=null;document.getElementById("appScreen").style.display="none";document.getElementById("loginScreen").style.display="flex";S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel"}}
-function showApp(){document.getElementById("loginScreen").style.display="none";document.getElementById("appScreen").style.display="block";document.getElementById("hdrUser").innerHTML=`<div class="hdr-user-icon">${CU.name.charAt(0)}</div><div><div style="font-size:11px;font-weight:600">${esc(CU.name)}</div><div style="font-size:9px;color:var(--t3)">${CU.role==="admin"?"Admin":"Op"}</div></div><button class="btn btn-sm" onclick="document.getElementById('changePwModal').style.display='flex'" style="margin-left:4px;font-size:9px">🔑</button>`;renderApp()}
+function showApp(){document.getElementById("loginScreen").style.display="none";document.getElementById("appScreen").style.display="block";let rl=CU.role==="admin"?"Admin":CU.role==="gestor"?"Gestor":"Operador";document.getElementById("hdrUser").innerHTML=`<div class="hdr-user-icon">${CU.name.charAt(0)}</div><div><div style="font-size:11px;font-weight:600">${esc(CU.name)}</div><div style="font-size:9px;color:var(--t3)">${rl}</div></div><button class="btn btn-sm" onclick="document.getElementById('changePwModal').style.display='flex'" style="margin-left:4px;font-size:9px">🔑</button>`;if(CU.role==="operador")S.tab="camp";renderApp()}
 function doChangePw(){const o=document.getElementById("cpwOld").value,n=document.getElementById("cpwNew").value,c=document.getElementById("cpwConfirm").value,err=document.getElementById("cpwError");if(!o||!n||!c){err.textContent="Preencha tudo";return}if(hp(o)!==CU.pw){err.textContent="Incorreta";return}if(n.length<4){err.textContent="Mín 4";return}if(n!==c){err.textContent="Não conferem";return}let users=getU();let i=users.findIndex(u=>u.user===CU.user);if(i>=0){users[i].pw=hp(n);saveU(users);CU.pw=hp(n)}err.style.color="var(--grn)";err.textContent="Alterada!";setTimeout(()=>document.getElementById("changePwModal").style.display="none",1000)}
 
 // ══════ HISTORY ══════
@@ -135,6 +141,7 @@ function loadHist(id){try{let raw=localStorage.getItem("lhm_data_"+id);if(!raw){
 
 // ══════ PIPELINE STATE ══════
 let selected=new Set(); // CPFs selected for pipeline
+let rcSelected=new Set(); // CPFs selected in RMC/RCC tab
 let phoneCache={}; // Hygienized phone data
 let wppSent=new Set(); // CPFs with WPP sent
 let bCancel=false;
@@ -458,7 +465,7 @@ function toggleBankActive(bankId){
 }
 function getActiveBanks(){let c=getBankCreds();return Object.entries(c).filter(([k,v])=>v.active&&v.user&&v.pass).map(([k])=>k)}
 
-function renderAdmin(){if(!CU||CU.role!=="admin")return"";const users=getU()||[];let rows=users.map(u=>`<tr><td><strong>${esc(u.name)}</strong></td><td style="font-family:monospace;font-size:11px">${esc(u.user)}</td><td><span class="${u.role==="admin"?"role-admin":"role-user"}">${u.role==="admin"?"Admin":"Op"}</span></td><td>${u.user==="admin"?"—":`<button class="btn btn-sm" onclick="rpw('${u.user}')">Reset</button> <button class="btn btn-red btn-sm" onclick="dlu('${u.user}')">Excluir</button>`}</td></tr>`).join("");
+function renderAdmin(){if(!CU||CU.role!=="admin")return"";const users=getU()||[];let roleLabel=r=>r==="admin"?"Admin":r==="gestor"?"Gestor":"Operador";let roleClass=r=>r==="admin"?"role-admin":r==="gestor"?"role-gestor":"role-user";let rows=users.map(u=>`<tr><td><strong>${esc(u.name)}</strong></td><td style="font-family:monospace;font-size:11px">${esc(u.user)}</td><td><span class="${roleClass(u.role)}">${roleLabel(u.role)}</span></td><td>${u.user==="admin"?"—":`<button class="btn btn-sm" onclick="rpw('${u.user}')">Reset</button> <button class="btn btn-red btn-sm" onclick="dlu('${u.user}')">Excluir</button>`}</td></tr>`).join("");
   // Bank credentials section
   let creds=getBankCreds();let activeBanks=getActiveBanks();
   let bankHtml=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:22px;margin-top:24px">
@@ -486,7 +493,7 @@ function renderAdmin(){if(!CU||CU.role!=="admin")return"";const users=getU()||[]
     </div>`;
   }
   bankHtml+=`</div></div>`;
-  return`<div class="admin-panel fi"><div style="font-size:16px;font-weight:800;margin-bottom:16px">👥 Usuários</div><table class="users-table"><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table><div class="add-user-form"><div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="nN"></div><div class="form-group"><label class="form-label">Login</label><input class="form-input" id="nU"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" id="nP" type="password"></div><div class="form-group"><label class="form-label">Perfil</label><select class="form-input" id="nR"><option value="user">Operador</option><option value="admin">Admin</option></select></div><button class="btn-acc" style="height:36px;padding:0 20px;font-size:11px" onclick="addU()">+ Add</button></div><div class="login-error" id="aErr" style="text-align:left;margin-top:8px"></div></div>${bankHtml}`}
+  return`<div class="admin-panel fi"><div style="font-size:16px;font-weight:800;margin-bottom:16px">👥 Usuários</div><table class="users-table"><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table><div class="add-user-form"><div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="nN"></div><div class="form-group"><label class="form-label">Login</label><input class="form-input" id="nU"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" id="nP" type="password"></div><div class="form-group"><label class="form-label">Perfil</label><select class="form-input" id="nR"><option value="operador">Operador</option><option value="gestor">Gestor</option><option value="admin">Admin</option></select></div><button class="btn-acc" style="height:36px;padding:0 20px;font-size:11px" onclick="addU()">+ Add</button></div><div class="login-error" id="aErr" style="text-align:left;margin-top:8px"></div></div>${bankHtml}`}
 function addU(){const n=document.getElementById("nN").value.trim(),u=document.getElementById("nU").value.trim().toLowerCase(),p=document.getElementById("nP").value,r=document.getElementById("nR").value,err=document.getElementById("aErr");if(!n||!u||!p){err.style.color="var(--red)";err.textContent="Preencha tudo";return}let users=getU()||[];if(users.find(x=>x.user===u)){err.style.color="var(--red)";err.textContent="Já existe";return}users.push({id:Date.now(),user:u,name:n,pw:hp(p),role:r,created:Date.now()});saveU(users);err.style.color="var(--grn)";err.textContent="Criado!";setTimeout(renderApp,500)}
 function dlu(u){if(confirm(`Excluir "${u}"?`)){saveU(getU().filter(x=>x.user!==u));renderApp()}}
 function rpw(u){const p=prompt(`Nova senha para "${u}":`);if(!p||p.length<4)return;let users=getU();let i=users.findIndex(x=>x.user===u);if(i>=0){users[i].pw=hp(p);saveU(users);alert("OK!")}}
@@ -495,7 +502,8 @@ function rpw(u){const p=prompt(`Nova senha para "${u}":`);if(!p||p.length<4)retu
 function globalSearch(q){
   let res=document.getElementById("gsearchResults");if(!res)return;
   let v=q.replace(/\D/g,"").trim();
-  if(v.length<3){res.style.display="none";res.innerHTML="";return}
+  let isText=q.trim().length>=3&&v.length<3; // searching by name
+  if(v.length<3&&!isText){res.style.display="none";res.innerHTML="";return}
   // Search across all history data
   let results=[];
   let hist=getHist();
@@ -503,10 +511,10 @@ function globalSearch(q){
     try{
       let raw=localStorage.getItem("lhm_data_"+h.id);if(!raw)continue;
       let sv=JSON.parse(raw);
-      let eleg=sv.elegiveis||[];
-      for(let e of eleg){
-        if((e.cpf||"").includes(v)||(e.ben||"").includes(v)){
-          results.push({...e,fonte:h.fname,histId:h.id,date:h.date});
+      let rows=sv.analise||sv.elegiveis||[];
+      for(let e of rows){
+        if((e.cpf||"").includes(v)||(e.ben||"").includes(v)||(e.nome||"").toLowerCase().includes(q.toLowerCase())){
+          if(!results.find(r=>r.cpf===e.cpf&&r.con===e.con))results.push({...e,fonte:h.fname,histId:h.id,date:h.date});
         }
       }
     }catch{}
@@ -514,7 +522,7 @@ function globalSearch(q){
   // Also search current data
   if(S.data){
     for(let e of S.data.analise||[]){
-      if((e.cpf||"").includes(v)||(e.ben||"").includes(v)){
+      if((e.cpf||"").includes(v)||(e.ben||"").includes(v)||(e.nome||"").toLowerCase().includes(q.toLowerCase())){
         if(!results.find(r=>r.cpf===e.cpf&&r.con===e.con))results.push({...e,fonte:"Atual",histId:null})
       }
     }
@@ -536,30 +544,142 @@ function globalSearch(q){
   res.innerHTML=html;res.style.display="block";
 }
 function showCPFDetail(cpf){
-  // Find all data for this CPF across history
-  let allRows=[];
+  // Collect ALL data for this CPF across history + current
+  let allRows=[],rmcData=null,crmEntry=null,tel1="",nome="",ben="",esp="";
   let hist=getHist();
-  for(let h of hist){try{let raw=localStorage.getItem("lhm_data_"+h.id);if(!raw)continue;let sv=JSON.parse(raw);for(let e of(sv.elegiveis||[]))if(e.cpf===cpf)allRows.push(e)}catch{}}
-  if(S.data)for(let e of(S.data.analise||[]))if(e.cpf===cpf&&!allRows.find(r=>r.con===e.con))allRows.push(e);
-  if(!allRows.length){alert("Nenhum dado encontrado para "+cpf);return}
-  let nome=allRows[0].nome,ben=allRows[0].ben;
-  let tTroco=allRows.reduce((s,r)=>s+r.troco,0),tVC=allRows.reduce((s,r)=>s+r.vc,0);
-  let html=`<div style="font-size:18px;font-weight:800;margin-bottom:4px">${esc(nome)}</div>
-    <div style="font-size:13px;color:var(--t2);font-family:monospace;margin-bottom:16px">CPF: ${cpf} ${ben?"| Benefício: "+ben:""}</div>
-    <div style="display:flex;gap:12px;margin-bottom:16px">
-      <div class="kpi" style="flex:1"><div class="kpi-label">Contratos</div><div class="kpi-value" style="color:var(--acc)">${allRows.length}</div></div>
-      <div class="kpi" style="flex:1"><div class="kpi-label">Elegíveis</div><div class="kpi-value" style="color:var(--grn)">${allRows.filter(r=>r.ok).length}</div></div>
-      <div class="kpi" style="flex:1"><div class="kpi-label">Troco Total</div><div class="kpi-value" style="color:var(--grn)">${R$(tTroco)}</div></div>
+  for(let h of hist){try{let raw=localStorage.getItem("lhm_data_"+h.id);if(!raw)continue;let sv=JSON.parse(raw);
+    for(let e of(sv.analise||[]))if(e.cpf===cpf&&!allRows.find(r=>r.con===e.con))allRows.push(e);
+    for(let r of(sv.rmcRcc||[]))if(r.cpf===cpf)rmcData=r;
+  }catch{}}
+  if(S.data){
+    for(let e of(S.data.analise||[]))if(e.cpf===cpf&&!allRows.find(r=>r.con===e.con))allRows.push(e);
+    for(let r of(S.data.rmcRcc||[]))if(r.cpf===cpf)rmcData=r;
+  }
+  if(!allRows.length&&!rmcData){alert("Nenhum dado encontrado para "+cpf);return}
+  if(allRows.length){nome=allRows[0].nome;ben=allRows[0].ben;esp=allRows[0].esp;tel1=allRows[0].t1||""}
+  if(rmcData&&!nome)nome=rmcData.nome;if(rmcData&&!tel1)tel1=rmcData.t1||"";
+  let crm=getCrmData();crmEntry=crm[cpf]||null;
+  let cc=cardCache[cpf];
+  let eligRows=allRows.filter(r=>r.ok);
+  let tTroco=eligRows.reduce((s,r)=>s+(r.troco||0),0);
+  let tVC=eligRows.reduce((s,r)=>s+(r.vc||0),0);
+  let saqueDisp=0;if(cc&&cc.cartoes)for(let cd of cc.cartoes)saqueDisp+=(cd.limiteSaqueDisp||0);
+  let mrgCart=rmcData?rmcData.mrgCartNova||0:0;
+  let mrgEmp=rmcData?rmcData.mrgEmpNova||0:0;
+  let temCartao=rmcData?rmcData.temCartao:false;
+
+  let crmLabel=crmEntry?CRM_LABELS.find(l=>l.k===crmEntry.status):null;
+
+  let html=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-size:20px;font-weight:800">${esc(nome)}</div>
+        <div style="font-size:13px;color:var(--t2);font-family:monospace;margin-top:2px">CPF: ${cpf}</div>
+        ${ben?`<div style="font-size:12px;color:var(--t3);margin-top:2px">Benefício: ${ben} ${esp?`| Espécie: ${esp}`:""}</div>`:""}
+        ${tel1?`<div style="font-size:12px;color:var(--cyan);margin-top:2px">📱 ${tel1}</div>`:""}
+      </div>
+      ${crmLabel?`<span class="pill" style="background:${crmLabel.bg};color:${crmLabel.c};font-size:13px;padding:6px 14px">${crmLabel.icon} ${crmLabel.l}</span>`:""}
     </div>
-    <table style="width:100%"><thead><tr><th>Contrato</th><th>Banco</th><th class="right">Parcela</th><th class="right">Saldo</th><th>Destino</th><th class="right">Vlr Contrato</th><th class="right">Troco</th></tr></thead><tbody>`;
-  for(let r of allRows){let dc=r.dest!=="-"?pCls[r.dest]:"";
-    html+=`<tr><td class="mono">${esc(r.con)}</td><td><span class="pill pill-default">${r.cod}</span></td><td class="right mono">${R$(r.par)}</td><td class="right mono">${R$(r.sal)}</td><td>${dc?`<span class="pill ${dc}">${r.dest}</span>`:"—"}</td><td class="right mono" style="color:var(--ylw)">${r.vc>0?R$(r.vc):"—"}</td><td class="right mono" style="color:var(--grn);font-weight:700">${r.troco>0?R$(r.troco):"—"}</td></tr>`}
-  html+=`</tbody></table>`;
+
+    <!-- KPIs -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:18px">
+      <div class="kpi"><div class="kpi-label">Contratos</div><div class="kpi-value" style="color:var(--acc)">${allRows.length}</div></div>
+      <div class="kpi"><div class="kpi-label">Elegíveis</div><div class="kpi-value" style="color:var(--grn)">${eligRows.length}</div></div>
+      <div class="kpi"><div class="kpi-label">Troco Port</div><div class="kpi-value" style="color:var(--grn)">${R$(tTroco)}</div></div>
+      <div class="kpi"><div class="kpi-label">Saque Comp</div><div class="kpi-value" style="color:var(--pur)">${saqueDisp>0?R$(saqueDisp):"—"}</div></div>
+      <div class="kpi"><div class="kpi-label">Cartão Novo</div><div class="kpi-value" style="color:var(--cyan)">${mrgCart>0?R$(mrgCart):"—"}</div></div>
+      <div class="kpi"><div class="kpi-label">Emp Novo</div><div class="kpi-value" style="color:var(--org)">${mrgEmp>0?R$(mrgEmp):"—"}</div></div>
+    </div>
+
+    <!-- AÇÕES -->
+    <div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:8px">Ações</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px;margin-bottom:18px">
+      ${tel1?`<button class="btn btn-sm btn-cyan" onclick="document.getElementById('phoneModal').style.display='none';wppStartChat('${tel1}')">💬 WhatsApp</button>`:`<button class="btn btn-sm" disabled>💬 Sem telefone</button>`}
+      <button class="btn btn-sm" style="border-color:var(--acc);color:var(--acc)" onclick="document.getElementById('phoneModal').style.display='none';openSimulacao('${cpf}','${esc(nome)}','${ben}')">📋 Simular</button>
+      <button class="btn btn-sm" style="border-color:var(--ylw);color:var(--ylw)" onclick="document.getElementById('phoneModal').style.display='none';openDigitacao('${cpf}','${esc(nome)}','${ben}')">📝 Digitar Proposta</button>
+      <button class="btn btn-sm" style="border-color:var(--pur);color:var(--pur)" onclick="consultarIN100('${cpf}','${ben}')">🔍 IN100</button>
+      <button class="btn btn-sm" style="border-color:var(--grn);color:var(--grn)" onclick="consultarCartao('${cpf}','${esc(nome)}','${ben}')">💳 Saque Comp</button>
+      <button class="btn btn-sm" onclick="document.getElementById('phoneModal').style.display='none';openCrmModal('${cpf}','${esc(nome)}')">🏷️ CRM</button>
+      <button class="btn btn-sm" style="border-color:var(--org);color:var(--org)" onclick="showClientHistory('${cpf}')">📊 Histórico</button>
+    </div>
+
+    <!-- CONTRATOS -->
+    ${allRows.length?`<div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:8px">Contratos (${allRows.length})</div>
+    <div class="table-wrap"><div class="table-scroll" style="max-height:180px"><table><thead><tr><th>Contrato</th><th>Banco</th><th class="right">Parcela</th><th class="right">Saldo</th><th>Destino</th><th class="right">Vlr Contrato</th><th class="right">Troco</th></tr></thead><tbody>
+    ${allRows.map(r=>{let dc=r.dest!=="-"?pCls[r.dest]:"";return`<tr><td class="mono">${esc(r.con)}</td><td><span class="pill pill-default">${r.cod}</span></td><td class="right mono">${R$(r.par)}</td><td class="right mono">${R$(r.sal)}</td><td>${dc?`<span class="pill ${dc}">${r.dest}</span>`:"—"}</td><td class="right mono" style="color:var(--ylw)">${r.vc>0?R$(r.vc):"—"}</td><td class="right mono" style="color:var(--grn);font-weight:700">${r.troco>0?R$(r.troco):"—"}</td></tr>`}).join("")}
+    </tbody></table></div></div>`:""}
+
+    <!-- RMC/RCC -->
+    ${rmcData?`<div style="font-size:12px;font-weight:700;color:var(--t2);margin-top:14px;margin-bottom:8px">Cartão Consignado</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      ${rmcData.cRmc&&rmcData.cRmc!=="000"?`<div class="kpi" style="flex:1;min-width:120px"><div class="kpi-label">RMC ${rmcData.cRmc}</div><div class="kpi-value" style="color:var(--grn)">${R$(rmcData.vRmc)}</div></div>`:""}
+      ${rmcData.cRcc&&rmcData.cRcc!=="000"?`<div class="kpi" style="flex:1;min-width:120px"><div class="kpi-label">RCC ${rmcData.cRcc}</div><div class="kpi-value" style="color:var(--pur)">${R$(rmcData.vRcc)}</div></div>`:""}
+      ${cc&&cc.cartoes?cc.cartoes.map(c=>`<div class="kpi" style="flex:1;min-width:120px"><div class="kpi-label">${c.banco||"Banco"} — Saque</div><div class="kpi-value" style="color:var(--grn)">${R$(c.limiteSaqueDisp||0)}</div></div>`).join(""):""}
+    </div>`:""}
+
+    <!-- CRM HISTORY -->
+    ${crmEntry?`<div style="font-size:12px;font-weight:700;color:var(--t2);margin-top:14px;margin-bottom:6px">Último CRM</div>
+    <div style="font-size:12px;color:var(--t3)">Status: ${crmLabel?crmLabel.icon+" "+crmLabel.l:"—"} | ${crmEntry.date||""} por ${crmEntry.user||""}</div>
+    ${crmEntry.obs?`<div style="font-size:12px;color:var(--t2);margin-top:4px">Obs: ${esc(crmEntry.obs)}</div>`:""}
+    `:""}`;
+
   document.getElementById("pmName").textContent="";
   document.getElementById("pmCPF").textContent="";
   document.getElementById("pmContent").innerHTML=html;
   document.getElementById("pmActions").innerHTML=`<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar</button>`;
   document.getElementById("phoneModal").style.display="flex";
+}
+
+// Client IN100 consultation
+async function consultarIN100(cpf,ben){
+  if(!cpf||!ben){alert("CPF e benefício necessários");return}
+  let pm=document.getElementById("pmContent");
+  pm.innerHTML=`<div style="text-align:center;padding:30px"><div style="font-size:24px;margin-bottom:8px">🔍</div><div style="font-size:14px;font-weight:700">Consultando IN100...</div><div style="font-size:12px;color:var(--t3);margin-top:4px">CPF: ${cpf} | Ben: ${ben}</div></div>`;
+  try{
+    const res=await fetch('/api/joinbank',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'in100',cpf,beneficio:ben})});
+    const d=await res.json();
+    if(d.success){
+      pm.innerHTML=`<div style="font-size:16px;font-weight:800;margin-bottom:12px">🔍 IN100 — ${esc(d.nome||cpf)}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:14px">
+          <div class="kpi"><div class="kpi-label">Status</div><div class="kpi-value" style="font-size:13px;color:${d.elegivel?'var(--grn)':'var(--red)'}">${d.elegivel?'✅ Elegível':'❌ '+d.benefitStatus}</div></div>
+          <div class="kpi"><div class="kpi-label">Margem Emp</div><div class="kpi-value" style="color:var(--grn)">${R$(d.margemEmprestimo)}</div></div>
+          <div class="kpi"><div class="kpi-label">Margem Cartão</div><div class="kpi-value" style="color:var(--cyan)">${R$(d.margemCartao)}</div></div>
+          <div class="kpi"><div class="kpi-label">Saldo Disponível</div><div class="kpi-value" style="color:var(--pur)">${R$(d.saldoDisponivel)}</div></div>
+          <div class="kpi"><div class="kpi-label">Contr Ativos</div><div class="kpi-value">${d.contratosAtivos}</div></div>
+          <div class="kpi"><div class="kpi-label">UF</div><div class="kpi-value" style="font-size:14px">${d.uf||"—"}</div></div>
+        </div>
+        ${d.bloqueado?`<div style="background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px;color:var(--red)">⚠️ Bloqueio: ${d.tipoBlock}</div>`:""}
+        <div style="font-size:11px;color:var(--t3)">Espécie: ${d.especie||"—"} | Portabilidades: ${d.portabilidades} | Repr Legal: ${d.representanteLegal?"Sim":"Não"}</div>
+        ${d.contaBanco?`<div style="font-size:11px;color:var(--t3);margin-top:4px">Conta: Banco ${d.contaBanco.bank} | Ag ${d.contaBanco.branch} | CC ${d.contaBanco.number}</div>`:""}`;
+    }else{
+      pm.innerHTML=`<div style="text-align:center;padding:20px;color:var(--red)">❌ Erro: ${d.error||d.mensagem||"Falha na consulta"}</div>`;
+    }
+  }catch(e){pm.innerHTML=`<div style="text-align:center;padding:20px;color:var(--red)">❌ ${e.message}</div>`}
+}
+
+// Placeholder functions for simulation and digitação (to be built)
+function openSimulacao(cpf,nome,ben){
+  alert(`📋 Simulação\n\nCliente: ${nome}\nCPF: ${cpf}\nBenefício: ${ben}\n\n⏳ Módulo de simulação será construído na próxima etapa (JoinBank + FACTA)`);
+}
+function openDigitacao(cpf,nome,ben){
+  alert(`📝 Digitação\n\nCliente: ${nome}\nCPF: ${cpf}\nBenefício: ${ben}\n\n⏳ Módulo de digitação será construído na próxima etapa (JoinBank + FACTA)`);
+}
+function showClientHistory(cpf){
+  let entries=[];let crm=getCrmData();let c=crm[cpf];
+  if(c)entries.push({date:c.date,tipo:"CRM",desc:`${c.status} — ${c.obs||""}`});
+  // Check campaigns
+  let camps=getCamp();for(let camp of camps)for(let x of(camp.cpfs||[]))if(x.cpf===cpf)entries.push({date:camp.created,tipo:"Campanha",desc:camp.nome});
+  let html=`<div style="font-size:16px;font-weight:800;margin-bottom:14px">📊 Histórico — ${cpf}</div>`;
+  if(!entries.length){html+=`<div style="text-align:center;padding:30px;color:var(--t3)">Nenhuma interação registrada</div>`}
+  else{html+=`<div style="display:flex;flex-direction:column;gap:8px">`;
+    for(let e of entries.sort((a,b)=>(b.date||"").localeCompare(a.date||""))){
+      html+=`<div style="background:var(--sf);border-radius:8px;padding:10px 14px;border-left:3px solid var(--acc)">
+        <div style="font-size:11px;color:var(--t3)">${e.date||""}</div>
+        <div style="font-size:12px;font-weight:600;color:var(--acc)">${e.tipo}</div>
+        <div style="font-size:12px;color:var(--t2)">${esc(e.desc)}</div>
+      </div>`}
+    html+=`</div>`}
+  document.getElementById("pmContent").innerHTML=html;
 }
 
 // ══════ CAMPANHAS ══════
@@ -617,6 +737,7 @@ function renderCampanhas(){
     </div>`}
   html+=`</div>`;
   if(selected.size>0)html+=`<div style="background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:12px"><span style="font-size:13px;color:var(--acc);font-weight:700">${selected.size} clientes selecionados</span><span style="font-size:12px;color:var(--t3)">→ Clique em "+ Atribuir" na campanha</span></div>`;
+  if(bulkWppState.running)html+=`<div style="background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.2);border-radius:12px;padding:14px 18px;margin-bottom:18px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:13px;font-weight:700;color:var(--grn)">📤 Disparando WhatsApp...</span><span style="font-size:12px;color:var(--t2)">${bulkWppState.done}/${bulkWppState.total} • ✅ ${bulkWppState.success} • ❌ ${bulkWppState.fail}</span></div><div style="height:6px;background:var(--brd);border-radius:3px;overflow:hidden"><div style="height:100%;background:var(--grn);width:${Math.round(bulkWppState.done/bulkWppState.total*100)}%;transition:width .3s"></div></div></div>`;
   if(!camps.length){html+=`<div style="text-align:center;padding:30px;color:var(--t3);font-size:14px">Nenhuma campanha criada. Clique num tipo acima.</div>`;return html}
   for(let camp of camps){
     let tipo=CAMP_TIPOS.find(t=>t.k===camp.tipo)||CAMP_TIPOS[5];
@@ -626,7 +747,7 @@ function renderCampanhas(){
     html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:22px;margin-bottom:16px;border-left:4px solid ${tipo.color}">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
         <div><div style="font-size:17px;font-weight:700">${tipo.icon} ${esc(camp.nome)}</div><div style="font-size:11px;color:var(--t3)">${tipo.l} — ${camp.created} por ${esc(camp.createdBy||"")}</div></div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">${selected.size?`<button class="btn-acc btn-sm" onclick="assignToCamp(${camp.id})">+ Atribuir ${selected.size}</button>`:""}<button class="btn btn-grn btn-sm" onclick="exportCamp(${camp.id})">↓ Exportar</button><button class="btn btn-red btn-sm" onclick="delCampanha(${camp.id})">Excluir</button></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${selected.size?`<button class="btn-acc btn-sm" onclick="assignToCamp(${camp.id})">+ Atribuir ${selected.size}</button>`:""}<button class="btn btn-grn btn-sm" style="background:rgba(34,197,94,.1)" onclick="wppBulkCampaign(${camp.id})">📤 Disparar WhatsApp</button><button class="btn btn-grn btn-sm" onclick="exportCamp(${camp.id})">↓ Exportar</button><button class="btn btn-red btn-sm" onclick="delCampanha(${camp.id})">Excluir</button></div>
       </div>
       <div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
         <div class="kpi" style="flex:1;padding:10px 14px;min-width:100px"><div class="kpi-label">Clientes</div><div class="kpi-value" style="color:var(--acc)">${nCpfs}</div></div>
@@ -652,6 +773,139 @@ function renderCampanhas(){
 // ══════ WHATSAPP (Evolution API) ══════
 let wppState={instances:[],myInst:null,connected:false,loading:false,chats:[],activeChat:null,messages:[],qr:null};
 
+// Message templates per campaign type
+const WPP_TEMPLATES={
+  port:[
+    {l:"Oferta Portabilidade",t:"Olá {nome}! Aqui é da Central Bancária. Analisamos seu benefício e identificamos uma economia de *{troco}* com a portabilidade do seu consignado. Gostaria de saber mais?"},
+    {l:"Follow-up Port",t:"Olá {nome}, tudo bem? Estou retornando sobre a portabilidade do seu consignado. Conseguimos reduzir sua parcela e ainda liberar *{troco}* pra você. Posso te explicar?"}
+  ],
+  saque:[
+    {l:"Oferta Saque Complementar",t:"Olá {nome}! Identificamos que você tem um saque complementar disponível no seu cartão consignado no valor de *{saque}*. Quer saber como liberar?"},
+    {l:"Follow-up Saque",t:"Olá {nome}, passando pra avisar que seu saque complementar de *{saque}* continua disponível. Posso te ajudar a liberar?"}
+  ],
+  cartao_margem:[
+    {l:"Oferta Cartão Novo",t:"Olá {nome}! Vi que você tem margem disponível de *{cartao}* para um cartão consignado novo. Sem anuidade e com saque na hora. Tem interesse?"},
+    {l:"Follow-up Cartão",t:"Oi {nome}! Ainda está disponível aquela margem de *{cartao}* para o cartão consignado. Quer que eu te explique como funciona?"}
+  ],
+  cartao_sem:[
+    {l:"Oferta Cartão Benefício",t:"Olá {nome}! Temos uma oportunidade de cartão consignado exclusivo para beneficiários INSS. Sem consulta SPC/Serasa. Posso te explicar?"},
+    {l:"Follow-up Cartão",t:"Oi {nome}, retornando sobre o cartão consignado. É sem anuidade e você pode usar como crédito e débito. Tem interesse?"}
+  ],
+  emp_novo:[
+    {l:"Oferta Empréstimo Novo",t:"Olá {nome}! Identificamos uma margem disponível de *{emprestimo}* para empréstimo consignado novo, com as melhores taxas do mercado. Gostaria de simular?"},
+    {l:"Follow-up Empréstimo",t:"Oi {nome}! Passando pra lembrar que sua margem de *{emprestimo}* para empréstimo novo continua disponível. Posso fazer uma simulação?"}
+  ],
+  completa:[
+    {l:"Oferta Completa",t:"Olá {nome}! Fizemos uma análise completa do seu benefício e encontramos ótimas oportunidades. Posso te apresentar?"},
+    {l:"Follow-up Geral",t:"Oi {nome}, tudo bem? Estou retornando sobre as oportunidades que identificamos no seu benefício. Tem um minutinho?"}
+  ]
+};
+
+function fillTemplate(tpl,client){
+  return tpl.replace(/{nome}/g,client.nome||"Cliente")
+    .replace(/{troco}/g,R$(client.troco||0))
+    .replace(/{saque}/g,R$(client.saqueDisp||0))
+    .replace(/{cartao}/g,R$(client.mrgCartNova||0))
+    .replace(/{emprestimo}/g,R$(client.mrgEmpNova||0))
+    .replace(/{cpf}/g,client.cpf||"");
+}
+
+// Bulk dispatch from campaign
+let bulkWppState={running:false,total:0,done:0,success:0,fail:0,log:[]};
+
+async function wppBulkCampaign(campId){
+  let camps=getCamp();let c=camps.find(x=>x.id===campId);if(!c||!c.cpfs||!c.cpfs.length){alert("Campanha sem clientes");return}
+  let tipo=c.tipo||"completa";
+  let templates=WPP_TEMPLATES[tipo]||WPP_TEMPLATES.completa;
+  // Show template selection modal
+  let tplHtml=`<div style="font-size:16px;font-weight:800;margin-bottom:12px">📤 Disparo em Massa — ${esc(c.nome)}</div>
+    <div style="font-size:13px;color:var(--t2);margin-bottom:16px">${c.cpfs.length} clientes • Tipo: ${tipo}</div>
+    <div style="font-size:13px;font-weight:700;margin-bottom:8px">Selecione o template:</div>`;
+  for(let i=0;i<templates.length;i++){
+    tplHtml+=`<div style="background:var(--sf);border:1px solid var(--brd);border-radius:10px;padding:12px;margin-bottom:8px;cursor:pointer" onclick="document.getElementById('bulkTplIdx').value=${i};document.querySelectorAll('.tpl-opt').forEach(e=>e.style.borderColor='var(--brd)');this.style.borderColor='var(--acc)'" class="tpl-opt">
+      <div style="font-size:12px;font-weight:700;color:var(--acc);margin-bottom:4px">${templates[i].l}</div>
+      <div style="font-size:12px;color:var(--t2);white-space:pre-wrap">${esc(templates[i].t.substring(0,120))}...</div>
+    </div>`}
+  tplHtml+=`<input type="hidden" id="bulkTplIdx" value="0">
+    <div style="font-size:13px;font-weight:700;margin-top:12px;margin-bottom:6px">Ou mensagem personalizada:</div>
+    <textarea id="bulkCustomMsg" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:12px;min-height:60px;resize:vertical" placeholder="Deixe vazio para usar o template selecionado"></textarea>
+    <div style="font-size:11px;color:var(--t3);margin-top:6px">Variáveis: {nome}, {troco}, {saque}, {cartao}, {emprestimo}</div>`;
+  document.getElementById("pmName").textContent="";
+  document.getElementById("pmCPF").textContent="";
+  document.getElementById("pmContent").innerHTML=tplHtml;
+  document.getElementById("pmActions").innerHTML=`<button class="btn-acc" onclick="document.getElementById('phoneModal').style.display='none';executeBulkWpp(${campId})">📤 Disparar para ${c.cpfs.length} clientes</button><button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Cancelar</button>`;
+  document.getElementById("phoneModal").style.display="flex";
+}
+
+async function executeBulkWpp(campId){
+  let camps=getCamp();let c=camps.find(x=>x.id===campId);if(!c)return;
+  let tipo=c.tipo||"completa";
+  let templates=WPP_TEMPLATES[tipo]||WPP_TEMPLATES.completa;
+  let tplIdx=parseInt(document.getElementById("bulkTplIdx")?.value||"0");
+  let customMsg=document.getElementById("bulkCustomMsg")?.value?.trim()||"";
+  let tplText=customMsg||templates[tplIdx].t;
+  
+  let clients=c.cpfs.filter(x=>x.t1);
+  if(!clients.length){alert("Nenhum cliente com telefone cadastrado");return}
+  if(!confirm(`Disparar mensagem para ${clients.length} clientes com telefone?\n\nInstância: ${getMyInstance()}\n\nPreview:\n${fillTemplate(tplText,clients[0]).substring(0,100)}...`))return;
+  
+  bulkWppState={running:true,total:clients.length,done:0,success:0,fail:0,log:[]};
+  renderApp();
+  
+  for(let cl of clients){
+    let msg=fillTemplate(tplText,cl);
+    let number=String(cl.t1).replace(/\D/g,'');
+    if(!number.startsWith('55')&&number.length<=11)number='55'+number;
+    try{
+      await wppCall('send',{number,text:msg});
+      bulkWppState.success++;bulkWppState.log.push({nome:cl.nome,cpf:cl.cpf,ok:true});
+    }catch(e){
+      bulkWppState.fail++;bulkWppState.log.push({nome:cl.nome,cpf:cl.cpf,ok:false,error:e.message});
+    }
+    bulkWppState.done++;
+    if(bulkWppState.done%5===0)renderApp();
+    await new Promise(r=>setTimeout(r,2000)); // 2s entre msgs
+  }
+  bulkWppState.running=false;renderApp();
+  alert(`✅ Disparo concluído!\n${bulkWppState.success} enviados\n${bulkWppState.fail} falharam`);
+}
+
+// Auto-assign instance to operator
+function autoAssignInstance(userLogin){
+  let assign=getWppAssign();
+  if(assign[userLogin])return assign[userLogin]; // already assigned
+  // Find unassigned instances
+  let usedInsts=new Set(Object.values(assign));
+  for(let inst of wppState.instances){
+    let name=inst.instance?.instanceName||inst.instanceName||inst.name||'';
+    if(name&&!usedInsts.has(name)){
+      assign[userLogin]=name;saveWppAssign(assign);return name;
+    }
+  }
+  return null;
+}
+
+function showWppTemplates(){
+  let allTpls=[];
+  for(let[k,v]of Object.entries(WPP_TEMPLATES)){
+    let tipo=CAMP_TIPOS.find(t=>t.k===k);
+    for(let t of v)allTpls.push({tipo:tipo?tipo.l:k,icon:tipo?tipo.icon:"📋",...t});
+  }
+  let thtml=`<div style="font-size:16px;font-weight:800;margin-bottom:14px">📋 Templates de Mensagem</div>
+    <div style="max-height:400px;overflow-y:auto">`;
+  for(let t of allTpls){
+    thtml+=`<div style="background:var(--sf);border:1px solid var(--brd);border-radius:10px;padding:12px;margin-bottom:8px;cursor:pointer" onclick="document.getElementById('wppMsgInput').value=\`${t.t.replace(/`/g,"'")}\`;document.getElementById('phoneModal').style.display='none'">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px"><span>${t.icon}</span><span style="font-size:11px;color:var(--t3)">${t.tipo}</span><span style="font-size:12px;font-weight:700;color:var(--acc)">${t.l}</span></div>
+      <div style="font-size:12px;color:var(--t2);white-space:pre-wrap">${esc(t.t)}</div>
+    </div>`}
+  thtml+=`</div>`;
+  document.getElementById("pmName").textContent="";
+  document.getElementById("pmCPF").textContent="";
+  document.getElementById("pmContent").innerHTML=thtml;
+  document.getElementById("pmActions").innerHTML=`<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar</button>`;
+  document.getElementById("phoneModal").style.display="flex";
+}
+
 function getWppAssign(){try{return JSON.parse(localStorage.getItem("ff_wpp_assign")||"{}")}catch{return{}}}
 function saveWppAssign(a){localStorage.setItem("ff_wpp_assign",JSON.stringify(a))}
 function getMyInstance(){let a=getWppAssign();return CU?a[CU.user]||null:null}
@@ -667,6 +921,8 @@ async function wppLoadInstances(){
   try{
     const d=await wppCall('list',{instance:''});
     wppState.instances=Array.isArray(d)?d:[];
+    // Auto-assign instance to current user if none
+    if(CU&&!getMyInstance()&&wppState.instances.length){autoAssignInstance(CU.user)}
     wppState.myInst=getMyInstance();
     // Check my instance status
     if(wppState.myInst){
@@ -791,7 +1047,7 @@ async function wppStartChat(number){
   number=String(number).replace(/\D/g,'');
   if(!number.startsWith('55')&&number.length<=11)number='55'+number;
   let jid=number+'@s.whatsapp.net';
-  S.tab='wpp';wppOpenChat(jid,number);
+  S.tab='wppchat';wppOpenChat(jid,number);
 }
 
 function renderWhatsApp(){
@@ -949,6 +1205,107 @@ function renderWhatsApp(){
 
 function filterWppChats(q){let items=document.querySelectorAll('#wppChatList > div');for(let item of items)item.style.display=!q||item.textContent.toLowerCase().includes(q.toLowerCase())?'block':'none'}
 
+function renderWppChat(){
+  let html='';let myInst=getMyInstance();
+  if(!myInst){return`<div style="text-align:center;padding:60px"><div style="font-size:48px;margin-bottom:16px">💬</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">Nenhuma instância atribuída</div><div style="font-size:13px;color:var(--t2)">Peça ao administrador para atribuir um WhatsApp a você.</div></div>`}
+  if(!wppState.connected){
+    return`<div style="text-align:center;padding:60px"><div style="font-size:48px;margin-bottom:16px">📱</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">WhatsApp desconectado</div><div style="font-size:13px;color:var(--t2);margin-bottom:20px">Instância: <strong>${myInst}</strong></div><button class="btn-acc" onclick="wppConnect()">📱 Conectar</button></div>`}
+  // Status bar
+  html+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:800">💬 Chat WhatsApp</div><div style="display:flex;gap:8px;align-items:center"><span style="font-size:12px;color:var(--t2)">${myInst}</span><span class="pill pill-grn">● Online</span><button class="btn btn-sm btn-cyan" onclick="wppLoadChats()">🔄</button></div></div>`;
+  // Chat UI
+  html+=`<div style="display:grid;grid-template-columns:320px 1fr;gap:0;height:calc(100vh - 200px);background:var(--card);border-radius:16px;border:1px solid var(--brd);overflow:hidden">`;
+  // Left: Chat list
+  html+=`<div style="border-right:1px solid var(--brd);display:flex;flex-direction:column">
+    <div style="padding:12px;border-bottom:1px solid var(--brd);display:flex;gap:6px">
+      <input type="text" placeholder="Buscar..." style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:13px" oninput="filterWppChats(this.value)">
+      <button class="btn btn-sm btn-cyan" onclick="wppLoadChats()">🔄</button>
+    </div>
+    <div style="overflow-y:auto;flex:1" id="wppChatList">`;
+  for(let ch of wppState.chats){
+    let name=ch.name||ch.pushName||ch.id.replace('@s.whatsapp.net','');
+    let isActive=wppState.activeChat&&wppState.activeChat.jid===ch.id;
+    let time=ch.lastMsgTimestamp?new Date(ch.lastMsgTimestamp*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+    let unread=ch.unreadMessages||0;
+    html+=`<div onclick="wppOpenChat('${ch.id}','${esc(name)}')" style="padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--brd);background:${isActive?'rgba(59,130,246,.08)':'transparent'}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-size:13px;font-weight:${isActive?'800':'600'};color:${isActive?'var(--acc)':'var(--t1)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px">${esc(name)}</div>
+        <div style="display:flex;align-items:center;gap:6px">${unread>0?`<span style="background:var(--grn);color:#000;font-size:10px;font-weight:800;padding:1px 6px;border-radius:10px">${unread}</span>`:''}<span style="font-size:10px;color:var(--t3)">${time}</span></div>
+      </div>
+    </div>`}
+  if(!wppState.chats.length)html+=`<div style="padding:20px;text-align:center;color:var(--t3);font-size:12px">Carregando... <button class="btn btn-sm" onclick="wppLoadChats()">🔄</button></div>`;
+  html+=`</div></div>`;
+  // Right: Messages
+  html+=`<div style="display:flex;flex-direction:column;background:var(--sf)">`;
+  if(wppState.activeChat){
+    let chatNum=wppState.activeChat.jid.replace('@s.whatsapp.net','');
+    html+=`<div style="padding:12px 18px;border-bottom:1px solid var(--brd);display:flex;align-items:center;gap:10px;background:var(--card)">
+      <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--acc),var(--pur));display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#fff">${(wppState.activeChat.name||'?')[0].toUpperCase()}</div>
+      <div style="flex:1"><div style="font-size:14px;font-weight:700">${esc(wppState.activeChat.name)}</div><div style="font-size:10px;color:var(--t3);font-family:monospace">${chatNum}</div></div>
+      <button class="btn btn-sm" onclick="openCrmModal('${chatNum}','${esc(wppState.activeChat.name)}')">🏷️</button>
+      <button class="btn btn-sm" onclick="wppOpenChat('${wppState.activeChat.jid}','${esc(wppState.activeChat.name)}')">🔄</button>
+    </div>`;
+    html+=`<div id="wppMsgList" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:6px">`;
+    for(let m of wppState.messages){
+      let fromMe=m.key&&m.key.fromMe;
+      let text=m.message?(m.message.conversation||m.message.extendedTextMessage&&m.message.extendedTextMessage.text||''):'';
+      if(!text)continue;
+      let time=m.messageTimestamp?new Date(m.messageTimestamp*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+      html+=`<div style="align-self:${fromMe?'flex-end':'flex-start'};max-width:70%;padding:10px 14px;border-radius:${fromMe?'12px 12px 2px 12px':'12px 12px 12px 2px'};background:${fromMe?'rgba(14,165,233,.12)':'var(--card)'};border:1px solid ${fromMe?'rgba(14,165,233,.2)':'var(--brd)'}">
+        <div style="font-size:13px;color:var(--t1);white-space:pre-wrap;word-break:break-word">${esc(text)}</div>
+        <div style="font-size:9px;color:var(--t3);text-align:${fromMe?'right':'left'};margin-top:4px">${time}${fromMe?' ✓':''}</div>
+      </div>`}
+    if(!wppState.messages.length)html+=`<div style="text-align:center;padding:30px;color:var(--t3)">Carregando mensagens...</div>`;
+    html+=`</div>`;
+    html+=`<div style="padding:6px 16px;border-top:1px solid var(--brd);background:var(--card);display:flex;gap:4px;flex-wrap:wrap;overflow-x:auto">
+      <button class="btn btn-sm" style="font-size:10px;white-space:nowrap" onclick="showWppTemplates()">📋 Templates</button>
+      <button class="btn btn-sm" style="font-size:10px;white-space:nowrap" onclick="document.getElementById('wppMsgInput').value='Olá! Aqui é da Central Bancária. Tudo bem?'">👋 Saudação</button>
+      <button class="btn btn-sm" style="font-size:10px;white-space:nowrap" onclick="document.getElementById('wppMsgInput').value='Perfeito! Vou preparar a proposta. Aguarde um momento.'">✅ Confirmar</button>
+      <button class="btn btn-sm" style="font-size:10px;white-space:nowrap" onclick="document.getElementById('wppMsgInput').value='Muito obrigado! Qualquer dúvida estou à disposição.'">🙏 Agradecer</button>
+    </div>`;
+    html+=`<div style="padding:8px 16px 12px;display:flex;gap:10px;background:var(--card)">
+      <input type="text" id="wppMsgInput" placeholder="Digite uma mensagem..." style="flex:1;padding:10px 14px;border-radius:10px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:14px" onkeydown="if(event.key==='Enter')wppSendMsg()">
+      <button class="btn-acc" style="padding:10px 20px" onclick="wppSendMsg()">➤</button>
+    </div>`;
+  }else{
+    html+=`<div style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px">
+      <div style="font-size:48px;opacity:.3">💬</div>
+      <div style="font-size:14px;color:var(--t3)">Selecione uma conversa</div>
+    </div>`}
+  html+=`</div></div>`;
+  return html;
+}
+
+// ══════ RMC SELECTION ══════
+function filtroRMC(r){
+  if(S.rmcF==="ALL")return true;
+  if(S.rmcF==="MARGEM")return r.mrgCart>0&&!r.temCartao;
+  if(S.rmcF==="COMCARTAO")return r.temCartao;
+  if(S.rmcF==="PAN")return r.cRmc==="623"||r.cRcc==="623";
+  if(S.rmcF==="BMG")return r.cRmc==="318"||r.cRcc==="318";
+  if(S.rmcF==="DAYCOVAL")return r.cRmc==="707"||r.cRcc==="707";
+  return true;
+}
+function toggleRcSel(cpf){if(rcSelected.has(cpf))rcSelected.delete(cpf);else rcSelected.add(cpf);renderApp()}
+async function batchSaqueSelected(){
+  let cpfs=[...rcSelected];
+  if(!cpfs.length){alert("Selecione clientes primeiro");return}
+  if(!confirm(`Consultar saque complementar de ${cpfs.length} CPFs selecionados?`))return;
+  batchProgress={running:true,total:cpfs.length,done:0,results:[]};renderApp();
+  for(let cpf of cpfs){
+    try{
+      const res=await fetch('/api/cartao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf.replace(/\D/g,''),bancos:['BMG','DAYCOVAL']})});
+      const data=await res.json();
+      if(data.success){cardCache[cpf]=data;let totalSaque=data.cartoes.reduce((s,c)=>s+(c.limiteSaqueDisp||0),0);batchProgress.results.push({cpf,nome:data.nome,ok:true,saque:totalSaque,cartoes:data.cartoes.length})}
+      else{batchProgress.results.push({cpf,nome:"",ok:false,error:data.error||"Erro"})}
+    }catch(e){batchProgress.results.push({cpf,nome:"",ok:false,error:e.message})}
+    batchProgress.done++;if(batchProgress.done%3===0)renderApp();
+    await new Promise(r=>setTimeout(r,800));
+  }
+  batchProgress.running=false;renderApp();
+  let ok=batchProgress.results.filter(r=>r.ok);let totalSaque=ok.reduce((s,r)=>s+r.saque,0);
+  alert(`✅ ${ok.length}/${cpfs.length} consultados\nSaque disponível: ${R$(totalSaque)}`);
+}
+
 // ══════ CRM ══════
 const CRM_LABELS=[
   {k:"fechado",l:"Fechado",icon:"✅",c:"#22C55E",bg:"rgba(34,197,94,.12)"},
@@ -1030,16 +1387,19 @@ function renderApp(){
     c.innerHTML=html;let ub=document.getElementById("uploadBox");ub.addEventListener("dragover",e=>{e.preventDefault();ub.classList.add("drag")});ub.addEventListener("dragleave",()=>ub.classList.remove("drag"));ub.addEventListener("drop",e=>{e.preventDefault();ub.classList.remove("drag");if(e.dataTransfer.files[0]){let inp=document.getElementById("fileInput");let dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);inp.files=dt.files;handleFile(inp)}});return}
   document.getElementById("headerActions").style.display="flex";document.getElementById("fileName").textContent="📁 "+S.fname;
   let nSel=selected.size,nHig=[...selected].filter(c=>phoneCache[c]).length,nWpp=[...selected].filter(c=>wppSent.has(c)).length;
-  let tabs=[{k:"dash",l:"Dashboard"},{k:"an",l:"Análise",n:N((D.totalAnalise||D.analise.length))},{k:"el",l:"✅ Elegíveis",n:N(D.elegiveis.length)},{k:"pipe",l:"🔄 Pipeline",n:nSel||""},{k:"mp",l:"Mapa"},{k:"rc",l:"RMC/RCC",n:N(D.rmcRcc.length)}];
-  tabs.push({k:"wpp",l:"💬 WhatsApp"});
+  let isAdm=CU&&CU.role==="admin",isGes=CU&&(CU.role==="gestor"||CU.role==="admin"),isOp=CU&&CU.role==="operador";
+  let tabs=[];
+  if(isGes){tabs.push({k:"dash",l:"Dashboard"},{k:"an",l:"Análise",n:N((D.totalAnalise||D.analise.length))},{k:"el",l:"✅ Elegíveis",n:N(D.elegiveis.length)},{k:"pipe",l:"🔄 Pipeline",n:nSel||""},{k:"mp",l:"Mapa"},{k:"rc",l:"RMC/RCC",n:N(D.rmcRcc.length)})}
+  tabs.push({k:"camp",l:"📋 Campanhas"});
   let crmCount=Object.keys(getCrmData()).length;
-  if(CU&&CU.role==="admin"){tabs.push({k:"camp",l:"📋 Campanhas"})}
   tabs.push({k:"crm",l:"🏷️ CRM",n:crmCount||""});
-  if(CU&&CU.role==="admin"){tabs.push({k:"admin",l:"👥"})}
+  tabs.push({k:"wppchat",l:"💬 Chat"});
+  if(isAdm){tabs.push({k:"wpp",l:"📱 Conexões"});tabs.push({k:"admin",l:"👥"})}
   html+=`<div class="tabs">${tabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
   if(S.tab==="admin"){c.innerHTML=html+renderAdmin();return}
   if(S.tab==="camp"){c.innerHTML=html+renderCampanhas();return}
   if(S.tab==="wpp"){c.innerHTML=html+renderWhatsApp();return}
+  if(S.tab==="wppchat"){c.innerHTML=html+renderWppChat();return}
   if(S.tab==="crm"){c.innerHTML=html+renderCRM();return}
 
   // ═══ DASHBOARD ═══
@@ -1216,11 +1576,11 @@ function renderApp(){
     if(batchProgress.running){html+=`<div style="background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:10px;padding:14px;margin-bottom:14px;display:flex;align-items:center;gap:12px"><div style="font-size:20px;animation:pulse 1.2s ease infinite">🔍</div><div><div style="font-size:13px;font-weight:700;color:var(--pur)">Consultando saque complementar... ${batchProgress.done}/${batchProgress.total}</div><div style="background:var(--brd);border-radius:4px;height:6px;margin-top:6px;width:200px"><div style="background:var(--pur);height:100%;border-radius:4px;width:${Math.round(batchProgress.done/batchProgress.total*100)}%"></div></div></div></div>`}
     if(batchProgress.results.length>0&&!batchProgress.running){let okRes=batchProgress.results.filter(r=>r.ok&&r.saque>0);
       html+=`<div style="display:flex;gap:8px;margin-bottom:14px"><button class="btn btn-grn" onclick="exportSaqueComplementar()">↓ Exportar Saque Complementar (${okRes.length} com saque)</button><button class="btn btn-sm" onclick="batchProgress.results=[];renderApp()">Limpar</button></div>`}
-    html+=`<div class="search-bar"><input type="text" placeholder="Buscar..." value="${esc(S.q)}" oninput="setQ(this.value)"><select onchange="S.rmcF=this.value;S.pg=0;renderApp()"><option value="ALL"${S.rmcF==="ALL"?" selected":""}>Todos</option><option value="PAN"${S.rmcF==="PAN"?" selected":""}>PAN</option><option value="BMG"${S.rmcF==="BMG"?" selected":""}>BMG</option><option value="DAYCOVAL"${S.rmcF==="DAYCOVAL"?" selected":""}>Daycoval</option><option value="MARGEM"${S.rmcF==="MARGEM"?" selected":""}>🆕 Sem Cartão</option><option value="COMCARTAO"${S.rmcF==="COMCARTAO"?" selected":""}>💳 Com Cartão</option></select><button class="btn btn-grn" onclick="batchSaqueComplementar()">💳 Consultar Lote</button><button class="btn btn-grn" onclick="exportRMC()">↓ Exportar</button></div>`;
-    html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Nome</th><th>CPF</th><th>Esp</th><th>Tel 1</th><th>Banco RMC</th><th class="right">Vlr RMC</th><th>Banco RCC</th><th class="right">Vlr RCC</th><th class="right">Margem Disp</th><th class="right">Cart Nova</th><th class="right">Emp Nova</th><th>Ação</th></tr></thead><tbody>`;
-    for(let r of items){let cc=cardCache[r.cpf];let cached=!!cc;let saqueDisp=0;if(cc&&cc.cartoes)for(let cd of cc.cartoes)saqueDisp+=(cd.limiteSaqueDisp||0);
-      html+=`<tr class="rh" style="${cached?"border-left:3px solid var(--grn)":""}"><td>${esc(r.nome)}</td><td class="mono">${esc(r.cpf)}</td><td>${esc(r.esp)}</td><td class="mono">${esc(r.t1)}</td><td><span class="pill pill-default">${esc(r.cRmc)}</span></td><td class="right mono" style="color:${r.vRmc>0?"var(--grn)":"var(--t3)"}">${r.vRmc>0?R$(r.vRmc):"—"}</td><td><span class="pill pill-default">${esc(r.cRcc)}</span></td><td class="right mono" style="color:${r.vRcc>0?"var(--pur)":"var(--t3)"}">${r.vRcc>0?R$(r.vRcc):"—"}</td><td class="right mono" style="color:${r.mrgCart>0?"var(--cyan)":"var(--t3)"}">${r.mrgCart>0?R$(r.mrgCart):"—"}</td><td class="right mono" style="color:${r.mrgCartNova>0?"var(--ylw)":"var(--t3)"}">${cached&&saqueDisp>0?`<span style="color:var(--grn);font-weight:800">${R$(saqueDisp)}</span> <span style="font-size:9px;color:var(--t3)">real</span>`:r.mrgCartNova>0?R$(r.mrgCartNova):"—"}</td><td class="right mono" style="color:${r.mrgEmpNova>0?"var(--org)":"var(--t3)"}">${r.mrgEmpNova>0?R$(r.mrgEmpNova):"—"}</td><td><button class="btn btn-sm ${cached?"btn-grn":"btn-cyan"}" onclick="consultarCartao('${r.cpf}','${esc(r.nome)}','${esc(r.ben)}')">${cached?"💳 Ver":"💳 Consultar"}</button></td></tr>`}
-    if(!items.length)html+=`<tr><td colspan="12" style="padding:40px;text-align:center;color:var(--t3)">Nenhum</td></tr>`;
+    html+=`<div class="search-bar"><input type="text" placeholder="Buscar..." value="${esc(S.q)}" oninput="setQ(this.value)"><select onchange="S.rmcF=this.value;S.pg=0;renderApp()"><option value="ALL"${S.rmcF==="ALL"?" selected":""}>Todos</option><option value="PAN"${S.rmcF==="PAN"?" selected":""}>PAN</option><option value="BMG"${S.rmcF==="BMG"?" selected":""}>BMG</option><option value="DAYCOVAL"${S.rmcF==="DAYCOVAL"?" selected":""}>Daycoval</option><option value="MARGEM"${S.rmcF==="MARGEM"?" selected":""}>🆕 Sem Cartão</option><option value="COMCARTAO"${S.rmcF==="COMCARTAO"?" selected":""}>💳 Com Cartão</option></select><div style="display:flex;gap:4px;align-items:center;background:var(--card);border:1px solid var(--brd);border-radius:6px;padding:3px"><button class="sel-btn" style="color:var(--acc)" onclick="for(let r of S.data.rmcRcc){if(S.rmcF==='ALL'||filtroRMC(r))rcSelected.add(r.cpf)};renderApp()">☑ Todos</button><button class="sel-btn" style="color:var(--red)" onclick="rcSelected.clear();renderApp()">✕</button></div>${rcSelected.size?`<button class="btn-acc btn-sm" onclick="batchSaqueSelected()">💳 Consultar ${rcSelected.size} selecionados</button>`:""}<button class="btn btn-grn btn-sm" onclick="exportRMC()">↓ Exportar</button><span style="font-size:10px;color:var(--t2)">${rcSelected.size} selecionados</span></div>`;
+    html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th style="width:30px"><input type="checkbox" class="chk" onclick="let vis=S.data.rmcRcc.filter(r=>filtroRMC(r));if(this.checked)vis.forEach(r=>rcSelected.add(r.cpf));else vis.forEach(r=>rcSelected.delete(r.cpf));renderApp()"></th><th>Nome</th><th>CPF</th><th>Esp</th><th>Tel 1</th><th>Banco RMC</th><th class="right">Vlr RMC</th><th>Banco RCC</th><th class="right">Vlr RCC</th><th class="right">Margem Disp</th><th class="right">Cart Nova</th><th class="right">Emp Nova</th><th>Ação</th></tr></thead><tbody>`;
+    for(let r of items){let cc=cardCache[r.cpf];let cached=!!cc;let saqueDisp=0;if(cc&&cc.cartoes)for(let cd of cc.cartoes)saqueDisp+=(cd.limiteSaqueDisp||0);let rcCk=rcSelected.has(r.cpf);
+      html+=`<tr class="rh" style="${rcCk?"background:rgba(167,139,250,0.06)":cached?"border-left:3px solid var(--grn)":""}"><td><input type="checkbox" class="chk" ${rcCk?"checked":""} onclick="toggleRcSel('${r.cpf}')"></td><td>${esc(r.nome)}</td><td class="mono">${esc(r.cpf)}</td><td>${esc(r.esp)}</td><td class="mono">${esc(r.t1)}</td><td><span class="pill pill-default">${esc(r.cRmc)}</span></td><td class="right mono" style="color:${r.vRmc>0?"var(--grn)":"var(--t3)"}">${r.vRmc>0?R$(r.vRmc):"—"}</td><td><span class="pill pill-default">${esc(r.cRcc)}</span></td><td class="right mono" style="color:${r.vRcc>0?"var(--pur)":"var(--t3)"}">${r.vRcc>0?R$(r.vRcc):"—"}</td><td class="right mono" style="color:${r.mrgCart>0?"var(--cyan)":"var(--t3)"}">${r.mrgCart>0?R$(r.mrgCart):"—"}</td><td class="right mono" style="color:${r.mrgCartNova>0?"var(--ylw)":"var(--t3)"}">${cached&&saqueDisp>0?`<span style="color:var(--grn);font-weight:800">${R$(saqueDisp)}</span> <span style="font-size:9px;color:var(--t3)">real</span>`:r.mrgCartNova>0?R$(r.mrgCartNova):"—"}</td><td class="right mono" style="color:${r.mrgEmpNova>0?"var(--org)":"var(--t3)"}">${r.mrgEmpNova>0?R$(r.mrgEmpNova):"—"}</td><td><button class="btn btn-sm ${cached?"btn-grn":"btn-cyan"}" onclick="consultarCartao('${r.cpf}','${esc(r.nome)}','${esc(r.ben)}')">${cached?"💳 Ver":"💳"}</button></td></tr>`}
+    if(!items.length)html+=`<tr><td colspan="13" style="padding:40px;text-align:center;color:var(--t3)">Nenhum</td></tr>`;
     html+=`</tbody></table></div>${pgr(filtered.length)}</div>`}
   c.innerHTML=html}
 
