@@ -1,7 +1,7 @@
 export const config = { runtime: 'edge' };
 
 const EVO_URL = 'https://evo.cbdw.com.br';
-const EVO_KEY = '17441d2e2da8e81a3b0499cfe6a22d14';
+const EVO_KEY = 'CBDW_EVO_KEY_2026';
 
 const H = { 'Content-Type': 'application/json', 'apikey': EVO_KEY };
 
