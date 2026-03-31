@@ -238,8 +238,10 @@ function showApp(){document.getElementById("loginScreen").style.display="none";d
   if(!S.data){
     let activeId=localStorage.getItem("ff_active");
     if(activeId){try{loadHist(parseInt(activeId))}catch{}}
-    let savedTab=localStorage.getItem("ff_tab");
-    if(savedTab&&S.data)S.tab=savedTab;
+    // Restore pipeline state, selections, tab from sessionStorage
+    restoreSession();
+    // Fallback: try localStorage tab
+    if(!S.data){let savedTab=localStorage.getItem("ff_tab");if(savedTab)S.tab=savedTab}
   }
   if(CU.role==="operador"&&!S.data)S.tab="camp";
   renderApp()}
@@ -559,8 +561,50 @@ function processar(data){
 let S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel",crmFilter:"",crmQ:""};
 const PER=50;const R$=v=>"R$ "+v.toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});const N=v=>v.toLocaleString("pt-BR");
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
-function handleFile(inp){let f=inp.files[0];if(!f)return;S.fname=f.name;document.getElementById("appContainer").innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:60vh;flex-direction:column;gap:12px"><div style="font-size:30px;animation:pulse 1.2s ease infinite">⚙️</div><div style="font-size:13px;color:var(--t2)">Processando...</div></div>';setTimeout(()=>{let reader=new FileReader();reader.onload=function(e){try{let wb=XLSX.read(e.target.result,{type:"array",cellDates:true});let ws=wb.Sheets[wb.SheetNames[0]];S.data=processar(XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:true}));S.tab="dash";S.pg=0;selected.clear();phoneCache={};wppSent.clear();if(S.data){let tT=S.data.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=S.data.elegiveis.reduce((s,e)=>s+e.vc,0);let bens=[...new Set(S.data.analise.map(r=>r.ben).filter(b=>b))].slice(0,20);addHist(S.fname,{contratos:S.data.analise.length,elegiveis:S.data.elegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:S.data.rmcRcc.length,beneficios:bens},S.data)}renderApp()}catch(err){alert("Erro: "+err.message);renderApp()}};reader.readAsArrayBuffer(f)},50)}
-function resetData(){S.data=null;S.fname="";S.tab="dash";selected.clear();phoneCache={};wppSent.clear();localStorage.removeItem("ff_active");localStorage.removeItem("ff_tab");renderApp()}
+
+// ══════ SESSION PERSISTENCE ══════
+function saveSession(){
+  try{
+    const ss={
+      tab:S.tab, pipeStage:S.pipeStage, rmcF:S.rmcF, fname:S.fname,
+      selected:[...selected], wppSent:[...wppSent], rcSelected:[...rcSelected],
+      ts:Date.now()
+    };
+    sessionStorage.setItem('ff_ss',JSON.stringify(ss));
+    // Save phoneCache updates to active history entry
+    const aid=localStorage.getItem('ff_active');
+    if(aid&&Object.keys(phoneCache).length>0){
+      try{
+        let raw=localStorage.getItem('lhm_data_'+aid);
+        if(raw){let sv=JSON.parse(raw);sv.phones=sv.phones||{};
+          let changed=false;
+          for(let k of Object.keys(phoneCache)){if(!sv.phones[k]){sv.phones[k]=phoneCache[k];changed=true}}
+          if(changed)localStorage.setItem('lhm_data_'+aid,JSON.stringify(sv));
+        }
+      }catch{}
+    }
+  }catch{}
+}
+function restoreSession(){
+  try{
+    const raw=sessionStorage.getItem('ff_ss');
+    if(!raw)return false;
+    const ss=JSON.parse(raw);
+    // Only restore if less than 4 hours old
+    if(Date.now()-ss.ts>4*3600*1000){sessionStorage.removeItem('ff_ss');return false}
+    if(ss.tab)S.tab=ss.tab;
+    if(ss.pipeStage)S.pipeStage=ss.pipeStage;
+    if(ss.rmcF)S.rmcF=ss.rmcF;
+    if(ss.fname)S.fname=ss.fname;
+    if(ss.selected&&ss.selected.length)ss.selected.forEach(c=>selected.add(c));
+    if(ss.wppSent&&ss.wppSent.length)ss.wppSent.forEach(c=>wppSent.add(c));
+    if(ss.rcSelected&&ss.rcSelected.length)ss.rcSelected.forEach(c=>rcSelected.add(c));
+    return true;
+  }catch{return false}
+}
+
+function handleFile(inp){let f=inp.files[0];if(!f)return;S.fname=f.name;document.getElementById("appContainer").innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:60vh;flex-direction:column;gap:12px"><div style="font-size:30px;animation:pulse 1.2s ease infinite">⚙️</div><div style="font-size:13px;color:var(--t2)">Processando...</div></div>';setTimeout(()=>{let reader=new FileReader();reader.onload=function(e){try{let wb=XLSX.read(e.target.result,{type:"array",cellDates:true});let ws=wb.Sheets[wb.SheetNames[0]];S.data=processar(XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:true}));S.tab="dash";S.pg=0;selected.clear();phoneCache={};wppSent.clear();sessionStorage.removeItem('ff_ss');if(S.data){let tT=S.data.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=S.data.elegiveis.reduce((s,e)=>s+e.vc,0);let bens=[...new Set(S.data.analise.map(r=>r.ben).filter(b=>b))].slice(0,20);addHist(S.fname,{contratos:S.data.analise.length,elegiveis:S.data.elegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:S.data.rmcRcc.length,beneficios:bens},S.data)}renderApp()}catch(err){alert("Erro: "+err.message);renderApp()}};reader.readAsArrayBuffer(f)},50)}
+function resetData(){S.data=null;S.fname="";S.tab="dash";selected.clear();phoneCache={};wppSent.clear();rcSelected.clear();localStorage.removeItem("ff_active");localStorage.removeItem("ff_tab");sessionStorage.removeItem("ff_ss");renderApp()}
 function setTab(t){S.tab=t;S.sort={c:null,d:"asc"};S.pg=0;localStorage.setItem("ff_tab",t);renderApp()}
 function setQ(v){S.q=v;S.pg=0;renderApp()}
 function doSort(col){if(S.sort.c===col)S.sort.d=S.sort.d==="asc"?"desc":"asc";else S.sort={c:col,d:"asc"};S.pg=0;renderApp()}
@@ -1971,7 +2015,7 @@ function renderApp(){
       html+=`<tr class="rh" style="${rcCk?"background:rgba(167,139,250,0.06)":cached?"border-left:3px solid var(--grn)":""}"><td><input type="checkbox" class="chk" ${rcCk?"checked":""} onclick="toggleRcSel('${r.cpf}')"></td><td>${esc(r.nome)}</td><td class="mono">${esc(r.cpf)}</td><td>${esc(r.esp)}</td><td class="mono">${esc(r.t1)}</td><td><span class="pill pill-default">${esc(r.cRmc)}</span></td><td class="right mono" style="color:${r.vRmc>0?"var(--grn)":"var(--t3)"}">${r.vRmc>0?R$(r.vRmc):"—"}</td><td><span class="pill pill-default">${esc(r.cRcc)}</span></td><td class="right mono" style="color:${r.vRcc>0?"var(--pur)":"var(--t3)"}">${r.vRcc>0?R$(r.vRcc):"—"}</td><td class="right mono" style="color:${r.mrgCart>0?"var(--cyan)":"var(--t3)"}">${r.mrgCart>0?R$(r.mrgCart):"—"}</td><td class="right mono" style="color:${r.mrgCartNova>0?"var(--ylw)":"var(--t3)"}">${cached&&saqueDisp>0?`<span style="color:var(--grn);font-weight:800">${R$(saqueDisp)}</span> <span style="font-size:9px;color:var(--t3)">real</span>`:r.mrgCartNova>0?R$(r.mrgCartNova):"—"}</td><td class="right mono" style="color:${r.mrgEmpNova>0?"var(--org)":"var(--t3)"}">${r.mrgEmpNova>0?R$(r.mrgEmpNova):"—"}</td><td><button class="btn btn-sm ${cached?"btn-grn":"btn-cyan"}" onclick="consultarCartao('${r.cpf}','${esc(r.nome)}','${esc(r.ben)}')">${cached?"💳 Ver":"💳"}</button></td></tr>`}
     if(!items.length)html+=`<tr><td colspan="13" style="padding:40px;text-align:center;color:var(--t3)">Nenhum</td></tr>`;
     html+=`</tbody></table></div>${pgr(filtered.length)}</div>`}
-  c.innerHTML=html}
+  c.innerHTML=html;saveSession()}
 
 // ══════ SAQUE PIPELINE ══════
 // Helper: call cartao API with active bank credentials
