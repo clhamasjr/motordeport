@@ -244,7 +244,10 @@ function showApp(){document.getElementById("loginScreen").style.display="none";d
     if(!S.data){let savedTab=localStorage.getItem("ff_tab");if(savedTab)S.tab=savedTab}
   }
   if(CU.role==="operador"&&!S.data)S.tab="camp";
-  renderApp()}
+  renderApp();
+  // Auto-reconnect WhatsApp in background (doesn't block UI)
+  setTimeout(()=>{if(getMyInstance())wppLoadInstances()},500);
+}
 function doChangePw(){const o=document.getElementById("cpwOld").value,n=document.getElementById("cpwNew").value,c=document.getElementById("cpwConfirm").value,err=document.getElementById("cpwError");if(!o||!n||!c){err.textContent="Preencha tudo";return}if(hp(o)!==CU.pw){err.textContent="Incorreta";return}if(n.length<4){err.textContent="Mín 4";return}if(n!==c){err.textContent="Não conferem";return}let users=getU();let i=users.findIndex(u=>u.user===CU.user);if(i>=0){users[i].pw=hp(n);saveU(users);CU.pw=hp(n)}err.style.color="var(--grn)";err.textContent="Alterada!";setTimeout(()=>document.getElementById("changePwModal").style.display="none",1000)}
 
 // ══════ HISTORY ══════
@@ -568,6 +571,7 @@ function saveSession(){
     const ss={
       tab:S.tab, pipeStage:S.pipeStage, rmcF:S.rmcF, fname:S.fname,
       selected:[...selected], wppSent:[...wppSent], rcSelected:[...rcSelected],
+      wppConnected:wppState.connected, wppMyInst:wppState.myInst,
       ts:Date.now()
     };
     sessionStorage.setItem('ff_ss',JSON.stringify(ss));
@@ -599,6 +603,9 @@ function restoreSession(){
     if(ss.selected&&ss.selected.length)ss.selected.forEach(c=>selected.add(c));
     if(ss.wppSent&&ss.wppSent.length)ss.wppSent.forEach(c=>wppSent.add(c));
     if(ss.rcSelected&&ss.rcSelected.length)ss.rcSelected.forEach(c=>rcSelected.add(c));
+    // Restore WhatsApp state hint (will be confirmed by API)
+    if(ss.wppConnected)wppState.connected=true;
+    if(ss.wppMyInst)wppState.myInst=ss.wppMyInst;
     return true;
   }catch{return false}
 }
