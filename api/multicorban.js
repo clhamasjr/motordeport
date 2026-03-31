@@ -381,6 +381,75 @@ export default async function handler(req) {
       }
     }
 
+    if (action === 'debugLogin') {
+      // Debug: show each step of login process
+      const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+      const steps = [];
+      
+      try {
+        // Step 1: GET login page
+        const page = await fetch(MC_BASE + '/login', { method: 'GET', headers: { 'User-Agent': UA }, redirect: 'manual' });
+        const pageHtml = await page.text();
+        const pageCookies = page.headers.get('set-cookie') || '';
+        
+        // Find form fields
+        const formAction = pageHtml.match(/form[^>]*action=["']([^"']+)["']/i);
+        const inputNames = [...pageHtml.matchAll(/<input[^>]*name=["']([^"']+)["'][^>]*/gi)].map(m => {
+          const type = m[0].match(/type=["']([^"']+)["']/i);
+          return m[1] + (type ? ' (' + type[1] + ')' : '');
+        });
+        const csrfInput = pageHtml.match(/name=["']_?csrf[_-]?token?["'][^>]*value=["']([^"']+)["']/i)
+                       || pageHtml.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/i);
+        
+        steps.push({
+          step: '1-GET-login',
+          status: page.status,
+          cookies: pageCookies.substring(0, 200),
+          formAction: formAction ? formAction[1] : 'not found',
+          inputNames,
+          csrfToken: csrfInput ? csrfInput[1].substring(0, 50) : 'not found',
+          htmlSize: pageHtml.length
+        });
+
+        // Step 2: POST login
+        const cookies = pageCookies.split(/,(?=\s*\w+=)/).map(c => c.split(';')[0].trim()).filter(c => c && c.includes('='));
+        let loginBody = `login=${encodeURIComponent(MC_USER)}&password=${encodeURIComponent(MC_PASS)}`;
+        if (csrfInput) loginBody += `&_csrf=${encodeURIComponent(csrfInput[1])}&_token=${encodeURIComponent(csrfInput[1])}`;
+        
+        const postUrl = formAction ? (formAction[1].startsWith('http') ? formAction[1] : MC_BASE + formAction[1]) : MC_BASE + '/login';
+        
+        const loginRes = await fetch(postUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': UA, 'Cookie': cookies.join('; '),
+            'Referer': MC_BASE + '/login', 'Origin': MC_BASE
+          },
+          body: loginBody,
+          redirect: 'manual'
+        });
+        
+        const loginCookies = loginRes.headers.get('set-cookie') || '';
+        const loginLocation = loginRes.headers.get('location') || '';
+        let loginText = '';
+        try { loginText = await loginRes.text(); } catch {}
+        
+        steps.push({
+          step: '2-POST-login',
+          status: loginRes.status,
+          location: loginLocation,
+          newCookies: loginCookies.substring(0, 200),
+          bodyUsed: loginBody.replace(MC_PASS, '***'),
+          postUrl,
+          responsePreview: loginText.substring(0, 300)
+        });
+
+        return new Response(JSON.stringify({ steps }), { headers: cors });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message, steps }), { headers: cors });
+      }
+    }
+
     return new Response(JSON.stringify({ error: 'action inválida', valid: ['consulta', 'test', 'debug'] }), { status: 400, headers: cors });
 
   } catch (err) {
