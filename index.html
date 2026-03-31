@@ -612,7 +612,10 @@ function restoreSession(){
 
 function handleFile(inp){let f=inp.files[0];if(!f)return;S.fname=f.name;document.getElementById("appContainer").innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:60vh;flex-direction:column;gap:12px"><div style="font-size:30px;animation:pulse 1.2s ease infinite">⚙️</div><div style="font-size:13px;color:var(--t2)">Processando...</div></div>';setTimeout(()=>{let reader=new FileReader();reader.onload=function(e){try{let wb=XLSX.read(e.target.result,{type:"array",cellDates:true});let ws=wb.Sheets[wb.SheetNames[0]];S.data=processar(XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:true}));S.tab="dash";S.pg=0;selected.clear();phoneCache={};wppSent.clear();sessionStorage.removeItem('ff_ss');if(S.data){let tT=S.data.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=S.data.elegiveis.reduce((s,e)=>s+e.vc,0);let bens=[...new Set(S.data.analise.map(r=>r.ben).filter(b=>b))].slice(0,20);addHist(S.fname,{contratos:S.data.analise.length,elegiveis:S.data.elegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:S.data.rmcRcc.length,beneficios:bens},S.data)}renderApp()}catch(err){alert("Erro: "+err.message);renderApp()}};reader.readAsArrayBuffer(f)},50)}
 function resetData(){S.data=null;S.fname="";S.tab="dash";selected.clear();phoneCache={};wppSent.clear();rcSelected.clear();localStorage.removeItem("ff_active");localStorage.removeItem("ff_tab");sessionStorage.removeItem("ff_ss");renderApp()}
-function setTab(t){S.tab=t;S.sort={c:null,d:"asc"};S.pg=0;localStorage.setItem("ff_tab",t);renderApp()}
+function setTab(t){S.tab=t;S.sort={c:null,d:"asc"};S.pg=0;localStorage.setItem("ff_tab",t);renderApp();
+  // Auto-load WhatsApp chats when switching to chat tab
+  if(t==='wppchat'&&wppState.connected&&!wppState.chats.length)wppLoadChats();
+}
 function setQ(v){S.q=v;S.pg=0;renderApp()}
 function doSort(col){if(S.sort.c===col)S.sort.d=S.sort.d==="asc"?"desc":"asc";else S.sort={c:col,d:"asc"};S.pg=0;renderApp()}
 function setPg(p){S.pg=p;renderApp()}
@@ -1454,20 +1457,43 @@ async function wppDisconnect(){
 async function wppLoadChats(){
   try{
     const d=await wppCall('chats');
-    wppState.chats=Array.isArray(d)?d.filter(c=>c.id&&!c.id.includes('@g.us')).slice(0,100):[];
+    console.log('[WPP] findChats response:', typeof d, Array.isArray(d) ? d.length + ' chats' : JSON.stringify(d).substring(0,200));
+    // Handle various response formats from Evolution API v2.x
+    let chats=[];
+    if(Array.isArray(d)){chats=d}
+    else if(d&&Array.isArray(d.chats)){chats=d.chats}
+    else if(d&&Array.isArray(d.data)){chats=d.data}
+    else if(d&&d.error){console.log('[WPP] Chat error:', d.error)}
+    wppState.chats=chats.filter(c=>{
+      const chatId=c.id||c.jid||c.remoteJid||'';
+      return chatId && !chatId.includes('@g.us') && !chatId.includes('@broadcast');
+    }).map(c=>({
+      ...c,
+      id: c.id||c.jid||c.remoteJid||'',
+      name: c.name||c.pushName||c.contact?.name||(c.id||c.jid||'').replace('@s.whatsapp.net',''),
+      lastMsgTimestamp: c.lastMsgTimestamp||c.updatedAt||c.timestamp||0,
+      unreadMessages: c.unreadMessages||c.unreadCount||0
+    })).slice(0,100);
     wppState.chats.sort((a,b)=>(b.lastMsgTimestamp||0)-(a.lastMsgTimestamp||0));
     renderApp();
-  }catch{renderApp()}
+  }catch(e){console.log('[WPP] loadChats error:', e.message);renderApp()}
 }
 
 async function wppOpenChat(jid,name){
   wppState.activeChat={jid,name};wppState.messages=[];renderApp();
   try{
     const d=await wppCall('messages',{jid,limit:50});
-    wppState.messages=Array.isArray(d)?d.reverse():Array.isArray(d.messages)?d.messages.reverse():[];
+    console.log('[WPP] findMessages response:', typeof d, Array.isArray(d) ? d.length + ' msgs' : JSON.stringify(d).substring(0,200));
+    // Handle various response formats
+    let msgs=[];
+    if(Array.isArray(d)){msgs=d}
+    else if(d&&Array.isArray(d.messages)){msgs=d.messages}
+    else if(d&&Array.isArray(d.data)){msgs=d.data}
+    else if(d&&d.records&&Array.isArray(d.records)){msgs=d.records}
+    wppState.messages=msgs.reverse();
     renderApp();
     setTimeout(()=>{let el=document.getElementById('wppMsgList');if(el)el.scrollTop=el.scrollHeight},100);
-  }catch{renderApp()}
+  }catch(e){console.log('[WPP] openChat error:', e.message);renderApp()}
 }
 
 async function wppSendMsg(){
@@ -1625,7 +1651,15 @@ function renderWppChat(){
         <div style="display:flex;align-items:center;gap:6px">${unread>0?`<span style="background:var(--grn);color:#000;font-size:10px;font-weight:800;padding:1px 6px;border-radius:10px">${unread}</span>`:''}<span style="font-size:10px;color:var(--t3)">${time}</span></div>
       </div>
     </div>`}
-  if(!wppState.chats.length)html+=`<div style="padding:20px;text-align:center;color:var(--t3);font-size:12px">Carregando... <button class="btn btn-sm" onclick="wppLoadChats()">🔄</button></div>`;
+  if(!wppState.chats.length){
+    html+=`<div style="padding:20px;text-align:center;color:var(--t3);font-size:12px">
+      <div style="font-size:20px;margin-bottom:8px;animation:pulse 1.2s ease infinite">💬</div>
+      Carregando conversas...<br>
+      <button class="btn btn-sm btn-cyan" style="margin-top:8px" onclick="wppLoadChats()">🔄 Recarregar</button>
+    </div>`;
+    // Auto-trigger load once (guard prevents loop)
+    if(!wppState._chatLoadAttempted){wppState._chatLoadAttempted=true;setTimeout(()=>wppLoadChats(),300)}
+  } else { wppState._chatLoadAttempted=false; }
   html+=`</div></div>`;
   // Right: Messages
   html+=`<div style="display:flex;flex-direction:column;background:var(--sf)">`;
