@@ -16,64 +16,157 @@ async function mcLogin() {
   if (sessionCookie && Date.now() < sessionExpires) return sessionCookie;
 
   try {
-    // Step 1: Get login page to capture CSRF/cookies
-    const loginPage = await fetch(MC_BASE + '/login', {
+    const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    
+    // Helper: extract cookies from response (Edge Runtime compatible)
+    function extractCookies(res) {
+      const raw = res.headers.get('set-cookie') || '';
+      // set-cookie can have multiple cookies separated by comma, but dates also have commas
+      // Split by comma followed by a space and a word with =
+      const parts = raw.split(/,(?=\s*\w+=)/);
+      return parts.map(c => c.split(';')[0].trim()).filter(c => c && c.includes('='));
+    }
+
+    // Step 1: GET login page to capture initial cookies + CSRF
+    const page = await fetch(MC_BASE + '/login', {
       method: 'GET',
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      headers: { 'User-Agent': UA },
       redirect: 'manual'
     });
-    let cookies = (loginPage.headers.get('set-cookie') || '').split(',').map(c => c.split(';')[0].trim()).filter(c => c).join('; ');
+    let cookies = extractCookies(page);
+    
+    // Check if there's a CSRF token in the HTML
+    let csrf = '';
+    try {
+      const html = await page.text();
+      const csrfMatch = html.match(/name=["']_csrf["']\s*value=["']([^"']+)["']/i) 
+                      || html.match(/name=["']_token["']\s*value=["']([^"']+)["']/i)
+                      || html.match(/csrf[_-]?token["']\s*(?:content|value)=["']([^"']+)["']/i);
+      if (csrfMatch) csrf = csrfMatch[1];
+    } catch {}
 
     // Step 2: POST login
+    let loginBody = `login=${encodeURIComponent(MC_USER)}&password=${encodeURIComponent(MC_PASS)}`;
+    if (csrf) loginBody += `&_csrf=${encodeURIComponent(csrf)}&_token=${encodeURIComponent(csrf)}`;
+
     const loginRes = await fetch(MC_BASE + '/login', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Cookie': cookies,
-        'Referer': MC_BASE + '/login'
+        'User-Agent': UA,
+        'Cookie': cookies.join('; '),
+        'Referer': MC_BASE + '/login',
+        'Origin': MC_BASE
       },
-      body: `login=${encodeURIComponent(MC_USER)}&password=${encodeURIComponent(MC_PASS)}`,
+      body: loginBody,
       redirect: 'manual'
     });
 
-    // Capture session cookies
-    const setCookies = loginRes.headers.getAll ? loginRes.headers.getAll('set-cookie') : [loginRes.headers.get('set-cookie') || ''];
-    const allCookies = setCookies.flatMap(c => c.split(',').map(x => x.split(';')[0].trim())).filter(c => c && c.includes('='));
-
-    if (allCookies.length) {
-      sessionCookie = [...new Set([...cookies.split('; '), ...allCookies])].filter(c => c).join('; ');
-    } else {
-      sessionCookie = cookies;
+    // Capture session cookies from login response
+    const loginCookies = extractCookies(loginRes);
+    const allCookies = [...cookies, ...loginCookies];
+    
+    // If redirected, follow redirect and capture more cookies
+    const location = loginRes.headers.get('location');
+    if (location) {
+      const redirectUrl = location.startsWith('http') ? location : MC_BASE + location;
+      const redirectRes = await fetch(redirectUrl, {
+        method: 'GET',
+        headers: { 'User-Agent': UA, 'Cookie': allCookies.join('; ') },
+        redirect: 'manual'
+      });
+      const redirectCookies = extractCookies(redirectRes);
+      allCookies.push(...redirectCookies);
     }
 
-    // Cache for 30 minutes
-    sessionExpires = Date.now() + 30 * 60 * 1000;
+    // Deduplicate cookies (keep last value for each name)
+    const cookieMap = {};
+    for (const c of allCookies) {
+      const [name] = c.split('=');
+      cookieMap[name.trim()] = c;
+    }
+    sessionCookie = Object.values(cookieMap).join('; ');
+
+    // Verify session works by fetching a protected page
+    const verify = await fetch(MC_BASE + '/search/form/inss', {
+      method: 'GET',
+      headers: { 'User-Agent': UA, 'Cookie': sessionCookie },
+      redirect: 'manual'
+    });
+    
+    // If redirected to login, auth failed
+    const verifyLocation = verify.headers.get('location') || '';
+    if (verifyLocation.includes('login')) {
+      throw new Error('Sessão inválida — redirecionou pro login');
+    }
+
+    // Cache for 25 minutes
+    sessionExpires = Date.now() + 25 * 60 * 1000;
     return sessionCookie;
   } catch (e) {
+    sessionCookie = null;
+    sessionExpires = 0;
     throw new Error('Login Multicorban falhou: ' + e.message);
   }
 }
 
 async function mcConsult(cpf) {
   const cookie = await mcLogin();
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
   const res = await fetch(MC_BASE + '/search/consult', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'User-Agent': UA,
       'Cookie': cookie,
       'Referer': MC_BASE + '/search/form/inss',
-      'X-Requested-With': 'XMLHttpRequest'
+      'X-Requested-With': 'XMLHttpRequest',
+      'Origin': MC_BASE
     },
     body: `methodOperation=dataBase&methodConsult=cpf&versaoTela=v2&dataConsult=${cpf.replace(/\D/g, '')}&dataOrgao=&CPF=&CPFRepresentante=&ddd=&telefone=`
   });
 
-  const data = await res.json();
-  if (!data.hash) throw new Error('Resposta vazia do Multicorban');
-
-  return parseMulticorbanHTML(data.hash);
+  const text = await res.text();
+  
+  // Check if redirected to login (session expired)
+  if (text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('/login')) {
+    // Clear session and retry once
+    sessionCookie = null; sessionExpires = 0;
+    const newCookie = await mcLogin();
+    const res2 = await fetch(MC_BASE + '/search/consult', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': UA,
+        'Cookie': newCookie,
+        'Referer': MC_BASE + '/search/form/inss',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Origin': MC_BASE
+      },
+      body: `methodOperation=dataBase&methodConsult=cpf&versaoTela=v2&dataConsult=${cpf.replace(/\D/g, '')}&dataOrgao=&CPF=&CPFRepresentante=&ddd=&telefone=`
+    });
+    const text2 = await res2.text();
+    if (text2.includes('<!DOCTYPE') || text2.includes('<html')) {
+      throw new Error('Multicorban retornou HTML após re-login. Possível bloqueio ou mudança no sistema. Preview: ' + text2.substring(0, 200));
+    }
+    try {
+      const data = JSON.parse(text2);
+      if (!data.hash) throw new Error('Resposta sem hash');
+      return parseMulticorbanHTML(data.hash);
+    } catch (e) {
+      throw new Error('Parse falhou após retry: ' + e.message + ' | Preview: ' + text2.substring(0, 200));
+    }
+  }
+  
+  // Normal path: parse JSON
+  try {
+    const data = JSON.parse(text);
+    if (!data.hash) throw new Error('Resposta sem campo hash. Keys: ' + Object.keys(data).join(','));
+    return parseMulticorbanHTML(data.hash);
+  } catch (e) {
+    throw new Error('Parse falhou: ' + e.message + ' | Preview: ' + text.substring(0, 200));
+  }
 }
 
 function parseMulticorbanHTML(html) {
@@ -240,11 +333,15 @@ export default async function handler(req) {
     }
 
     if (action === 'test') {
+      // Clear cache to force fresh login
+      sessionCookie = null; sessionExpires = 0;
       try {
         const cookie = await mcLogin();
         return new Response(JSON.stringify({
           active: true,
           authenticated: !!cookie,
+          cookieCount: cookie ? cookie.split(';').length : 0,
+          cookiePreview: cookie ? cookie.substring(0, 100) + '...' : '',
           user: MC_USER,
           message: 'Multicorban conectado!'
         }), { headers: cors });
@@ -253,7 +350,38 @@ export default async function handler(req) {
       }
     }
 
-    return new Response(JSON.stringify({ error: 'action inválida', valid: ['consulta', 'test'] }), { status: 400, headers: cors });
+    if (action === 'debug') {
+      // Debug: show raw response from consult without parsing
+      const cpf = (body.cpf || '07518194848').replace(/\D/g, '');
+      try {
+        const cookie = await mcLogin();
+        const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+        const res = await fetch(MC_BASE + '/search/consult', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': UA, 'Cookie': cookie,
+            'Referer': MC_BASE + '/search/form/inss',
+            'X-Requested-With': 'XMLHttpRequest', 'Origin': MC_BASE
+          },
+          body: `methodOperation=dataBase&methodConsult=cpf&versaoTela=v2&dataConsult=${cpf}&dataOrgao=&CPF=&CPFRepresentante=&ddd=&telefone=`
+        });
+        const text = await res.text();
+        return new Response(JSON.stringify({
+          status: res.status,
+          contentType: res.headers.get('content-type'),
+          isHTML: text.startsWith('<!') || text.startsWith('<html'),
+          isJSON: text.startsWith('{') || text.startsWith('['),
+          length: text.length,
+          preview: text.substring(0, 500),
+          cookieUsed: cookie ? cookie.substring(0, 80) + '...' : 'none'
+        }), { headers: cors });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { headers: cors });
+      }
+    }
+
+    return new Response(JSON.stringify({ error: 'action inválida', valid: ['consulta', 'test', 'debug'] }), { status: 400, headers: cors });
 
   } catch (err) {
     // If auth error, clear session
