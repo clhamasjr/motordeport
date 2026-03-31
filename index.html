@@ -243,7 +243,7 @@ function showApp(){document.getElementById("loginScreen").style.display="none";d
     // Fallback: try localStorage tab
     if(!S.data){let savedTab=localStorage.getItem("ff_tab");if(savedTab)S.tab=savedTab}
   }
-  if(CU.role==="operador"&&!S.data)S.tab="camp";
+  if(CU.role==="operador"&&!S.data)S.tab="consulta";
   renderApp();
   // Auto-reconnect WhatsApp in background (doesn't block UI)
   setTimeout(()=>{if(getMyInstance())wppLoadInstances()},500);
@@ -1804,7 +1804,176 @@ function renderCRM(){
   html+=`</tbody></table></div></div>`;
   return html;
 }
+// ══════ CONSULTA UNITÁRIA ══════
+let consultaState = { result: null, loading: false, error: null };
 
+function getConsultaHist() { try { return JSON.parse(localStorage.getItem('ff_consulta_hist') || '[]') } catch { return [] } }
+function saveConsultaHist(h) { localStorage.setItem('ff_consulta_hist', JSON.stringify(h.slice(0, 50))) }
+
+async function consultarCPFUnitario() {
+  const inp = document.getElementById('consultaCPF');
+  if (!inp) return;
+  const raw = inp.value.trim();
+  if (!raw || raw.replace(/\D/g, '').length < 5) { alert('Informe um CPF ou Benefício válido'); return }
+  const modo = document.getElementById('consultaModo') ? document.getElementById('consultaModo').value : 'cpf';
+  const action = modo === 'beneficio' ? 'consult_beneficio' : 'consult_cpf';
+  const param = modo === 'beneficio' ? { beneficio: raw } : { cpf: raw.replace(/\D/g, '') };
+  consultaState = { result: null, loading: true, error: null };
+  renderApp();
+  try {
+    const res = await fetch('/api/multicorban', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...param }) });
+    const data = await res.json();
+    if (data.ok && data.parsed) {
+      consultaState.result = data.parsed;
+      consultaState.loading = false;
+      let hist = getConsultaHist();
+      const entry = { cpf: data.parsed.beneficiario?.cpf || raw, nome: data.parsed.beneficiario?.nome || '—', nb: data.parsed.beneficiario?.nb || '', date: new Date().toLocaleString('pt-BR'), user: CU ? CU.name : '' };
+      hist = [entry, ...hist.filter(h => h.cpf !== entry.cpf)].slice(0, 50);
+      saveConsultaHist(hist);
+    } else { consultaState.loading = false; consultaState.error = data.error || data.mensagem || 'Erro na consulta'; }
+  } catch (e) { consultaState.loading = false; consultaState.error = e.message; }
+  renderApp();
+}
+
+function renderConsulta() {
+  let html = '';
+  // Search bar
+  html += '<div style="max-width:680px;margin:0 auto 24px">';
+  html += '<div style="font-size:22px;font-weight:800;text-align:center;margin-bottom:6px">🔍 Consulta INSS</div>';
+  html += '<div style="font-size:13px;color:var(--t2);text-align:center;margin-bottom:24px">Consulte extrato completo por CPF ou Benefício</div>';
+  html += '<div style="display:flex;gap:10px;margin-bottom:16px">';
+  html += '<select class="form-input" id="consultaModo" style="width:140px;flex:none"><option value="cpf">CPF</option><option value="beneficio">Benefício</option></select>';
+  html += '<input class="form-input" id="consultaCPF" type="text" placeholder="Digite o CPF ou Nº Benefício..." style="flex:1;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')consultarCPFUnitario()">';
+  html += '<button class="btn-acc" style="padding:14px 28px;font-size:14px;white-space:nowrap" onclick="consultarCPFUnitario()">🔍 Consultar</button>';
+  html += '</div></div>';
+
+  if (consultaState.loading) {
+    html += '<div style="text-align:center;padding:60px" class="fi"><div style="font-size:36px;animation:pulse 1.2s ease infinite;margin-bottom:12px">📡</div><div style="font-size:15px;font-weight:700">Consultando benefício...</div><div style="font-size:12px;color:var(--t3);margin-top:6px">Aguarde alguns segundos</div></div>';
+    return html;
+  }
+  if (consultaState.error) {
+    html += '<div style="text-align:center;padding:40px;background:var(--card);border-radius:14px;border:1px solid var(--brd);max-width:500px;margin:0 auto" class="fi"><div style="font-size:28px;margin-bottom:10px">❌</div><div style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:6px">Erro na Consulta</div><div style="font-size:13px;color:var(--t2)">' + esc(consultaState.error) + '</div><button class="btn" style="margin-top:14px" onclick="consultaState.error=null;renderApp()">Tentar novamente</button></div>';
+    return html;
+  }
+
+  const r = consultaState.result;
+  if (r) {
+    const b = r.beneficiario || {};
+    const ben = r.beneficio || {};
+    const mrg = r.margem || {};
+    const end = r.endereco || {};
+    const bco = r.banco || {};
+    const tels = r.telefones || [];
+    const carts = r.cartoes || [];
+    const fV = (v) => v ? 'R$ ' + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '—';
+
+    // Header
+    html += '<div class="fi" style="margin-bottom:20px">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:18px">';
+    html += '<div><div style="font-size:22px;font-weight:900">' + esc(b.nome || '—') + '</div>';
+    html += '<div style="font-size:13px;font-family:monospace;color:var(--t2);margin-top:4px">CPF: ' + esc(b.cpf || '—');
+    if (b.nb) html += ' &nbsp;|&nbsp; Benefício: ' + esc(b.nb);
+    if (b.idade) html += ' &nbsp;|&nbsp; ' + esc(b.idade);
+    html += '</div>';
+    if (b.nome_mae) html += '<div style="font-size:12px;color:var(--t3);margin-top:2px">Mãe: ' + esc(b.nome_mae) + '</div>';
+    if (b.rg) html += '<div style="font-size:12px;color:var(--t3)">RG: ' + esc(b.rg) + '</div>';
+    html += '</div><div style="display:flex;gap:6px;flex-wrap:wrap">';
+    if (ben.situacao) html += '<span class="pill ' + (ben.situacao === 'ATIVO' ? 'pill-grn' : 'pill-red') + '" style="font-size:13px;padding:6px 14px">' + (ben.situacao === 'ATIVO' ? '✅' : '⚠️') + ' ' + esc(ben.situacao) + '</span>';
+    if (ben.desbloqueio) html += '<span class="pill pill-acc" style="font-size:11px;padding:4px 10px">' + esc(ben.desbloqueio) + '</span>';
+    html += '</div></div>';
+
+    // KPIs
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:20px">';
+    html += '<div class="kpi"><div class="kpi-label">Valor Benefício</div><div class="kpi-value" style="color:var(--acc)">' + fV(ben.valor) + '</div></div>';
+    html += '<div class="kpi"><div class="kpi-label">Base Cálculo</div><div class="kpi-value" style="color:var(--cyan)">' + fV(ben.base_calculo) + '</div></div>';
+    html += '<div class="kpi"><div class="kpi-label">Parcelas Emp.</div><div class="kpi-value" style="color:var(--red)">' + fV(mrg.parcelas) + '</div></div>';
+    html += '<div class="kpi"><div class="kpi-label">Margem Livre</div><div class="kpi-value" style="color:var(--grn)">R$ ' + esc(mrg.disponivel || '—') + '</div></div>';
+    html += '<div class="kpi"><div class="kpi-label">RMC</div><div class="kpi-value" style="color:var(--pur)">R$ ' + esc(mrg.rmc || '0,00') + '</div></div>';
+    html += '<div class="kpi"><div class="kpi-label">RCC</div><div class="kpi-value" style="color:var(--pnk)">R$ ' + esc(mrg.rcc || '0,00') + '</div></div>';
+    html += '</div>';
+
+    // Ações
+    let tel1 = tels[0] || '';
+    let wppNum = tel1 ? tel1.replace(/\D/g, '') : '';
+    let wppLink = wppNum.length >= 10 ? 'https://wa.me/55' + wppNum : '';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:20px">';
+    html += wppLink ? '<a href="' + wppLink + '" target="_blank" style="text-decoration:none"><button class="btn btn-sm btn-cyan" style="width:100%">💬 WhatsApp</button></a>' : '<button class="btn btn-sm" disabled style="width:100%">💬 Sem telefone</button>';
+    html += '<button class="btn btn-sm" style="width:100%;border-color:var(--acc);color:var(--acc)" onclick="openSimulacao(\'' + esc(b.cpf || '') + '\',\'' + esc(b.nome || '') + '\',\'' + esc(b.nb || '') + '\')">📋 Simular</button>';
+    html += '<button class="btn btn-sm" style="width:100%;border-color:var(--ylw);color:var(--ylw)" onclick="openDigitacao(\'' + esc(b.cpf || '') + '\',\'' + esc(b.nome || '') + '\',\'' + esc(b.nb || '') + '\')">📝 Digitar</button>';
+    html += '<button class="btn btn-sm" style="width:100%;border-color:var(--pur);color:var(--pur)" onclick="consultarIN100(\'' + esc(b.cpf || '') + '\',\'' + esc(b.nb || '') + '\')">🔍 IN100</button>';
+    html += '<button class="btn btn-sm" style="width:100%;border-color:var(--grn);color:var(--grn)" onclick="consultarCartao(\'' + esc(b.cpf || '') + '\',\'' + esc(b.nome || '') + '\',\'' + esc(b.nb || '') + '\')">💳 Saque Comp</button>';
+    html += '<button class="btn btn-sm" style="width:100%" onclick="openCrmModal(\'' + esc(b.cpf || '') + '\',\'' + esc(b.nome || '') + '\')">🏷️ CRM</button>';
+    html += '</div>';
+
+    // Info grid: benefício + conta pagadora
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">';
+    html += '<div style="background:var(--card);border-radius:12px;padding:18px;border:1px solid var(--brd)"><div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:12px">📋 Benefício</div><div style="display:grid;gap:8px">';
+    if (ben.especie) html += '<div><div style="font-size:10px;color:var(--t3)">Espécie</div><div style="font-size:13px;font-weight:600">' + esc(ben.especie) + '</div></div>';
+    if (b.data_nascimento) html += '<div><div style="font-size:10px;color:var(--t3)">Nascimento</div><div style="font-size:13px">' + esc(b.data_nascimento) + '</div></div>';
+    if (ben.ddb) html += '<div><div style="font-size:10px;color:var(--t3)">DDB</div><div style="font-size:13px">' + esc(ben.ddb) + '</div></div>';
+    html += '</div></div>';
+    html += '<div style="background:var(--card);border-radius:12px;padding:18px;border:1px solid var(--brd)"><div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:12px">🏦 Conta Pagadora</div><div style="display:grid;gap:8px">';
+    if (bco.nome) html += '<div><div style="font-size:10px;color:var(--t3)">Banco</div><div style="font-size:13px;font-weight:600">' + esc(bco.nome) + '</div></div>';
+    html += '<div style="display:flex;gap:16px">';
+    if (bco.agencia) html += '<div><div style="font-size:10px;color:var(--t3)">Agência</div><div style="font-size:13px;font-family:monospace">' + esc(bco.agencia) + '</div></div>';
+    if (bco.conta) html += '<div><div style="font-size:10px;color:var(--t3)">Conta</div><div style="font-size:13px;font-family:monospace">' + esc(bco.conta) + '</div></div>';
+    html += '</div></div></div></div>';
+
+    // Endereço
+    if (end.uf || end.municipio || end.endereco) {
+      html += '<div style="background:var(--card);border-radius:12px;padding:18px;border:1px solid var(--brd);margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:8px">📍 Endereço</div><div style="font-size:13px">' + esc(end.endereco || '') + (end.municipio ? ' — ' + esc(end.municipio) : '') + (end.uf ? '/' + esc(end.uf) : '') + (end.cep ? ' — CEP: ' + esc(end.cep) : '') + '</div></div>';
+    }
+
+    // Telefones
+    if (tels.length) {
+      html += '<div style="background:var(--card);border-radius:12px;padding:18px;border:1px solid var(--brd);margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:10px">📱 Telefones (' + tels.length + ')</div><div style="display:flex;gap:10px;flex-wrap:wrap">';
+      for (let tel of tels) {
+        let num = tel.replace(/\D/g, '');
+        let wl = num.length >= 10 ? 'https://wa.me/55' + num : '';
+        html += '<div style="background:var(--sf);border:1px solid var(--brd);border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:8px"><span style="font-family:monospace;font-size:14px;font-weight:700">' + esc(tel) + '</span>';
+        if (wl) html += '<a href="' + wl + '" target="_blank" style="text-decoration:none"><span class="pill pill-grn" style="cursor:pointer;font-size:10px">💬</span></a>';
+        html += '<button class="btn btn-sm" style="font-size:9px;padding:2px 6px" onclick="navigator.clipboard.writeText(\'' + tel + '\')">📋</button></div>';
+      }
+      html += '</div></div>';
+    }
+
+    // Cartões
+    if (carts.length) {
+      html += '<div style="background:var(--card);border-radius:12px;padding:18px;border:1px solid var(--brd);margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:10px">💳 Cartões (' + carts.length + ')</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">';
+      for (let c of carts) {
+        let cor = c.tipo === 'RMC' ? 'var(--pur)' : 'var(--pnk)';
+        html += '<div style="background:var(--sf);border-radius:10px;padding:14px;border:1px solid var(--brd);border-left:3px solid ' + cor + '"><div style="display:flex;justify-content:space-between;margin-bottom:8px"><span style="font-size:14px;font-weight:800;color:' + cor + '">' + esc(c.tipo || '?') + '</span><span style="font-size:12px;color:var(--t3)">' + esc(c.banco || '') + '</span></div>';
+        html += '<div><div style="font-size:10px;color:var(--t3)">Margem</div><div style="font-size:14px;font-weight:700;color:' + (c.margem !== '0,00' ? 'var(--grn)' : 'var(--red)') + '">R$ ' + esc(c.margem || '0,00') + '</div></div>';
+        html += '<div><div style="font-size:10px;color:var(--t3)">Limite</div><div style="font-size:14px;font-weight:700;color:var(--acc)">R$ ' + esc(c.limite || '0,00') + '</div></div>';
+        html += '</div>';
+      }
+      html += '</div></div>';
+    }
+
+    // Contratos
+    if (r.contratos && r.contratos.length) {
+      html += '<div style="background:var(--card);border-radius:12px;padding:18px;border:1px solid var(--brd);margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:10px">📑 Contratos (' + r.contratos.length + ')</div><div style="display:flex;gap:8px;flex-wrap:wrap">';
+      for (let ct of r.contratos) html += '<span class="pill pill-acc" style="font-family:monospace">' + esc(ct.contrato || ct.id || '?') + '</span>';
+      html += '</div></div>';
+    }
+
+    // Nova consulta
+    html += '<div style="text-align:center;margin-top:16px"><button class="btn" onclick="consultaState.result=null;renderApp()">🔍 Nova Consulta</button></div></div>';
+  }
+
+  // Histórico
+  if (!r && !consultaState.loading && !consultaState.error) {
+    let hist = getConsultaHist();
+    if (hist.length) {
+      html += '<div style="max-width:680px;margin:0 auto"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:14px;font-weight:700;color:var(--t2)">📁 Últimas Consultas</div><button class="btn btn-red btn-sm" onclick="localStorage.removeItem(\'ff_consulta_hist\');renderApp()">Limpar</button></div><div style="display:grid;gap:8px">';
+      for (let h of hist.slice(0, 15)) {
+        html += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;cursor:pointer" class="rh" onclick="document.getElementById(\'consultaCPF\').value=\'' + esc(h.cpf) + '\';consultarCPFUnitario()"><div><div style="font-size:13px;font-weight:700">' + esc(h.nome) + '</div><div style="font-size:11px;color:var(--t2);font-family:monospace">CPF: ' + esc(h.cpf) + (h.nb ? ' | Ben: ' + esc(h.nb) : '') + '</div></div><div style="font-size:10px;color:var(--t3)">' + esc(h.date) + '</div></div>';
+      }
+      html += '</div></div>';
+    }
+  }
+  return html;
+}  
 // ══════ RENDER ══════
 function renderApp(){
   let D=S.data,c=document.getElementById("appContainer"),html="";
@@ -1817,6 +1986,7 @@ function renderApp(){
   let isAdm=CU&&CU.role==="admin",isGes=CU&&(CU.role==="gestor"||CU.role==="admin"),isOp=CU&&CU.role==="operador";
   let tabs=[];
   if(isGes){tabs.push({k:"dash",l:"Dashboard"},{k:"an",l:"Análise",n:N((D.totalAnalise||D.analise.length))},{k:"el",l:"✅ Elegíveis",n:N(D.elegiveis.length)},{k:"pipe",l:"🔄 Pipeline",n:nSel||""},{k:"mp",l:"Mapa"},{k:"rc",l:"RMC/RCC",n:N(D.rmcRcc.length)})}
+  tabs.push({k:"consulta",l:"🔍 Consulta"});
   tabs.push({k:"camp",l:"📋 Campanhas"});
   let crmCount=Object.keys(getCrmData()).length;
   tabs.push({k:"crm",l:"🏷️ CRM",n:crmCount||""});
@@ -1824,6 +1994,7 @@ function renderApp(){
   if(isAdm){tabs.push({k:"wpp",l:"📱 Conexões"});tabs.push({k:"admin",l:"👥"})}
   html+=`<div class="tabs">${tabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
   if(S.tab==="admin"){c.innerHTML=html+renderAdmin();return}
+  if(S.tab==="consulta"){c.innerHTML=html+renderConsulta();return}
   if(S.tab==="camp"){c.innerHTML=html+renderCampanhas();return}
   if(S.tab==="wpp"){c.innerHTML=html+renderWhatsApp();return}
   if(S.tab==="wppchat"){c.innerHTML=html+renderWppChat();return}
