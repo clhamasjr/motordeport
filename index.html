@@ -97,6 +97,129 @@ td.right,th.right{text-align:right}td.mono{font-family:monospace;font-size:12px}
 <div id="batchModal" class="modal-overlay" style="display:none"><div class="modal-box" style="max-width:420px"><div style="font-size:16px;font-weight:700;margin-bottom:12px">⏳ Processando</div><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span id="bCnt" style="font-size:12px;color:var(--t2)">0/0</span><span id="bPct" style="font-size:12px;font-weight:700;color:var(--acc)">0%</span></div><div class="taxa-bar" style="height:8px"><div id="bBar" class="taxa-fill" style="width:0%"></div></div><div id="bStat" style="font-size:11px;color:var(--t2);margin:10px 0"></div><button class="btn btn-red" onclick="bCancel=true">Cancelar</button></div></div>
 <div id="wppModal" class="modal-overlay" style="display:none"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:700">💬 Mensagem WhatsApp</div><button class="btn btn-sm" onclick="document.getElementById('wppModal').style.display='none'">✕</button></div><div class="form-group"><label class="form-label">Template da Mensagem</label><textarea class="wpp-tpl" id="wppTpl">Olá {nome}, tudo bem? Aqui é da FlowForce! Identificamos {qtd} oportunidade(s) de portabilidade com troco total de {troco}. Podemos conversar?</textarea></div><div class="form-group"><label class="form-label">Variáveis Disponíveis</label><div class="wpp-vars"><span class="wpp-var" onclick="insertVar('{nome}')">nome</span><span class="wpp-var" onclick="insertVar('{cpf}')">cpf</span><span class="wpp-var" onclick="insertVar('{troco}')">troco</span><span class="wpp-var" onclick="insertVar('{vlr_contrato}')">vlr_contrato</span><span class="wpp-var" onclick="insertVar('{banco}')">banco</span><span class="wpp-var" onclick="insertVar('{destino}')">destino</span><span class="wpp-var" onclick="insertVar('{qtd}')">qtd_contratos</span></div></div><div id="wppPreview" style="background:var(--card);border-radius:10px;padding:14px;margin-bottom:14px;border:1px solid var(--brd)"><div style="font-size:10px;color:var(--t3);margin-bottom:6px">PRÉ-VISUALIZAÇÃO</div><div id="wppPreviewText" style="font-size:13px;line-height:1.5"></div></div><div id="wppTargetInfo" style="font-size:12px;color:var(--t2);margin-bottom:14px"></div><div style="display:flex;gap:8px"><button class="btn-acc" style="flex:1" onclick="sendWppBatch()">💬 Enviar WhatsApp</button><button class="btn btn-grn" onclick="exportWppList()">↓ Exportar Lista</button></div></div></div>
 
+<!-- ═══ SIMULAÇÃO MODAL ═══ -->
+<div id="simModal" class="modal-overlay" style="display:none">
+<div class="modal-box" style="max-width:860px">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+  <div style="font-size:18px;font-weight:800">📋 Simulação</div>
+  <button class="btn btn-sm" onclick="closeSimModal()">✕</button>
+</div>
+<!-- Client info -->
+<div id="simClientInfo" style="background:var(--card);border-radius:10px;padding:12px 16px;margin-bottom:16px;border:1px solid var(--brd);display:flex;gap:20px;flex-wrap:wrap">
+</div>
+<!-- Form -->
+<div id="simForm">
+  <div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+    <div style="flex:1;min-width:160px">
+      <label class="form-label">API / Banco</label>
+      <select class="form-input" id="simApi" onchange="simApiChanged()">
+        <option value="facta">FACTA</option>
+        <option value="joinbank">JoinBank (Quali)</option>
+      </select>
+    </div>
+    <div style="flex:1;min-width:200px">
+      <label class="form-label">Tipo Operação</label>
+      <select class="form-input" id="simTipoOp" onchange="simTipoChanged()">
+        <option value="13">Novo Digital</option>
+        <option value="27">Margem Complementar</option>
+        <option value="14">Refinanciamento</option>
+        <option value="003500">Portabilidade CIP + Refin</option>
+        <option value="33">Cartão Benefício</option>
+      </select>
+    </div>
+  </div>
+  <!-- Common fields -->
+  <div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+    <div style="flex:1;min-width:130px">
+      <label class="form-label">Data Nascimento</label>
+      <input class="form-input" id="simDtNasc" placeholder="DD/MM/AAAA">
+    </div>
+    <div style="flex:1;min-width:100px">
+      <label class="form-label">Prazo</label>
+      <input class="form-input" id="simPrazo" type="number" value="84">
+    </div>
+    <div style="flex:1;min-width:130px" id="simValorWrap">
+      <label class="form-label">Valor</label>
+      <input class="form-input" id="simValor" type="number" placeholder="1000.00">
+    </div>
+    <div style="flex:1;min-width:130px" id="simParcelaWrap">
+      <label class="form-label">Valor Parcela</label>
+      <input class="form-input" id="simParcela" type="number" placeholder="0.00">
+    </div>
+  </div>
+  <!-- Refin fields -->
+  <div id="simRefinFields" style="display:none;margin-bottom:14px">
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:130px">
+        <label class="form-label">Valor Renda</label>
+        <input class="form-input" id="simRenda" type="number" placeholder="1412.00">
+      </div>
+      <div style="flex:1;min-width:160px">
+        <label class="form-label">Contratos Refin (nº)</label>
+        <input class="form-input" id="simContratosRefin" placeholder="00000000">
+      </div>
+    </div>
+  </div>
+  <!-- Portabilidade fields -->
+  <div id="simPortFields" style="display:none;margin-bottom:14px">
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:120px">
+        <label class="form-label">Saldo Devedor</label>
+        <input class="form-input" id="simSaldo" type="number" placeholder="3000.00">
+      </div>
+      <div style="flex:1;min-width:120px">
+        <label class="form-label">Parcela Original</label>
+        <input class="form-input" id="simParcelaOrig" type="number" placeholder="120.00">
+      </div>
+      <div style="flex:1;min-width:100px">
+        <label class="form-label">Prazo Restante</label>
+        <input class="form-input" id="simPrazoRest" type="number" placeholder="36">
+      </div>
+      <div style="flex:1;min-width:100px">
+        <label class="form-label">Prazo Original</label>
+        <input class="form-input" id="simPrazoOrig" type="number" placeholder="84">
+      </div>
+    </div>
+  </div>
+  <!-- Cartão fields -->
+  <div id="simCartaoFields" style="display:none;margin-bottom:14px">
+    <div style="flex:1;min-width:130px">
+      <label class="form-label">Valor Renda</label>
+      <input class="form-input" id="simRendaCartao" type="number" placeholder="1412.00">
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <button class="btn-acc" style="flex:1" onclick="runSimulacao()">🔍 Simular</button>
+    <button class="btn btn-grn" id="simIN100btn" onclick="runIN100()" style="display:none">📋 IN100</button>
+  </div>
+</div>
+<!-- Loading -->
+<div id="simLoading" style="display:none;text-align:center;padding:30px">
+  <div style="font-size:24px;margin-bottom:8px">⏳</div>
+  <div style="font-size:13px;color:var(--t2)">Consultando...</div>
+</div>
+<!-- Results -->
+<div id="simResults" style="display:none;margin-top:16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <div style="font-size:14px;font-weight:700" id="simResTitle">Tabelas Disponíveis</div>
+    <div style="font-size:12px;color:var(--t3)" id="simResCount"></div>
+  </div>
+  <div style="overflow:auto;max-height:45vh;border-radius:10px;border:1px solid var(--brd)">
+    <table>
+      <thead><tr id="simResHead"></tr></thead>
+      <tbody id="simResBody"></tbody>
+    </table>
+  </div>
+  <div id="simResActions" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"></div>
+</div>
+<!-- IN100 Results -->
+<div id="simIN100" style="display:none;margin-top:16px">
+  <div style="font-size:14px;font-weight:700;margin-bottom:10px">📋 IN100 — DATAPREV</div>
+  <div id="simIN100Content"></div>
+</div>
+</div>
+</div>
+
 <script>
 // ══════ AUTH ══════
 function hp(p){let h=0;const s=p+"lhamas2024";for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0}return"H"+Math.abs(h).toString(36)}
@@ -110,7 +233,16 @@ function getSess(){try{let s=JSON.parse(localStorage.getItem("lhm_sess"));if(!s|
 let CU=null;
 function doLogin(){const u=document.getElementById("loginUser").value.trim().toLowerCase(),p=document.getElementById("loginPass").value,err=document.getElementById("loginError");if(!u||!p){err.textContent="Preencha todos os campos";return}const users=initU(),f=users.find(x=>x.user.toLowerCase()===u&&x.pw===hp(p));if(!f){err.textContent="Usuário ou senha incorretos";document.getElementById("loginCard").classList.add("shake");setTimeout(()=>document.getElementById("loginCard").classList.remove("shake"),350);return}CU=f;localStorage.setItem("lhm_sess",JSON.stringify({user:f.user,name:f.name,role:f.role,ts:Date.now()}));showApp()}
 function doLogout(){localStorage.removeItem("lhm_sess");CU=null;document.getElementById("appScreen").style.display="none";document.getElementById("loginScreen").style.display="flex";S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel"}}
-function showApp(){document.getElementById("loginScreen").style.display="none";document.getElementById("appScreen").style.display="block";let rl=CU.role==="admin"?"Admin":CU.role==="gestor"?"Gestor":"Operador";document.getElementById("hdrUser").innerHTML=`<div class="hdr-user-icon">${CU.name.charAt(0)}</div><div><div style="font-size:11px;font-weight:600">${esc(CU.name)}</div><div style="font-size:9px;color:var(--t3)">${rl}</div></div><button class="btn btn-sm" onclick="document.getElementById('changePwModal').style.display='flex'" style="margin-left:4px;font-size:9px">🔑</button>`;if(CU.role==="operador")S.tab="camp";renderApp()}
+function showApp(){document.getElementById("loginScreen").style.display="none";document.getElementById("appScreen").style.display="block";let rl=CU.role==="admin"?"Admin":CU.role==="gestor"?"Gestor":"Operador";document.getElementById("hdrUser").innerHTML=`<div class="hdr-user-icon">${CU.name.charAt(0)}</div><div><div style="font-size:11px;font-weight:600">${esc(CU.name)}</div><div style="font-size:9px;color:var(--t3)">${rl}</div></div><button class="btn btn-sm" onclick="document.getElementById('changePwModal').style.display='flex'" style="margin-left:4px;font-size:9px">🔑</button>`;
+  // Auto-restore last active session
+  if(!S.data){
+    let activeId=localStorage.getItem("ff_active");
+    if(activeId){try{loadHist(parseInt(activeId))}catch{}}
+    let savedTab=localStorage.getItem("ff_tab");
+    if(savedTab&&S.data)S.tab=savedTab;
+  }
+  if(CU.role==="operador"&&!S.data)S.tab="camp";
+  renderApp()}
 function doChangePw(){const o=document.getElementById("cpwOld").value,n=document.getElementById("cpwNew").value,c=document.getElementById("cpwConfirm").value,err=document.getElementById("cpwError");if(!o||!n||!c){err.textContent="Preencha tudo";return}if(hp(o)!==CU.pw){err.textContent="Incorreta";return}if(n.length<4){err.textContent="Mín 4";return}if(n!==c){err.textContent="Não conferem";return}let users=getU();let i=users.findIndex(u=>u.user===CU.user);if(i>=0){users[i].pw=hp(n);saveU(users);CU.pw=hp(n)}err.style.color="var(--grn)";err.textContent="Alterada!";setTimeout(()=>document.getElementById("changePwModal").style.display="none",1000)}
 
 // ══════ HISTORY ══════
@@ -122,21 +254,25 @@ function addHist(fn,sm,data){
   let h=getHist();h.unshift({id,fname:fn,user:CU?CU.name:"",userLogin:CU?CU.user:"",date:new Date().toLocaleString("pt-BR"),summary:sm});saveHist(h);
   // Auto-save data
   if(data){try{
-    let sv={elegiveis:data.elegiveis,mapaArr:data.mapaArr,rmcRcc:data.rmcRcc||[],taxaDist:data.taxaDist||{},aLen:data.analise?data.analise.length:data.elegiveis.length,phones:{}};
+    let sv={elegiveis:data.elegiveis,analise:data.analise||data.elegiveis,mapaArr:data.mapaArr,rmcRcc:data.rmcRcc||[],taxaDist:data.taxaDist||{},aLen:data.analise?data.analise.length:data.elegiveis.length,phones:{}};
     for(let k of Object.keys(phoneCache))sv.phones[k]=phoneCache[k];
     localStorage.setItem("lhm_data_"+id,JSON.stringify(sv));
   }catch(e){try{
-    let m={elegiveis:data.elegiveis.slice(0,1500),mapaArr:data.mapaArr,aLen:data.analise?data.analise.length:data.elegiveis.length,phones:{}};
+    let m={elegiveis:data.elegiveis.slice(0,1500),analise:(data.analise||data.elegiveis).slice(0,1500),mapaArr:data.mapaArr,aLen:data.analise?data.analise.length:data.elegiveis.length,phones:{}};
     localStorage.setItem("lhm_data_"+id,JSON.stringify(m));
   }catch{}}}
+  // Save as active session
+  localStorage.setItem("ff_active",String(id));
 }
 function delHist(id){localStorage.removeItem("lhm_data_"+id);saveHist(getHist().filter(x=>x.id!==id));renderApp()}
 function clearHist(){if(confirm("Limpar?")){let h=getMyHist();h.forEach(x=>localStorage.removeItem("lhm_data_"+x.id));let all=getHist();let ids=new Set(h.map(x=>x.id));saveHist(all.filter(x=>!ids.has(x.id)));renderApp()}}
 function loadHist(id){try{let raw=localStorage.getItem("lhm_data_"+id);if(!raw){alert("Dados não disponíveis.");return}
   let sv=JSON.parse(raw);if(sv.phones)for(let k of Object.keys(sv.phones))phoneCache[k]=sv.phones[k];
-  let eleg=sv.elegiveis||[];
-  S.data={analise:eleg,elegiveis:eleg,mapaArr:sv.mapaArr||[],rmcRcc:sv.rmcRcc||[],taxaDist:sv.taxaDist||{},totalAnalise:sv.aLen||eleg.length};
-  let hist=getHist(),h=hist.find(x=>x.id===id);S.fname=h?h.fname+" (histórico)":"Histórico";S.tab="dash";S.pg=0;renderApp();
+  let eleg=sv.elegiveis||[];let analise=sv.analise||eleg;
+  S.data={analise:analise,elegiveis:eleg,mapaArr:sv.mapaArr||[],rmcRcc:sv.rmcRcc||[],taxaDist:sv.taxaDist||{},totalAnalise:sv.aLen||analise.length};
+  let hist=getHist(),h=hist.find(x=>x.id===id);S.fname=h?h.fname:"Histórico";S.tab="dash";S.pg=0;
+  localStorage.setItem("ff_active",String(id));localStorage.setItem("ff_tab",S.tab);
+  renderApp();
 }catch(e){alert("Erro: "+e.message)}}
 
 // ══════ PIPELINE STATE ══════
@@ -424,8 +560,8 @@ let S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",
 const PER=50;const R$=v=>"R$ "+v.toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});const N=v=>v.toLocaleString("pt-BR");
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
 function handleFile(inp){let f=inp.files[0];if(!f)return;S.fname=f.name;document.getElementById("appContainer").innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:60vh;flex-direction:column;gap:12px"><div style="font-size:30px;animation:pulse 1.2s ease infinite">⚙️</div><div style="font-size:13px;color:var(--t2)">Processando...</div></div>';setTimeout(()=>{let reader=new FileReader();reader.onload=function(e){try{let wb=XLSX.read(e.target.result,{type:"array",cellDates:true});let ws=wb.Sheets[wb.SheetNames[0]];S.data=processar(XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:true}));S.tab="dash";S.pg=0;selected.clear();phoneCache={};wppSent.clear();if(S.data){let tT=S.data.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=S.data.elegiveis.reduce((s,e)=>s+e.vc,0);let bens=[...new Set(S.data.analise.map(r=>r.ben).filter(b=>b))].slice(0,20);addHist(S.fname,{contratos:S.data.analise.length,elegiveis:S.data.elegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:S.data.rmcRcc.length,beneficios:bens},S.data)}renderApp()}catch(err){alert("Erro: "+err.message);renderApp()}};reader.readAsArrayBuffer(f)},50)}
-function resetData(){S.data=null;S.fname="";selected.clear();phoneCache={};wppSent.clear();renderApp()}
-function setTab(t){S.tab=t;S.sort={c:null,d:"asc"};S.pg=0;renderApp()}
+function resetData(){S.data=null;S.fname="";S.tab="dash";selected.clear();phoneCache={};wppSent.clear();localStorage.removeItem("ff_active");localStorage.removeItem("ff_tab");renderApp()}
+function setTab(t){S.tab=t;S.sort={c:null,d:"asc"};S.pg=0;localStorage.setItem("ff_tab",t);renderApp()}
 function setQ(v){S.q=v;S.pg=0;renderApp()}
 function doSort(col){if(S.sort.c===col)S.sort.d=S.sort.d==="asc"?"desc":"asc";else S.sort={c:col,d:"asc"};S.pg=0;renderApp()}
 function setPg(p){S.pg=p;renderApp()}
@@ -657,9 +793,262 @@ async function consultarIN100(cpf,ben){
   }catch(e){pm.innerHTML=`<div style="text-align:center;padding:20px;color:var(--red)">❌ ${e.message}</div>`}
 }
 
-// Placeholder functions for simulation and digitação (to be built)
+// ═══ SIMULATION MODULE ═══
+const API_BASE='https://motordeport.vercel.app/api';
+let simCtx={cpf:'',nome:'',ben:'',lastResults:null};
+
+function closeSimModal(){document.getElementById('simModal').style.display='none'}
+
 function openSimulacao(cpf,nome,ben){
-  alert(`📋 Simulação\n\nCliente: ${nome}\nCPF: ${cpf}\nBenefício: ${ben}\n\n⏳ Módulo de simulação será construído na próxima etapa (JoinBank + FACTA)`);
+  simCtx={cpf:cpf||'',nome:nome||'',ben:ben||'',lastResults:null};
+  // Fill client info
+  document.getElementById('simClientInfo').innerHTML=`
+    <div><div style="font-size:10px;color:var(--t3)">CLIENTE</div><div style="font-size:14px;font-weight:700">${esc(nome||'—')}</div></div>
+    <div><div style="font-size:10px;color:var(--t3)">CPF</div><div style="font-size:13px;font-family:monospace">${cpf||'—'}</div></div>
+    <div><div style="font-size:10px;color:var(--t3)">BENEFÍCIO</div><div style="font-size:13px;font-family:monospace">${ben||'—'}</div></div>`;
+  // Try to get birth date from data
+  let dtNasc='';
+  if(S&&S.analise){let cl=S.analise.find(a=>a.cpf===cpf);if(cl&&cl.dtNasc)dtNasc=cl.dtNasc}
+  document.getElementById('simDtNasc').value=dtNasc;
+  // Reset
+  document.getElementById('simResults').style.display='none';
+  document.getElementById('simIN100').style.display='none';
+  document.getElementById('simLoading').style.display='none';
+  document.getElementById('simForm').style.display='block';
+  simTipoChanged();
+  simApiChanged();
+  document.getElementById('simModal').style.display='flex';
+}
+
+function simApiChanged(){
+  const api=document.getElementById('simApi').value;
+  const sel=document.getElementById('simTipoOp');
+  const in100btn=document.getElementById('simIN100btn');
+  if(api==='joinbank'){
+    // JoinBank: show IN100, limit ops
+    in100btn.style.display='';
+    sel.innerHTML='<option value="1">Novo (op 1)</option><option value="3">Portabilidade (op 3)</option><option value="2">Refinanciamento (op 2)</option><option value="4">Port + Refin (op 4)</option>';
+  }else{
+    in100btn.style.display='none';
+    sel.innerHTML='<option value="13">Novo Digital (13)</option><option value="27">Margem Complementar (27)</option><option value="14">Refinanciamento (14)</option><option value="003500">Portabilidade CIP + Refin</option><option value="33">Cartão Benefício (33)</option>';
+  }
+  simTipoChanged();
+}
+
+function simTipoChanged(){
+  const op=document.getElementById('simTipoOp').value;
+  const api=document.getElementById('simApi').value;
+  // Show/hide conditional fields
+  const isRefin=(op==='14'||op==='49'||op==='2');
+  const isPort=(op==='003500'||op==='3'||op==='4');
+  const isCartao=(op==='33');
+  document.getElementById('simRefinFields').style.display=isRefin?'':'none';
+  document.getElementById('simPortFields').style.display=isPort?'':'none';
+  document.getElementById('simCartaoFields').style.display=isCartao?'':'none';
+  // Adjust valor/parcela visibility
+  if(isPort||isRefin){
+    document.getElementById('simValorWrap').style.display='none';
+    document.getElementById('simParcelaWrap').style.display='';
+  }else if(isCartao){
+    document.getElementById('simValorWrap').style.display='';
+    document.getElementById('simParcelaWrap').style.display='none';
+  }else{
+    document.getElementById('simValorWrap').style.display='';
+    document.getElementById('simParcelaWrap').style.display='';
+  }
+}
+
+async function runSimulacao(){
+  const api=document.getElementById('simApi').value;
+  const op=document.getElementById('simTipoOp').value;
+  const cpf=simCtx.cpf;
+  const dtNasc=document.getElementById('simDtNasc').value;
+  if(!cpf){alert('CPF não informado');return}
+  if(!dtNasc&&api==='facta'){alert('Data de nascimento obrigatória');return}
+
+  document.getElementById('simForm').style.display='none';
+  document.getElementById('simResults').style.display='none';
+  document.getElementById('simLoading').style.display='block';
+
+  try{
+    let result;
+    if(api==='facta'){
+      const payload={action:'simular',cpf,data_nascimento:dtNasc,tipo_operacao:op};
+      const prazo=document.getElementById('simPrazo').value;
+      const valor=document.getElementById('simValor').value;
+      const parcela=document.getElementById('simParcela').value;
+      if(prazo)payload.prazo=prazo;
+      if(valor)payload.valor=valor;
+      if(parcela)payload.valor_parcela=parcela;
+      // Refin extras
+      if(op==='14'||op==='49'){
+        payload.opcao_valor=2;
+        const renda=document.getElementById('simRenda').value;
+        const contRef=document.getElementById('simContratosRefin').value;
+        if(renda)payload.valor_renda=renda;
+        if(contRef)payload.contratos_refin=contRef;
+      }
+      // Port CIP extras
+      if(op==='003500'){
+        payload.opcao_valor=2;
+        const saldo=document.getElementById('simSaldo').value;
+        const parcOrig=document.getElementById('simParcelaOrig').value;
+        const prazoRest=document.getElementById('simPrazoRest').value;
+        const prazoOrig=document.getElementById('simPrazoOrig').value;
+        if(saldo)payload.saldo_devedor=saldo;
+        if(parcOrig)payload.valor_parcela_original=parcOrig;
+        if(prazoRest)payload.prazo_restante=prazoRest;
+        if(prazoOrig)payload.prazo_original=prazoOrig;
+      }
+      // Cartão extras
+      if(op==='33'){
+        payload.opcao_valor=1;
+        const rendaC=document.getElementById('simRendaCartao').value;
+        if(rendaC)payload.valor_renda=rendaC;
+      }
+      const r=await fetch(API_BASE+'/facta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      result=await r.json();
+    }else{
+      // JoinBank — use listRules for now
+      const r=await fetch(API_BASE+'/joinbank',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'listRules',operation:Number(op),limit:50})});
+      result=await r.json();
+    }
+    simCtx.lastResults=result;
+    renderSimResults(api,op,result);
+  }catch(e){
+    document.getElementById('simLoading').style.display='none';
+    document.getElementById('simForm').style.display='block';
+    alert('Erro: '+e.message);
+  }
+}
+
+function renderSimResults(api,op,data){
+  document.getElementById('simLoading').style.display='none';
+  document.getElementById('simResults').style.display='block';
+  const head=document.getElementById('simResHead');
+  const body=document.getElementById('simResBody');
+  const title=document.getElementById('simResTitle');
+  const count=document.getElementById('simResCount');
+  const actions=document.getElementById('simResActions');
+
+  if(api==='facta'){
+    // Check for Port CIP (has 2 arrays)
+    if(data.tabelas_portabilidade){
+      const tPort=data.tabelas_portabilidade||[];
+      const tRefin=data.tabelas_refin_portabilidade||[];
+      title.textContent='Portabilidade CIP — Tabelas';
+      count.textContent=`${tPort.length} port + ${tRefin.length} refin`;
+      head.innerHTML='<th>Tipo</th><th>Tabela</th><th>Taxa %</th><th>Prazo</th><th>Coef.</th><th>Contrato</th><th>Parcela</th><th>Líquido</th><th>Grupo</th><th></th>';
+      let html='';
+      for(const t of tPort){
+        html+=`<tr style="background:rgba(59,130,246,.04)">
+          <td><span class="pill pill-acc">PORT</span></td>
+          <td style="font-size:11px;max-width:200px;white-space:normal">${esc(t.tabela)}</td>
+          <td class="mono right">${t.taxa}</td><td class="mono right">${t.prazo}</td>
+          <td class="mono right" style="font-size:10px">${t.coeficiente}</td>
+          <td class="mono right">${R$(t.contrato||0)}</td>
+          <td class="mono right">${R$(t.parcela||0)}</td><td>—</td>
+          <td style="font-size:10px">${t.grupos||''}</td>
+          <td><button class="btn btn-sm btn-cyan" onclick="selectSimTabela('facta','port',${JSON.stringify(t).replace(/'/g,"\\'")},'${op}')">Usar</button></td></tr>`;
+      }
+      for(const t of tRefin){
+        html+=`<tr style="background:rgba(167,139,250,.04)">
+          <td><span class="pill pill-pur">REFIN</span></td>
+          <td style="font-size:11px;max-width:200px;white-space:normal">${esc(t.tabela)}</td>
+          <td class="mono right">${t.taxa}</td><td class="mono right">${t.prazo}</td>
+          <td class="mono right" style="font-size:10px">${t.coeficiente}</td>
+          <td class="mono right">${R$(t.contrato||0)}</td>
+          <td class="mono right">${R$(t.parcela||0)}</td>
+          <td class="mono right" style="color:var(--grn);font-weight:700">${R$(t.valor_liquido||0)}</td>
+          <td style="font-size:10px">${t.grupos||''}</td>
+          <td><button class="btn btn-sm btn-grn" onclick="selectSimTabela('facta','refin',${JSON.stringify(t).replace(/'/g,"\\'")},'${op}')">Usar</button></td></tr>`;
+      }
+      body.innerHTML=html||'<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--t3)">Nenhuma tabela disponível</td></tr>';
+    }else{
+      const tabs=data.tabelas||[];
+      title.textContent='Tabelas Disponíveis';
+      count.textContent=`${tabs.length} tabela(s)`;
+      head.innerHTML='<th>Tabela</th><th>Taxa %</th><th>Prazo</th><th>Coef.</th><th>Contrato</th><th>Parcela</th><th></th>';
+      let html='';
+      for(const t of tabs){
+        html+=`<tr>
+          <td style="font-size:11px;max-width:220px;white-space:normal">${esc(t.tabela)}</td>
+          <td class="mono right">${t.taxa}</td><td class="mono right">${t.prazo}</td>
+          <td class="mono right" style="font-size:10px">${t.coeficiente}</td>
+          <td class="mono right">${R$(t.contrato||0)}</td>
+          <td class="mono right">${R$(t.parcela||0)}</td>
+          <td><button class="btn btn-sm btn-acc" onclick="selectSimTabela('facta','tab',${JSON.stringify(t).replace(/'/g,"\\'")},'${op}')">Digitar</button></td></tr>`;
+      }
+      body.innerHTML=html||'<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--t3)">Nenhuma tabela disponível</td></tr>';
+    }
+    if(data.erro||data.mensagem){
+      actions.innerHTML=`<div style="font-size:12px;color:${data.erro?'var(--red)':'var(--t3)'}">${esc(data.mensagem||'')}</div>`;
+    }else{actions.innerHTML=''}
+  }else{
+    // JoinBank results
+    const items=data.items||[];
+    title.textContent='Regras JoinBank';
+    count.textContent=`${items.length} regra(s)`;
+    head.innerHTML='<th>ID</th><th>Nome</th><th>Taxa</th><th>Prazo Min</th><th>Prazo Max</th><th></th>';
+    let html='';
+    for(const t of items){
+      html+=`<tr>
+        <td class="mono">${t.id||''}</td>
+        <td style="font-size:11px;max-width:220px;white-space:normal">${esc(t.name||'')}</td>
+        <td class="mono right">${t.rate||''}</td>
+        <td class="mono right">${t.minTerm||''}</td>
+        <td class="mono right">${t.maxTerm||''}</td>
+        <td><button class="btn btn-sm btn-acc" onclick="selectSimTabela('joinbank','rule',${JSON.stringify(t).replace(/'/g,"\\'")},'${op}')">Calcular</button></td></tr>`;
+    }
+    body.innerHTML=html||'<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--t3)">Nenhuma regra encontrada</td></tr>';
+    actions.innerHTML='';
+  }
+  actions.innerHTML+=`<button class="btn" style="margin-top:8px" onclick="document.getElementById('simResults').style.display='none';document.getElementById('simForm').style.display='block'">← Voltar</button>`;
+}
+
+function selectSimTabela(api,tipo,tabela,op){
+  // Store selection and open digitação
+  const sel={api,tipo,tabela,op,cpf:simCtx.cpf,nome:simCtx.nome,ben:simCtx.ben};
+  localStorage.setItem('ff_sim_selected',JSON.stringify(sel));
+  closeSimModal();
+  openDigitacao(simCtx.cpf,simCtx.nome,simCtx.ben);
+}
+
+async function runIN100(){
+  const cpf=simCtx.cpf;
+  const ben=simCtx.ben;
+  if(!cpf||!ben){alert('CPF e Benefício obrigatórios para IN100');return}
+  document.getElementById('simIN100').style.display='block';
+  document.getElementById('simIN100Content').innerHTML='<div style="text-align:center;padding:20px"><div style="font-size:20px">⏳</div><div style="font-size:12px;color:var(--t2)">Consultando DATAPREV via JoinBank...</div></div>';
+  try{
+    const r=await fetch(API_BASE+'/joinbank',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'in100',cpf,beneficio:ben})});
+    const d=await r.json();
+    if(!d.success){
+      document.getElementById('simIN100Content').innerHTML=`<div style="color:var(--red);padding:12px">❌ Erro: ${esc(d.error||'Falha na consulta')}</div>`;
+      return;
+    }
+    document.getElementById('simIN100Content').innerHTML=`
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px">
+        <div style="background:var(--card);border-radius:8px;padding:10px;border:1px solid var(--brd)">
+          <div style="font-size:9px;color:var(--t3)">NOME</div><div style="font-size:13px;font-weight:700">${esc(d.nome||'—')}</div></div>
+        <div style="background:var(--card);border-radius:8px;padding:10px;border:1px solid var(--brd)">
+          <div style="font-size:9px;color:var(--t3)">STATUS</div><div style="font-size:13px;font-weight:700;color:${d.elegivel?'var(--grn)':'var(--red)'}">${d.elegivel?'✅ Elegível':'❌ '+esc(d.benefitStatus||'Não elegível')}</div></div>
+        <div style="background:var(--card);border-radius:8px;padding:10px;border:1px solid var(--brd)">
+          <div style="font-size:9px;color:var(--t3)">ESPÉCIE</div><div style="font-size:13px">${esc(d.especie||'—')}</div></div>
+        <div style="background:var(--card);border-radius:8px;padding:10px;border:1px solid var(--brd)">
+          <div style="font-size:9px;color:var(--t3)">MARGEM EMPRÉSTIMO</div><div style="font-size:14px;font-weight:800;color:var(--grn)">${R$(d.margemEmprestimo||0)}</div></div>
+        <div style="background:var(--card);border-radius:8px;padding:10px;border:1px solid var(--brd)">
+          <div style="font-size:9px;color:var(--t3)">MARGEM CARTÃO</div><div style="font-size:14px;font-weight:800;color:var(--cyan)">${R$(d.margemCartao||0)}</div></div>
+        <div style="background:var(--card);border-radius:8px;padding:10px;border:1px solid var(--brd)">
+          <div style="font-size:9px;color:var(--t3)">BLOQUEIO</div><div style="font-size:13px;color:${d.bloqueado?'var(--red)':'var(--grn)'}">${d.bloqueado?'🚫 '+esc(d.tipoBlock||'Bloqueado'):'✅ Livre'}</div></div>
+        <div style="background:var(--card);border-radius:8px;padding:10px;border:1px solid var(--brd)">
+          <div style="font-size:9px;color:var(--t3)">CONTRATOS ATIVOS</div><div style="font-size:13px">${d.contratosAtivos||0} ativos, ${d.contratosSuspensos||0} susp.</div></div>
+        <div style="background:var(--card);border-radius:8px;padding:10px;border:1px solid var(--brd)">
+          <div style="font-size:9px;color:var(--t3)">UF / NASCIMENTO</div><div style="font-size:13px">${esc(d.uf||'—')} / ${esc(d.dataNascimento||'—')}</div></div>
+      </div>`;
+  }catch(e){
+    document.getElementById('simIN100Content').innerHTML=`<div style="color:var(--red);padding:12px">❌ ${e.message}</div>`;
+  }
 }
 function openDigitacao(cpf,nome,ben){
   alert(`📝 Digitação\n\nCliente: ${nome}\nCPF: ${cpf}\nBenefício: ${ben}\n\n⏳ Módulo de digitação será construído na próxima etapa (JoinBank + FACTA)`);
