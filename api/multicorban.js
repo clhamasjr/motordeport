@@ -1,462 +1,474 @@
-export const config = { runtime: 'edge' };
+// ══════════════════════════════════════════════════════════════════════
+// api/multicorban.js — Proxy Multicorban (app.multicorban.com)
+// FlowForce — LhamasCred
+// Login via AJAX + Cookie session + Consulta CPF + HTML→JSON parse
+// ══════════════════════════════════════════════════════════════════════
 
-// ═══ MULTICORBAN PROXY ═══
-// Login + consulta CPF + parse HTML → JSON estruturado
+const BASE = 'https://app.multicorban.com';
 
-const MC_BASE = 'https://app.multicorban.com';
-const MC_USER = 'lhamascred';
-const MC_PASS = '*Lhamas24';
+// ── Session cache (in-memory, per cold-start) ──────────────────────
+let sessionCache = { cookie: null, ts: 0 };
+const SESSION_TTL = 25 * 60 * 1000; // 25 min
 
-// Session cache (in-memory, resets on cold start)
-let sessionCookie = null;
-let sessionExpires = 0;
-
-async function mcLogin() {
-  // Check cached session
-  if (sessionCookie && Date.now() < sessionExpires) return sessionCookie;
-
-  try {
-    const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-    
-    // Helper: extract cookies from response (Edge Runtime compatible)
-    function extractCookies(res) {
-      const raw = res.headers.get('set-cookie') || '';
-      // set-cookie can have multiple cookies separated by comma, but dates also have commas
-      // Split by comma followed by a space and a word with =
-      const parts = raw.split(/,(?=\s*\w+=)/);
-      return parts.map(c => c.split(';')[0].trim()).filter(c => c && c.includes('='));
-    }
-
-    // Step 1: GET login page to capture initial cookies + CSRF
-    const page = await fetch(MC_BASE + '/login', {
-      method: 'GET',
-      headers: { 'User-Agent': UA },
-      redirect: 'manual'
-    });
-    let cookies = extractCookies(page);
-    
-    // Check if there's a CSRF token in the HTML
-    let csrf = '';
-    try {
-      const html = await page.text();
-      const csrfMatch = html.match(/name=["']_csrf["']\s*value=["']([^"']+)["']/i) 
-                      || html.match(/name=["']_token["']\s*value=["']([^"']+)["']/i)
-                      || html.match(/csrf[_-]?token["']\s*(?:content|value)=["']([^"']+)["']/i);
-      if (csrfMatch) csrf = csrfMatch[1];
-    } catch {}
-
-    // Step 2: POST login
-    let loginBody = `login=${encodeURIComponent(MC_USER)}&password=${encodeURIComponent(MC_PASS)}`;
-    if (csrf) loginBody += `&_csrf=${encodeURIComponent(csrf)}&_token=${encodeURIComponent(csrf)}`;
-
-    const loginRes = await fetch(MC_BASE + '/login', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': UA,
-        'Cookie': cookies.join('; '),
-        'Referer': MC_BASE + '/login',
-        'Origin': MC_BASE
-      },
-      body: loginBody,
-      redirect: 'manual'
-    });
-
-    // Capture session cookies from login response
-    const loginCookies = extractCookies(loginRes);
-    const allCookies = [...cookies, ...loginCookies];
-    
-    // If redirected, follow redirect and capture more cookies
-    const location = loginRes.headers.get('location');
-    if (location) {
-      const redirectUrl = location.startsWith('http') ? location : MC_BASE + location;
-      const redirectRes = await fetch(redirectUrl, {
-        method: 'GET',
-        headers: { 'User-Agent': UA, 'Cookie': allCookies.join('; ') },
-        redirect: 'manual'
-      });
-      const redirectCookies = extractCookies(redirectRes);
-      allCookies.push(...redirectCookies);
-    }
-
-    // Deduplicate cookies (keep last value for each name)
-    const cookieMap = {};
-    for (const c of allCookies) {
-      const [name] = c.split('=');
-      cookieMap[name.trim()] = c;
-    }
-    sessionCookie = Object.values(cookieMap).join('; ');
-
-    // Verify session works by fetching a protected page
-    const verify = await fetch(MC_BASE + '/search/form/inss', {
-      method: 'GET',
-      headers: { 'User-Agent': UA, 'Cookie': sessionCookie },
-      redirect: 'manual'
-    });
-    
-    // If redirected to login, auth failed
-    const verifyLocation = verify.headers.get('location') || '';
-    if (verifyLocation.includes('login')) {
-      throw new Error('Sessão inválida — redirecionou pro login');
-    }
-
-    // Cache for 25 minutes
-    sessionExpires = Date.now() + 25 * 60 * 1000;
-    return sessionCookie;
-  } catch (e) {
-    sessionCookie = null;
-    sessionExpires = 0;
-    throw new Error('Login Multicorban falhou: ' + e.message);
-  }
+// ── CORS headers ───────────────────────────────────────────────────
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...CORS, 'Content-Type': 'application/json' },
+  });
 }
 
-async function mcConsult(cpf) {
-  const cookie = await mcLogin();
-  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-
-  const res = await fetch(MC_BASE + '/search/consult', {
+// ── Login — get PHPSESSID cookie ───────────────────────────────────
+async function doLogin(user, pass) {
+  const body = new URLSearchParams({ login: user, senha: pass });
+  const res = await fetch(`${BASE}/access/validateLogin`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent': UA,
-      'Cookie': cookie,
-      'Referer': MC_BASE + '/search/form/inss',
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
       'X-Requested-With': 'XMLHttpRequest',
-      'Origin': MC_BASE
+      'Referer': `${BASE}/`,
+      'Origin': BASE,
     },
-    body: `methodOperation=dataBase&methodConsult=cpf&versaoTela=v2&dataConsult=${cpf.replace(/\D/g, '')}&dataOrgao=&CPF=&CPFRepresentante=&ddd=&telefone=`
+    body: body.toString(),
+    redirect: 'manual',
+  });
+
+  // Extract Set-Cookie(s) — edge runtime returns them in headers
+  const cookies = [];
+  // getSetCookie available in newer runtimes; fallback to getAll
+  if (typeof res.headers.getSetCookie === 'function') {
+    cookies.push(...res.headers.getSetCookie());
+  } else {
+    // Vercel edge: headers.get('set-cookie') may concat with ', '
+    const raw = res.headers.get('set-cookie');
+    if (raw) cookies.push(...raw.split(/,(?=\s*\w+=)/));
+  }
+
+  let loginData;
+  try {
+    loginData = await res.json();
+  } catch {
+    loginData = { code: -1, mensagem: 'Failed to parse login response' };
+  }
+
+  if (loginData.code !== 0) {
+    return { ok: false, error: loginData.mensagem || 'Login failed', data: loginData };
+  }
+
+  // Build cookie string for subsequent requests
+  const cookieParts = cookies.map(c => c.split(';')[0].trim()).filter(Boolean);
+  const cookieStr = cookieParts.join('; ');
+
+  if (!cookieStr) {
+    return { ok: false, error: 'No session cookie returned', data: loginData };
+  }
+
+  return { ok: true, cookie: cookieStr, data: loginData };
+}
+
+// ── Ensure active session ──────────────────────────────────────────
+async function ensureSession(user, pass) {
+  const now = Date.now();
+  if (sessionCache.cookie && (now - sessionCache.ts) < SESSION_TTL) {
+    return { ok: true, cookie: sessionCache.cookie };
+  }
+  const result = await doLogin(user, pass);
+  if (result.ok) {
+    sessionCache = { cookie: result.cookie, ts: now };
+  }
+  return result;
+}
+
+// ── Consulta CPF ───────────────────────────────────────────────────
+async function consultCPF(cookie, cpf) {
+  // Multicorban expects CPF with 11 digits (leading zeros)
+  const cpfClean = cpf.replace(/\D/g, '').padStart(11, '0');
+
+  const body = new URLSearchParams({
+    methodOperation: 'dataBase',
+    methodConsult: 'cpf',
+    versaoTela: 'v2',
+    dataConsult: cpfClean,
+    dataOrgao: '',
+    CPF: '',
+    CPFRepresentante: '',
+    ddd: '',
+    telefone: '',
+  });
+
+  const res = await fetch(`${BASE}/search/consult`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Cookie': cookie,
+      'Referer': `${BASE}/search`,
+      'Origin': BASE,
+    },
+    body: body.toString(),
   });
 
   const text = await res.text();
-  
-  // Check if redirected to login (session expired)
-  if (text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('/login')) {
-    // Clear session and retry once
-    sessionCookie = null; sessionExpires = 0;
-    const newCookie = await mcLogin();
-    const res2 = await fetch(MC_BASE + '/search/consult', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': UA,
-        'Cookie': newCookie,
-        'Referer': MC_BASE + '/search/form/inss',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Origin': MC_BASE
-      },
-      body: `methodOperation=dataBase&methodConsult=cpf&versaoTela=v2&dataConsult=${cpf.replace(/\D/g, '')}&dataOrgao=&CPF=&CPFRepresentante=&ddd=&telefone=`
-    });
-    const text2 = await res2.text();
-    if (text2.includes('<!DOCTYPE') || text2.includes('<html')) {
-      throw new Error('Multicorban retornou HTML após re-login. Possível bloqueio ou mudança no sistema. Preview: ' + text2.substring(0, 200));
-    }
-    try {
-      const data = JSON.parse(text2);
-      if (!data.hash) throw new Error('Resposta sem hash');
-      return parseMulticorbanHTML(data.hash);
-    } catch (e) {
-      throw new Error('Parse falhou após retry: ' + e.message + ' | Preview: ' + text2.substring(0, 200));
-    }
-  }
-  
-  // Normal path: parse JSON
+
+  // Try JSON parse first
+  let data;
   try {
-    const data = JSON.parse(text);
-    if (!data.hash) throw new Error('Resposta sem campo hash. Keys: ' + Object.keys(data).join(','));
-    return parseMulticorbanHTML(data.hash);
-  } catch (e) {
-    throw new Error('Parse falhou: ' + e.message + ' | Preview: ' + text.substring(0, 200));
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, error: 'Non-JSON response', raw: text.substring(0, 500) };
   }
+
+  // code !== 0 means error (session expired, CPF not found, etc.)
+  if (data.code !== undefined && data.code !== 0) {
+    return { ok: false, error: data.mensagem || 'Consulta error', data };
+  }
+
+  // Parse the HTML hash to extract structured data
+  const html = data.hash || '';
+  const parsed = parseConsultHTML(html);
+
+  return { ok: true, cpf: cpfClean, parsed, raw_code: data.code };
 }
 
-function parseMulticorbanHTML(html) {
-  // Helper: extract value from input by name/id pattern
-  const getInput = (pattern) => {
-    const regex = new RegExp(`(?:name|id)=["']${pattern}["'][^>]*value=["']([^"']*)["']`, 'i');
-    const match = html.match(regex);
-    if (match) return match[1].trim();
-    // Try reverse order (value before name)
-    const regex2 = new RegExp(`value=["']([^"']*)["'][^>]*(?:name|id)=["']${pattern}["']`, 'i');
-    const match2 = html.match(regex2);
-    return match2 ? match2[1].trim() : '';
+// ── HTML Parser — extract structured data from consult response ────
+function parseConsultHTML(html) {
+  const result = {
+    beneficiario: {},
+    beneficio: {},
+    margem: {},
+    contratos: [],
+    cartoes: [],
+    telefones: [],
+    endereco: {},
+    banco: {},
   };
 
-  // Helper: extract text content between tags
-  const getText = (pattern) => {
-    const regex = new RegExp(pattern + '[^>]*>([^<]+)<', 'i');
-    const match = html.match(regex);
-    return match ? match[1].trim() : '';
+  if (!html) return result;
+
+  // Helper: extract value from hidden input or text near a label
+  const extractInput = (id) => {
+    const re = new RegExp(`id="\\s*${id}"[^>]*value="\\s*([^"]*)"`, 'i');
+    const m = html.match(re);
+    return m ? m[1].trim() : null;
   };
 
-  // ═══ DADOS PESSOAIS ═══
-  const cpf = getInput('cpf_beneficiario') || getInput('cpf_digitacao');
-  const nome = getInput('nome_beneficiario') || getInput('nome_digitacao');
-  const rg = getInput('rg_beneficiario') || getInput('identidade_digitacao');
-  const nomeMae = getInput('nomeMae_beneficiario') || getInput('nome_mae_digitacao');
-  const beneficio = getInput('nb_beneficiario') || getInput('nb_digitacao');
-  const valorBeneficio = getInput('valor_beneficio');
-  const baseCalculo = getInput('base_calculo_consignavel');
-  const parcelasTotal = getInput('valor_parcela_emprestimo');
-  const margemTotal = getInput('margem_total');
-  const margemParcela = getInput('valor_parcela_margem');
-
-  // Data nascimento, idade, sexo, email, telefone, DDB
-  // These are unnamed inputs — extract by position after labels
-  const extractAfterLabel = (label) => {
-    const regex = new RegExp(label + '[\\s\\S]*?value=["\'](.*?)["\']', 'i');
-    const m = html.match(regex);
-    return m ? m[1].trim() : '';
+  const extractText = (pattern) => {
+    const re = new RegExp(pattern, 'i');
+    const m = html.match(re);
+    return m ? m[1].trim() : null;
   };
 
-  const dtNasc = extractAfterLabel('Data de Nascimento');
-  const especie = extractAfterLabel('Descrição da Espécie') || extractAfterLabel('Descri');
-  const idade = extractAfterLabel('Idade');
-  const sexo = extractAfterLabel('Sexo');
-  const email = extractAfterLabel('E-mail');
-  const telefone = extractAfterLabel('Telefone/WhatsApp') || extractAfterLabel('Telefone');
-  const ddb = extractAfterLabel('DDB');
-  const desbloqueio = extractAfterLabel('Elegível para Desbloqueio') || extractAfterLabel('Desbloqueio');
+  // ── Beneficiário
+  result.beneficiario.cpf = extractInput('cpf_beneficiario');
+  result.beneficiario.nome = extractInput('nome_beneficiario');
+  result.beneficiario.rg = extractInput('rg_beneficiario');
+  result.beneficiario.nome_mae = extractInput('nomeMae_beneficiario');
+  result.beneficiario.nb = extractInput('nb_beneficiario');
 
-  // ═══ DADOS BANCÁRIOS ═══
-  let banco_deposito = '', uf_banco = '', agencia = '', conta = '', tipo_conta = '';
-  const bankMatch = html.match(/Dados\s*Bancário[\s\S]*?value=["']([^"']*)["'][\s\S]*?value=["']([^"']*)["'][\s\S]*?value=["']([^"']*)["'][\s\S]*?value=["']([^"']*)["'][\s\S]*?value=["']([^"']*)["']/i);
-  if (bankMatch) {
-    banco_deposito = bankMatch[1]; uf_banco = bankMatch[2];
-    agencia = bankMatch[3]; conta = bankMatch[4]; tipo_conta = bankMatch[5];
+  // Data nascimento — search in the value fields
+  const nascRe = /Data de Nascimento<\/small>\s*<input[^>]*value="\s*([^"]+)"/i;
+  const nascM = html.match(nascRe);
+  if (nascM) result.beneficiario.data_nascimento = nascM[1].trim();
+
+  // Idade
+  const idadeRe = /Idade<\/small>\s*(?:<[^>]*>)*\s*<input[^>]*value="\s*([^"]+)"/i;
+  const idadeM = html.match(idadeRe);
+  if (idadeM) result.beneficiario.idade = idadeM[1].trim();
+
+  // ── Benefício
+  result.beneficio.valor = extractInput('valor_beneficio');
+  result.beneficio.base_calculo = extractInput('base_calculo_consignavel');
+
+  // Situação
+  const sitRe = /Situa[çc]\u00e3o:\s*<\/small>\s*<small[^>]*>\s*(\w+)/i;
+  const sitM = html.match(sitRe);
+  if (sitM) result.beneficio.situacao = sitM[1].trim();
+
+  // Espécie
+  const especieRe = /Descri[çc]\u00e3o da Esp\u00e9cie<\/small>\s*<input[^>]*value="\s*([^"]+)"/i;
+  const especieM = html.match(especieRe);
+  if (especieM) result.beneficio.especie = especieM[1].trim();
+
+  // Data extrato
+  const extratoRe = /Data do extrato:\s*<\/small>\s*<small[^>]*>\s*([^<]+)/i;
+  const extratoM = html.match(extratoRe);
+  if (extratoM) result.beneficio.data_extrato = extratoM[1].trim();
+
+  // DDB
+  const ddbRe = /DDB<\/small>\s*<input[^>]*value="\s*([^"]+)"/i;
+  const ddbM = html.match(ddbRe);
+  if (ddbM) result.beneficio.ddb = ddbM[1].trim();
+
+  // Desbloqueio
+  const desbRe = /Desbloqueio<\/small>\s*(?:<[^>]*>)*\s*<input[^>]*value="\s*([^"]+)"/i;
+  const desbM = html.match(desbRe);
+  if (desbM) result.beneficio.desbloqueio = desbM[1].trim();
+
+  // ── Margem
+  result.margem.parcelas = extractInput('valor_parcela_emprestimo');
+  result.margem.total = extractInput('margem_total');
+
+  // Margem disponível empréstimo
+  const margemRe = /Margem:\s*<\/small>\s*<small[^>]*>\s*R\$\s*([\d.,]+)/i;
+  const margemM = html.match(margemRe);
+  if (margemM) result.margem.disponivel = margemM[1].trim();
+
+  // RMC / RCC
+  const rmcRe = /valor_parcela_rmc[^>]*>\s*R\$\s*([\d.,]+)/i;
+  const rmcM = html.match(rmcRe);
+  if (rmcM) result.margem.rmc = rmcM[1].trim();
+
+  const rccRe = /valor_parcela_rcc[^>]*>\s*R\$\s*([\d.,]+)/i;
+  const rccM = html.match(rccRe);
+  if (rccM) result.margem.rcc = rccM[1].trim();
+
+  // ── Contratos de Empréstimo — parse from the contratos section
+  // Pattern: Contrato number, Banco, Taxa, Valor, Parcela, Prazos, Data Averbação
+  const contratoRe = /class="[^"]*contratos[^"]*"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/gi;
+  // Simpler: look for collapse sections with data-id-contrato
+  const collapseRe = /data-id-contrato="\s*(\d+)"/gi;
+  let cm;
+  while ((cm = collapseRe.exec(html)) !== null) {
+    // Each contrato has nearby info - simplified extraction
+    result.contratos.push({ id: cm[1] });
   }
 
-  // ═══ DADOS ENDEREÇO ═══
-  let uf = '', cidade = '', cep = '', endereco = '';
-  const addrMatch = html.match(/Dados\s*do\s*Endereço[\s\S]*?value=["']([^"']*)["'][\s\S]*?value=["']([^"']*)["'][\s\S]*?value=["']([^"']*)["'][\s\S]*?value=["']([^"']*)["']/i);
-  if (addrMatch) {
-    uf = addrMatch[1]; cidade = addrMatch[2]; cep = addrMatch[3]; endereco = addrMatch[4];
+  // Detailed contract extraction from table rows (PDF section has cleaner data)
+  // Look for contrato number pattern: 10+ digits in contrato context
+  const contratoNumRe = /Contrato<\/small>\s*<p[^>]*>\s*([\d]+)/gi;
+  let cnm;
+  const contratoNums = [];
+  while ((cnm = contratoNumRe.exec(html)) !== null) {
+    contratoNums.push(cnm[1].trim());
+  }
+  if (contratoNums.length > 0) {
+    result.contratos = contratoNums.map(n => ({ contrato: n }));
   }
 
-  // ═══ CONTRATOS DE EMPRÉSTIMO ═══
-  const contratos = [];
-  const contratoRegex = /valor_saldoquitacao_contrato(\d+)["'][^>]*value=["']([^"']*)["']/gi;
-  let m;
-  while ((m = contratoRegex.exec(html)) !== null) {
-    const id = m[1];
-    const saldo = m[2];
-    contratos.push({
-      id,
-      saldo_devedor: parseFloat(saldo) || 0,
-      parcela: parseFloat(getInput('valor_parcela_contrato' + id)) || 0,
-      valor_liquido: getInput('resultadoSimulacao' + id),
-      coeficiente: getInput('coeficiente' + id),
-      valor_emprestimo: parseFloat(getInput('valor_emprestimo')) || 0
+  // ── Cartões — look for Cartão (RMC) and Cartão (RCC) sections
+  const cartaoRe = /Cart[aã]o \((RM[C]|RCC)\)[\s\S]*?Banco<\/small>\s*<p[^>]*>\s*([^<]+)[\s\S]*?Margem<\/small>\s*<p[^>]*>\s*R\$\s*([\d.,]+)[\s\S]*?Limite Cart[aã]o<\/small>\s*<p[^>]*>\s*R\$\s*([\d.,]+)/gi;
+  let cartM;
+  while ((cartM = cartaoRe.exec(html)) !== null) {
+    result.cartoes.push({
+      tipo: cartM[1],
+      banco: cartM[2].trim(),
+      margem: cartM[3].trim(),
+      limite: cartM[4].trim(),
     });
   }
 
-  // ═══ EXTRATO INSS (contratos detalhados da tabela) ═══
-  // Parse table rows for detailed contract info
-  const contratosDetalhados = [];
-  const tableRegex = /<td[^>]*>(\d{5,}(?:-\d)?)<\/td>[\s\S]*?<td[^>]*>(\d+\s*-\s*[^<]+)<\/td>[\s\S]*?<td[^>]*>(Ativo|Suspenso)[^<]*<\/td>/gi;
-  while ((m = tableRegex.exec(html)) !== null) {
-    contratosDetalhados.push({
-      contrato: m[1].trim(),
-      banco: m[2].trim(),
-      situacao: m[3].trim()
-    });
-  }
-
-  // ═══ SITUAÇÃO ═══
-  const bloqueadoMatch = html.match(/Bloqueado para Empréstimo[\s\S]*?<p[^>]*class=["'][^"']*text-(success|danger|warning)[^"']*["'][^>]*>([^<]+)/i);
-  const elegivelMatch = html.match(/Elegível para Empréstimo[\s\S]*?<p[^>]*class=["'][^"']*text-(success|danger|warning)[^"']*["'][^>]*>([^<]+)/i);
-
-  // ═══ CALCULAR OPORTUNIDADES ═══
-  const margemDisp = parseFloat(margemTotal) - parseFloat(parcelasTotal) || 0;
-  const totalSaldos = contratos.reduce((s, c) => s + c.saldo_devedor, 0);
-  const totalParcelas = contratos.reduce((s, c) => s + c.parcela, 0);
-
-  return {
-    _source: 'multicorban_api',
-    _consultedAt: new Date().toISOString(),
-
-    // Pessoais
-    cpf, nome_completo: nome, rg_numero: rg, nome_mae: nomeMae,
-    beneficio, data_nascimento: dtNasc, especie, idade, sexo, email, telefone, ddb,
-    desbloqueio,
-
-    // Financeiros
-    valor_beneficio: parseFloat(valorBeneficio) || 0,
-    base_calculo: parseFloat(baseCalculo) || 0,
-    parcelas_total: parseFloat(parcelasTotal) || 0,
-    margem_total: parseFloat(margemTotal) || 0,
-    margem_disponivel: margemDisp,
-    margem_parcela: parseFloat(margemParcela) || 0,
-
-    // Bancário
-    banco_deposito, uf_banco, agencia, conta, tipo_conta,
-
-    // Endereço
-    uf, cidade, cep, endereco,
-
-    // Contratos
-    contratos,
-    contratos_detalhados: contratosDetalhados,
-    total_contratos: contratos.length,
-    total_saldo_devedor: totalSaldos,
-    total_parcelas_contratos: totalParcelas,
-
-    // Status
-    bloqueado: bloqueadoMatch ? bloqueadoMatch[2].trim() : '',
-    elegivel: elegivelMatch ? elegivelMatch[2].trim() : '',
-
-    // Oportunidades
-    oportunidades: {
-      portabilidade: contratos.length > 0,
-      emprestimo_novo: margemDisp > 30,
-      cartao_beneficio: true,
-      margem_emprestimo_estimada: margemDisp > 0 ? Math.round(margemDisp / 0.02299) : 0,
-      margem_cartao_estimada: margemDisp > 0 ? Math.round(margemDisp / 0.029214) : 0
+  // ── Telefones
+  const telRe = /phone=55(\d+)"/gi;
+  let telM;
+  while ((telM = telRe.exec(html)) !== null) {
+    if (!result.telefones.includes(telM[1])) {
+      result.telefones.push(telM[1]);
     }
-  };
+  }
+  // Fixed phones
+  const fixRe = /class="phone_fixo"[^>]*>\s*(\d+)/gi;
+  let fixM;
+  while ((fixM = fixRe.exec(html)) !== null) {
+    if (!result.telefones.includes(fixM[1])) {
+      result.telefones.push(fixM[1]);
+    }
+  }
+
+  // ── Endereço
+  const ufRe = /UF<\/small>\s*<input[^>]*value="\s*([^"]+)"/i;
+  const ufM = html.match(ufRe);
+  if (ufM) result.endereco.uf = ufM[1].trim();
+
+  const munRe = /Munic[ií]pio<\/small>\s*<input[^>]*value="\s*([^"]+)"/i;
+  const munM = html.match(munRe);
+  if (munM) result.endereco.municipio = munM[1].trim();
+
+  const cepRe = /CEP<\/small>\s*<input[^>]*value="\s*([^"]+)"/i;
+  const cepM = html.match(cepRe);
+  if (cepM) result.endereco.cep = cepM[1].trim();
+
+  const endRe = /Endere[çc]o<\/small>\s*<input[^>]*value="\s*([^"]+)"/i;
+  const endM = html.match(endRe);
+  if (endM) result.endereco.endereco = endM[1].trim();
+
+  // ── Banco pagador
+  const bancoRe = /Banco<\/small>\s*<input[^>]*value="\s*([^"]+)"/i;
+  const bancoM = html.match(bancoRe);
+  if (bancoM) result.banco.nome = bancoM[1].trim();
+
+  const agRe = /Agencia<\/small>\s*<input[^>]*value="\s*([^"]+)"/i;
+  const agM = html.match(agRe);
+  if (agM) result.banco.agencia = agM[1].trim();
+
+  const contaRe = /Conta<\/small>\s*<input[^>]*value="\s*([^"]+)"/i;
+  const contaM = html.match(contaRe);
+  if (contaM) result.banco.conta = contaM[1].trim();
+
+  const tipoRe = /Tipo de Conta<\/small>\s*<input[^>]*value="\s*([^"]+)"/i;
+  const tipoM = html.match(tipoRe);
+  if (tipoM) result.banco.tipo = tipoM[1].trim();
+
+  return result;
 }
 
-// ═══ HANDLER ═══
+// ── Consulta por Benefício ─────────────────────────────────────────
+async function consultBeneficio(cookie, beneficio) {
+  const nbClean = beneficio.replace(/\D/g, '');
+  const body = new URLSearchParams({
+    methodOperation: 'dataBase',
+    methodConsult: 'beneficio',
+    versaoTela: 'v2',
+    dataConsult: nbClean,
+    dataOrgao: '',
+    CPF: '',
+    CPFRepresentante: '',
+    ddd: '',
+    telefone: '',
+  });
+
+  const res = await fetch(`${BASE}/search/consult`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Cookie': cookie,
+      'Referer': `${BASE}/search`,
+      'Origin': BASE,
+    },
+    body: body.toString(),
+  });
+
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, error: 'Non-JSON response', raw: text.substring(0, 500) };
+  }
+
+  if (data.code !== undefined && data.code !== 0) {
+    return { ok: false, error: data.mensagem || 'Consulta error', data };
+  }
+
+  const html = data.hash || '';
+  const parsed = parseConsultHTML(html);
+  return { ok: true, beneficio: nbClean, parsed, raw_code: data.code };
+}
+
+// ── Main handler ───────────────────────────────────────────────────
 export default async function handler(req) {
-  const cors = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' };
-  if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: { ...cors, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Content-Type' } });
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS });
+  }
+  if (req.method !== 'POST') {
+    return json({ error: 'POST only' }, 405);
+  }
+
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const { action, user, pass, cpf, beneficio } = body;
+
+  // Credentials — use provided or fallback to defaults
+  const loginUser = user || 'lhamascred';
+  const loginPass = pass || '*Lhamas24';
 
   try {
-    const body = await req.json();
-    const action = body.action || '';
-
-    if (action === 'consulta' || action === 'search') {
-      const cpf = (body.cpf || '').replace(/\D/g, '');
-      if (!cpf || cpf.length < 11) return new Response(JSON.stringify({ success: false, error: 'CPF inválido' }), { status: 400, headers: cors });
-
-      const data = await mcConsult(cpf);
-      return new Response(JSON.stringify({ success: true, ...data }), { headers: cors });
+    // ── Action: login — just test login, return session status
+    if (action === 'login') {
+      const result = await doLogin(loginUser, loginPass);
+      if (result.ok) {
+        sessionCache = { cookie: result.cookie, ts: Date.now() };
+        return json({ ok: true, mensagem: 'Sessão ativa', data: result.data });
+      }
+      return json({ ok: false, error: result.error }, 401);
     }
 
-    if (action === 'test') {
-      // Clear cache to force fresh login
-      sessionCookie = null; sessionExpires = 0;
+    // ── Action: consult_cpf — login + consulta CPF
+    if (action === 'consult_cpf') {
+      if (!cpf) return json({ error: 'CPF obrigatório' }, 400);
+
+      const session = await ensureSession(loginUser, loginPass);
+      if (!session.ok) {
+        return json({ ok: false, error: 'Login failed: ' + session.error }, 401);
+      }
+
+      const result = await consultCPF(session.cookie, cpf);
+
+      // If session expired, retry once
+      if (!result.ok && (result.error || '').includes('session')) {
+        sessionCache = { cookie: null, ts: 0 };
+        const retry = await ensureSession(loginUser, loginPass);
+        if (retry.ok) {
+          const result2 = await consultCPF(retry.cookie, cpf);
+          return json(result2, result2.ok ? 200 : 400);
+        }
+      }
+
+      return json(result, result.ok ? 200 : 400);
+    }
+
+    // ── Action: consult_beneficio — login + consulta NB
+    if (action === 'consult_beneficio') {
+      if (!beneficio) return json({ error: 'Benefício obrigatório' }, 400);
+
+      const session = await ensureSession(loginUser, loginPass);
+      if (!session.ok) {
+        return json({ ok: false, error: 'Login failed: ' + session.error }, 401);
+      }
+
+      const result = await consultBeneficio(session.cookie, beneficio);
+      return json(result, result.ok ? 200 : 400);
+    }
+
+    // ── Action: raw — pass-through any endpoint (advanced)
+    if (action === 'raw') {
+      const { endpoint, params } = body;
+      if (!endpoint) return json({ error: 'endpoint obrigatório' }, 400);
+
+      const session = await ensureSession(loginUser, loginPass);
+      if (!session.ok) {
+        return json({ ok: false, error: 'Login failed' }, 401);
+      }
+
+      const formBody = new URLSearchParams(params || {});
+      const res = await fetch(`${BASE}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Cookie': session.cookie,
+          'Referer': `${BASE}/search`,
+          'Origin': BASE,
+        },
+        body: formBody.toString(),
+      });
+
+      const text = await res.text();
       try {
-        const cookie = await mcLogin();
-        return new Response(JSON.stringify({
-          active: true,
-          authenticated: !!cookie,
-          cookieCount: cookie ? cookie.split(';').length : 0,
-          cookiePreview: cookie ? cookie.substring(0, 100) + '...' : '',
-          user: MC_USER,
-          message: 'Multicorban conectado!'
-        }), { headers: cors });
-      } catch (e) {
-        return new Response(JSON.stringify({ active: false, error: e.message }), { headers: cors });
+        return json(JSON.parse(text));
+      } catch {
+        return json({ raw: text.substring(0, 5000) });
       }
     }
 
-    if (action === 'debug') {
-      // Debug: show raw response from consult without parsing
-      const cpf = (body.cpf || '07518194848').replace(/\D/g, '');
-      try {
-        const cookie = await mcLogin();
-        const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
-        const res = await fetch(MC_BASE + '/search/consult', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': UA, 'Cookie': cookie,
-            'Referer': MC_BASE + '/search/form/inss',
-            'X-Requested-With': 'XMLHttpRequest', 'Origin': MC_BASE
-          },
-          body: `methodOperation=dataBase&methodConsult=cpf&versaoTela=v2&dataConsult=${cpf}&dataOrgao=&CPF=&CPFRepresentante=&ddd=&telefone=`
-        });
-        const text = await res.text();
-        return new Response(JSON.stringify({
-          status: res.status,
-          contentType: res.headers.get('content-type'),
-          isHTML: text.startsWith('<!') || text.startsWith('<html'),
-          isJSON: text.startsWith('{') || text.startsWith('['),
-          length: text.length,
-          preview: text.substring(0, 500),
-          cookieUsed: cookie ? cookie.substring(0, 80) + '...' : 'none'
-        }), { headers: cors });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), { headers: cors });
-      }
-    }
+    return json({
+      error: 'action inválida',
+      actions: ['login', 'consult_cpf', 'consult_beneficio', 'raw'],
+    }, 400);
 
-    if (action === 'debugLogin') {
-      // Debug: show each step of login process
-      const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-      const steps = [];
-      
-      try {
-        // Step 1: GET login page
-        const page = await fetch(MC_BASE + '/login', { method: 'GET', headers: { 'User-Agent': UA }, redirect: 'manual' });
-        const pageHtml = await page.text();
-        const pageCookies = page.headers.get('set-cookie') || '';
-        
-        // Find form fields
-        const formAction = pageHtml.match(/form[^>]*action=["']([^"']+)["']/i);
-        const inputNames = [...pageHtml.matchAll(/<input[^>]*name=["']([^"']+)["'][^>]*/gi)].map(m => {
-          const type = m[0].match(/type=["']([^"']+)["']/i);
-          return m[1] + (type ? ' (' + type[1] + ')' : '');
-        });
-        const csrfInput = pageHtml.match(/name=["']_?csrf[_-]?token?["'][^>]*value=["']([^"']+)["']/i)
-                       || pageHtml.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/i);
-        
-        steps.push({
-          step: '1-GET-login',
-          status: page.status,
-          cookies: pageCookies.substring(0, 200),
-          formAction: formAction ? formAction[1] : 'not found',
-          inputNames,
-          csrfToken: csrfInput ? csrfInput[1].substring(0, 50) : 'not found',
-          htmlSize: pageHtml.length
-        });
-
-        // Step 2: POST login
-        const cookies = pageCookies.split(/,(?=\s*\w+=)/).map(c => c.split(';')[0].trim()).filter(c => c && c.includes('='));
-        let loginBody = `login=${encodeURIComponent(MC_USER)}&password=${encodeURIComponent(MC_PASS)}`;
-        if (csrfInput) loginBody += `&_csrf=${encodeURIComponent(csrfInput[1])}&_token=${encodeURIComponent(csrfInput[1])}`;
-        
-        const postUrl = formAction ? (formAction[1].startsWith('http') ? formAction[1] : MC_BASE + formAction[1]) : MC_BASE + '/login';
-        
-        const loginRes = await fetch(postUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': UA, 'Cookie': cookies.join('; '),
-            'Referer': MC_BASE + '/login', 'Origin': MC_BASE
-          },
-          body: loginBody,
-          redirect: 'manual'
-        });
-        
-        const loginCookies = loginRes.headers.get('set-cookie') || '';
-        const loginLocation = loginRes.headers.get('location') || '';
-        let loginText = '';
-        try { loginText = await loginRes.text(); } catch {}
-        
-        steps.push({
-          step: '2-POST-login',
-          status: loginRes.status,
-          location: loginLocation,
-          newCookies: loginCookies.substring(0, 200),
-          bodyUsed: loginBody.replace(MC_PASS, '***'),
-          postUrl,
-          responsePreview: loginText.substring(0, 300)
-        });
-
-        return new Response(JSON.stringify({ steps }), { headers: cors });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: e.message, steps }), { headers: cors });
-      }
-    }
-
-    return new Response(JSON.stringify({ error: 'action inválida', valid: ['consulta', 'test', 'debug'] }), { status: 400, headers: cors });
-
-  } catch (err) {
-    // If auth error, clear session
-    if (err.message.includes('Login') || err.message.includes('401')) {
-      sessionCookie = null; sessionExpires = 0;
-    }
-    return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500, headers: cors });
+  } catch (e) {
+    return json({ error: e.message, stack: e.stack?.substring(0, 300) }, 500);
   }
 }
+
+export const config = { runtime: 'edge' };
