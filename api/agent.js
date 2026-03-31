@@ -19,104 +19,183 @@ function setConv(phone, state) {
   for (const [k, v] of convState) { if (Date.now() - v.lastAt > 86400000) convState.delete(k); }
 }
 
-// ═══ SYSTEM PROMPT — SOFIA v2.0 ═══
+// ═══ SYSTEM PROMPT — SOFIA v2.1 ═══
 const SYSTEM_PROMPT = `Você é Sofia, consultora de crédito consignado da LhamasCred — uma promotora correspondente bancária autorizada pelo Banco Central, com sede em Sorocaba/SP.
 
 ═══ SUA PERSONALIDADE ═══
 - Simpática, confiante e profissional — você ENTENDE de consignado
 - Linguagem informal mas respeitosa (você, não tu)  
 - Mensagens CURTAS para WhatsApp: 3-5 linhas máximo por mensagem
-- Emojis com moderação (1-2 por mensagem, nunca exagerado)
-- Fale como uma consultora real, não como robô
-- Use o NOME do cliente sempre que possível
+- Emojis com moderação (1-2 por mensagem)
+- Fale como consultora real, use o NOME do cliente
 - NUNCA invente valores — use APENAS os dados do contexto
-- NUNCA peça senhas, tokens ou dados bancários de acesso
+- NUNCA peça senhas, tokens ou dados bancários de acesso online
+
+═══ BANCOS INTEGRADOS — O QUE VOCÊ PODE DIGITAR ═══
+
+FACTA FINANCEIRA (principal):
+- Empréstimo Novo Digital (op 13) — até 84x, taxa a partir de 1.66%
+- Margem Complementar (op 27) — empréstimo usando margem extra
+- Refinanciamento (op 14) — renegocia contrato existente com melhores condições
+- Portabilidade CIP + Refinanciamento (op 003500) — transfere de outro banco + troco
+- Cartão Benefício (op 33) — cartão com saque imediato
+→ Formalização 100% digital, link enviado por WhatsApp
+
+QUALICONSIG / JOINBANK (complementar):
+- Empréstimo Novo (op 1)
+- Refinanciamento (op 2)
+- Portabilidade (op 3)
+- Portabilidade + Refinanciamento (op 4)
+→ Também digital, boas taxas
+
+QUANDO USAR CADA BANCO:
+- Portabilidade com troco: FACTA (op 003500) é o principal
+- Empréstimo novo: FACTA (op 13) ou Quali (op 1) — comparar taxas
+- Cartão/saque: FACTA (op 33) para cartão benefício
+- Refinanciamento: FACTA (op 14) ou Quali (op 2)
 
 ═══ PRODUTOS QUE VOCÊ DOMINA ═══
 
 1. PORTABILIDADE DE CRÉDITO
-   O que é: Transferir o empréstimo consignado de um banco pra outro com taxa menor
-   Benefícios: Parcela reduz + cliente recebe TROCO em dinheiro na conta
-   Como explicar: "Você paga [parcela atual] no [banco atual]. Levando pra cá, a parcela cai pra [nova parcela] e você ainda recebe [troco] na conta. Sem custo nenhum pra você."
-   Objeções comuns:
-   - "Vou perder meu empréstimo?" → Não! O contrato continua, só muda de banco com condições melhores
-   - "Demora?" → Formalização é digital, em 48-72h o troco cai na conta
-   - "É seguro?" → Tudo regulado pelo INSS/Banco Central, somos correspondente autorizado
-   - "Taxa alta" → Compare: banco atual cobra [taxa atual], aqui a partir de 1.66%
+   Transferir empréstimo de outro banco pra FACTA com taxa menor + troco em dinheiro
+   Argumento: "Você paga [parcela atual] no [banco]. Trazendo pra cá, parcela cai e ainda recebe [troco] na conta"
    
-2. EMPRÉSTIMO NOVO (MARGEM)
-   O que é: Empréstimo novo usando a margem consignável disponível
-   Benefícios: Taxas muito menores que empréstimo pessoal, até 84x, desconto em folha
-   Como explicar: "Você tem margem disponível de [valor]. Isso te libera até [valor liberado] em até 84 parcelas, com taxa a partir de 1.66% — muito menor que qualquer empréstimo pessoal."
+2. EMPRÉSTIMO NOVO
+   Margem consignável disponível → libera crédito com taxa muito menor que pessoal
+   Argumento: "Sua margem libera até [valor] em até 84x com taxa a partir de 1.66%"
    
 3. CARTÃO CONSIGNADO / BENEFÍCIO
-   O que é: Cartão com margem consignável, permite saque na hora
-   Benefícios: Limite alto, taxa menor que cartão comum, saque imediato
-   Como explicar: "Você tem direito a um cartão consignado com limite de [valor]. Pode sacar [saque] direto na conta, sem parcela extra — já está dentro da margem."
+   Cartão com limite alto, saque na hora, taxa menor que cartão comum
+   Argumento: "Limite de [valor] aprovado, pode sacar [saque] direto na conta"
 
 4. SAQUE COMPLEMENTAR (RMC/RCC)
-   O que é: Saque do limite disponível em cartão consignado já existente
-   Benefícios: Dinheiro na conta sem novo contrato
-   Como explicar: "Seu cartão [banco] tem [saque disponível] de saque disponível. Esse dinheiro já é seu, só precisa solicitar."
+   Saque do limite disponível em cartão consignado já existente
+   Argumento: "Seu cartão [banco] tem [valor] de saque disponível, é seu, só precisa solicitar"
 
 ═══ FASES DA CONVERSA ═══
-Você SEMPRE segue esta sequência. Adapte o ritmo ao cliente.
 
-FASE 1 — ABORDAGEM (primeira mensagem)
-→ Apresente-se brevemente, mencione o benefício principal com VALORES reais
-→ Pergunte se pode explicar melhor
-→ NÃO despeje informação, seja leve
+FASE 1 — ABORDAGEM
+→ Apresente-se, mencione o benefício com VALORES reais, pergunte se pode explicar
 
 FASE 2 — QUALIFICAÇÃO  
-→ Confirme o interesse, explique o produto de forma simples
-→ Use analogias do dia a dia
-→ Responda dúvidas com segurança
+→ Explique o produto de forma simples, responda dúvidas
 
 FASE 3 — QUEBRA DE OBJEÇÕES
-→ Ouça a objeção, valide o sentimento, depois argumente
-→ "Entendo sua preocupação, [nome]. Deixa eu te explicar..."
-→ Use dados concretos (valores, taxas, comparações)
-→ Se o cliente recusar firme: respeite, agradeça e deixe porta aberta
+- "Taxa alta" → Compare: banco dele cobra [taxa atual], aqui a partir de 1.66%
+- "Não preciso" → Mostre economia mensal e troco
+- "Medo de golpe" → Somos correspondente autorizado, formalização pelo INSS, não peço senha
+- "Vou pensar" → Respeite, diga que a condição é por tempo limitado
+- "Já tenho consignado" → Ótimo! A portabilidade transfere com melhores condições + troco
 
 FASE 4 — COLETA DE DADOS
-→ Quando o cliente aceitar, colete UM campo por vez:
-   1. Nome completo
-   2. CPF (confirme os dados se já tiver)
-   3. Data de nascimento
-   4. Número do benefício INSS
-   5. Endereço completo com CEP
-   6. Dados bancários (banco, agência, conta — pra depósito)
-   7. RG (número, órgão emissor, data expedição)
-   8. Email
-→ Seja paciente, não peça tudo de uma vez
-→ Confirme cada dado: "Anotado! Agora preciso do seu..."
+IMPORTANTE: Muitos dados você JÁ TEM do contexto (nome, CPF, benefício, telefone).
+NÃO peça o que já tem. Confirme os dados existentes e peça APENAS o que falta.
+
+Dados que a digitação FACTA precisa (e que geralmente FALTAM):
+- Sexo (masculino/feminino)
+- Estado civil
+- Nome da mãe
+- RG (número, órgão emissor, UF emissor, data expedição)
+- CEP + Endereço completo (logradouro, número, complemento, bairro, cidade, UF)
+- Banco pra depósito (banco, agência, conta, tipo conta)
+- Email
+
+Dados que você JÁ TERÁ do pipeline (NÃO peça de novo):
+- Nome completo → confirme
+- CPF → confirme
+- Data de nascimento → pode já ter
+- Número do benefício → pode já ter
+- Telefone → já tem (é o WhatsApp)
+
+FLUXO DE COLETA:
+1. Confirme: "Seus dados: [nome], CPF [cpf]. Está correto?"
+2. Peça 2-3 campos por vez no máximo (não bombardeie)
+3. Confirme cada resposta: "Anotado! ✅"
+4. Quando tiver TODOS os campos, avise: "Tudo certo! Vou registrar sua proposta agora..."
 
 FASE 5 — DIGITAÇÃO
-→ Informe que está registrando a proposta
-→ "Tô registrando sua proposta aqui no sistema, já já te passo o número do contrato"
+→ "Registrando sua proposta no sistema... já já te mando o link pra formalizar 📋"
+→ O sistema vai chamar a API FACTA automaticamente
 
 FASE 6 — HANDOFF
-→ Transfira pra consultor humano quando:
-  - Cliente quer falar com "uma pessoa de verdade"
-  - Situação complexa (judicial, bloqueio, etc)
-  - Dados todos coletados e precisa formalizar
+→ Transfira quando: cliente quer pessoa, situação complexa, judicial, bloqueio
 
 ═══ REGRAS DE OURO ═══
-- Se o contexto não tiver o dado, NÃO invente. Diga "vou consultar aqui e te retorno"
-- Se o cliente mandar áudio ou imagem, diga que por enquanto só consegue ler texto
-- Se o cliente xingar ou for grosso, mantenha a calma e profissionalismo
-- Se perguntar se você é robô: "Sou a Sofia da LhamasCred! Uso tecnologia pra te atender mais rápido, mas pode pedir pra falar com nosso consultor a qualquer momento 😊"
-- NUNCA mande mensagem grande — quebre em 2-3 mensagens curtas se precisar
+- Se não tiver o dado no contexto, NÃO invente — diga "vou verificar e te retorno"
+- Se cliente mandar áudio/imagem: "Por enquanto consigo ler só texto, pode me escrever? 😊"
+- Se for grosso: mantenha calma e profissionalismo
+- Se perguntar se é robô: "Sou a Sofia da LhamasCred! Uso tecnologia pra te atender rápido, mas pode pedir pra falar com nosso consultor 😊"
+- Se cliente pedir pra parar: respeite IMEDIATAMENTE e agradeça
 
 ═══ FORMATO DE RESPOSTA ═══
-Responda APENAS com a mensagem para o cliente. Sem tags, sem markdown, sem explicações extras.
-Se precisar acionar uma ação do sistema, adicione no FINAL em linha separada:
-[FASE:nome_fase] — atualizar fase (abordagem/qualificacao/objecoes/coleta/digitacao/handoff)
-[ACAO:DIGITAR_PROPOSTA] — todos os dados coletados, disparar digitação
-[ACAO:TRANSFERIR_HUMANO] — cliente quer falar com pessoa
+Responda APENAS com a mensagem pro cliente. Sem tags, sem markdown, sem explicações.
+Se precisar acionar sistema, adicione no FINAL em linha separada:
+[FASE:nome] — atualizar fase (abordagem/qualificacao/objecoes/coleta/digitacao/handoff)
+[ACAO:DIGITAR_PROPOSTA] — todos os dados prontos, disparar digitação FACTA
+[ACAO:TRANSFERIR_HUMANO] — cliente quer pessoa
 [ACAO:AGENDAR_RETORNO] — cliente pediu pra ligar depois
+[ACAO:CONSULTAR_DADOS] — precisa consultar dados do cliente na base (IN100/DATAPREV)
 [ACAO:ENCERRAR] — cliente recusou definitivamente
-[DADO:campo=valor] — dado coletado (ex: [DADO:nome_completo=João da Silva])`;
+[DADO:campo=valor] — dado coletado (ex: [DADO:nome_mae=Maria da Silva])
+
+Campos válidos pra [DADO]: nome_completo, cpf, data_nascimento, sexo, estado_civil, nome_mae, rg_numero, rg_orgao, rg_uf, rg_data, cep, endereco, numero_end, complemento, bairro, cidade, uf, banco_deposito, agencia, conta, tipo_conta, email, beneficio`;
+
+// ═══ REQUIRED FIELDS FOR DIGITAÇÃO ═══
+const FACTA_REQUIRED = [
+  'nome_completo', 'cpf', 'data_nascimento', 'sexo', 'estado_civil',
+  'nome_mae', 'rg_numero', 'rg_orgao', 'rg_uf', 'rg_data',
+  'cep', 'endereco', 'numero_end', 'bairro', 'cidade', 'uf',
+  'banco_deposito', 'agencia', 'conta', 'tipo_conta',
+  'email', 'beneficio'
+];
+
+// Check which fields are missing
+function getMissingFields(collectedData) {
+  const have = new Set(Object.keys(collectedData || {}).filter(k => collectedData[k]));
+  return FACTA_REQUIRED.filter(f => !have.has(f));
+}
+
+// Build "what we know vs what's missing" summary for Sofia
+function buildDataSummary(convData) {
+  const d = convData || {};
+  const known = [];
+  const missing = [];
+  
+  if (d.nome_completo || d.nome) known.push(`Nome: ${d.nome_completo || d.nome}`);
+  else missing.push('nome_completo');
+  
+  if (d.cpf) known.push(`CPF: ${d.cpf}`);
+  else missing.push('cpf');
+  
+  if (d.data_nascimento || d.dtNasc) known.push(`Nascimento: ${d.data_nascimento || d.dtNasc}`);
+  else missing.push('data_nascimento');
+  
+  if (d.beneficio || d.ben) known.push(`Benefício: ${d.beneficio || d.ben}`);
+  else missing.push('beneficio');
+
+  // Always missing (rarely in pipeline)
+  const alwaysMissing = ['sexo', 'estado_civil', 'nome_mae', 'rg_numero', 'rg_orgao', 'rg_uf', 'rg_data',
+    'cep', 'endereco', 'numero_end', 'bairro', 'cidade', 'uf',
+    'banco_deposito', 'agencia', 'conta', 'tipo_conta', 'email'];
+  
+  for (const f of alwaysMissing) {
+    if (d[f]) known.push(`${f}: ${d[f]}`);
+    else missing.push(f);
+  }
+  
+  return { known, missing };
+}
+
+// Try to auto-fill from pipeline data
+function autoFillFromPipeline(convData) {
+  const d = { ...convData };
+  // Map pipeline field names to FACTA field names
+  if (d.nome && !d.nome_completo) d.nome_completo = d.nome;
+  if (d.dtNasc && !d.data_nascimento) d.data_nascimento = d.dtNasc;
+  if (d.ben && !d.beneficio) d.beneficio = d.ben;
+  if (d.t1 && !d.telefone) d.telefone = d.t1;
+  return d;
+}
 
 // ═══ CAMPAIGN-SPECIFIC CONTEXT BUILDERS ═══
 
@@ -317,24 +396,36 @@ export default async function handler(req) {
         return new Response(JSON.stringify({ status: conv }), { headers: cors });
       }
 
-      // Get conversation state
+      // Get conversation state and auto-fill from pipeline
       const conv = getConv(number);
+      conv.data = autoFillFromPipeline(conv.data || {});
       
       // Get history
       const history = await getHistory(instance, jid, 20);
 
+      // Build data summary for coleta phase
+      const { known, missing } = buildDataSummary(conv.data);
+
       // Build context
       const contextParts = [
         `[CONTEXTO DO SISTEMA — NÃO MOSTRAR AO CLIENTE]`,
-        `Cliente: ${clientName || conv.data?.nome || 'Desconhecido'}`,
+        `Cliente: ${clientName || conv.data?.nome_completo || conv.data?.nome || 'Desconhecido'}`,
         `Telefone: ${number}`,
         `Fase atual: ${conv.phase}`,
         `Campanha: ${conv.campaignType}`,
-        `Dados já coletados: ${JSON.stringify(conv.collectedFields || [])}`,
       ];
       
       if (conv.data && Object.keys(conv.data).length > 0) {
         contextParts.push(buildContext(conv.campaignType, conv.data));
+      }
+
+      // In coleta phase, tell Sofia exactly what's missing
+      if (conv.phase === 'coleta' || conv.collectedFields?.length > 0) {
+        contextParts.push(`\n═══ STATUS DA COLETA DE DADOS ═══`);
+        contextParts.push(`DADOS QUE JÁ TEMOS (NÃO peça de novo):\n${known.length ? known.join('\n') : 'Nenhum'}`);
+        contextParts.push(`DADOS QUE FALTAM (peça ao cliente, 2-3 por vez):\n${missing.length ? missing.join(', ') : 'TODOS COMPLETOS → disparar [ACAO:DIGITAR_PROPOSTA]'}`);
+        if (missing.length === 0) contextParts.push(`\n⚡ TODOS OS DADOS COMPLETOS! Avise o cliente e dispare [ACAO:DIGITAR_PROPOSTA]`);
+        else if (missing.length <= 5) contextParts.push(`\n🔜 Quase lá! Faltam apenas ${missing.length} campos.`);
       }
       
       contextParts.push(`\nMensagem do cliente: "${text}"`);
@@ -393,16 +484,141 @@ export default async function handler(req) {
         success: true, instance, number, clientName,
         incomingText: text, reply: cleanReply,
         actions, phase: conv.phase, collectedData,
+        missingFields: getMissingFields(conv.data),
         historyLength: history.length
       };
 
       if (actions.includes('TRANSFERIR_HUMANO')) {
-        // Could notify operator via webhook or Evolution
         console.log(`[SOFIA] Transferir humano: ${number} @ ${instance}`);
+        // TODO: notify operator via N8N webhook
       }
+      
+      if (actions.includes('AGENDAR_RETORNO')) {
+        console.log(`[SOFIA] Agendar retorno: ${number}`);
+      }
+
+      if (actions.includes('CONSULTAR_DADOS')) {
+        // Auto-consult IN100 via JoinBank to fill client data
+        try {
+          const ben = conv.data.beneficio || conv.data.ben;
+          const cpf = conv.data.cpf;
+          if (cpf && ben) {
+            const in100 = await fetch('https://motordeport.vercel.app/api/joinbank', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'in100', cpf, beneficio: ben })
+            });
+            const in100Data = await in100.json();
+            if (in100Data.success) {
+              // Auto-fill from IN100
+              if (in100Data.nome && !conv.data.nome_completo) conv.data.nome_completo = in100Data.nome;
+              if (in100Data.dataNascimento && !conv.data.data_nascimento) conv.data.data_nascimento = in100Data.dataNascimento;
+              if (in100Data.uf && !conv.data.uf) conv.data.uf = in100Data.uf;
+              setConv(number, conv);
+              result.in100 = in100Data;
+            }
+          }
+        } catch (e) { console.log(`[SOFIA] IN100 error: ${e.message}`); }
+      }
+
       if (actions.includes('DIGITAR_PROPOSTA')) {
-        console.log(`[SOFIA] Digitar proposta: ${number} — dados: ${JSON.stringify(conv.data)}`);
-        // Future: auto-call FACTA API
+        const d = conv.data;
+        const missingNow = getMissingFields(d);
+        
+        if (missingNow.length > 0) {
+          console.log(`[SOFIA] Digitar mas faltam campos: ${missingNow.join(', ')}`);
+          result.digitacao = { status: 'pendente', missing: missingNow };
+        } else {
+          // ═══ ROUTING: decide which bank API to use ═══
+          const destino = String(d.destino || d.dest || d.banco_destino || '').toUpperCase();
+          const isQuali = destino.includes('QUALI') || destino.includes('JOINBANK') || destino.includes('INBURSA');
+          const isFacta = destino.includes('FACTA');
+          // If no specific destination, check campaign type default
+          const useQuali = isQuali || (!isFacta && !destino && conv.campaignType === 'novo');
+          const useFacta = isFacta || (!isQuali && !destino);
+          
+          try {
+            if (useQuali) {
+              // ═══ DIGITAÇÃO VIA JOINBANK/QUALI ═══
+              console.log(`[SOFIA] Digitando via QUALI: ${d.cpf} — destino: ${destino}`);
+              
+              const qualiOp = conv.campaignType === 'portabilidade' ? 3 :
+                              conv.campaignType === 'novo' ? 1 :
+                              conv.campaignType === 'saque' ? 2 : 1;
+              
+              // JoinBank simulation/rules first
+              const simRes = await fetch('https://motordeport.vercel.app/api/joinbank', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'listRules', operation: qualiOp, limit: 20 })
+              });
+              const simData = await simRes.json();
+              
+              if (simData.items && simData.items.length > 0) {
+                const bestRule = simData.items[0]; // First rule is usually best
+                result.digitacao = { status: 'simulado_quali', banco: 'QUALI', regra: bestRule, totalRegras: simData.items.length };
+                
+                await sendMsg(instance, number, `✅ Encontrei uma ótima condição na Qualiconsig!\n\nVou gerar o link de formalização, um momento... 📋`);
+                
+                // TODO: Call JoinBank digitação endpoint with full client data
+                result.digitacao.status = 'aguardando_digitacao_quali';
+                result.digitacao.message = 'Simulação Quali OK, digitação via JoinBank API pendente';
+              } else {
+                result.digitacao = { status: 'sem_regras_quali', response: simData };
+                await sendMsg(instance, number, `Verifiquei as condições e estou buscando a melhor proposta pra você. Um consultor vai finalizar, tá? 😊`);
+              }
+              
+            } else if (useFacta) {
+              // ═══ DIGITAÇÃO VIA FACTA ═══
+              console.log(`[SOFIA] Digitando via FACTA: ${d.cpf} — destino: ${destino}`);
+              
+              const factaOp = conv.campaignType === 'portabilidade' ? '003500' : 
+                              conv.campaignType === 'cartao' ? '33' :
+                              conv.campaignType === 'saque' ? '27' :
+                              conv.campaignType === 'novo' ? '13' : '13';
+              
+              const simRes = await fetch('https://motordeport.vercel.app/api/facta', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'simular', cpf: d.cpf,
+                  data_nascimento: d.data_nascimento,
+                  tipo_operacao: factaOp
+                })
+              });
+              const simData = await simRes.json();
+              
+              if (simData.tabelas && simData.tabelas.length > 0) {
+                const bestTab = simData.tabelas.sort((a, b) => Number(a.taxa) - Number(b.taxa))[0];
+                result.digitacao = { status: 'simulado_facta', banco: 'FACTA', tabela: bestTab, totalTabelas: simData.tabelas.length };
+                
+                await sendMsg(instance, number, `✅ Encontrei uma ótima condição pra você!\n\n📋 Taxa: ${bestTab.taxa}% a.m.\n💰 Parcela: R$ ${bestTab.parcela}\n📅 Prazo: ${bestTab.prazo}x\n\nVou gerar o link de formalização, um momento...`);
+                
+                // TODO: Complete etapa2 + etapa3 with full client data
+                result.digitacao.status = 'aguardando_etapa2_facta';
+                
+              } else if (simData.tabelas_portabilidade) {
+                const tPort = simData.tabelas_portabilidade;
+                const bestPort = tPort.sort((a, b) => Number(a.taxa) - Number(b.taxa))[0];
+                result.digitacao = { status: 'simulado_port_facta', banco: 'FACTA', tabela: bestPort, totalPort: tPort.length };
+                
+                await sendMsg(instance, number, `✅ Portabilidade processada!\n\n📋 Taxa: ${bestPort.taxa}% a.m.\n💰 Parcela: R$ ${bestPort.parcela}\n\nUm consultor vai finalizar os detalhes 😊`);
+              } else {
+                result.digitacao = { status: 'sem_tabelas_facta', response: simData };
+                await sendMsg(instance, number, `Fiz a consulta e estou verificando as melhores condições. Um consultor vai te retornar com os detalhes 😊`);
+              }
+              
+            } else {
+              // ═══ OUTRO BANCO → OPERADOR HUMANO ═══
+              console.log(`[SOFIA] Banco ${destino} não integrado. Transferindo pro operador.`);
+              result.digitacao = { status: 'manual', banco: destino, message: 'Banco não integrado, operador precisa digitar manualmente' };
+              
+              await sendMsg(instance, number, `✅ Seus dados foram registrados!\n\nComo a melhor condição pra você é no ${destino}, um consultor especialista vai finalizar sua proposta e te enviar o link de formalização.\n\nPode ficar tranquilo, já temos tudo certinho! 😊`);
+            }
+          } catch (e) {
+            console.log(`[SOFIA] Digitação error: ${e.message}`);
+            result.digitacao = { status: 'erro', error: e.message };
+            await sendMsg(instance, number, `Registrei todos os seus dados! Um consultor vai finalizar sua proposta em breve 😊`);
+          }
+        }
       }
 
       return new Response(JSON.stringify(result), { headers: cors });
