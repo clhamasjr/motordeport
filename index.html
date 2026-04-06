@@ -855,15 +855,23 @@ function closeSimModal(){document.getElementById('simModal').style.display='none
 
 function openSimulacao(cpf,nome,ben){
   simCtx={cpf:cpf||'',nome:nome||'',ben:ben||'',lastResults:null};
-  // Fill client info
   document.getElementById('simClientInfo').innerHTML=`
     <div><div style="font-size:10px;color:var(--t3)">CLIENTE</div><div style="font-size:14px;font-weight:700">${esc(nome||'—')}</div></div>
     <div><div style="font-size:10px;color:var(--t3)">CPF</div><div style="font-size:13px;font-family:monospace">${cpf||'—'}</div></div>
     <div><div style="font-size:10px;color:var(--t3)">BENEFÍCIO</div><div style="font-size:13px;font-family:monospace">${ben||'—'}</div></div>`;
-  // Try to get birth date from data
-  let dtNasc='';
-  if(S&&S.analise){let cl=S.analise.find(a=>a.cpf===cpf);if(cl&&cl.dtNasc)dtNasc=cl.dtNasc}
+  // Auto-fill from consultaState if available
+  let dtNasc='',margem=0;
+  let cr=consultaState.result;
+  if(cr){
+    let b=cr.beneficiario||{};
+    if(b.data_nascimento)dtNasc=b.data_nascimento;
+    let mrg=cr.margem||{};
+    margem=parseFloat(String(mrg.disponivel||'0').replace(/\./g,'').replace(',','.'))||0;
+  }
+  // Fallback: try from loaded base
+  if(!dtNasc&&S.data&&S.data.analise){let cl=S.data.analise.find(a=>a.cpf===cpf);if(cl&&cl.dtNasc)dtNasc=cl.dtNasc}
   document.getElementById('simDtNasc').value=dtNasc;
+  if(margem>0)document.getElementById('simValor').value=Math.floor(margem/0.02299);
   // Reset
   document.getElementById('simResults').style.display='none';
   document.getElementById('simIN100').style.display='none';
@@ -891,15 +899,12 @@ function simApiChanged(){
 
 function simTipoChanged(){
   const op=document.getElementById('simTipoOp').value;
-  const api=document.getElementById('simApi').value;
-  // Show/hide conditional fields
   const isRefin=(op==='14'||op==='49'||op==='2');
   const isPort=(op==='003500'||op==='3'||op==='4');
   const isCartao=(op==='33');
   document.getElementById('simRefinFields').style.display=isRefin?'':'none';
   document.getElementById('simPortFields').style.display=isPort?'':'none';
   document.getElementById('simCartaoFields').style.display=isCartao?'':'none';
-  // Adjust valor/parcela visibility
   if(isPort||isRefin){
     document.getElementById('simValorWrap').style.display='none';
     document.getElementById('simParcelaWrap').style.display='';
@@ -909,6 +914,36 @@ function simTipoChanged(){
   }else{
     document.getElementById('simValorWrap').style.display='';
     document.getElementById('simParcelaWrap').style.display='';
+  }
+  // Auto-fill portabilidade fields from first eligible contract in consultaState
+  if(isPort&&consultaState.result&&consultaState.result.contratos){
+    let cts=consultaState.result.contratos;
+    // Find first contract with taxa > 1.85 (port candidate)
+    let best=cts.find(ct=>{let tx=parseFloat(String(ct.taxa||'0').replace(',','.'))||0;return tx>1.85});
+    if(!best&&cts.length)best=cts[0];
+    if(best){
+      let par=parseFloat(String(best.parcela||'0').replace(/\./g,'').replace(',','.'))||0;
+      let sal=parseFloat(String(best.saldo||best.saldo_quitacao||'0').replace(/\./g,'').replace(',','.'))||0;
+      let prazo=parseInt(best.prazo||best.prazo_restante||'0')||0;
+      let prazoOrig=parseInt(best.prazo_original||'84')||84;
+      if(par>0)document.getElementById('simParcelaOrig').value=par.toFixed(2);
+      if(sal>0)document.getElementById('simSaldo').value=sal.toFixed(2);
+      if(prazo>0)document.getElementById('simPrazoRest').value=prazo;
+      document.getElementById('simPrazoOrig').value=prazoOrig;
+      if(par>0)document.getElementById('simParcela').value=par.toFixed(2);
+    }
+  }
+  // Auto-fill refin with renda from beneficio
+  if(isRefin&&consultaState.result){
+    let ben=consultaState.result.beneficio||{};
+    let renda=parseFloat(String(ben.valor||'0').replace(/\./g,'').replace(',','.'))||0;
+    if(renda>0)document.getElementById('simRenda').value=renda.toFixed(2);
+  }
+  // Auto-fill cartão with renda
+  if(isCartao&&consultaState.result){
+    let ben=consultaState.result.beneficio||{};
+    let renda=parseFloat(String(ben.valor||'0').replace(/\./g,'').replace(',','.'))||0;
+    if(renda>0)document.getElementById('simRendaCartao').value=renda.toFixed(2);
   }
 }
 
