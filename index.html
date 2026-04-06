@@ -1891,7 +1891,64 @@ function renderConsulta() {
     html += '<div class="kpi"><div class="kpi-label">RMC</div><div class="kpi-value" style="color:var(--pur)">R$ ' + esc(mrg.rmc || '0,00') + '</div></div>';
     html += '<div class="kpi"><div class="kpi-label">RCC</div><div class="kpi-value" style="color:var(--pnk)">R$ ' + esc(mrg.rcc || '0,00') + '</div></div>';
     html += '</div>';
+// ══ OPORTUNIDADES ══
+let oportunidades = [];
+let totalOport = 0;
+// 1. Margem livre → Empréstimo novo
+let mrgDisp = parseFloat(String(mrg.disponivel||'0').replace(/\./g,'').replace(',','.')) || 0;
+if (mrgDisp > 0) {
+  let potEmp = Math.round((mrgDisp / 0.02299) * 100) / 100;
+  let potCart = Math.round((mrgDisp / 0.029214) * 100) / 100;
+  oportunidades.push({icon:'💰',tipo:'Empréstimo Novo',cor:'var(--org)',valor:potEmp,desc:'Margem livre R$ '+mrg.disponivel+' → coef 1.85%'});
+  totalOport += potEmp;
+  // 2. Cartão novo (se não tem RMC/RCC)
+  if (!carts.length) {
+    oportunidades.push({icon:'🆕',tipo:'Cartão Consignado Novo',cor:'var(--cyan)',valor:potCart,desc:'Sem cartão ativo — margem disponível p/ RMC'});
+    totalOport += potCart;
+  }
+}
+// 3. Saque complementar (se tem cartão)
+if (carts.length) {
+  for (let cd of carts) {
+    let mrgC = parseFloat(String(cd.margem||'0').replace(/\./g,'').replace(',','.')) || 0;
+    if (mrgC > 0) {
+      oportunidades.push({icon:'💳',tipo:'Saque Comp. ' + (cd.tipo||'') + ' ' + (cd.banco||''),cor:'var(--pur)',valor:mrgC,desc:'Cartão ativo com margem — consultar saque real via DataConsulta'});
+      totalOport += mrgC;
+    }
+  }
+}
+// 4. Portabilidade (analisar contratos)
+if (r.contratos && r.contratos.length) {
+  let portContratos = 0;
+  for (let ct of r.contratos) {
+    let taxa = parseFloat(String(ct.taxa||'0').replace(',','.')) || 0;
+    if (taxa > 1.85) { portContratos++; }
+  }
+  if (portContratos > 0) {
+    oportunidades.push({icon:'🔄',tipo:'Portabilidade',cor:'var(--grn)',valor:0,desc:portContratos + ' contrato(s) com taxa acima de 1.85% — simular redução'});
+  }
+}
+// 5. Refinanciamento
+if (r.contratos && r.contratos.length) {
+  oportunidades.push({icon:'📋',tipo:'Refinanciamento',cor:'var(--acc)',valor:0,desc:r.contratos.length + ' contrato(s) ativo(s) — verificar condições de refin'});
+}
 
+if (oportunidades.length) {
+  html += '<div style="background:linear-gradient(135deg,rgba(34,197,94,.06),rgba(59,130,246,.04));border:2px solid rgba(34,197,94,.2);border-radius:18px;padding:22px;margin-bottom:20px">';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:800;color:var(--grn)">💡 Oportunidades Identificadas</div>';
+  if (totalOport > 0) html += '<div style="font-size:14px;font-weight:800;color:var(--grn)">' + fV(totalOport) + ' potencial</div>';
+  html += '</div>';
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">';
+  for (let op of oportunidades) {
+    html += '<div style="background:var(--card);border-radius:12px;padding:16px;border:1px solid var(--brd);border-left:4px solid ' + op.cor + '">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:14px;font-weight:800;color:' + op.cor + '">' + op.icon + ' ' + op.tipo + '</span>';
+    if (op.valor > 0) html += '<span style="font-size:15px;font-weight:900;color:var(--grn)">' + fV(op.valor) + '</span>';
+    html += '</div>';
+    html += '<div style="font-size:11px;color:var(--t2)">' + op.desc + '</div>';
+    html += '</div>';
+  }
+  html += '</div></div>';
+}
     // Ações
     let tel1 = tels[0] || '';
     let wppNum = tel1 ? tel1.replace(/\D/g, '') : '';
