@@ -1940,43 +1940,49 @@ function renderConsulta() {
 // ══ OPORTUNIDADES ══
 let oportunidades = [];
 let totalOport = 0;
-// 1. Margem livre → Empréstimo novo
 let mrgDisp = parseFloat(String(mrg.disponivel||'0').replace(/\./g,'').replace(',','.')) || 0;
 if (mrgDisp > 0) {
   let potEmp = Math.round((mrgDisp / 0.02299) * 100) / 100;
-  let potCart = Math.round((mrgDisp / 0.029214) * 100) / 100;
-  oportunidades.push({icon:'💰',tipo:'Empréstimo Novo',cor:'var(--org)',valor:potEmp,desc:'Margem livre R$ '+mrg.disponivel+' → coef 1.85%'});
+  oportunidades.push({icon:'💰',tipo:'Empréstimo Novo',cor:'var(--org)',valor:potEmp,desc:'Margem livre R$ '+mrg.disponivel+' → parcela até R$ '+(mrgDisp).toLocaleString('pt-BR',{minimumFractionDigits:2})});
   totalOport += potEmp;
-  // 2. Cartão novo (se não tem RMC/RCC)
   if (!carts.length) {
+    let potCart = Math.round((mrgDisp / 0.029214) * 100) / 100;
     oportunidades.push({icon:'🆕',tipo:'Cartão Consignado Novo',cor:'var(--cyan)',valor:potCart,desc:'Sem cartão ativo — margem disponível p/ RMC'});
     totalOport += potCart;
   }
 }
-// 3. Saque complementar (se tem cartão)
 if (carts.length) {
   for (let cd of carts) {
     let mrgC = parseFloat(String(cd.margem||'0').replace(/\./g,'').replace(',','.')) || 0;
     if (mrgC > 0) {
-      oportunidades.push({icon:'💳',tipo:'Saque Comp. ' + (cd.tipo||'') + ' ' + (cd.banco||''),cor:'var(--pur)',valor:mrgC,desc:'Cartão ativo com margem — consultar saque real via DataConsulta'});
+      oportunidades.push({icon:'💳',tipo:'Saque Comp. '+(cd.tipo||'')+' '+(cd.banco||''),cor:'var(--pur)',valor:mrgC,desc:'Cartão ativo com margem'});
       totalOport += mrgC;
     }
   }
 }
-// 4. Portabilidade (analisar contratos)
+// Analisar cada contrato individualmente
+let portContratos=[];
 if (r.contratos && r.contratos.length) {
-  let portContratos = 0;
   for (let ct of r.contratos) {
-    let taxa = parseFloat(String(ct.taxa||'0').replace(',','.')) || 0;
-    if (taxa > 1.85) { portContratos++; }
-  }
-  if (portContratos > 0) {
-    oportunidades.push({icon:'🔄',tipo:'Portabilidade',cor:'var(--grn)',valor:0,desc:portContratos + ' contrato(s) com taxa acima de 1.85% — simular redução'});
+    let par=parseFloat(String(ct.parcela||'0').replace(/\./g,'').replace(',','.'))||0;
+    let sal=parseFloat(String(ct.saldo||ct.saldo_quitacao||'0').replace(/\./g,'').replace(',','.'))||0;
+    let taxa=parseFloat(String(ct.taxa||'0').replace(',','.'))||0;
+    let cod=String(ct.banco_codigo||ct.codigo||'').padStart(3,'0');
+    let rest=parseInt(ct.prazo||ct.prazo_restante||'0')||0;
+    if(par>0&&sal>0&&cod&&cod!=='000'){
+      let res=testar(par,sal,0,cod,false,null,null,rest);
+      if(res&&res.troco>0){
+        portContratos.push({contrato:ct.contrato||ct.id,banco:cod,parcela:par,saldo:sal,taxa,destino:res.banco,troco:res.troco,vc:res.vc,novaTaxa:res.taxa});
+        totalOport+=res.troco;
+      }
+    }
   }
 }
-// 5. Refinanciamento
-if (r.contratos && r.contratos.length) {
-  oportunidades.push({icon:'📋',tipo:'Refinanciamento',cor:'var(--acc)',valor:0,desc:r.contratos.length + ' contrato(s) ativo(s) — verificar condições de refin'});
+if(portContratos.length){
+  oportunidades.push({icon:'🔄',tipo:'Portabilidade',cor:'var(--grn)',valor:portContratos.reduce((s,c)=>s+c.troco,0),desc:portContratos.length+' contrato(s) elegível(is)'});
+}
+if(r.contratos&&r.contratos.length&&!portContratos.length){
+  oportunidades.push({icon:'📋',tipo:'Refinanciamento',cor:'var(--acc)',valor:0,desc:r.contratos.length+' contrato(s) — verificar condições'});
 }
 
 if (oportunidades.length) {
@@ -1993,7 +1999,18 @@ if (oportunidades.length) {
     html += '<div style="font-size:11px;color:var(--t2)">' + op.desc + '</div>';
     html += '</div>';
   }
-  html += '</div></div>';
+  html += '</div>';
+  // Tabela detalhada de portabilidade
+  if(portContratos.length){
+    html += '<div style="margin-top:14px;font-size:12px;font-weight:700;color:var(--t2);margin-bottom:6px">🔄 Detalhe Portabilidade:</div>';
+    html += '<div style="overflow:auto;border-radius:8px;border:1px solid var(--brd)"><table><thead><tr><th>Contrato</th><th>Origem</th><th>Taxa Atual</th><th class="right">Parcela</th><th class="right">Saldo</th><th>→ Destino</th><th>Nova Taxa</th><th class="right">Vlr Contrato</th><th class="right" style="color:var(--grn)">Troco</th></tr></thead><tbody>';
+    for(let pc of portContratos){
+      let dc=pCls[pc.destino]||'pill-default';
+      html+='<tr><td class="mono" style="font-size:11px">'+esc(pc.contrato||'?')+'</td><td><span class="pill pill-default">'+pc.banco+'</span></td><td class="mono">'+pc.taxa.toFixed(2)+'%</td><td class="right mono">'+fV(pc.parcela)+'</td><td class="right mono">'+fV(pc.saldo)+'</td><td><span class="pill '+dc+'">'+pc.destino+'</span></td><td class="mono" style="color:var(--grn)">'+pc.novaTaxa+'%</td><td class="right mono" style="color:var(--ylw)">'+fV(pc.vc)+'</td><td class="right mono" style="color:var(--grn);font-weight:800">'+fV(pc.troco)+'</td></tr>';
+    }
+    html+='</tbody></table></div>';
+  }
+  html += '</div>';
 }
     // Ações
     let tel1 = tels[0] || '';
