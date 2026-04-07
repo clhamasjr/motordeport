@@ -2032,7 +2032,7 @@ if(oportunidades.length){
     // Contratos com análise
     if (r.contratos && r.contratos.length) {
       html += '<div style="background:var(--card);border-radius:12px;padding:18px;border:1px solid var(--brd);margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:10px">📑 Contratos (' + r.contratos.length + ')</div>';
-      html += '<div style="overflow:auto;max-height:300px;border-radius:8px;border:1px solid var(--brd)"><table><thead><tr><th>Contrato</th><th>Banco</th><th class="right">Parcela</th><th class="right">Saldo</th><th>Taxa</th><th>Prazo</th><th>Destino</th><th class="right">Vlr Contrato</th><th class="right">Troco</th></tr></thead><tbody>';
+      html += '<div style="overflow:auto;max-height:300px;border-radius:8px;border:1px solid var(--brd)"><table><thead><tr><th>Contrato</th><th>Banco</th><th class="right">Parcela</th><th class="right">Saldo</th><th>Taxa</th><th>Prazo</th><th>Destino</th><th>Nova Taxa</th><th class="right">Vlr Contrato</th><th class="right">Troco</th></tr></thead><tbody>';
       for (let ct of r.contratos) {
         let par = parseFloat(String(ct.parcela||'0').replace(/\./g,'').replace(',','.')) || 0;
         let sal = parseFloat(String(ct.saldo||ct.saldo_quitacao||'0').replace(/\./g,'').replace(',','.')) || 0;
@@ -2052,10 +2052,10 @@ if(oportunidades.length){
         html += '<td class="right mono">' + (sal>0?'R$ '+sal.toLocaleString('pt-BR',{minimumFractionDigits:2}):'—') + '</td>';
         html += '<td class="mono">' + (taxa>0?taxa.toFixed(2)+'%':'—') + '</td>';
         html += '<td class="mono">' + esc(prazoStr||'—') + '</td>';
-        html += '<td>' + (res?'<span class="pill '+dc+'">'+res.banco+'</span>':'<span style="color:var(--t3)">—</span>') + '</td>';
+html += '<td>' + (res?'<span class="pill '+dc+'">'+res.banco+'</span>':'<span style="color:var(--t3)">—</span>') + '</td>';
+        html += '<td class="mono" style="color:var(--grn)">' + (res?res.taxa+'%':'—') + '</td>';
         html += '<td class="right mono" style="color:var(--ylw)">' + (res?'R$ '+res.vc.toLocaleString('pt-BR',{minimumFractionDigits:2}):'—') + '</td>';
-        html += '<td class="right mono" style="color:var(--grn);font-weight:700">' + (res&&res.troco>0?'R$ '+res.troco.toLocaleString('pt-BR',{minimumFractionDigits:2}):'—') + '</td>';
-        html += '</tr>';
+        html += '<td class="right mono" style="color:var(--grn);font-weight:700">' + (res&&res.troco>0?'R$ '+res.troco.toLocaleString('pt-BR',{minimumFractionDigits:2}):'—') + '</td>';        html += '</tr>';
       }
       html += '</tbody></table></div></div>';
     }
