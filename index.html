@@ -1049,26 +1049,31 @@ function renderSimResults(api,op,data){
       actions.innerHTML=`<div style="font-size:12px;color:${data.erro?'var(--red)':'var(--t3)'}">${esc(data.mensagem||'')}</div>`;
     }else{actions.innerHTML=''}
   }else{
-    // JoinBank results
-    const items=data.items||[];
+    // JoinBank results — parse name for taxa/prazo
+    const items=result.items||[];
     title.textContent='Regras JoinBank';
     count.textContent=`${items.length} regra(s)`;
-    head.innerHTML='<th>ID</th><th>Nome</th><th>Taxa</th><th>Prazo Min</th><th>Prazo Max</th><th></th>';
+    head.innerHTML='<th>Nome</th><th>Taxa</th><th>Prazo</th><th>Tipo</th><th></th>';
     let html='';
     for(const t of items){
+      let nm=t.name||'';
+      // Extract taxa from name (e.g. "000328 Entrante Sem Seguro BEN 32 96× 1,85%")
+      let txMatch=nm.match(/([\d]+[,.][\d]+)\s*%/);
+      let taxa=txMatch?txMatch[1].replace(',','.'):'';
+      // Extract prazo from name (e.g. "96×" or "72X")
+      let pzMatch=nm.match(/(\d+)\s*[×xX]/);
+      let prazo=pzMatch?pzMatch[1]:'';
+      // Detect type
+      let tipo=nm.toLowerCase().includes('entrante')?'Entrante':nm.toLowerCase().includes('novo')?'Novo':'—';
       html+=`<tr>
-        <td class="mono">${t.id||''}</td>
-        <td style="font-size:11px;max-width:220px;white-space:normal">${esc(t.name||'')}</td>
-        <td class="mono right">${t.rate||''}</td>
-        <td class="mono right">${t.minTerm||''}</td>
-        <td class="mono right">${t.maxTerm||''}</td>
-        <td><button class="btn btn-sm btn-acc" onclick="selectSimTabela('joinbank','rule',${JSON.stringify(t).replace(/'/g,"\\'")},'${op}')">Calcular</button></td></tr>`;
+        <td style="font-size:11px;max-width:280px;white-space:normal">${esc(nm)}</td>
+        <td class="mono right" style="color:var(--grn);font-weight:700">${taxa?taxa+'%':t.rate||'—'}</td>
+        <td class="mono right">${prazo?prazo+'x':(t.minTerm||'—')}</td>
+        <td><span class="pill ${tipo==='Entrante'?'pill-grn':tipo==='Novo'?'pill-acc':'pill-default'}">${tipo}</span></td>
+        <td><button class="btn btn-sm btn-acc" onclick="selectSimTabela('joinbank','rule',${JSON.stringify(t).replace(/'/g,"\\'")},'${op}')">Selecionar</button></td></tr>`;
     }
-    body.innerHTML=html||'<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--t3)">Nenhuma regra encontrada</td></tr>';
-    actions.innerHTML='';
-  }
-  actions.innerHTML+=`<button class="btn" style="margin-top:8px" onclick="document.getElementById('simResults').style.display='none';document.getElementById('simForm').style.display='block'">← Voltar</button>`;
-}
+    body.innerHTML=html||'<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--t3)">Nenhuma regra encontrada</td></tr>';
+    actions.innerHTML='';}
 
 function selectSimTabela(api,tipo,tabela,op){
   // Store selection and open digitação
