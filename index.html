@@ -1840,6 +1840,10 @@ async function consultarCPFUnitario() {
       const entry = { cpf: data.parsed.beneficiario?.cpf || raw, nome: data.parsed.beneficiario?.nome || '—', nb: data.parsed.beneficiario?.nb || '', date: new Date().toLocaleString('pt-BR'), user: CU ? CU.name : '' };
       hist = [entry, ...hist.filter(h => h.cpf !== entry.cpf)].slice(0, 50);
       saveConsultaHist(hist);
+    } else if (data.ok && data.lista && data.lista.length) {
+      // CPF com múltiplos benefícios — mostrar seleção
+      consultaState.loading = false;
+      consultaState.lista = data.lista;
     } else { consultaState.loading = false; consultaState.error = data.error || data.mensagem || 'Erro na consulta'; }
   } catch (e) { consultaState.loading = false; consultaState.error = e.message; }
   renderApp();
