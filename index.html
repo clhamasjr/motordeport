@@ -1954,6 +1954,7 @@ if(r.contratos&&r.contratos.length){for(let ct of r.contratos){
   let total=parseInt(ct.prazo_original||'0')||0;
   let pag=total>0&&rest>0?total-rest:0;
   if(par>0&&sal>0&&cod&&cod!=='000'){let res=testar(par,sal,pag,cod,false,null,null,rest);
+  if(res){portContratos.push({contrato:ct.contrato||ct.id||'?',banco:cod,parcela:par,saldo:sal,taxa,destino:res.banco,novaTaxa:res.taxa,vc:res.vc,troco:res.troco});totalOport+=res.troco}}
 }}
 if(portContratos.length){oportunidades.push({icon:'🔄',tipo:'Portabilidade',cor:'var(--grn)',valor:portContratos.reduce((s,c)=>s+c.troco,0),desc:portContratos.length+' contrato(s) elegível(is)'})}
 if(r.contratos&&r.contratos.length&&!portContratos.length){oportunidades.push({icon:'📋',tipo:'Refinanciamento',cor:'var(--acc)',valor:0,desc:r.contratos.length+' contrato(s) — verificar condições'})}
@@ -2044,7 +2045,9 @@ if(oportunidades.length){
         let rest = parseInt(prazoStr)||0;
         let res = null;
         if (par > 0 && sal > 0 && cod && cod !== '000') {
-          res = testar(par, sal, 0, cod, false, null, null, rest);
+        let total2 = parseInt(ct.prazo_original||'0')||0;
+          let pag2 = total2>0&&rest>0?total2-rest:0;
+          res = testar(par, sal, pag2, cod, false, null, null, rest);
         }
         let dc = res ? (pCls[res.banco]||'pill-default') : '';
         html += '<tr>';
