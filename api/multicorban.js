@@ -101,14 +101,13 @@ function parseConsultHTML(html){
   m=html.match(/valor_parcela_rmc[^>]*>\s*R\$\s*([\d.,]+)/i);if(m)result.margem.rmc=m[1].trim();
   m=html.match(/valor_parcela_rcc[^>]*>\s*R\$\s*([\d.,]+)/i);if(m)result.margem.rcc=m[1].trim();
 
-  // ═══ CONTRATOS — Bootstrap card extraction (Multicorban v2) ═══
+// ═══ CONTRATOS — Bootstrap card extraction (Multicorban v2) ═══
   // Structure: each contract in <div class="card mb-4"> inside navs-tab-contrato
   // Bank: <img src="/upload/icones/329.png"> + <small>329 - QI S.C.D</small>
   // Fields: <small>Label</small><p>Value</p>
-  const contratoSection=html.indexOf('navs-tab-contrato');
+  const contratoSection=html.indexOf('id="navs-tab-contrato"');
   if(contratoSection>=0){
-    const secEnd=html.indexOf('navs-tab-dados_complementar',contratoSection);
-    const cBlock=secEnd>0?html.substring(contratoSection,secEnd):html.substring(contratoSection,contratoSection+50000);
+    const cBlock=html.substring(contratoSection,contratoSection+50000);
     const cards=cBlock.split(/card\s+mb-4/);
     for(let i=1;i<cards.length;i++){
       const card=cards[i];
