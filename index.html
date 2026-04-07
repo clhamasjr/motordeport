@@ -927,11 +927,9 @@ async function runSimulacao(){
   const dtNasc=document.getElementById('simDtNasc').value;
   if(!cpf){alert('CPF não informado');return}
   if(!dtNasc&&api==='facta'){alert('Data de nascimento obrigatória');return}
-
   document.getElementById('simForm').style.display='none';
   document.getElementById('simResults').style.display='none';
   document.getElementById('simLoading').style.display='block';
-
   try{
     let result;
     if(api==='facta'){
@@ -942,7 +940,6 @@ async function runSimulacao(){
       if(prazo)payload.prazo=prazo;
       if(valor)payload.valor=valor;
       if(parcela)payload.valor_parcela=parcela;
-      // Refin extras
       if(op==='14'||op==='49'){
         payload.opcao_valor=2;
         const renda=document.getElementById('simRenda').value;
@@ -950,7 +947,6 @@ async function runSimulacao(){
         if(renda)payload.valor_renda=renda;
         if(contRef)payload.contratos_refin=contRef;
       }
-      // Port CIP extras
       if(op==='003500'){
         payload.opcao_valor=2;
         const saldo=document.getElementById('simSaldo').value;
@@ -962,7 +958,6 @@ async function runSimulacao(){
         if(prazoRest)payload.prazo_restante=prazoRest;
         if(prazoOrig)payload.prazo_original=prazoOrig;
       }
-      // Cartão extras
       if(op==='33'){
         payload.opcao_valor=1;
         const rendaC=document.getElementById('simRendaCartao').value;
@@ -971,20 +966,16 @@ async function runSimulacao(){
       const r=await fetch(API_BASE+'/facta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       result=await r.json();
     }else{
-     // JoinBank — listRules filtrado por operação
       const r=await fetch(API_BASE+'/joinbank',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'listRules',operation:Number(op),limit:100})});
       result=await r.json();
-      // Filtrar regras pelo tipo de operação selecionado
       if(result.items&&result.items.length){
         const opNames={1:['novo','new','entrante'],2:['refin'],3:['port','portab'],4:['port','refin']};
         const keys=opNames[Number(op)]||[];
         if(keys.length){
-          let filtered=result.items.filter(item=>{
-            let nm=(item.name||'').toLowerCase();
-            return keys.some(k=>nm.includes(k)) && !nm.includes('clt');
-          });
+          let filtered=result.items.filter(item=>{let nm=(item.name||'').toLowerCase();return keys.some(k=>nm.includes(k))&&!nm.includes('clt')});
           if(filtered.length)result.items=filtered;
         }
+      }
     }
     simCtx.lastResults=result;
     renderSimResults(api,op,result);
