@@ -113,17 +113,33 @@ function parseConsultHTML(html){
   m=html.match(/valor_parcela_rmc[^>]*>\s*R\$\s*([\d.,]+)/i);if(m)result.margem.rmc=m[1].trim();
   m=html.match(/valor_parcela_rcc[^>]*>\s*R\$\s*([\d.,]+)/i);if(m)result.margem.rcc=m[1].trim();
 
-  // Contratos — detailed extraction
-  const cbRe=/Contrato<\/small>\s*<p[^>]*>\s*([\d]+)[\s\S]*?(?=Contrato<\/small>|Cart[aã]o \(|Telefone|$)/gi;
-  let cb;
-  while((cb=cbRe.exec(html))!==null){
-    const block=cb[0],contrato=cb[1].trim();
-    const gf=(label)=>{const re=new RegExp(label+'<\\/small>\\s*<p[^>]*>\\s*([^<]+)','i');const m2=block.match(re);return m2?m2[1].trim():''};
-    const gv=(label)=>{const re=new RegExp(label+'<\\/small>\\s*<p[^>]*>\\s*R\\$\\s*([\\d.,]+)','i');const m2=block.match(re);return m2?m2[1].trim():''};
-    result.contratos.push({contrato,banco_codigo:gf('C[oó]digo Banco')||gf('Banco'),parcela:gv('Parcela')||gv('Valor Parcela'),saldo:gv('Saldo')||gv('Saldo Devedor')||gv('Saldo Quita'),taxa:gf('Taxa'),prazo:gf('Prazo')||gf('Prazo Restante'),prazo_original:gf('Prazo Original')||gf('Prazo Total'),data_averbacao:gf('Averba')});
+// Contratos — Bootstrap card extraction (Multicorban v2)
+  const contratoSection=html.indexOf('navs-tab-contrato');
+  if(contratoSection>=0){
+    const cEnd=html.indexOf('navs-tab-dados_complementar',contratoSection);
+    const cBlock=cEnd>0?html.substring(contratoSection,cEnd):html.substring(contratoSection);
+    const cards=cBlock.split(/card mb-4/);
+    for(let i=1;i<cards.length;i++){
+      const card=cards[i];
+      const getField=(label)=>{const re=new RegExp(label+'<\\/small>\\s*(?:<\\/[^>]*>\\s*)*(?:<[^>]*>\\s*)*<p[^>]*>\\s*([\\s\\S]*?)<\\/p>','i');const m=card.match(re);return m?m[1].replace(/<[^>]*>/g,'').trim():''};
+      const contrato=getField('Contrato');
+      const taxa=getField('Taxa');
+      const valor=getField('Valor');
+      const parcela=getField('Parcela');
+      const prazos=getField('Prazos');
+      const dataAverb=getField('Data Averba');
+      let banco_codigo='';
+      const iconM=card.match(/icones\/(\d{3})\.png/);
+      if(iconM)banco_codigo=iconM[1];
+      if(!banco_codigo){const btm=card.match(/(\d{3})\s*-\s*[A-Z]/);if(btm)banco_codigo=btm[1]}
+      let prazo_rest='',prazo_total='';
+      if(prazos){const pm=prazos.match(/(\d+)\s*\/\s*(\d+)/);if(pm){prazo_rest=pm[1];prazo_total=pm[2]}}
+      let saldo='';if(valor){const vm=valor.match(/R\$\s*([\d.,]+)/);if(vm)saldo=vm[1]}
+      let parcelaClean='';if(parcela){const pm2=parcela.match(/R\$\s*([\d.,]+)/);if(pm2)parcelaClean=pm2[1]}
+      if(contrato)result.contratos.push({contrato:contrato.replace(/[^0-9A-Za-z]/g,''),banco_codigo,parcela:parcelaClean,saldo,taxa:taxa.trim(),prazo:prazo_rest,prazo_original:prazo_total,data_averbacao:dataAverb});
+    }
   }
   if(!result.contratos.length){const cnRe=/Contrato<\/small>\s*<p[^>]*>\s*([\d]+)/gi;let cn;while((cn=cnRe.exec(html))!==null)result.contratos.push({contrato:cn[1].trim()})}
-
   // Cartões
   const cartRe=/Cart[aã]o \((RM[C]|RCC)\)[\s\S]*?Banco<\/small>\s*<p[^>]*>\s*([^<]+)[\s\S]*?Margem<\/small>\s*<p[^>]*>\s*R\$\s*([\d.,]+)[\s\S]*?Limite Cart[aã]o<\/small>\s*<p[^>]*>\s*R\$\s*([\d.,]+)/gi;
   let ct;while((ct=cartRe.exec(html))!==null)result.cartoes.push({tipo:ct[1],banco:ct[2].trim(),margem:ct[3].trim(),limite:ct[4].trim()});
