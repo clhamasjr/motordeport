@@ -1820,30 +1820,30 @@ let consultaState = { result: null, loading: false, error: null };
 function getConsultaHist() { try { return JSON.parse(localStorage.getItem('ff_consulta_hist') || '[]') } catch { return [] } }
 function saveConsultaHist(h) { localStorage.setItem('ff_consulta_hist', JSON.stringify(h.slice(0, 50))) }
 
-async function consultarCPFUnitario() {
+async function consultarCPFUnitario(forceNB) {
   const inp = document.getElementById('consultaCPF');
-  if (!inp) return;
-  const raw = inp.value.trim();
+  if (!inp && !forceNB) return;
+  const raw = forceNB || inp.value.trim();
   if (!raw || raw.replace(/\D/g, '').length < 5) { alert('Informe um CPF ou Benefício válido'); return }
-  const modo = document.getElementById('consultaModo') ? document.getElementById('consultaModo').value : 'cpf';
+  const modo = forceNB ? 'beneficio' : (document.getElementById('consultaModo') ? document.getElementById('consultaModo').value : 'cpf');
   const action = modo === 'beneficio' ? 'consult_beneficio' : 'consult_cpf';
   const param = modo === 'beneficio' ? { beneficio: raw } : { cpf: raw.replace(/\D/g, '') };
-  consultaState = { result: null, loading: true, error: null };
+  consultaState = { result: null, loading: true, error: null, lista: null };
   renderApp();
   try {
     const res = await fetch('/api/multicorban', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...param }) });
     const data = await res.json();
-    if (data.ok && data.parsed) {
+    if (data.ok && data.lista && data.lista.length > 1 && !forceNB) {
+      // Múltiplos benefícios — mostrar seleção
+      consultaState.loading = false;
+      consultaState.lista = data.lista;
+    } else if (data.ok && data.parsed) {
       consultaState.result = data.parsed;
       consultaState.loading = false;
       let hist = getConsultaHist();
       const entry = { cpf: data.parsed.beneficiario?.cpf || raw, nome: data.parsed.beneficiario?.nome || '—', nb: data.parsed.beneficiario?.nb || '', date: new Date().toLocaleString('pt-BR'), user: CU ? CU.name : '' };
       hist = [entry, ...hist.filter(h => h.cpf !== entry.cpf)].slice(0, 50);
       saveConsultaHist(hist);
-    } else if (data.ok && data.lista && data.lista.length) {
-      // CPF com múltiplos benefícios — mostrar seleção
-      consultaState.loading = false;
-      consultaState.lista = data.lista;
     } else { consultaState.loading = false; consultaState.error = data.error || data.mensagem || 'Erro na consulta'; }
   } catch (e) { consultaState.loading = false; consultaState.error = e.message; }
   renderApp();
@@ -1869,7 +1869,30 @@ function renderConsulta() {
     html += '<div style="text-align:center;padding:40px;background:var(--card);border-radius:14px;border:1px solid var(--brd);max-width:500px;margin:0 auto" class="fi"><div style="font-size:28px;margin-bottom:10px">❌</div><div style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:6px">Erro na Consulta</div><div style="font-size:13px;color:var(--t2)">' + esc(consultaState.error) + '</div><button class="btn" style="margin-top:14px" onclick="consultaState.error=null;renderApp()">Tentar novamente</button></div>';
     return html;
   }
-
+// Lista de benefícios (CPF com múltiplos)
+  if (consultaState.lista && consultaState.lista.length) {
+    html += '<div style="max-width:740px;margin:0 auto" class="fi">';
+    html += '<div style="font-size:16px;font-weight:800;margin-bottom:6px">📋 Múltiplos Benefícios Encontrados</div>';
+    html += '<div style="font-size:13px;color:var(--t2);margin-bottom:16px">Selecione o benefício para consultar o extrato completo:</div>';
+    html += '<div style="display:grid;gap:10px">';
+    for (let b of consultaState.lista) {
+      let isAtivo = (b.situacao||'').includes('ATIVO');
+      let cor = isAtivo ? 'var(--grn)' : 'var(--red)';
+      let border = isAtivo ? 'border-left:4px solid var(--grn)' : 'border-left:4px solid var(--brd)';
+      html += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:18px;cursor:pointer;' + border + '" class="rh" onclick="consultarCPFUnitario(\'' + esc(b.nb) + '\')">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">';
+      html += '<div><div style="font-size:15px;font-weight:800">' + esc(b.nome || '—') + '</div>';
+      html += '<div style="font-size:12px;font-family:monospace;color:var(--t2);margin-top:2px">Benefício: ' + esc(b.nb) + (b.especie ? ' | Espécie: ' + esc(b.especie) : '') + (b.ddb ? ' | DDB: ' + esc(b.ddb) : '') + '</div></div>';
+      html += '<div style="display:flex;gap:10px;align-items:center">';
+      if (b.valor) html += '<div style="font-size:16px;font-weight:800;color:var(--acc)">R$ ' + esc(b.valor) + '</div>';
+      html += '<span class="pill ' + (isAtivo ? 'pill-grn' : 'pill-red') + '" style="font-size:12px;padding:5px 12px">' + (isAtivo ? '✅ ' : '⚠️ ') + esc(b.situacao || '—') + '</span>';
+      html += '</div></div></div>';
+    }
+    html += '</div>';
+    html += '<div style="text-align:center;margin-top:14px"><button class="btn" onclick="consultaState.lista=null;renderApp()">← Voltar</button></div>';
+    html += '</div>';
+    return html;
+  }
   const r = consultaState.result;
   if (r) {
     const b = r.beneficiario || {};
