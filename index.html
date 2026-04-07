@@ -864,7 +864,7 @@ function openSimulacao(cpf,nome,ben){
   if(cr){let b=cr.beneficiario||{};if(b.data_nascimento)dtNasc=b.data_nascimento;let mrg=cr.margem||{};margem=parseFloat(String(mrg.disponivel||'0').replace(/\./g,'').replace(',','.'))||0}
   if(!dtNasc&&S.data&&S.data.analise){let cl=S.data.analise.find(a=>a.cpf===cpf);if(cl&&cl.dtNasc)dtNasc=cl.dtNasc}
   document.getElementById('simDtNasc').value=dtNasc;
-  if(margem>0)document.getElementById('simValor').value=Math.floor(margem/0.02299);
+  if(margem>0){document.getElementById('simParcela').value=margem.toFixed(2);document.getElementById('simValor').value=''}
   document.getElementById('simResults').style.display='none';
   document.getElementById('simIN100').style.display='none';
   document.getElementById('simLoading').style.display='none';
