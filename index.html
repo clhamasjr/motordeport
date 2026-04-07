@@ -1817,8 +1817,8 @@ function renderCRM(){
 // ══════ CONSULTA UNITÁRIA ══════
 let consultaState = { result: null, loading: false, error: null };
 
-function getConsultaHist() { try { return JSON.parse(localStorage.getItem('ff_consulta_hist') || '[]') } catch { return [] } }
-function saveConsultaHist(h) { localStorage.setItem('ff_consulta_hist', JSON.stringify(h.slice(0, 50))) }
+function getConsultaHist() { let key='ff_consulta_hist'+(CU?'_'+CU.user:''); try { return JSON.parse(localStorage.getItem(key) || '[]') } catch { return [] } }
+function saveConsultaHist(h) { let key='ff_consulta_hist'+(CU?'_'+CU.user:''); localStorage.setItem(key, JSON.stringify(h.slice(0, 50))) }
 
 async function consultarCPFUnitario(forceNB) {
   const inp = document.getElementById('consultaCPF');
