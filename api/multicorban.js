@@ -1,7 +1,5 @@
-// ══════════════════════════════════════════════════════════════════════
 // api/multicorban.js — Proxy Multicorban — FlowForce LhamasCred
-// Suporte a múltiplos benefícios por CPF (auto-select ATIVO)
-// ══════════════════════════════════════════════════════════════════════
+// Suporte a múltiplos benefícios + parser Bootstrap cards contratos
 const BASE='https://app.multicorban.com';
 let sessionCache={cookie:null,ts:0};const SESSION_TTL=25*60*1000;
 const CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type'};
@@ -12,10 +10,10 @@ async function doLogin(user,pass){
   const res=await fetch(`${BASE}/access/validateLogin`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','X-Requested-With':'XMLHttpRequest','Referer':`${BASE}/`,'Origin':BASE},body:body.toString(),redirect:'manual'});
   const cookies=[];
   if(typeof res.headers.getSetCookie==='function'){cookies.push(...res.headers.getSetCookie())}else{const raw=res.headers.get('set-cookie');if(raw)cookies.push(...raw.split(/,(?=\s*\w+=)/))}
-  let loginData;try{loginData=await res.json()}catch{loginData={code:-1,mensagem:'Failed to parse login response'}}
+  let loginData;try{loginData=await res.json()}catch{loginData={code:-1,mensagem:'Failed to parse'}}
   if(loginData.code!==0)return{ok:false,error:loginData.mensagem||'Login failed',data:loginData};
   const cookieStr=cookies.map(c=>c.split(';')[0].trim()).filter(Boolean).join('; ');
-  if(!cookieStr)return{ok:false,error:'No session cookie returned',data:loginData};
+  if(!cookieStr)return{ok:false,error:'No session cookie',data:loginData};
   return{ok:true,cookie:cookieStr,data:loginData};
 }
 
@@ -27,7 +25,6 @@ async function ensureSession(user,pass){
   return result;
 }
 
-// ── Detect benefit list (CPF with multiple benefits) ───────────────
 function parseListHTML(html){
   const lista=[];
   const rowRe=/<tr[^>]*>[\s\S]*?<\/tr>/gi;
@@ -53,7 +50,6 @@ function parseListHTML(html){
   return lista;
 }
 
-// ── Consulta CPF (multi-benefit auto-select) ───────────────────────
 async function consultCPF(cookie,cpf){
   const cpfClean=cpf.replace(/\D/g,'').padStart(11,'0');
   const body=new URLSearchParams({methodOperation:'dataBase',methodConsult:'cpf',versaoTela:'v2',dataConsult:cpfClean,dataOrgao:'',CPF:'',CPFRepresentante:'',ddd:'',telefone:''});
@@ -62,32 +58,24 @@ async function consultCPF(cookie,cpf){
   let data;try{data=JSON.parse(text)}catch{return{ok:false,error:'Non-JSON response',raw:text.substring(0,500)}}
   if(data.code!==undefined&&data.code!==0)return{ok:false,error:data.mensagem||'Consulta error',data};
   const html=data.hash||'';
-  
-  // Check if detailed extract or benefit list
   const hasDetail=/nome_beneficiario|nb_beneficiario|valor_beneficio/i.test(html);
   const hasList=/<tr[\s\S]*?<\/tr>/i.test(html)&&!hasDetail;
-  
   if(hasList||(!hasDetail&&/<table/i.test(html))){
     const lista=parseListHTML(html);
     if(lista.length>0){
-      // Auto-consult first ATIVO benefit
       const ativo=lista.find(l=>l.situacao==='ATIVO')||lista[0];
       if(ativo&&ativo.nb){
         const benefResult=await consultBeneficio(cookie,ativo.nb);
-        if(benefResult.ok){
-          return{ok:true,cpf:cpfClean,parsed:benefResult.parsed,lista,auto_selected:ativo.nb,raw_code:data.code};
-        }
+        if(benefResult.ok)return{ok:true,cpf:cpfClean,parsed:benefResult.parsed,lista,auto_selected:ativo.nb,raw_code:data.code};
       }
       return{ok:true,cpf:cpfClean,parsed:{beneficiario:{cpf:cpfClean,nome:lista[0].nome||''},beneficio:{},margem:{},contratos:[],cartoes:[],telefones:[],endereco:{},banco:{}},lista,raw_code:data.code};
     }
     return{ok:false,error:'Múltiplos benefícios — use consulta por benefício',raw:html.substring(0,1000)};
   }
-  
   const parsed=parseConsultHTML(html);
   return{ok:true,cpf:cpfClean,parsed,raw_code:data.code};
 }
 
-// ── HTML Parser ────────────────────────────────────────────────────
 function parseConsultHTML(html){
   const result={beneficiario:{},beneficio:{},margem:{},contratos:[],cartoes:[],telefones:[],endereco:{},banco:{}};
   if(!html)return result;
@@ -113,40 +101,70 @@ function parseConsultHTML(html){
   m=html.match(/valor_parcela_rmc[^>]*>\s*R\$\s*([\d.,]+)/i);if(m)result.margem.rmc=m[1].trim();
   m=html.match(/valor_parcela_rcc[^>]*>\s*R\$\s*([\d.,]+)/i);if(m)result.margem.rcc=m[1].trim();
 
-// Contratos — Bootstrap card extraction (Multicorban v2)
+  // ═══ CONTRATOS — Bootstrap card extraction (Multicorban v2) ═══
+  // Structure: each contract in <div class="card mb-4"> inside navs-tab-contrato
+  // Bank: <img src="/upload/icones/329.png"> + <small>329 - QI S.C.D</small>
+  // Fields: <small>Label</small><p>Value</p>
   const contratoSection=html.indexOf('navs-tab-contrato');
   if(contratoSection>=0){
-    const cEnd=html.indexOf('navs-tab-dados_complementar',contratoSection);
-    const cBlock=cEnd>0?html.substring(contratoSection,cEnd):html.substring(contratoSection);
-    const cards=cBlock.split(/card mb-4/);
+    const secEnd=html.indexOf('navs-tab-dados_complementar',contratoSection);
+    const cBlock=secEnd>0?html.substring(contratoSection,secEnd):html.substring(contratoSection,contratoSection+50000);
+    const cards=cBlock.split(/card\s+mb-4/);
     for(let i=1;i<cards.length;i++){
       const card=cards[i];
-      const getField=(label)=>{const re=new RegExp(label+'<\\/small>\\s*(?:<\\/[^>]*>\\s*)*(?:<[^>]*>\\s*)*<p[^>]*>\\s*([\\s\\S]*?)<\\/p>','i');const m=card.match(re);return m?m[1].replace(/<[^>]*>/g,'').trim():''};
+      const getField=(label)=>{
+        const re=new RegExp(label+'<\\/small>[\\s\\S]*?<p[^>]*>\\s*([\\s\\S]*?)<\\/p>','i');
+        const fm=card.match(re);
+        return fm?fm[1].replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim():'';
+      };
       const contrato=getField('Contrato');
       const taxa=getField('Taxa');
       const valor=getField('Valor');
       const parcela=getField('Parcela');
       const prazos=getField('Prazos');
       const dataAverb=getField('Data Averba');
+      // Bank code from icon
       let banco_codigo='';
       const iconM=card.match(/icones\/(\d{3})\.png/);
       if(iconM)banco_codigo=iconM[1];
       if(!banco_codigo){const btm=card.match(/(\d{3})\s*-\s*[A-Z]/);if(btm)banco_codigo=btm[1]}
+      // Parse prazo: "90 / 96"
       let prazo_rest='',prazo_total='';
       if(prazos){const pm=prazos.match(/(\d+)\s*\/\s*(\d+)/);if(pm){prazo_rest=pm[1];prazo_total=pm[2]}}
+      // Parse saldo (valor empréstimo)
       let saldo='';if(valor){const vm=valor.match(/R\$\s*([\d.,]+)/);if(vm)saldo=vm[1]}
+      // Parse parcela
       let parcelaClean='';if(parcela){const pm2=parcela.match(/R\$\s*([\d.,]+)/);if(pm2)parcelaClean=pm2[1]}
-      if(contrato)result.contratos.push({contrato:contrato.replace(/[^0-9A-Za-z]/g,''),banco_codigo,parcela:parcelaClean,saldo,taxa:taxa.trim(),prazo:prazo_rest,prazo_original:prazo_total,data_averbacao:dataAverb});
+      if(contrato){
+        result.contratos.push({contrato:contrato.replace(/[^0-9A-Za-z]/g,''),banco_codigo,parcela:parcelaClean,saldo,taxa:taxa.trim(),prazo:prazo_rest,prazo_original:prazo_total,data_averbacao:dataAverb});
+      }
     }
   }
-  if(!result.contratos.length){const cnRe=/Contrato<\/small>\s*<p[^>]*>\s*([\d]+)/gi;let cn;while((cn=cnRe.exec(html))!==null)result.contratos.push({contrato:cn[1].trim()})}
-  // Cartões
-  const cartRe=/Cart[aã]o \((RM[C]|RCC)\)[\s\S]*?Banco<\/small>\s*<p[^>]*>\s*([^<]+)[\s\S]*?Margem<\/small>\s*<p[^>]*>\s*R\$\s*([\d.,]+)[\s\S]*?Limite Cart[aã]o<\/small>\s*<p[^>]*>\s*R\$\s*([\d.,]+)/gi;
-  let ct;while((ct=cartRe.exec(html))!==null)result.cartoes.push({tipo:ct[1],banco:ct[2].trim(),margem:ct[3].trim(),limite:ct[4].trim()});
+  // Fallback: simple contrato number extraction
+  if(!result.contratos.length){
+    const cnRe=/Contrato<\/small>\s*<p[^>]*>\s*([\d\w]+)/gi;let cn;
+    while((cn=cnRe.exec(html))!==null)result.contratos.push({contrato:cn[1].trim()});
+  }
+
+  // Cartões RMC/RCC
+  const cartRe=/Cart[aã]o \((RM[C]|RCC)\)/gi;
+  let cartMatch;
+  while((cartMatch=cartRe.exec(html))!==null){
+    const tipo=cartMatch[1];
+    const afterCart=html.substring(cartMatch.index,cartMatch.index+2000);
+    let margem='',limite='',banco='';
+    const mrgM=afterCart.match(/Margem<\/small>\s*<p[^>]*>\s*R\$\s*([\d.,]+)/i);if(mrgM)margem=mrgM[1];
+    const limM=afterCart.match(/Limite Cart[aã]o<\/small>\s*<p[^>]*>\s*R\$\s*([\d.,]+)/i);if(limM)limite=limM[1];
+    const liqM=afterCart.match(/Valor L[ií]quido<\/small>\s*<p[^>]*>\s*R\$\s*([\d.,]+)/i);if(liqM&&!limite)limite=liqM[1];
+    const bancoM=afterCart.match(/Banco<\/small>\s*<p[^>]*>\s*([^<]+)/i);if(bancoM)banco=bancoM[1].trim();
+    result.cartoes.push({tipo,banco,margem:margem||'0,00',limite:limite||'0,00'});
+  }
 
   // Telefones
-  const telRe=/phone=55(\d+)"/gi;let tl;while((tl=telRe.exec(html))!==null){if(!result.telefones.includes(tl[1]))result.telefones.push(tl[1])}
-  const fxRe=/class="phone_fixo"[^>]*>\s*(\d+)/gi;let fx;while((fx=fxRe.exec(html))!==null){if(!result.telefones.includes(fx[1]))result.telefones.push(fx[1])}
+  const telRe=/phone=55(\d+)"/gi;let tl;
+  while((tl=telRe.exec(html))!==null){if(!result.telefones.includes(tl[1]))result.telefones.push(tl[1])}
+  const fxRe=/class="phone_fixo"[^>]*>\s*(\d+)/gi;let fx;
+  while((fx=fxRe.exec(html))!==null){if(!result.telefones.includes(fx[1]))result.telefones.push(fx[1])}
 
   // Endereço
   m=html.match(/UF<\/small>\s*<input[^>]*value="\s*([^"]+)"/i);if(m)result.endereco.uf=m[1].trim();
@@ -162,7 +180,6 @@ function parseConsultHTML(html){
   return result;
 }
 
-// ── Consulta por Benefício ─────────────────────────────────────────
 async function consultBeneficio(cookie,beneficio){
   const nbClean=beneficio.replace(/\D/g,'');
   const body=new URLSearchParams({methodOperation:'dataBase',methodConsult:'beneficio',versaoTela:'v2',dataConsult:nbClean,dataOrgao:'',CPF:'',CPFRepresentante:'',ddd:'',telefone:''});
@@ -175,7 +192,6 @@ async function consultBeneficio(cookie,beneficio){
   return{ok:true,beneficio:nbClean,parsed,raw_code:data.code};
 }
 
-// ── Main handler ───────────────────────────────────────────────────
 export default async function handler(req){
   if(req.method==='OPTIONS')return new Response(null,{status:204,headers:CORS});
   if(req.method!=='POST')return json({error:'POST only'},405);
