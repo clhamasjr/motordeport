@@ -136,7 +136,7 @@ td.right,th.right{text-align:right}td.mono{font-family:monospace;font-size:12px}
     </div>
     <div style="flex:1;min-width:100px">
       <label class="form-label">Prazo</label>
-      <input class="form-input" id="simPrazo" type="number" value="84">
+      <input class="form-input" id="simPrazo" type="number" value="96">
     </div>
     <div style="flex:1;min-width:130px" id="simValorWrap">
       <label class="form-label">Valor</label>
@@ -859,26 +859,17 @@ function openSimulacao(cpf,nome,ben){
     <div><div style="font-size:10px;color:var(--t3)">CLIENTE</div><div style="font-size:14px;font-weight:700">${esc(nome||'—')}</div></div>
     <div><div style="font-size:10px;color:var(--t3)">CPF</div><div style="font-size:13px;font-family:monospace">${cpf||'—'}</div></div>
     <div><div style="font-size:10px;color:var(--t3)">BENEFÍCIO</div><div style="font-size:13px;font-family:monospace">${ben||'—'}</div></div>`;
-  // Auto-fill from consultaState if available
   let dtNasc='',margem=0;
   let cr=consultaState.result;
-  if(cr){
-    let b=cr.beneficiario||{};
-    if(b.data_nascimento)dtNasc=b.data_nascimento;
-    let mrg=cr.margem||{};
-    margem=parseFloat(String(mrg.disponivel||'0').replace(/\./g,'').replace(',','.'))||0;
-  }
-  // Fallback: try from loaded base
+  if(cr){let b=cr.beneficiario||{};if(b.data_nascimento)dtNasc=b.data_nascimento;let mrg=cr.margem||{};margem=parseFloat(String(mrg.disponivel||'0').replace(/\./g,'').replace(',','.'))||0}
   if(!dtNasc&&S.data&&S.data.analise){let cl=S.data.analise.find(a=>a.cpf===cpf);if(cl&&cl.dtNasc)dtNasc=cl.dtNasc}
   document.getElementById('simDtNasc').value=dtNasc;
   if(margem>0)document.getElementById('simValor').value=Math.floor(margem/0.02299);
-  // Reset
   document.getElementById('simResults').style.display='none';
   document.getElementById('simIN100').style.display='none';
   document.getElementById('simLoading').style.display='none';
   document.getElementById('simForm').style.display='block';
-  simTipoChanged();
-  simApiChanged();
+  simTipoChanged();simApiChanged();
   document.getElementById('simModal').style.display='flex';
 }
 
@@ -905,20 +896,11 @@ function simTipoChanged(){
   document.getElementById('simRefinFields').style.display=isRefin?'':'none';
   document.getElementById('simPortFields').style.display=isPort?'':'none';
   document.getElementById('simCartaoFields').style.display=isCartao?'':'none';
-  if(isPort||isRefin){
-    document.getElementById('simValorWrap').style.display='none';
-    document.getElementById('simParcelaWrap').style.display='';
-  }else if(isCartao){
-    document.getElementById('simValorWrap').style.display='';
-    document.getElementById('simParcelaWrap').style.display='none';
-  }else{
-    document.getElementById('simValorWrap').style.display='';
-    document.getElementById('simParcelaWrap').style.display='';
-  }
-  // Auto-fill portabilidade fields from first eligible contract in consultaState
+  if(isPort||isRefin){document.getElementById('simValorWrap').style.display='none';document.getElementById('simParcelaWrap').style.display=''}
+  else if(isCartao){document.getElementById('simValorWrap').style.display='';document.getElementById('simParcelaWrap').style.display='none'}
+  else{document.getElementById('simValorWrap').style.display='';document.getElementById('simParcelaWrap').style.display=''}
   if(isPort&&consultaState.result&&consultaState.result.contratos){
     let cts=consultaState.result.contratos;
-    // Find first contract with taxa > 1.85 (port candidate)
     let best=cts.find(ct=>{let tx=parseFloat(String(ct.taxa||'0').replace(',','.'))||0;return tx>1.85});
     if(!best&&cts.length)best=cts[0];
     if(best){
@@ -933,19 +915,10 @@ function simTipoChanged(){
       if(par>0)document.getElementById('simParcela').value=par.toFixed(2);
     }
   }
-  // Auto-fill refin with renda from beneficio
-  if(isRefin&&consultaState.result){
-    let ben=consultaState.result.beneficio||{};
-    let renda=parseFloat(String(ben.valor||'0').replace(/\./g,'').replace(',','.'))||0;
-    if(renda>0)document.getElementById('simRenda').value=renda.toFixed(2);
-  }
-  // Auto-fill cartão with renda
-  if(isCartao&&consultaState.result){
-    let ben=consultaState.result.beneficio||{};
-    let renda=parseFloat(String(ben.valor||'0').replace(/\./g,'').replace(',','.'))||0;
-    if(renda>0)document.getElementById('simRendaCartao').value=renda.toFixed(2);
-  }
+  if(isRefin&&consultaState.result){let ben=consultaState.result.beneficio||{};let renda=parseFloat(String(ben.valor||'0').replace(/\./g,'').replace(',','.'))||0;if(renda>0)document.getElementById('simRenda').value=renda.toFixed(2)}
+  if(isCartao&&consultaState.result){let ben=consultaState.result.beneficio||{};let renda=parseFloat(String(ben.valor||'0').replace(/\./g,'').replace(',','.'))||0;if(renda>0)document.getElementById('simRendaCartao').value=renda.toFixed(2)}
 }
+
 
 async function runSimulacao(){
   const api=document.getElementById('simApi').value;
@@ -1938,79 +1911,41 @@ function renderConsulta() {
     html += '<div class="kpi"><div class="kpi-label">RCC</div><div class="kpi-value" style="color:var(--pnk)">R$ ' + esc(mrg.rcc || '0,00') + '</div></div>';
     html += '</div>';
 // ══ OPORTUNIDADES ══
-let oportunidades = [];
-let totalOport = 0;
-let mrgDisp = parseFloat(String(mrg.disponivel||'0').replace(/\./g,'').replace(',','.')) || 0;
-if (mrgDisp > 0) {
-  let potEmp = Math.round((mrgDisp / 0.02299) * 100) / 100;
-  oportunidades.push({icon:'💰',tipo:'Empréstimo Novo',cor:'var(--org)',valor:potEmp,desc:'Margem livre R$ '+mrg.disponivel+' → parcela até R$ '+(mrgDisp).toLocaleString('pt-BR',{minimumFractionDigits:2})});
-  totalOport += potEmp;
-  if (!carts.length) {
-    let potCart = Math.round((mrgDisp / 0.029214) * 100) / 100;
-    oportunidades.push({icon:'🆕',tipo:'Cartão Consignado Novo',cor:'var(--cyan)',valor:potCart,desc:'Sem cartão ativo — margem disponível p/ RMC'});
-    totalOport += potCart;
-  }
+let oportunidades=[];let totalOport=0;
+let mrgDisp=parseFloat(String(mrg.disponivel||'0').replace(/\./g,'').replace(',','.'))||0;
+if(mrgDisp>0){
+  let potEmp=Math.round((mrgDisp/0.02299)*100)/100;
+  oportunidades.push({icon:'💰',tipo:'Empréstimo Novo',cor:'var(--org)',valor:potEmp,desc:'Margem livre R$ '+mrg.disponivel});
+  totalOport+=potEmp;
+  if(!carts.length){let potCart=Math.round((mrgDisp/0.029214)*100)/100;oportunidades.push({icon:'🆕',tipo:'Cartão Novo',cor:'var(--cyan)',valor:potCart,desc:'Sem cartão ativo'});totalOport+=potCart}
 }
-if (carts.length) {
-  for (let cd of carts) {
-    let mrgC = parseFloat(String(cd.margem||'0').replace(/\./g,'').replace(',','.')) || 0;
-    if (mrgC > 0) {
-      oportunidades.push({icon:'💳',tipo:'Saque Comp. '+(cd.tipo||'')+' '+(cd.banco||''),cor:'var(--pur)',valor:mrgC,desc:'Cartão ativo com margem'});
-      totalOport += mrgC;
-    }
-  }
-}
-// Analisar cada contrato individualmente
+if(carts.length){for(let cd of carts){let mrgC=parseFloat(String(cd.margem||'0').replace(/\./g,'').replace(',','.'))||0;if(mrgC>0){oportunidades.push({icon:'💳',tipo:'Saque '+((cd.tipo||'')+' '+(cd.banco||'')).trim(),cor:'var(--pur)',valor:mrgC,desc:'Cartão ativo com margem'});totalOport+=mrgC}}}
 let portContratos=[];
-if (r.contratos && r.contratos.length) {
-  for (let ct of r.contratos) {
-    let par=parseFloat(String(ct.parcela||'0').replace(/\./g,'').replace(',','.'))||0;
-    let sal=parseFloat(String(ct.saldo||ct.saldo_quitacao||'0').replace(/\./g,'').replace(',','.'))||0;
-    let taxa=parseFloat(String(ct.taxa||'0').replace(',','.'))||0;
-    let cod=String(ct.banco_codigo||ct.codigo||'').padStart(3,'0');
-    let rest=parseInt(ct.prazo||ct.prazo_restante||'0')||0;
-    if(par>0&&sal>0&&cod&&cod!=='000'){
-      let res=testar(par,sal,0,cod,false,null,null,rest);
-      if(res&&res.troco>0){
-        portContratos.push({contrato:ct.contrato||ct.id,banco:cod,parcela:par,saldo:sal,taxa,destino:res.banco,troco:res.troco,vc:res.vc,novaTaxa:res.taxa});
-        totalOport+=res.troco;
-      }
-    }
-  }
-}
-if(portContratos.length){
-  oportunidades.push({icon:'🔄',tipo:'Portabilidade',cor:'var(--grn)',valor:portContratos.reduce((s,c)=>s+c.troco,0),desc:portContratos.length+' contrato(s) elegível(is)'});
-}
-if(r.contratos&&r.contratos.length&&!portContratos.length){
-  oportunidades.push({icon:'📋',tipo:'Refinanciamento',cor:'var(--acc)',valor:0,desc:r.contratos.length+' contrato(s) — verificar condições'});
-}
-
-if (oportunidades.length) {
-  html += '<div style="background:linear-gradient(135deg,rgba(34,197,94,.06),rgba(59,130,246,.04));border:2px solid rgba(34,197,94,.2);border-radius:18px;padding:22px;margin-bottom:20px">';
-  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:800;color:var(--grn)">💡 Oportunidades Identificadas</div>';
-  if (totalOport > 0) html += '<div style="font-size:14px;font-weight:800;color:var(--grn)">' + fV(totalOport) + ' potencial</div>';
-  html += '</div>';
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">';
-  for (let op of oportunidades) {
-    html += '<div style="background:var(--card);border-radius:12px;padding:16px;border:1px solid var(--brd);border-left:4px solid ' + op.cor + '">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:14px;font-weight:800;color:' + op.cor + '">' + op.icon + ' ' + op.tipo + '</span>';
-    if (op.valor > 0) html += '<span style="font-size:15px;font-weight:900;color:var(--grn)">' + fV(op.valor) + '</span>';
-    html += '</div>';
-    html += '<div style="font-size:11px;color:var(--t2)">' + op.desc + '</div>';
-    html += '</div>';
-  }
-  html += '</div>';
-  // Tabela detalhada de portabilidade
+if(r.contratos&&r.contratos.length){for(let ct of r.contratos){
+  let par=parseFloat(String(ct.parcela||'0').replace(/\./g,'').replace(',','.'))||0;
+  let sal=parseFloat(String(ct.saldo||ct.saldo_quitacao||'0').replace(/\./g,'').replace(',','.'))||0;
+  let taxa=parseFloat(String(ct.taxa||'0').replace(',','.'))||0;
+  let cod=String(ct.banco_codigo||ct.codigo||'').padStart(3,'0');
+  let rest=parseInt(ct.prazo||ct.prazo_restante||'0')||0;
+  if(par>0&&sal>0&&cod&&cod!=='000'){let res=testar(par,sal,0,cod,false,null,null,rest);if(res&&res.troco>0){portContratos.push({contrato:ct.contrato||ct.id,banco:cod,parcela:par,saldo:sal,taxa,destino:res.banco,troco:res.troco,vc:res.vc,novaTaxa:res.taxa});totalOport+=res.troco}}
+}}
+if(portContratos.length){oportunidades.push({icon:'🔄',tipo:'Portabilidade',cor:'var(--grn)',valor:portContratos.reduce((s,c)=>s+c.troco,0),desc:portContratos.length+' contrato(s) elegível(is)'})}
+if(r.contratos&&r.contratos.length&&!portContratos.length){oportunidades.push({icon:'📋',tipo:'Refinanciamento',cor:'var(--acc)',valor:0,desc:r.contratos.length+' contrato(s) — verificar condições'})}
+if(oportunidades.length){
+  html+='<div style="background:linear-gradient(135deg,rgba(34,197,94,.06),rgba(59,130,246,.04));border:2px solid rgba(34,197,94,.2);border-radius:18px;padding:22px;margin-bottom:20px">';
+  html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:800;color:var(--grn)">💡 Oportunidades Identificadas</div>';
+  if(totalOport>0)html+='<div style="font-size:14px;font-weight:800;color:var(--grn)">'+fV(totalOport)+' potencial</div>';
+  html+='</div>';
+  html+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">';
+  for(let op of oportunidades){html+='<div style="background:var(--card);border-radius:12px;padding:16px;border:1px solid var(--brd);border-left:4px solid '+op.cor+'"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:14px;font-weight:800;color:'+op.cor+'">'+op.icon+' '+op.tipo+'</span>';if(op.valor>0)html+='<span style="font-size:15px;font-weight:900;color:var(--grn)">'+fV(op.valor)+'</span>';html+='</div><div style="font-size:11px;color:var(--t2)">'+op.desc+'</div></div>'}
+  html+='</div>';
   if(portContratos.length){
-    html += '<div style="margin-top:14px;font-size:12px;font-weight:700;color:var(--t2);margin-bottom:6px">🔄 Detalhe Portabilidade:</div>';
-    html += '<div style="overflow:auto;border-radius:8px;border:1px solid var(--brd)"><table><thead><tr><th>Contrato</th><th>Origem</th><th>Taxa Atual</th><th class="right">Parcela</th><th class="right">Saldo</th><th>→ Destino</th><th>Nova Taxa</th><th class="right">Vlr Contrato</th><th class="right" style="color:var(--grn)">Troco</th></tr></thead><tbody>';
-    for(let pc of portContratos){
-      let dc=pCls[pc.destino]||'pill-default';
-      html+='<tr><td class="mono" style="font-size:11px">'+esc(pc.contrato||'?')+'</td><td><span class="pill pill-default">'+pc.banco+'</span></td><td class="mono">'+pc.taxa.toFixed(2)+'%</td><td class="right mono">'+fV(pc.parcela)+'</td><td class="right mono">'+fV(pc.saldo)+'</td><td><span class="pill '+dc+'">'+pc.destino+'</span></td><td class="mono" style="color:var(--grn)">'+pc.novaTaxa+'%</td><td class="right mono" style="color:var(--ylw)">'+fV(pc.vc)+'</td><td class="right mono" style="color:var(--grn);font-weight:800">'+fV(pc.troco)+'</td></tr>';
-    }
+    html+='<div style="margin-top:14px;font-size:12px;font-weight:700;color:var(--t2);margin-bottom:6px">🔄 Detalhe Portabilidade:</div>';
+    html+='<div style="overflow:auto;border-radius:8px;border:1px solid var(--brd)"><table><thead><tr><th>Contrato</th><th>Origem</th><th>Taxa Atual</th><th class="right">Parcela</th><th class="right">Saldo</th><th>→ Destino</th><th>Nova Taxa</th><th class="right">Vlr Contrato</th><th class="right" style="color:var(--grn)">Troco</th></tr></thead><tbody>';
+    for(let pc of portContratos){let dc=pCls[pc.destino]||'pill-default';html+='<tr><td class="mono" style="font-size:11px">'+esc(pc.contrato||'?')+'</td><td><span class="pill pill-default">'+pc.banco+'</span></td><td class="mono">'+pc.taxa.toFixed(2)+'%</td><td class="right mono">'+fV(pc.parcela)+'</td><td class="right mono">'+fV(pc.saldo)+'</td><td><span class="pill '+dc+'">'+pc.destino+'</span></td><td class="mono" style="color:var(--grn)">'+pc.novaTaxa+'%</td><td class="right mono" style="color:var(--ylw)">'+fV(pc.vc)+'</td><td class="right mono" style="color:var(--grn);font-weight:800">'+fV(pc.troco)+'</td></tr>'}
     html+='</tbody></table></div>';
   }
-  html += '</div>';
+  html+='</div>';
 }
     // Ações
     let tel1 = tels[0] || '';
@@ -2123,8 +2058,6 @@ if (oportunidades.length) {
 function renderApp(){
 let D=S.data,c=document.getElementById("appContainer"),html="";
 let isAdm=CU&&CU.role==="admin",isGes=CU&&(CU.role==="gestor"||CU.role==="admin"),isOp=CU&&CU.role==="operador";
-
-// ── SEM BASE: mostra tabs acessíveis ──
 if(!D){
   document.getElementById("headerActions").style.display="none";
   let noDataTabs=[{k:"home",l:"🏠 Início"},{k:"consulta",l:"🔍 Consulta"},{k:"camp",l:"📋 Campanhas"},{k:"crm",l:"🏷️ CRM",n:Object.keys(getCrmData()).length||""},{k:"wppchat",l:"💬 Chat"}];
@@ -2141,8 +2074,6 @@ if(!D){
   html+=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:${hist.length?'40vh':'60vh'}" class="fi"><div style="cursor:pointer;background:var(--sf);border:2px solid var(--acc);border-radius:20px;padding:40px 48px;text-align:center;max-width:500px;width:100%;margin-bottom:20px;box-shadow:0 0 30px rgba(59,130,246,.15)" onclick="S.tab='consulta';renderApp()"><div style="font-size:36px;margin-bottom:16px">🔍</div><div style="font-size:19px;font-weight:700;margin-bottom:8px">Consulta Unitária</div><div style="font-size:14px;color:var(--t2);margin-bottom:16px">Consulte extrato completo por CPF</div><div class="btn-acc">Consultar CPF</div></div><div class="upload-box" id="uploadBox" onclick="document.getElementById('fileInput').click()"><div style="font-size:36px;margin-bottom:16px">📊</div><div style="font-size:19px;font-weight:700;margin-bottom:8px">Consulta em Lote</div><div style="font-size:14px;color:var(--t2);margin-bottom:24px">Suba a base completa offline</div><div class="btn-acc">Selecionar Arquivo</div><div style="font-size:9px;color:var(--t3);margin-top:10px">.xlsx .xls .csv</div><input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)"></div></div>`;
   if(hist.length){html+=`<div class="fi" style="margin-top:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:700">📁 Histórico</div><button class="btn btn-red btn-sm" onclick="clearHist()">Limpar</button></div><div style="display:grid;gap:8px">`;for(let h of hist){let sm=h.summary||{};let bensStr=sm.beneficios&&sm.beneficios.length?sm.beneficios.slice(0,5).join(", ")+(sm.beneficios.length>5?" ...":""):"";html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div style="flex:1;min-width:180px"><div style="font-size:12px;font-weight:700">${esc(h.fname)}</div><div style="font-size:10px;color:var(--t2)">${h.date}${CU&&CU.role==="admin"?` — <span style="color:var(--cyan)">${esc(h.user)}</span>`:""}</div>${bensStr?`<div style="font-size:9px;color:var(--t3);margin-top:3px;font-family:monospace">Ben: ${esc(bensStr)}</div>`:""}</div><div style="display:flex;gap:12px"><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):"-"}</div><div style="font-size:8px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--ylw)">${sm.valorContrato?R$(sm.valorContrato):"-"}</div><div style="font-size:8px;color:var(--t3)">VLR CONT</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):"-"}</div><div style="font-size:8px;color:var(--t3)">TROCO</div></div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn-acc" style="padding:4px 12px;font-size:10px;border-radius:5px" onclick="loadHist(${h.id})">📂 Carregar</button><button class="btn btn-red btn-sm" onclick="delHist(${h.id})">✕</button></div></div>`}html+=`</div></div>`}
   c.innerHTML=html;let ub=document.getElementById("uploadBox");if(ub){ub.addEventListener("dragover",e=>{e.preventDefault();ub.classList.add("drag")});ub.addEventListener("dragleave",()=>ub.classList.remove("drag"));ub.addEventListener("drop",e=>{e.preventDefault();ub.classList.remove("drag");if(e.dataTransfer.files[0]){let inp=document.getElementById("fileInput");let dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);inp.files=dt.files;handleFile(inp)}})}return}
-
-  // ── COM BASE: sistema completo ──
   document.getElementById("headerActions").style.display="flex";document.getElementById("fileName").textContent="📁 "+S.fname;
   let nSel=selected.size,nHig=[...selected].filter(c=>phoneCache[c]).length,nWpp=[...selected].filter(c=>wppSent.has(c)).length;
   let tabs=[];
