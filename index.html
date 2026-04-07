@@ -1951,7 +1951,9 @@ if(r.contratos&&r.contratos.length){for(let ct of r.contratos){
   let taxa=parseFloat(String(ct.taxa||'0').replace(',','.'))||0;
   let cod=String(ct.banco_codigo||ct.codigo||'').padStart(3,'0');
   let rest=parseInt(ct.prazo||ct.prazo_restante||'0')||0;
-  if(par>0&&sal>0&&cod&&cod!=='000'){let res=testar(par,sal,0,cod,false,null,null,rest);if(res&&res.troco>0){portContratos.push({contrato:ct.contrato||ct.id,banco:cod,parcela:par,saldo:sal,taxa,destino:res.banco,troco:res.troco,vc:res.vc,novaTaxa:res.taxa});totalOport+=res.troco}}
+  let total=parseInt(ct.prazo_original||'0')||0;
+  let pag=total>0&&rest>0?total-rest:0;
+  if(par>0&&sal>0&&cod&&cod!=='000'){let res=testar(par,sal,pag,cod,false,null,null,rest);
 }}
 if(portContratos.length){oportunidades.push({icon:'🔄',tipo:'Portabilidade',cor:'var(--grn)',valor:portContratos.reduce((s,c)=>s+c.troco,0),desc:portContratos.length+' contrato(s) elegível(is)'})}
 if(r.contratos&&r.contratos.length&&!portContratos.length){oportunidades.push({icon:'📋',tipo:'Refinanciamento',cor:'var(--acc)',valor:0,desc:r.contratos.length+' contrato(s) — verificar condições'})}
