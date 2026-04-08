@@ -2122,6 +2122,7 @@ if(!D){
   tabs.push({k:"consulta",l:"🔍 Consulta"});
   tabs.push({k:"camp",l:"📋 Campanhas"});
   let crmCount=Object.keys(getCrmData()).length;
+  tabs.push({k:"in100",l:"🔍 IN100",n:Object.keys(in100Cache).length||""});
   tabs.push({k:"crm",l:"🏷️ CRM",n:crmCount||""});
   tabs.push({k:"wppchat",l:"💬 Chat"});
   if(isAdm){tabs.push({k:"wpp",l:"📱 Conexões"});tabs.push({k:"admin",l:"👥"})}
@@ -2131,6 +2132,7 @@ if(!D){
   if(S.tab==="camp"){c.innerHTML=html+renderCampanhas();return}
   if(S.tab==="wpp"){c.innerHTML=html+renderWhatsApp();return}
   if(S.tab==="wppchat"){c.innerHTML=html+renderWppChat();return}
+  if(S.tab==="in100"){c.innerHTML=html+renderIN100();return}
   if(S.tab==="crm"){c.innerHTML=html+renderCRM();return}
 
   // ═══ DASHBOARD ═══
@@ -2238,7 +2240,7 @@ if(!D){
           </div>
           <span style="font-size:10px;color:var(--t3)">${phoneMode==="base"?"Usando telefones da planilha":"Usando API NovaVida (custo por consulta)"}</span>
         </div>`;
-        html+=`<div class="search-bar">${phoneMode==="api"?`<button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="if(confirm('⚠️ Serão consultados ${grouped.length} CPFs na NovaVida.\\nIsso tem CUSTO. Confirma?'))batchHig()">📡 Higienizar ${grouped.length} (NovaVida)</button>`:"<span></span>"}<button class="btn btn-red" onclick="selected.clear();renderApp()">Limpar Seleção</button><button class="btn btn-cyan" onclick="setTab('camp')">📋 Campanha</button><button class="btn" style="border-color:var(--pur);color:var(--pur)" onclick="batchSaquePipeline()">💳 Saque Complementar</button></div>`;
+        html+=`<div class="search-bar">${phoneMode==="api"?`<button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="if(confirm('⚠️ Serão consultados ${grouped.length} CPFs na NovaVida.\\nIsso tem CUSTO. Confirma?'))batchHig()">📡 Higienizar ${grouped.length} (NovaVida)</button>`:"<span></span>"}<button class="btn btn-red" onclick="selected.clear();renderApp()">Limpar Seleção</button><button class="btn btn-cyan" onclick="setTab('camp')">📋 Campanha</button><button class="btn" style="border-color:var(--pur);color:var(--pur)" onclick="batchSaquePipeline()">💳 Saque Complementar</button><button class="btn" style="border-color:var(--org);color:var(--org)" onclick="batchIN100()">🔍 IN100 Lote</button></div>`;
         html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Cliente</th><th>CPF</th><th style="text-align:center">Contr</th><th>Destinos</th><th class="right">Vlr Contrato</th><th class="right">Troco Total</th><th>Tel Base</th><th>Status</th><th>Ação</th></tr></thead><tbody>`;
         for(let g of grouped){let hig=!!phoneCache[g.cpf];let sent=wppSent.has(g.cpf);let destinos=[...g.bancos].map(b=>`<span class="pill ${pCls[b]||"pill-default"}" style="margin-right:2px">${b}</span>`).join("");
           let telBase=g.t1||g.t2||g.t3||"";
@@ -2422,6 +2424,154 @@ async function batchCartao(){
   }
   document.getElementById("bStat").innerHTML=`<span style="color:var(--grn)">✅ ${ok} sucesso, ${fail} falhas</span>`;
   setTimeout(()=>{document.getElementById("batchModal").style.display="none";renderApp()},1500);
+}
+// ══════ IN100 EM LOTE ══════
+let in100Cache={};
+
+async function batchIN100(){
+  if(!S.data||!selected.size){alert("Selecione clientes primeiro");return}
+  let grouped=groupByCPF(S.data.elegiveis.filter(e=>selected.has(e.cpf)));
+  // Só clientes com benefício
+  let targets=grouped.filter(g=>{let ben=g.contratos[0]?.ben;return ben&&ben.length>=7});
+  let pending=targets.filter(g=>!in100Cache[g.cpf]);
+  if(!pending.length){alert("Todos já consultados! "+targets.length+" no cache.");S.tab="in100";renderApp();return}
+  if(!confirm(`Consultar IN100 de ${pending.length} clientes via JoinBank?\n\n${targets.length} com benefício, ${pending.length} pendentes.\n\nIsso consome a API JoinBank.`))return;
+  bCancel=false;document.getElementById("batchModal").style.display="flex";
+  let done=0,ok=0,fail=0,blocked=0;
+  for(let g of pending){
+    if(bCancel)break;
+    document.getElementById("bStat").textContent=g.nome||g.cpf;
+    let ben=g.contratos[0]?.ben||'';
+    try{
+      const res=await fetch('/api/joinbank',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'in100',cpf:g.cpf,beneficio:ben})});
+      const d=await res.json();
+      if(d.success){
+        in100Cache[g.cpf]={...d,cpf:g.cpf,nome:d.nome||g.nome,ben,ts:Date.now()};
+        ok++;if(d.bloqueado)blocked++;
+      }else{
+        in100Cache[g.cpf]={cpf:g.cpf,nome:g.nome,ben,success:false,error:d.error||d.mensagem||'Erro',ts:Date.now()};
+        fail++;
+      }
+    }catch(e){
+      in100Cache[g.cpf]={cpf:g.cpf,nome:g.nome,ben,success:false,error:e.message,ts:Date.now()};
+      fail++;
+    }
+    done++;let p=Math.round(done/pending.length*100);
+    document.getElementById("bCnt").textContent=`${done}/${pending.length}`;
+    document.getElementById("bPct").textContent=p+"%";
+    document.getElementById("bBar").style.width=p+"%";
+    await new Promise(r=>setTimeout(r,800));
+  }
+  document.getElementById("bStat").innerHTML=`<span style="color:var(--grn)">✅ ${ok} sucesso, ${fail} falhas${blocked?`, ${blocked} bloqueados`:''}</span>`;
+  setTimeout(()=>{document.getElementById("batchModal").style.display="none";S.tab="in100";renderApp()},1500);
+}
+
+function exportIN100(){
+  let entries=Object.values(in100Cache).filter(d=>d.success!==false);
+  if(!entries.length){alert("Nenhum resultado IN100");return}
+  let rows=entries.map(d=>({
+    Nome:d.nome||'',CPF:d.cpf||'',Beneficio:d.ben||'',
+    Status:d.elegivel?'ELEGÍVEL':'NÃO ELEGÍVEL',
+    Bloqueado:d.bloqueado?'SIM - '+d.tipoBlock:'NÃO',
+    "Margem Empréstimo":d.margemEmprestimo||0,
+    "Margem Cartão":d.margemCartao||0,
+    "Saldo Disponível":d.saldoDisponivel||0,
+    "Contratos Ativos":d.contratosAtivos||0,
+    "Contratos Suspensos":d.contratosSuspensos||0,
+    Portabilidades:d.portabilidades||0,
+    UF:d.uf||'',
+    "Data Nascimento":d.dataNascimento||'',
+    Especie:d.especie||'',
+    "Repr Legal":d.representanteLegal?'SIM':'NÃO',
+    "Banco Conta":d.contaBanco?d.contaBanco.bank:'',
+    "Agência":d.contaBanco?d.contaBanco.branch:'',
+    "Conta":d.contaBanco?d.contaBanco.number:''
+  }));
+  let wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),"IN100");
+  // Resumo
+  let elegiv=entries.filter(d=>d.elegivel);let bloq=entries.filter(d=>d.bloqueado);
+  let totalMrgEmp=elegiv.reduce((s,d)=>s+(d.margemEmprestimo||0),0);
+  let totalMrgCart=elegiv.reduce((s,d)=>s+(d.margemCartao||0),0);
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet([{
+    "Total Consultados":entries.length,"Elegíveis":elegiv.length,"Bloqueados":bloq.length,
+    "Margem Emp Total":totalMrgEmp,"Margem Cart Total":totalMrgCart
+  }]),"Resumo");
+  XLSX.writeFile(wb,"flowforce_in100_lote.xlsx");
+}
+
+function renderIN100(){
+  let entries=Object.values(in100Cache);
+  let elegiv=entries.filter(d=>d.success!==false&&d.elegivel);
+  let naoElegiv=entries.filter(d=>d.success!==false&&!d.elegivel);
+  let erros=entries.filter(d=>d.success===false);
+  let bloq=entries.filter(d=>d.bloqueado);
+  let totalMrgEmp=elegiv.reduce((s,d)=>s+(d.margemEmprestimo||0),0);
+  let totalMrgCart=elegiv.reduce((s,d)=>s+(d.margemCartao||0),0);
+  let totalSaldo=elegiv.reduce((s,d)=>s+(d.saldoDisponivel||0),0);
+
+  let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+    <div style="font-size:18px;font-weight:800">🔍 IN100 — Consulta em Lote</div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-acc" onclick="batchIN100()">🔍 Consultar IN100 (${selected.size} selecionados)</button>
+      ${entries.length?`<button class="btn btn-grn" onclick="exportIN100()">↓ Exportar IN100</button>`:''}
+      ${entries.length?`<button class="btn btn-red btn-sm" onclick="in100Cache={};renderApp()">Limpar</button>`:''}
+    </div>
+  </div>`;
+
+  if(!entries.length){
+    html+=`<div style="text-align:center;padding:60px;color:var(--t3)">
+      <div style="font-size:48px;margin-bottom:16px">🔍</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:8px">Nenhuma consulta IN100 realizada</div>
+      <div style="font-size:13px;color:var(--t2);margin-bottom:20px">Selecione clientes na aba <strong>Elegíveis</strong> e clique em "Consultar IN100"</div>
+    </div>`;
+    return html;
+  }
+
+  // KPIs
+  html+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:20px">
+    <div class="kpi"><div class="kpi-label">Consultados</div><div class="kpi-value" style="color:var(--acc)">${entries.length}</div></div>
+    <div class="kpi"><div class="kpi-label">Elegíveis</div><div class="kpi-value" style="color:var(--grn)">${elegiv.length}</div></div>
+    <div class="kpi"><div class="kpi-label">Não Elegíveis</div><div class="kpi-value" style="color:var(--red)">${naoElegiv.length}</div></div>
+    <div class="kpi"><div class="kpi-label">Bloqueados</div><div class="kpi-value" style="color:var(--org)">${bloq.length}</div></div>
+    <div class="kpi"><div class="kpi-label">Margem Emp Total</div><div class="kpi-value" style="color:var(--grn)">${R$(totalMrgEmp)}</div></div>
+    <div class="kpi"><div class="kpi-label">Margem Cart Total</div><div class="kpi-value" style="color:var(--cyan)">${R$(totalMrgCart)}</div></div>
+    <div class="kpi"><div class="kpi-label">Saldo Disp Total</div><div class="kpi-value" style="color:var(--pur)">${R$(totalSaldo)}</div></div>
+    <div class="kpi"><div class="kpi-label">Erros</div><div class="kpi-value" style="color:var(--red)">${erros.length}</div></div>
+  </div>`;
+
+  // Tabela
+  html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr>
+    <th>Nome</th><th>CPF</th><th>Benefício</th><th>Status</th><th>Bloqueio</th>
+    <th class="right">Margem Emp</th><th class="right">Margem Cart</th><th class="right">Saldo Disp</th>
+    <th>Contr Ativos</th><th>UF</th><th>Ação</th>
+  </tr></thead><tbody>`;
+  // Elegíveis primeiro, depois não elegíveis, depois erros
+  let sorted=[...elegiv,...naoElegiv,...erros];
+  for(let d of sorted){
+    if(d.success===false){
+      html+=`<tr><td>${esc(d.nome||'')}</td><td class="mono">${esc(d.cpf||'')}</td><td class="mono">${esc(d.ben||'')}</td>
+        <td><span class="pill pill-red">❌ ERRO</span></td><td colspan="6" style="color:var(--red);font-size:12px">${esc(d.error||'')}</td>
+        <td><button class="btn btn-sm btn-cyan" onclick="delete in100Cache['${d.cpf}'];batchIN100()">🔄</button></td></tr>`;
+      continue;
+    }
+    let isEleg=d.elegivel;let isBloq=d.bloqueado;
+    html+=`<tr class="rh">
+      <td>${esc(d.nome||'')}</td>
+      <td class="mono">${esc(d.cpf||'')}</td>
+      <td class="mono" style="font-size:11px">${esc(d.ben||'')}</td>
+      <td><span class="pill ${isEleg?'pill-grn':'pill-red'}">${isEleg?'✅ Elegível':'❌ '+(d.benefitStatus||'Não')}</span></td>
+      <td>${isBloq?`<span class="pill pill-org">🚫 ${esc(d.tipoBlock||'Bloq')}</span>`:'<span class="pill pill-grn">✅ Livre</span>'}</td>
+      <td class="right mono" style="color:var(--grn);font-weight:700">${R$(d.margemEmprestimo||0)}</td>
+      <td class="right mono" style="color:var(--cyan)">${R$(d.margemCartao||0)}</td>
+      <td class="right mono" style="color:var(--pur)">${R$(d.saldoDisponivel||0)}</td>
+      <td style="text-align:center">${d.contratosAtivos||0}</td>
+      <td>${esc(d.uf||'—')}</td>
+      <td><button class="btn btn-sm" onclick="showCPFDetail('${d.cpf}')">👤</button></td>
+    </tr>`;
+  }
+  html+=`</tbody></table></div></div>`;
+  return html;
 }
 
 let cardCache={};
