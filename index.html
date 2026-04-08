@@ -494,7 +494,7 @@ const COEFS=[{t:1.85,c:0.02299},{t:1.80,c:0.02451},{t:1.78,c:0.02250},{t:1.75,c:
 const BD={QUALI:{sMin:2000,tMin:250,pMin:0,pgMin:0,faixa:null,coefF:null,block:["359","246","025","047","063","070","320","394","422","654","212","626","935","753","330","149","012","752","082","079","329","643","243"]},FACTA:{sMin:0,tMin:100,pMin:50,pgMin:0,faixa:[1.70,1.85],coefF:null,block:["070","071","925","935","149","012","611","643","917"]},BRB:{sMin:3000,tMin:250,pMin:0,pgMin:0,faixa:null,coefF:0.02130,block:["070","623","935","149","012","071","925","380","079"]},DIGIO:{sMin:4500,tMin:250,pMin:0,pgMin:12,faixa:null,coefF:null,block:["237","001","041"]}};
 const ORDEM=["QUALI","FACTA","BRB","DIGIO"],B1P=["149","422","739","925","380","033","326","290","041","389","121"],ESP_INV=[4,5,6,32,33,34,51,83,92],ESP_AUX=[31,36,91,94],CARTAO={PAN:"623",BMG:"318",Daycoval:"707"};
 function pV(v){if(v==null||v==="")return 0;if(typeof v==="number")return v;let s=String(v).replace(/R\$\s*/g,"").replace(/\s/g,"");if(s.includes(","))return parseFloat(s.replace(/\./g,"").replace(",","."))||0;if(s.includes("."))return parseFloat(s)||0;let n=parseInt(s,10);return isNaN(n)?0:n>99?n/100:n}
-function pP(v){if(v==null||v==="")return[0,0,0];let m=String(v).match(/(\d+)\s*[/\\]\s*(\d+)/);if(m){let r=+m[1],t=+m[2];return[r,t,t-r]}let n=parseInt(v,10);return[n||0,n||0,0]}
+function pP(v){if(v==null||v==="")return[0,0,0];let m=String(v).match(/(\d+)\s*[/\\]\s*(\d+)/);if(m){const COEFS=[{t:1.85,c:0.02299},{t:1.83,c:0.02360},{t:1.80,c:0.02451},{t:1.78,c:0.02250},{t:1.75,c:0.021985},{t:1.72,c:0.02175},{t:1.70,c:0.021604},{t:1.68,c:0.02145},{t:1.66,c:0.02130},{t:1.65,c:0.02123}];let r=+m[1],t=+m[2];return[r,t,t-r]}let n=parseInt(v,10);return[n||0,n||0,0]}
 function pC(v){if(v==null||v==="")return"";return String(typeof v==="number"?Math.floor(v):v).trim().padStart(3,"0")}
 function pEN(e){if(!e)return 0;let m=String(e).match(/^(\d+)/);return m?parseInt(m[1],10):0}
 function cAge(ns){if(ns==null)return null;let d;if(ns instanceof Date)d=ns;else if(typeof ns==="number")d=new Date((ns-25569)*864e5);else{let s=String(ns).trim(),m=s.match(/(\d{2})[/-](\d{2})[/-](\d{4})/);if(m)d=new Date(+m[3],+m[2]-1,+m[1]);else d=new Date(s)}if(!d||isNaN(d.getTime()))return null;let now=new Date(),a=now.getFullYear()-d.getFullYear();if(now.getMonth()<d.getMonth()||(now.getMonth()===d.getMonth()&&now.getDate()<d.getDate()))a--;return{age:a}}
@@ -1854,7 +1854,12 @@ async function consultarCPFUnitario(forceNB) {
   } catch (e) { consultaState.loading = false; consultaState.error = e.message; }
   renderApp();
 }
-
+function recalcContrato(idx,campo,valor){
+  let r=consultaState.result;if(!r||!r.contratos||!r.contratos[idx])return;
+  if(campo==='saldo')r.contratos[idx].saldo=String(valor);
+  if(campo==='taxa_dest')r.contratos[idx]._taxaManual=parseFloat(valor)||0;
+  renderApp();
+}
 function renderConsulta() {
   let html = '';
   // Search bar
@@ -1916,6 +1921,7 @@ function renderConsulta() {
     html += '<div><div style="font-size:22px;font-weight:900">' + esc(b.nome || '—') + '</div>';
     html += '<div style="font-size:13px;font-family:monospace;color:var(--t2);margin-top:4px">CPF: ' + esc(b.cpf || '—');
     if (b.nb) html += ' &nbsp;|&nbsp; Benefício: ' + esc(b.nb);
+    if (ben.especie) html += ' &nbsp;|&nbsp; ' + esc(ben.especie);
     if (b.idade) html += ' &nbsp;|&nbsp; ' + esc(b.idade);
     html += '</div>';
     if (b.nome_mae) html += '<div style="font-size:12px;color:var(--t3);margin-top:2px">Mãe: ' + esc(b.nome_mae) + '</div>';
@@ -2045,20 +2051,25 @@ if(oportunidades.length){
         let rest = parseInt(prazoStr)||0;
         let res = null;
         if (par > 0 && sal > 0 && cod && cod !== '000') {
-        let total2 = parseInt(ct.prazo_original||'0')||0;
+          let total2 = parseInt(ct.prazo_original||'0')||0;
           let pag2 = total2>0&&rest>0?total2-rest:0;
           res = testar(par, sal, pag2, cod, false, null, null, rest);
+        }
+        let txManual=ct._taxaManual||0;
+        if(txManual>0&&par>0&&sal>0){let coefM=COEFS.find(c=>c.t===txManual);if(coefM){let vcM=par/coefM.c;let trM=vcM-sal;res={banco:res?res.banco:'MANUAL',troco:Math.round(trM*100)/100,vc:Math.round(vcM*100)/100,taxa:txManual,i1:res?res.i1:false}}}
         }
         let dc = res ? (pCls[res.banco]||'pill-default') : '';
         html += '<tr>';
         html += '<td class="mono" style="font-size:11px">' + esc(ct.contrato||ct.id||'?') + '</td>';
         html += '<td><span class="pill pill-default">' + esc(cod) + '</span></td>';
-        html += '<td class="right mono">' + (par>0?'R$ '+par.toLocaleString('pt-BR',{minimumFractionDigits:2}):'—') + '</td>';
-        html += '<td class="right mono">' + (sal>0?'R$ '+sal.toLocaleString('pt-BR',{minimumFractionDigits:2}):'—') + '</td>';
+        html += '<td class="right mono"><input type="number" style="width:110px;padding:4px 6px;border-radius:6px;border:1px solid var(--brd);background:var(--card);color:var(--grn);font-family:monospace;font-size:12px;text-align:right" value="'+(sal||'')+'" onchange="recalcContrato('+i+',\'saldo\',this.value)"></td>';        html += '<td class="right mono"><input type="number" style="width:110px;padding:4px 6px;border-radius:6px;border:1px solid var(--brd);background:var(--card);color:var(--grn);font-family:monospace;font-size:12px;text-align:right" value="'+(sal||'')+'" onchange="recalcContrato(this,'+i+')"></td>';
         html += '<td class="mono">' + (taxa>0?taxa.toFixed(2)+'%':'—') + '</td>';
         html += '<td class="mono">' + esc(prazoStr||'—') + '</td>';
-html += '<td>' + (res?'<span class="pill '+dc+'">'+res.banco+'</span>':'<span style="color:var(--t3)">—</span>') + '</td>';
-        html += '<td class="mono" style="color:var(--grn)">' + (res?res.taxa+'%':'—') + '</td>';
+        html += '<td>' + (res?'<span class="pill '+dc+'">'+res.banco+'</span>':'<span style="color:var(--t3)">—</span>') + '</td>';
+        html += '<td><select style="padding:4px;border-radius:6px;border:1px solid var(--brd);background:var(--card);color:var(--grn);font-family:monospace;font-size:12px" onchange="recalcContrato('+i+',\'taxa_dest\',this.value)">';
+        html += '<option value="0"'+(txManual===0?' selected':'')+'>Auto</option>';
+        for(let cf of COEFS){html+='<option value="'+cf.t+'"'+((txManual===cf.t||(txManual===0&&res&&res.taxa===cf.t))?' selected':'')+'>'+cf.t+'%</option>'}
+        html += '</select></td>';
         html += '<td class="right mono" style="color:var(--ylw)">' + (res?'R$ '+res.vc.toLocaleString('pt-BR',{minimumFractionDigits:2}):'—') + '</td>';
         html += '<td class="right mono" style="color:var(--grn);font-weight:700">' + (res&&res.troco>0?'R$ '+res.troco.toLocaleString('pt-BR',{minimumFractionDigits:2}):'—') + '</td>';        html += '</tr>';
       }
