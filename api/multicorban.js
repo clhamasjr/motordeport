@@ -130,13 +130,17 @@ function parseConsultHTML(html){
       // Parse prazo: "90 / 96"
       let prazo_rest='',prazo_total='';
       if(prazos){const pm=prazos.match(/(\d+)\s*\/\s*(\d+)/);if(pm){prazo_rest=pm[1];prazo_total=pm[2]}}
-      // Parse saldo (valor empréstimo)
-      let saldo='';if(valor){const vm=valor.match(/R\$\s*([\d.,]+)/);if(vm)saldo=vm[1]}
+      // Parse valor averbado (empréstimo original)
+      let valorAverb='';if(valor){const vm=valor.match(/R\$\s*([\d.,]+)/);if(vm)valorAverb=vm[1]}
+      // Parse saldo devedor real
+      const saldoDev=getField('Saldo Devedor')||getField('Saldo');
+      let saldo='';
+      if(saldoDev){const sm=saldoDev.match(/R\$\s*([\d.,]+)/);if(sm)saldo=sm[1]}
+      if(!saldo)saldo=valorAverb; // fallback se não tiver saldo devedor
       // Parse parcela
       let parcelaClean='';if(parcela){const pm2=parcela.match(/R\$\s*([\d.,]+)/);if(pm2)parcelaClean=pm2[1]}
       if(contrato){
-        result.contratos.push({contrato:contrato.replace(/[^0-9A-Za-z]/g,''),banco_codigo,parcela:parcelaClean,saldo,taxa:taxa.trim(),prazo:prazo_rest,prazo_original:prazo_total,data_averbacao:dataAverb});
-      }
+      result.contratos.push({contrato:contrato.replace(/[^0-9A-Za-z]/g,''),banco_codigo,parcela:parcelaClean,saldo,valor_averbado:valorAverb,taxa:taxa.trim(),prazo:prazo_rest,prazo_original:prazo_total,data_averbacao:dataAverb});      }
     }
   }
   // Fallback: simple contrato number extraction
