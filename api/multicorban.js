@@ -132,11 +132,12 @@ function parseConsultHTML(html){
       if(prazos){const pm=prazos.match(/(\d+)\s*\/\s*(\d+)/);if(pm){prazo_rest=pm[1];prazo_total=pm[2]}}
       // Parse valor averbado (empréstimo original)
       let valorAverb='';if(valor){const vm=valor.match(/R\$\s*([\d.,]+)/);if(vm)valorAverb=vm[1]}
-      // Parse saldo devedor real
-      const saldoDev=getField('Saldo Devedor')||getField('Saldo');
+      // Parse saldo devedor (campo expandido do card)
+      const saldoDev=getField('Saldo Devedor');
       let saldo='';
-      if(saldoDev){const sm=saldoDev.match(/R\$\s*([\d.,]+)/);if(sm)saldo=sm[1]}
-      if(!saldo)saldo=valorAverb; // fallback se não tiver saldo devedor
+      if(saldoDev){const sm=saldoDev.match(/([\d.,]+)/);if(sm)saldo=sm[1]}
+      // Fallback: valor averbado
+      if(!saldo&&valor){const vm=valor.match(/R\$\s*([\d.,]+)/);if(vm)saldo=vm[1]}
       // Parse parcela
       let parcelaClean='';if(parcela){const pm2=parcela.match(/R\$\s*([\d.,]+)/);if(pm2)parcelaClean=pm2[1]}
       if(contrato){
