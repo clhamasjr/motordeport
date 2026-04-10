@@ -2196,7 +2196,7 @@ if(mrgDisp>0){
   if(!carts.length){let potCart=Math.round((mrgDisp/0.029214)*100)/100;oportunidades.push({icon:'🆕',tipo:'Cartão Novo',cor:'var(--cyan)',valor:potCart,desc:'Sem cartão ativo'});totalOport+=potCart}
 }
 if(carts.length){for(let cd of carts){let mrgC=parseFloat(String(cd.margem||'0').replace(/\./g,'').replace(',','.'))||0;if(mrgC>0){oportunidades.push({icon:'💳',tipo:'Saque '+((cd.tipo||'')+' '+(cd.banco||'')).trim(),cor:'var(--pur)',valor:mrgC,desc:'Cartão ativo com margem'});totalOport+=mrgC}}}
-let portContratos=[];
+var portContratos=[];
 if(r.contratos&&r.contratos.length){for(let ct of r.contratos){
   let par=parseFloat(String(ct.parcela||'0').replace(/\./g,'').replace(',','.'))||0;
   let sal=parseFloat(String(ct.saldo||ct.saldo_quitacao||'0').replace(/\./g,'').replace(',','.'))||0;
