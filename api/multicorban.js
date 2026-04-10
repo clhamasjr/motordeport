@@ -177,51 +177,61 @@ function parseConsultHTML(html) {
       // Parse valor averbado
       let valorAverb = ''; if (valor) { const vm = valor.match(/R\$\s*([\d.,]+)/); if (vm) valorAverb = vm[1]; }
 
-      // ── Saldo Devedor — busca agressiva com multiplas estrategias ──
+      // ── Saldo Devedor — extração específica para Multicorban v2 ──
+      // HTML real: Saldo Devedor <input onkeyup="somaValorLiquidoContratos(ID)"
+      //            name="valor_saldoquitacao_contratoID" value="1.002,59">
       let saldo = '';
 
-      // Estrategia 1: getField padrao
-      const saldoDev = getField('Saldo Devedor');
-      if (saldoDev) { const sm = saldoDev.match(/([\d][\\d.,]*[\d])/); if (sm) saldo = sm[1]; }
-
-      // Estrategia 2: busca "Saldo" + proximidade de valor monetario no card
-      if (!saldo) {
+      // Estrategia 1 (PRINCIPAL): Encontrar "Saldo Devedor" e pegar o value="" do <input> mais proximo
+      {
         const saldoIdx = card.search(/[Ss]aldo\s*[Dd]evedor/);
         if (saldoIdx >= 0) {
-          const afterSaldo = card.substring(saldoIdx, saldoIdx + 500);
-          const vm = afterSaldo.match(/R\$\s*([\d.,]+)/);
-          if (vm) saldo = vm[1];
-          if (!saldo) { const vm2 = afterSaldo.match(/(\d[\d.,]+\d)/); if (vm2) saldo = vm2[1]; }
-        }
-      }
-
-      // Estrategia 3: busca em data-attributes (data-saldo, data-valor-saldo, etc.)
-      if (!saldo) {
-        const dataM = card.match(/data-(?:saldo|valor[_-]?saldo|saldo[_-]?devedor)="([^"]+)"/i);
-        if (dataM) saldo = dataM[1];
-      }
-
-      // Estrategia 4: busca "saldo_devedor" ou "saldoDevedor" em campos hidden/input
-      if (!saldo) {
-        const hiddenM = card.match(/(?:name|id)="[^"]*saldo[_]?devedor[^"]*"[^>]*value="([^"]+)"/i);
-        if (hiddenM) saldo = hiddenM[1];
-      }
-
-      // Estrategia 5: busca no padrao Multicorban "Vlr. Saldo" ou "Sld. Devedor"
-      if (!saldo) {
-        const altLabels = ['Vlr\\.?\\s*Saldo', 'Sld\\.?\\s*Devedor', 'Saldo\\s*Dev\\.?', 'SALDO'];
-        for (const alt of altLabels) {
-          if (saldo) break;
-          const altM = card.match(new RegExp(alt + '[\\s\\S]*?R\\$\\s*([\\d.,]+)', 'i'));
-          if (altM) saldo = altM[1];
+          const afterSaldo = card.substring(saldoIdx, saldoIdx + 600);
+          // Pegar especificamente o atributo value="..." do input (NAO o onkeyup)
+          const inputM = afterSaldo.match(/<input[^>]*\bvalue="([^"]+)"/i);
+          if (inputM) {
+            const val = inputM[1].trim();
+            // Validar que parece um valor monetario (tem virgula ou ponto, formato X.XXX,XX)
+            if (/^\d[\d.,]*\d$/.test(val) && val.includes(',')) {
+              saldo = val;
+            }
+          }
+          // Fallback: buscar R$ depois de Saldo Devedor
           if (!saldo) {
-            const altM2 = card.match(new RegExp(alt + '[\\s\\S]*?(\\d[\\d.,]+\\d)', 'i'));
-            if (altM2 && altM2[1].length >= 4) saldo = altM2[1];
+            const rmM = afterSaldo.match(/R\$\s*([\d.,]+)/);
+            if (rmM) saldo = rmM[1];
           }
         }
       }
 
-      // Fallback final: valor averbado
+      // Estrategia 2: buscar input com name contendo "saldoquitacao"
+      if (!saldo) {
+        const sqM = card.match(/name="[^"]*saldoquitacao[^"]*"[^>]*value="([^"]+)"/i);
+        if (sqM) saldo = sqM[1];
+        // Tambem tentar com value antes do name
+        if (!saldo) {
+          const sqM2 = card.match(/value="([^"]+)"[^>]*name="[^"]*saldoquitacao[^"]*"/i);
+          if (sqM2 && /^\d[\d.,]*\d$/.test(sqM2[1])) saldo = sqM2[1];
+        }
+      }
+
+      // Estrategia 3: getField padrao (caso o formato mude no futuro)
+      if (!saldo) {
+        const saldoDev = getField('Saldo Devedor');
+        if (saldoDev) { const sm = saldoDev.match(/(\d[\d.,]*\d)/); if (sm && sm[1].includes(',')) saldo = sm[1]; }
+      }
+
+      // Estrategia 4: busca "Saldo" em qualquer formato alternativo
+      if (!saldo) {
+        const altLabels = ['Vlr\\.?\\s*Saldo', 'Sld\\.?\\s*Devedor', 'Saldo\\s*Dev\\.?'];
+        for (const alt of altLabels) {
+          if (saldo) break;
+          const altM = card.match(new RegExp(alt + '[\\s\\S]*?<input[^>]*value="([^"]+)"', 'i'));
+          if (altM && /^\d[\d.,]*\d$/.test(altM[1]) && altM[1].includes(',')) saldo = altM[1];
+        }
+      }
+
+      // Fallback final: valor averbado (melhor que nada)
       if (!saldo && valor) { const vm = valor.match(/R\$\s*([\d.,]+)/); if (vm) saldo = vm[1]; }
 
       // Parse parcela
