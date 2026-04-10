@@ -222,17 +222,53 @@ td.right,th.right{text-align:right}td.mono{font-family:monospace;font-size:12px}
 
 <script>
 // ══════ AUTH ══════
+// ═══ AUTH TOKEN ═══
+function getToken(){return localStorage.getItem("ff_token")||""}
+function setToken(t){localStorage.setItem("ff_token",t)}
+function clearToken(){localStorage.removeItem("ff_token")}
+function authHeaders(){return{"Content-Type":"application/json","Authorization":"Bearer "+getToken()}}
+// Wrapper pra fetch com auth
+async function apiFetch(url,opts={}){
+  if(!opts.headers)opts.headers={};
+  opts.headers["Authorization"]="Bearer "+getToken();
+  if(!opts.headers["Content-Type"])opts.headers["Content-Type"]="application/json";
+  const r=await fetch(url,opts);
+  if(r.status===401){clearToken();CU=null;document.getElementById("appScreen").style.display="none";document.getElementById("loginScreen").style.display="flex";throw new Error("Sessao expirada")}
+  return r;
+}
+// Compat: manter hp() para funcoes legadas que ainda usam localStorage local
 function hp(p){let h=0;const s=p+"lhamas2024";for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0}return"H"+Math.abs(h).toString(36)}
 function getU(){try{return JSON.parse(localStorage.getItem("lhm_users"))}catch{return null}}
 function saveU(u){localStorage.setItem("lhm_users",JSON.stringify(u))}
 function initU(){let u=getU();if(!u){u=[{id:1,user:"admin",name:"Administrador",pw:hp("admin123"),role:"admin",created:Date.now()},{id:2,user:"gestor",name:"Gestor",pw:hp("gestor123"),role:"gestor",created:Date.now()},{id:3,user:"operador",name:"Operador",pw:hp("op123"),role:"operador",created:Date.now()}];saveU(u)}
-  // Migrate old 'user' role to 'operador'
   let changed=false;for(let x of u)if(x.role==="user"){x.role="operador";changed=true}if(changed)saveU(u);
   return u}
 function getSess(){try{let s=JSON.parse(localStorage.getItem("lhm_sess"));if(!s||Date.now()-s.ts>864e5)return null;return s}catch{return null}}
 let CU=null;
-function doLogin(){const u=document.getElementById("loginUser").value.trim().toLowerCase(),p=document.getElementById("loginPass").value,err=document.getElementById("loginError");if(!u||!p){err.textContent="Preencha todos os campos";return}const users=initU(),f=users.find(x=>x.user.toLowerCase()===u&&x.pw===hp(p));if(!f){err.textContent="Usuário ou senha incorretos";document.getElementById("loginCard").classList.add("shake");setTimeout(()=>document.getElementById("loginCard").classList.remove("shake"),350);return}CU=f;localStorage.setItem("lhm_sess",JSON.stringify({user:f.user,name:f.name,role:f.role,ts:Date.now()}));showApp()}
-function doLogout(){localStorage.removeItem("lhm_sess");CU=null;document.getElementById("appScreen").style.display="none";document.getElementById("loginScreen").style.display="flex";S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel"}}
+async function doLogin(){const u=document.getElementById("loginUser").value.trim().toLowerCase(),p=document.getElementById("loginPass").value,err=document.getElementById("loginError");if(!u||!p){err.textContent="Preencha todos os campos";return}
+  err.textContent="Autenticando...";
+  try{
+    const r=await fetch("/api/auth",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"login",user:u,pass:p})});
+    const d=await r.json();
+    if(!d.ok){err.textContent=d.error||"Erro no login";document.getElementById("loginCard").classList.add("shake");setTimeout(()=>document.getElementById("loginCard").classList.remove("shake"),350);return}
+    setToken(d.token);
+    CU={id:d.user.id,user:d.user.user,name:d.user.name,role:d.user.role,pw:""};
+    localStorage.setItem("lhm_sess",JSON.stringify({user:d.user.user,name:d.user.name,role:d.user.role,ts:Date.now()}));
+    // Manter compat local
+    let users=getU()||[];if(!users.find(x=>x.user===d.user.user)){users.push({id:d.user.id,user:d.user.user,name:d.user.name,pw:"",role:d.user.role,created:Date.now()});saveU(users)}
+    showApp();
+  }catch(e){
+    // Fallback: login local se API nao disponivel
+    err.textContent="";
+    const users=initU(),f=users.find(x=>x.user.toLowerCase()===u&&x.pw===hp(p));
+    if(!f){err.textContent="Usuario ou senha incorretos";document.getElementById("loginCard").classList.add("shake");setTimeout(()=>document.getElementById("loginCard").classList.remove("shake"),350);return}
+    CU=f;localStorage.setItem("lhm_sess",JSON.stringify({user:f.user,name:f.name,role:f.role,ts:Date.now()}));showApp();
+  }
+}
+function doLogout(){
+  // Logout no servidor
+  if(getToken()){fetch("/api/auth",{method:"POST",headers:authHeaders(),body:JSON.stringify({action:"logout"})}).catch(()=>{})}
+  clearToken();localStorage.removeItem("lhm_sess");CU=null;document.getElementById("appScreen").style.display="none";document.getElementById("loginScreen").style.display="flex";S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel"}}
 function showApp(){document.getElementById("loginScreen").style.display="none";document.getElementById("appScreen").style.display="block";let rl=CU.role==="admin"?"Admin":CU.role==="gestor"?"Gestor":"Operador";document.getElementById("hdrUser").innerHTML=`<div class="hdr-user-icon">${CU.name.charAt(0)}</div><div><div style="font-size:11px;font-weight:600">${esc(CU.name)}</div><div style="font-size:9px;color:var(--t3)">${rl}</div></div><button class="btn btn-sm" onclick="document.getElementById('changePwModal').style.display='flex'" style="margin-left:4px;font-size:9px">🔑</button>`;
   // Auto-restore last active session
   if(!S.data){
@@ -248,7 +284,20 @@ function showApp(){document.getElementById("loginScreen").style.display="none";d
   // Auto-reconnect WhatsApp in background (doesn't block UI)
   setTimeout(()=>{if(getMyInstance())wppLoadInstances()},500);
 }
-function doChangePw(){const o=document.getElementById("cpwOld").value,n=document.getElementById("cpwNew").value,c=document.getElementById("cpwConfirm").value,err=document.getElementById("cpwError");if(!o||!n||!c){err.textContent="Preencha tudo";return}if(hp(o)!==CU.pw){err.textContent="Incorreta";return}if(n.length<4){err.textContent="Mín 4";return}if(n!==c){err.textContent="Não conferem";return}let users=getU();let i=users.findIndex(u=>u.user===CU.user);if(i>=0){users[i].pw=hp(n);saveU(users);CU.pw=hp(n)}err.style.color="var(--grn)";err.textContent="Alterada!";setTimeout(()=>document.getElementById("changePwModal").style.display="none",1000)}
+async function doChangePw(){const o=document.getElementById("cpwOld").value,n=document.getElementById("cpwNew").value,c=document.getElementById("cpwConfirm").value,err=document.getElementById("cpwError");if(!o||!n||!c){err.textContent="Preencha tudo";return}if(n.length<4){err.textContent="Mín 4";return}if(n!==c){err.textContent="Não conferem";return}
+  err.style.color="var(--t2)";err.textContent="Salvando...";
+  try{
+    const r=await apiFetch("/api/auth",{method:"POST",body:JSON.stringify({action:"change_pw",oldPass:o,newPass:n})});
+    const d=await r.json();
+    if(!d.ok){err.style.color="var(--red)";err.textContent=d.error||"Erro";return}
+    err.style.color="var(--grn)";err.textContent="Alterada!";setTimeout(()=>document.getElementById("changePwModal").style.display="none",1000);
+  }catch(e){
+    // Fallback local
+    if(hp(o)!==CU.pw){err.style.color="var(--red)";err.textContent="Incorreta";return}
+    let users=getU();let i=users.findIndex(u=>u.user===CU.user);if(i>=0){users[i].pw=hp(n);saveU(users);CU.pw=hp(n)}
+    err.style.color="var(--grn)";err.textContent="Alterada!";setTimeout(()=>document.getElementById("changePwModal").style.display="none",1000);
+  }
+}
 
 // ══════ HISTORY ══════
 function getHist(){try{return JSON.parse(localStorage.getItem("lhm_hist")||"[]")}catch{return[]}}
@@ -373,7 +422,7 @@ async function higienizarCPF(cpf,nome,bt1,bt2,bt3){
   document.getElementById("pmContent").innerHTML=baseHtml+'<div style="text-align:center;padding:20px;color:var(--t2)"><div style="animation:pulse 1.2s ease infinite;font-size:24px;margin-bottom:8px">📡</div>Consultando API...</div>';
   document.getElementById("pmActions").innerHTML=`<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar (usar base)</button>`;
   try{
-    const res=await fetch('/api/higienizar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf.replace(/\D/g,'')})});
+    const res=await apiFetch('/api/higienizar',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,'')})});
     const data=await res.json();
     if(data.success){phoneCache[cpf]=data;document.getElementById("pmContent").innerHTML=baseHtml;showPhones(data,true)}
     else{document.getElementById("pmContent").innerHTML=baseHtml+`<div style="text-align:center;padding:12px;color:var(--red)">❌ ${esc(data.error||'Erro na API')}</div>`;document.getElementById("pmActions").innerHTML=`<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar (usar base)</button>`}
@@ -405,7 +454,7 @@ async function batchHig(){
   for(let cpf of cpfs){
     if(bCancel)break;
     document.getElementById("bStat").textContent=cpf;
-    try{const r=await fetch('/api/higienizar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf.replace(/\D/g,'')})});const d=await r.json();if(d.success){phoneCache[cpf]=d;ok++}}catch{}
+    try{const r=await apiFetch('/api/higienizar',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,'')})});const d=await r.json();if(d.success){phoneCache[cpf]=d;ok++}}catch{}
     done++;let p=Math.round(done/cpfs.length*100);
     document.getElementById("bCnt").textContent=`${done}/${cpfs.length}`;
     document.getElementById("bPct").textContent=p+"%";
@@ -826,7 +875,7 @@ async function consultarIN100(cpf,ben){
   let pm=document.getElementById("pmContent");
   pm.innerHTML=`<div style="text-align:center;padding:30px"><div style="font-size:24px;margin-bottom:8px">🔍</div><div style="font-size:14px;font-weight:700">Consultando IN100...</div><div style="font-size:12px;color:var(--t3);margin-top:4px">CPF: ${cpf} | Ben: ${ben}</div></div>`;
   try{
-    const res=await fetch('/api/joinbank',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'in100',cpf,beneficio:ben})});
+    const res=await apiFetch('/api/joinbank',{method:'POST',body:JSON.stringify({action:'in100',cpf,beneficio:ben})});
     const d=await res.json();
     if(d.success){
       pm.innerHTML=`<div style="font-size:16px;font-weight:800;margin-bottom:12px">🔍 IN100 — ${esc(d.nome||cpf)}</div>
@@ -1371,7 +1420,7 @@ function getMyInstance(){let a=getWppAssign();return CU?a[CU.user]||null:null}
 
 async function wppCall(action,data={}){
   let inst=data.instance||getMyInstance()||'';
-  const res=await fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,instance:inst,...data})});
+  const res=await apiFetch('/api/evolution',{method:'POST',body:JSON.stringify({action,instance:inst,...data})});
   return res.json();
 }
 
@@ -1736,7 +1785,7 @@ async function batchSaqueSelected(){
   batchProgress={running:true,total:cpfs.length,done:0,results:[]};renderApp();
   for(let cpf of cpfs){
     try{
-      const res=await fetch('/api/cartao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf.replace(/\D/g,''),bancos:['BMG','DAYCOVAL']})});
+      const res=await apiFetch('/api/cartao',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,''),bancos:['BMG','DAYCOVAL']})});
       const data=await res.json();
       if(data.success){cardCache[cpf]=data;let totalSaque=data.cartoes.reduce((s,c)=>s+(c.limiteSaqueDisp||0),0);batchProgress.results.push({cpf,nome:data.nome,ok:true,saque:totalSaque,cartoes:data.cartoes.length})}
       else{batchProgress.results.push({cpf,nome:"",ok:false,error:data.error||"Erro"})}
@@ -1837,7 +1886,7 @@ async function consultarCPFUnitario(forceNB) {
   consultaState = { result: null, loading: true, error: null, lista: null };
   renderApp();
   try {
-    const res = await fetch('/api/multicorban', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...param }) });
+    const res = await apiFetch('/api/multicorban', { method: 'POST', body: JSON.stringify({ action, ...param }) });
     const data = await res.json();
     if (data.ok && data.lista && data.lista.length > 1 && !forceNB) {
       // Múltiplos benefícios — mostrar seleção
@@ -2323,7 +2372,7 @@ async function cartaoCall(cpf,matricula){
   let creds=getBankCreds();let activeCreds={};
   for(let[k,v]of Object.entries(creds)){if(v.active&&v.user&&v.pass)activeCreds[k]={user:v.user,pass:v.pass}}
   if(!Object.keys(activeCreds).length){throw new Error("Nenhum banco configurado. Admin → 👥 → Credenciais de Bancos")}
-  const res=await fetch('/api/cartao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf.replace(/\D/g,''),matricula:matricula||'',creds:activeCreds})});
+  const res=await apiFetch('/api/cartao',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,''),matricula:matricula||'',creds:activeCreds})});
   return res.json();
 }
 
@@ -2335,7 +2384,7 @@ async function batchSaquePipeline(){
   S.tab="rc";S.rmcF="COMCARTAO";renderApp();
   for(let cpf of cpfs){
     try{
-      const res=await fetch('/api/cartao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf.replace(/\D/g,''),bancos:['BMG','DAYCOVAL']})});
+      const res=await apiFetch('/api/cartao',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,''),bancos:['BMG','DAYCOVAL']})});
       const data=await res.json();
       if(data.success){
         cardCache[cpf]=data;
@@ -2364,7 +2413,7 @@ async function batchSaqueComplementar(){
   renderApp();
   for(let r of comCartao){
     try{
-      const res=await fetch('/api/cartao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:r.cpf.replace(/\D/g,''),matricula:r.ben||""})});
+      const res=await apiFetch('/api/cartao',{method:'POST',body:JSON.stringify({cpf:r.cpf.replace(/\D/g,''),matricula:r.ben||""})});
       const data=await res.json();
       if(data.success){
         cardCache[r.cpf]=data;
@@ -2443,7 +2492,7 @@ async function batchIN100(){
     document.getElementById("bStat").textContent=g.nome||g.cpf;
     let ben=g.contratos[0]?.ben||'';
     try{
-      const res=await fetch('/api/joinbank',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'in100',cpf:g.cpf,beneficio:ben})});
+      const res=await apiFetch('/api/joinbank',{method:'POST',body:JSON.stringify({action:'in100',cpf:g.cpf,beneficio:ben})});
       const d=await res.json();
       if(d.success){
         in100Cache[g.cpf]={...d,cpf:g.cpf,nome:d.nome||g.nome,ben,ts:Date.now()};
@@ -2585,7 +2634,7 @@ async function consultarCartao(cpf,nome,ben){
   if(cardCache[cpf]){showCardResult(cardCache[cpf]);return}
 
   try{
-    const res=await fetch('/api/cartao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf.replace(/\D/g,''),matricula:ben||""})});
+    const res=await apiFetch('/api/cartao',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,''),matricula:ben||""})});
     const data=await res.json();
     if(data.success){cardCache[cpf]=data;showCardResult(data)}
     else{document.getElementById("pmContent").innerHTML=`<div style="text-align:center;padding:20px;color:var(--red)">❌ ${esc(data.error||"Erro")}<br><span style="font-size:11px;color:var(--t3)">${esc(data.detail||"")}</span>${data.debug?`<br><details style="margin-top:10px;text-align:left"><summary style="font-size:10px;color:var(--t3);cursor:pointer">Debug</summary><pre style="font-size:9px;color:var(--t3);white-space:pre-wrap;margin-top:6px">${esc(JSON.stringify(data.debug,null,2))}</pre></details>`:""}</div>`;

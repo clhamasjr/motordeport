@@ -1,175 +1,215 @@
-// ══════════════════════════════════════════════════════════════════════
-// api/auth.js — Autenticação centralizada FlowForce
-// Usuários persistem no servidor (funciona em qualquer máquina)
-// ══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// api/auth.js — Autenticacao FlowForce com Supabase
+// ══════════════════════════════════════════════════════════════════
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status, headers: { ...CORS, 'Content-Type': 'application/json' },
-  });
-}
+import { dbSelect, dbInsert, dbUpdate, dbDelete, dbQuery } from './_lib/supabase.js';
+import { json, jsonError, handleOptions, hashPassword, generateSalt, generateToken, verifySession, requireRole } from './_lib/auth.js';
 
-// ── Hash function (same as frontend) ───────────────────────────────
-function hp(p) {
-  let h = 0;
-  const s = p + 'lhamas2024';
-  for (let i = 0; i < s.length; i++) {
-    h = ((h << 5) - h) + s.charCodeAt(i);
-    h |= 0;
-  }
-  return 'H' + Math.abs(h).toString(36);
-}
+const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
 
-// ── User store ─────────────────────────────────────────────────────
-// Defaults (always available)
-const DEFAULT_USERS = [
-  { id: 1, user: 'admin', name: 'Administrador', pw: hp('admin123'), role: 'admin', created: 1700000000000 },
-  { id: 2, user: 'gestor', name: 'Gestor', pw: hp('gestor123'), role: 'gestor', created: 1700000000000 },
-  { id: 3, user: 'operador', name: 'Operador', pw: hp('op123'), role: 'operador', created: 1700000000000 },
-];
-
-// In-memory store (survives across requests in same instance)
-let userStore = null;
-
-function getUsers() {
-  if (userStore) return userStore;
-
-  // Try loading from env var FF_USERS (JSON string set in Vercel dashboard)
-  try {
-    const envUsers = typeof process !== 'undefined' && process.env && process.env.FF_USERS;
-    if (envUsers) {
-      userStore = JSON.parse(envUsers);
-      return userStore;
-    }
-  } catch {}
-
-  // Fallback to defaults
-  userStore = [...DEFAULT_USERS];
-  return userStore;
-}
-
-function saveUsers(users) {
-  userStore = users;
-  // Note: true persistence requires FF_USERS env var in Vercel
-  // In-memory survives within same cold-start instance
-}
-
-// ── Main handler ───────────────────────────────────────────────────
 export default async function handler(req) {
-  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
-  if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+  if (req.method === 'OPTIONS') return handleOptions(req);
+  if (req.method !== 'POST') return jsonError('POST only', 405, req);
 
   let body;
-  try { body = await req.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
+  try { body = await req.json(); } catch { return jsonError('Invalid JSON', 400, req); }
 
   const { action } = body;
-  const users = getUsers();
 
-  // ── LOGIN ────────────────────────────────────────────────────────
+  // ── LOGIN ──────────────────────────────────────────────────
   if (action === 'login') {
     const { user, pass } = body;
-    if (!user || !pass) return json({ ok: false, error: 'Preencha todos os campos' });
+    if (!user || !pass) return json({ ok: false, error: 'Preencha todos os campos' }, 400, req);
 
-    const u = user.trim().toLowerCase();
-    const pwHash = hp(pass);
-    const found = users.find(x => x.user.toLowerCase() === u && x.pw === pwHash);
+    const username = user.trim().toLowerCase();
 
-    if (!found) return json({ ok: false, error: 'Usuário ou senha incorretos' });
+    // Buscar usuario
+    const { data: found, error } = await dbSelect('users', {
+      filters: { username, active: true },
+      select: 'id,username,name,role,password_hash,salt',
+      single: true
+    });
+
+    if (error || !found) return json({ ok: false, error: 'Usuario ou senha incorretos' }, 401, req);
+
+    // Handle primeiro login do admin (hash PENDING)
+    if (found.password_hash === 'PENDING_FIRST_LOGIN') {
+      const salt = generateSalt();
+      const hash = await hashPassword(pass, salt);
+      await dbUpdate('users', { id: found.id }, { password_hash: hash, salt });
+    } else {
+      // Verificar senha
+      const hash = await hashPassword(pass, found.salt);
+      if (hash !== found.password_hash) {
+        return json({ ok: false, error: 'Usuario ou senha incorretos' }, 401, req);
+      }
+    }
+
+    // Criar sessao
+    const token = generateToken();
+    const expiresAt = new Date(Date.now() + SESSION_DURATION_MS).toISOString();
+    const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '';
+
+    await dbInsert('sessions', {
+      user_id: found.id,
+      token,
+      expires_at: expiresAt,
+      ip_address: ip.split(',')[0].trim(),
+      user_agent: (req.headers.get('user-agent') || '').substring(0, 200)
+    });
+
+    // Audit
+    await dbInsert('audit_log', {
+      user_id: found.id,
+      action: 'login',
+      ip_address: ip.split(',')[0].trim()
+    });
 
     return json({
       ok: true,
-      user: { id: found.id, user: found.user, name: found.name, role: found.role },
-    });
+      token,
+      user: { id: found.id, user: found.username, name: found.name, role: found.role },
+    }, 200, req);
   }
 
-  // ── LIST USERS (admin only — frontend validates role) ────────────
+  // ── LOGOUT ─────────────────────────────────────────────────
+  if (action === 'logout') {
+    const authHeader = req.headers.get('Authorization') || '';
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    if (token) await dbDelete('sessions', { token });
+    return json({ ok: true, mensagem: 'Sessao encerrada' }, 200, req);
+  }
+
+  // ── VERIFY SESSION ─────────────────────────────────────────
+  if (action === 'verify') {
+    const user = await verifySession(req);
+    if (!user) return json({ ok: false }, 200, req);
+    return json({ ok: true, user }, 200, req);
+  }
+
+  // ── A partir daqui, requer sessao valida ───────────────────
+  const currentUser = await verifySession(req);
+  if (!currentUser) return jsonError('Sessao invalida', 401, req);
+
+  // ── LIST USERS (admin/gestor) ──────────────────────────────
   if (action === 'list') {
-    return json({
-      ok: true,
-      users: users.map(u => ({ id: u.id, user: u.user, name: u.name, role: u.role, created: u.created })),
+    const roleErr = requireRole(currentUser, ['admin', 'gestor']);
+    if (roleErr) return roleErr;
+
+    const { data, error } = await dbSelect('users', {
+      select: 'id,username,name,role,active,created_at',
+      order: 'created_at.asc'
     });
+    if (error) return jsonError('Erro ao buscar usuarios', 500, req);
+    return json({ ok: true, users: data }, 200, req);
   }
 
-  // ── CREATE USER ──────────────────────────────────────────────────
+  // ── CREATE USER (admin only) ───────────────────────────────
   if (action === 'create') {
-    const { name, user, pass, role, adminUser, adminPass } = body;
+    const roleErr = requireRole(currentUser, ['admin']);
+    if (roleErr) return roleErr;
 
-    // Validate admin
-    const admin = users.find(x => x.user === adminUser && x.pw === hp(adminPass) && x.role === 'admin');
-    if (!admin) return json({ ok: false, error: 'Sem permissão' }, 403);
+    const { name, user: newUser, pass, role } = body;
+    if (!name || !newUser || !pass) return json({ ok: false, error: 'Preencha todos os campos' }, 400, req);
+    if (pass.length < 4) return json({ ok: false, error: 'Senha min 4 caracteres' }, 400, req);
 
-    if (!name || !user || !pass) return json({ ok: false, error: 'Preencha todos os campos' });
-    if (users.find(x => x.user.toLowerCase() === user.toLowerCase())) return json({ ok: false, error: 'Usuário já existe' });
+    const username = newUser.trim().toLowerCase();
 
-    const newUser = {
-      id: Date.now(),
-      user: user.trim().toLowerCase(),
+    // Verificar duplicata
+    const { data: existing } = await dbSelect('users', { filters: { username }, single: true });
+    if (existing) return json({ ok: false, error: 'Usuario ja existe' }, 400, req);
+
+    const salt = generateSalt();
+    const hash = await hashPassword(pass, salt);
+
+    const { data: created, error } = await dbInsert('users', {
+      username,
       name: name.trim(),
-      pw: hp(pass),
-      role: role || 'operador',
-      created: Date.now(),
-    };
+      password_hash: hash,
+      salt,
+      role: role || 'operador'
+    });
 
-    users.push(newUser);
-    saveUsers(users);
+    if (error) return jsonError('Erro ao criar usuario', 500, req);
 
-    return json({ ok: true, mensagem: 'Usuário criado', user: { id: newUser.id, user: newUser.user, name: newUser.name, role: newUser.role } });
+    await dbInsert('audit_log', {
+      user_id: currentUser.id,
+      action: 'create_user',
+      details: { target: username, role: role || 'operador' }
+    });
+
+    return json({ ok: true, mensagem: 'Usuario criado', user: { id: created.id, user: created.username, name: created.name, role: created.role } }, 200, req);
   }
 
-  // ── DELETE USER ──────────────────────────────────────────────────
+  // ── DELETE USER (admin only) ───────────────────────────────
   if (action === 'delete') {
-    const { targetUser, adminUser, adminPass } = body;
+    const roleErr = requireRole(currentUser, ['admin']);
+    if (roleErr) return roleErr;
 
-    const admin = users.find(x => x.user === adminUser && x.pw === hp(adminPass) && x.role === 'admin');
-    if (!admin) return json({ ok: false, error: 'Sem permissão' }, 403);
-    if (targetUser === 'admin') return json({ ok: false, error: 'Não pode excluir admin' });
+    const { targetUser } = body;
+    if (targetUser === 'admin') return json({ ok: false, error: 'Nao pode excluir admin' }, 400, req);
 
-    const idx = users.findIndex(x => x.user === targetUser);
-    if (idx < 0) return json({ ok: false, error: 'Usuário não encontrado' });
+    // Soft delete
+    const { error } = await dbUpdate('users', { username: targetUser }, { active: false });
+    if (error) return jsonError('Erro ao excluir', 500, req);
 
-    users.splice(idx, 1);
-    saveUsers(users);
+    // Invalidar sessoes
+    const { data: targetData } = await dbSelect('users', { filters: { username: targetUser }, select: 'id', single: true });
+    if (targetData) await dbDelete('sessions', { user_id: targetData.id });
 
-    return json({ ok: true, mensagem: 'Usuário excluído' });
+    await dbInsert('audit_log', {
+      user_id: currentUser.id,
+      action: 'delete_user',
+      details: { target: targetUser }
+    });
+
+    return json({ ok: true, mensagem: 'Usuario desativado' }, 200, req);
   }
 
-  // ── RESET PASSWORD ───────────────────────────────────────────────
+  // ── RESET PASSWORD (admin only) ────────────────────────────
   if (action === 'reset_pw') {
-    const { targetUser, newPass, adminUser, adminPass } = body;
+    const roleErr = requireRole(currentUser, ['admin']);
+    if (roleErr) return roleErr;
 
-    const admin = users.find(x => x.user === adminUser && x.pw === hp(adminPass) && x.role === 'admin');
-    if (!admin) return json({ ok: false, error: 'Sem permissão' }, 403);
-    if (!newPass || newPass.length < 4) return json({ ok: false, error: 'Senha mín 4 caracteres' });
+    const { targetUser, newPass } = body;
+    if (!newPass || newPass.length < 4) return json({ ok: false, error: 'Senha min 4 caracteres' }, 400, req);
 
-    const target = users.find(x => x.user === targetUser);
-    if (!target) return json({ ok: false, error: 'Usuário não encontrado' });
+    const { data: target } = await dbSelect('users', { filters: { username: targetUser }, select: 'id', single: true });
+    if (!target) return json({ ok: false, error: 'Usuario nao encontrado' }, 400, req);
 
-    target.pw = hp(newPass);
-    saveUsers(users);
+    const salt = generateSalt();
+    const hash = await hashPassword(newPass, salt);
+    await dbUpdate('users', { id: target.id }, { password_hash: hash, salt });
 
-    return json({ ok: true, mensagem: 'Senha alterada' });
+    // Invalidar sessoes do usuario
+    await dbDelete('sessions', { user_id: target.id });
+
+    return json({ ok: true, mensagem: 'Senha alterada' }, 200, req);
   }
 
-  // ── CHANGE OWN PASSWORD ──────────────────────────────────────────
+  // ── CHANGE OWN PASSWORD ────────────────────────────────────
   if (action === 'change_pw') {
-    const { user, oldPass, newPass } = body;
+    const { oldPass, newPass } = body;
 
-    const found = users.find(x => x.user === user && x.pw === hp(oldPass));
-    if (!found) return json({ ok: false, error: 'Senha atual incorreta' });
-    if (!newPass || newPass.length < 4) return json({ ok: false, error: 'Nova senha mín 4 caracteres' });
+    // Buscar usuario completo
+    const { data: me } = await dbSelect('users', {
+      filters: { id: currentUser.id },
+      select: 'id,password_hash,salt',
+      single: true
+    });
 
-    found.pw = hp(newPass);
-    saveUsers(users);
+    const oldHash = await hashPassword(oldPass, me.salt);
+    if (oldHash !== me.password_hash) return json({ ok: false, error: 'Senha atual incorreta' }, 400, req);
+    if (!newPass || newPass.length < 4) return json({ ok: false, error: 'Nova senha min 4 caracteres' }, 400, req);
 
-    return json({ ok: true, mensagem: 'Senha alterada' });
+    const salt = generateSalt();
+    const hash = await hashPassword(newPass, salt);
+    await dbUpdate('users', { id: currentUser.id }, { password_hash: hash, salt });
+
+    return json({ ok: true, mensagem: 'Senha alterada' }, 200, req);
   }
 
-  return json({ error: 'action inválida', actions: ['login', 'list', 'create', 'delete', 'reset_pw', 'change_pw'] }, 400);
+  return jsonError('action invalida', 400, req);
 }
 
 export const config = { runtime: 'edge' };
