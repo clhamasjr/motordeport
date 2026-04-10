@@ -125,45 +125,108 @@ function parseConsultHTML(html) {
   // ═══ CONTRATOS — Bootstrap card extraction (Multicorban v2) ═══
   const contratoSection = html.indexOf('id="navs-tab-contrato"');
   if (contratoSection >= 0) {
-    const cBlock = html.substring(contratoSection, contratoSection + 50000);
+    const cBlock = html.substring(contratoSection, contratoSection + 80000);
     const cards = cBlock.split(/card\s+mb-4/);
     for (let i = 1; i < cards.length; i++) {
       const card = cards[i];
+
+      // ── getField robusto: busca valor apos label em multiplos formatos HTML ──
       const getField = (label) => {
-        // Tenta <small>Label</small>...<p>Value</p>
-        let re = new RegExp(label + '<\\/small>[\\s\\S]*?<p[^>]*>\\s*([\\s\\S]*?)<\\/p>', 'i');
-        let fm = card.match(re);
+        let fm;
+        // 1) <small>Label</small> ... <p>Value</p>
+        fm = card.match(new RegExp(label + '<\\/small>[\\s\\S]*?<p[^>]*>\\s*([\\s\\S]*?)<\\/p>', 'i'));
         if (fm) return fm[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-        // Fallback: <small>Label</small>...<input value="...">
-        re = new RegExp(label + '<\\/small>[\\s\\S]*?<input[^>]*value="\\s*([^"]*)"', 'i');
-        fm = card.match(re);
+        // 2) <small>Label</small> ... <input value="...">
+        fm = card.match(new RegExp(label + '<\\/small>[\\s\\S]*?<input[^>]*value="\\s*([^"]*)"', 'i'));
+        if (fm) return fm[1].trim();
+        // 3) <small>Label</small> ... <span>Value</span>
+        fm = card.match(new RegExp(label + '<\\/small>[\\s\\S]*?<span[^>]*>\\s*([\\s\\S]*?)<\\/span>', 'i'));
+        if (fm) return fm[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+        // 4) <small>Label</small> ... <strong>Value</strong>
+        fm = card.match(new RegExp(label + '<\\/small>[\\s\\S]*?<strong[^>]*>\\s*([\\s\\S]*?)<\\/strong>', 'i'));
+        if (fm) return fm[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+        // 5) <small>Label</small> ... <div>Value</div> (collapse panels)
+        fm = card.match(new RegExp(label + '<\\/small>[\\s\\S]*?<div[^>]*>\\s*([^<]+)', 'i'));
+        if (fm && fm[1].trim().length > 0 && fm[1].trim().length < 100) return fm[1].trim();
+        // 6) <td>Label</td><td>Value</td> (table rows)
+        fm = card.match(new RegExp(label + '<\\/td>\\s*<td[^>]*>\\s*([^<]+)', 'i'));
+        if (fm) return fm[1].trim();
+        // 7) Label:</small> or Label:</strong> followed by value
+        fm = card.match(new RegExp(label + ':?\\s*<\\/(?:small|strong|b|label)>[\\s\\S]*?(?:R\\$\\s*)?([\\d][\\d.,]*)', 'i'));
         if (fm) return fm[1].trim();
         return '';
       };
+
       const contrato = getField('Contrato');
       const taxa = getField('Taxa');
       const valor = getField('Valor');
       const parcela = getField('Parcela');
       const prazos = getField('Prazos');
       const dataAverb = getField('Data Averba');
+
       // Bank code from icon
       let banco_codigo = '';
       const iconM = card.match(/icones\/(\d{3})\.png/);
       if (iconM) banco_codigo = iconM[1];
       if (!banco_codigo) { const btm = card.match(/(\d{3})\s*-\s*[A-Z]/); if (btm) banco_codigo = btm[1]; }
+
       // Parse prazo: "90 / 96"
       let prazo_rest = '', prazo_total = '';
       if (prazos) { const pm = prazos.match(/(\d+)\s*\/\s*(\d+)/); if (pm) { prazo_rest = pm[1]; prazo_total = pm[2]; } }
+
       // Parse valor averbado
       let valorAverb = ''; if (valor) { const vm = valor.match(/R\$\s*([\d.,]+)/); if (vm) valorAverb = vm[1]; }
-      // Parse saldo devedor (campo expandido do card)
-      const saldoDev = getField('Saldo Devedor');
+
+      // ── Saldo Devedor — busca agressiva com multiplas estrategias ──
       let saldo = '';
-      if (saldoDev) { const sm = saldoDev.match(/([\d.,]+)/); if (sm) saldo = sm[1]; }
-      // Fallback: valor averbado
+
+      // Estrategia 1: getField padrao
+      const saldoDev = getField('Saldo Devedor');
+      if (saldoDev) { const sm = saldoDev.match(/([\d][\\d.,]*[\d])/); if (sm) saldo = sm[1]; }
+
+      // Estrategia 2: busca "Saldo" + proximidade de valor monetario no card
+      if (!saldo) {
+        const saldoIdx = card.search(/[Ss]aldo\s*[Dd]evedor/);
+        if (saldoIdx >= 0) {
+          const afterSaldo = card.substring(saldoIdx, saldoIdx + 500);
+          const vm = afterSaldo.match(/R\$\s*([\d.,]+)/);
+          if (vm) saldo = vm[1];
+          if (!saldo) { const vm2 = afterSaldo.match(/(\d[\d.,]+\d)/); if (vm2) saldo = vm2[1]; }
+        }
+      }
+
+      // Estrategia 3: busca em data-attributes (data-saldo, data-valor-saldo, etc.)
+      if (!saldo) {
+        const dataM = card.match(/data-(?:saldo|valor[_-]?saldo|saldo[_-]?devedor)="([^"]+)"/i);
+        if (dataM) saldo = dataM[1];
+      }
+
+      // Estrategia 4: busca "saldo_devedor" ou "saldoDevedor" em campos hidden/input
+      if (!saldo) {
+        const hiddenM = card.match(/(?:name|id)="[^"]*saldo[_]?devedor[^"]*"[^>]*value="([^"]+)"/i);
+        if (hiddenM) saldo = hiddenM[1];
+      }
+
+      // Estrategia 5: busca no padrao Multicorban "Vlr. Saldo" ou "Sld. Devedor"
+      if (!saldo) {
+        const altLabels = ['Vlr\\.?\\s*Saldo', 'Sld\\.?\\s*Devedor', 'Saldo\\s*Dev\\.?', 'SALDO'];
+        for (const alt of altLabels) {
+          if (saldo) break;
+          const altM = card.match(new RegExp(alt + '[\\s\\S]*?R\\$\\s*([\\d.,]+)', 'i'));
+          if (altM) saldo = altM[1];
+          if (!saldo) {
+            const altM2 = card.match(new RegExp(alt + '[\\s\\S]*?(\\d[\\d.,]+\\d)', 'i'));
+            if (altM2 && altM2[1].length >= 4) saldo = altM2[1];
+          }
+        }
+      }
+
+      // Fallback final: valor averbado
       if (!saldo && valor) { const vm = valor.match(/R\$\s*([\d.,]+)/); if (vm) saldo = vm[1]; }
+
       // Parse parcela
       let parcelaClean = ''; if (parcela) { const pm2 = parcela.match(/R\$\s*([\d.,]+)/); if (pm2) parcelaClean = pm2[1]; }
+
       if (contrato) {
         result.contratos.push({ contrato: contrato.replace(/[^0-9A-Za-z]/g, ''), banco_codigo, parcela: parcelaClean, saldo, valor_averbado: valorAverb, taxa: taxa.trim(), prazo: prazo_rest, prazo_original: prazo_total, data_averbacao: dataAverb });
       }
@@ -269,6 +332,38 @@ export default async function handler(req) {
         dbInsert('consultas', { user_id: user.id, tipo: 'beneficio', beneficio: beneficio.replace(/\D/g, ''), nome: result.parsed?.beneficiario?.nome, resultado: result.parsed, fonte: 'multicorban' }).catch(() => {});
       }
       return json(result, result.ok ? 200 : 400, req);
+    }
+
+    // Debug: retorna HTML bruto da secao de contratos pra diagnostico
+    if (action === 'debug_saldo') {
+      if (!beneficio && !cpf) return jsonError('CPF ou beneficio obrigatorio', 400, req);
+      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Login failed' }, 401, req);
+      let result;
+      if (beneficio) { result = await consultBeneficio(session.cookie, beneficio); }
+      else {
+        const cpfClean = cpf.replace(/\D/g, '').padStart(11, '0');
+        const formBody = new URLSearchParams({ methodOperation: 'dataBase', methodConsult: 'cpf', versaoTela: 'v2', dataConsult: cpfClean, dataOrgao: '', CPF: '', CPFRepresentante: '', ddd: '', telefone: '' });
+        const res = await fetch(`${BASE}/search/consult`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'Cookie': session.cookie, 'Referer': `${BASE}/search`, 'Origin': BASE }, body: formBody.toString() });
+        const text = await res.text();
+        let data; try { data = JSON.parse(text); } catch { return json({ raw_error: text.substring(0, 1000) }, 200, req); }
+        const html = data.hash || '';
+        // Extrair trecho de contratos
+        const idx = html.indexOf('id="navs-tab-contrato"');
+        const contratoHTML = idx >= 0 ? html.substring(idx, idx + 10000) : 'SECAO_CONTRATOS_NAO_ENCONTRADA';
+        // Buscar qualquer ocorrencia de "Saldo" no HTML inteiro
+        const saldoMatches = [];
+        const saldoRe = /[Ss]aldo[\s\S]{0,200}/gi;
+        let sm;
+        while ((sm = saldoRe.exec(html)) !== null && saldoMatches.length < 10) {
+          saldoMatches.push({ pos: sm.index, trecho: sm[0].substring(0, 200).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() });
+        }
+        return json({ ok: true, debug: true, html_length: html.length, contrato_section_found: idx >= 0, contrato_html_sample: contratoHTML.substring(0, 5000), saldo_ocorrencias: saldoMatches, parsed: parseConsultHTML(html) }, 200, req);
+      }
+      // Se consultou por beneficio, fazer o mesmo debug
+      if (result && result.ok) {
+        return json({ ok: true, debug: true, parsed: result.parsed, contratos_encontrados: result.parsed?.contratos?.length || 0, contratos: result.parsed?.contratos || [] }, 200, req);
+      }
+      return json(result || { error: 'Sem resultado' }, 200, req);
     }
 
     if (action === 'raw') {
