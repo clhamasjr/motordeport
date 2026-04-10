@@ -449,7 +449,7 @@ async function higienizarCPF(cpf,nome,bt1,bt2,bt3){
   document.getElementById("pmContent").innerHTML=baseHtml+'<div style="text-align:center;padding:20px;color:var(--t2)"><div style="animation:pulse 1.2s ease infinite;font-size:24px;margin-bottom:8px">📡</div>Consultando API...</div>';
   document.getElementById("pmActions").innerHTML=`<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar (usar base)</button>`;
   try{
-    const res=await apiFetch('/api/higienizar',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,'')})});
+    const res=await apiFetch('/api/cartao',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,''),creds:getBankCreds()})});
     const data=await res.json();
     if(data.success){phoneCache[cpf]=data;document.getElementById("pmContent").innerHTML=baseHtml;showPhones(data,true)}
     else{document.getElementById("pmContent").innerHTML=baseHtml+`<div style="text-align:center;padding:12px;color:var(--red)">❌ ${esc(data.error||'Erro na API')}</div>`;document.getElementById("pmActions").innerHTML=`<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar (usar base)</button>`}
@@ -481,7 +481,7 @@ async function batchHig(){
   for(let cpf of cpfs){
     if(bCancel)break;
     document.getElementById("bStat").textContent=cpf;
-    try{const r=await apiFetch('/api/higienizar',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,'')})});const d=await r.json();if(d.success){phoneCache[cpf]=d;ok++}}catch{}
+    try{const r=await apiFetch('/api/cartao',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,''),creds:getBankCreds()})});const d=await r.json();if(d.success){phoneCache[cpf]=d;ok++}}catch{}
     done++;let p=Math.round(done/cpfs.length*100);
     document.getElementById("bCnt").textContent=`${done}/${cpfs.length}`;
     document.getElementById("bPct").textContent=p+"%";
@@ -2087,6 +2087,44 @@ async function batchSaqueSelected(){
   alert(`✅ ${ok.length}/${cpfs.length} consultados\nSaque disponível: ${R$(totalSaque)}`);
 }
 
+// ── DATAFAST BMG: consulta em lote via /api/datafast (mais rapido, lotes de 10) ──
+async function batchDatafastBMG(){
+  let cpfs=[...rcSelected];
+  if(!cpfs.length){alert("Selecione clientes primeiro");return}
+  let creds=getBankCreds();let bmgCred=creds.BMG;
+  if(!bmgCred||!bmgCred.user||!bmgCred.pass){alert("Configure as credenciais BMG em Admin → Credenciais de Bancos");return}
+  if(!confirm(`⚡ Datafast BMG: consultar ${cpfs.length} CPFs em lote?\n\nUsa credenciais BMG configuradas.`))return;
+  batchProgress={running:true,total:cpfs.length,done:0,results:[]};renderApp();
+  const LOTE=10;
+  for(let i=0;i<cpfs.length;i+=LOTE){
+    const lote=cpfs.slice(i,i+LOTE);
+    try{
+      const res=await apiFetch('/api/datafast',{method:'POST',body:JSON.stringify({action:'batch',cpfs:lote,cred:{user:bmgCred.user,pass:bmgCred.pass}})});
+      const data=await res.json();
+      if(data.ok&&data.resultados){
+        for(const r of data.resultados){
+          const saque=r.melhorSaque||r.limite||0;
+          // Salvar no cardCache pra ficar visivel na tabela
+          if(r.ok&&r.cartoesDetalhes){
+            cardCache[r.cpf]={success:true,cpf:r.cpf,nome:r.nome||'',fontes:['BMG'],cartoes:r.cartoesDetalhes.map(c=>({banco:c.banco||'BMG',produto:c.produto||'',statusCartao:c.statusCartao||'',limiteCartao:c.limiteCartao||0,limiteSaqueDisp:c.limiteSaqueDisp||0,minimoSaque:c.minimoSaque||0,limiteUtilizado:c.limiteUtilizado||0,saldoDevedor:c.saldoDevedor||0,margem:c.margem||0})),telefones:[],dados:{}};
+          }
+          batchProgress.results.push({cpf:r.cpf,nome:r.nome||'',ok:r.ok!==false,saque,cartoes:r.cartoes||0});
+          batchProgress.done++;
+        }
+      }else{
+        lote.forEach(cpf=>{batchProgress.results.push({cpf,nome:'',ok:false,error:data.error||'Erro lote'});batchProgress.done++});
+      }
+    }catch(e){
+      lote.forEach(cpf=>{batchProgress.results.push({cpf,nome:'',ok:false,error:'Erro conexao'});batchProgress.done++});
+    }
+    renderApp();
+    await new Promise(r=>setTimeout(r,300));
+  }
+  batchProgress.running=false;renderApp();
+  let okR=batchProgress.results.filter(r=>r.ok&&r.saque>0);let totalSaque=okR.reduce((s,r)=>s+r.saque,0);
+  showToast(`Datafast: ${okR.length} com saque (${R$(totalSaque)})`);
+}
+
 // ══════ CRM ══════
 const CRM_LABELS=[
   {k:"fechado",l:"Fechado",icon:"✅",c:"#22C55E",bg:"rgba(34,197,94,.12)"},
@@ -2653,7 +2691,7 @@ if(!D){
     if(batchProgress.running){html+=`<div style="background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:10px;padding:14px;margin-bottom:14px;display:flex;align-items:center;gap:12px"><div style="font-size:20px;animation:pulse 1.2s ease infinite">🔍</div><div><div style="font-size:13px;font-weight:700;color:var(--pur)">Consultando saque complementar... ${batchProgress.done}/${batchProgress.total}</div><div style="background:var(--brd);border-radius:4px;height:6px;margin-top:6px;width:200px"><div style="background:var(--pur);height:100%;border-radius:4px;width:${Math.round(batchProgress.done/batchProgress.total*100)}%"></div></div></div></div>`}
     if(batchProgress.results.length>0&&!batchProgress.running){let okRes=batchProgress.results.filter(r=>r.ok&&r.saque>0);
       html+=`<div style="display:flex;gap:8px;margin-bottom:14px"><button class="btn btn-grn" onclick="exportSaqueComplementar()">↓ Exportar Saque Complementar (${okRes.length} com saque)</button><button class="btn btn-sm" onclick="batchProgress.results=[];renderApp()">Limpar</button></div>`}
-    html+=`<div class="search-bar"><input type="text" placeholder="Buscar..." value="${esc(S.q)}" oninput="setQ(this.value)"><select onchange="S.rmcF=this.value;S.pg=0;renderApp()"><option value="ALL"${S.rmcF==="ALL"?" selected":""}>Todos</option><option value="PAN"${S.rmcF==="PAN"?" selected":""}>PAN</option><option value="BMG"${S.rmcF==="BMG"?" selected":""}>BMG</option><option value="DAYCOVAL"${S.rmcF==="DAYCOVAL"?" selected":""}>Daycoval</option><option value="MARGEM"${S.rmcF==="MARGEM"?" selected":""}>🆕 Sem Cartão</option><option value="COMCARTAO"${S.rmcF==="COMCARTAO"?" selected":""}>💳 Com Cartão</option></select><div style="display:flex;gap:4px;align-items:center;background:var(--card);border:1px solid var(--brd);border-radius:6px;padding:3px"><button class="sel-btn" style="color:var(--acc)" onclick="for(let r of S.data.rmcRcc){if(S.rmcF==='ALL'||filtroRMC(r))rcSelected.add(r.cpf)};renderApp()">☑ Todos</button><button class="sel-btn" style="color:var(--red)" onclick="rcSelected.clear();renderApp()">✕</button></div>${rcSelected.size?`<button class="btn-acc btn-sm" onclick="batchSaqueSelected()">💳 Consultar ${rcSelected.size} selecionados</button>`:""}<button class="btn btn-grn btn-sm" onclick="exportRMC()">↓ Exportar</button><span style="font-size:10px;color:var(--t2)">${rcSelected.size} selecionados</span></div>`;
+    html+=`<div class="search-bar"><input type="text" placeholder="Buscar..." value="${esc(S.q)}" oninput="setQ(this.value)"><select onchange="S.rmcF=this.value;S.pg=0;renderApp()"><option value="ALL"${S.rmcF==="ALL"?" selected":""}>Todos</option><option value="PAN"${S.rmcF==="PAN"?" selected":""}>PAN</option><option value="BMG"${S.rmcF==="BMG"?" selected":""}>BMG</option><option value="DAYCOVAL"${S.rmcF==="DAYCOVAL"?" selected":""}>Daycoval</option><option value="MARGEM"${S.rmcF==="MARGEM"?" selected":""}>🆕 Sem Cartão</option><option value="COMCARTAO"${S.rmcF==="COMCARTAO"?" selected":""}>💳 Com Cartão</option></select><div style="display:flex;gap:4px;align-items:center;background:var(--card);border:1px solid var(--brd);border-radius:6px;padding:3px"><button class="sel-btn" style="color:var(--acc)" onclick="for(let r of S.data.rmcRcc){if(S.rmcF==='ALL'||filtroRMC(r))rcSelected.add(r.cpf)};renderApp()">☑ Todos</button><button class="sel-btn" style="color:var(--red)" onclick="rcSelected.clear();renderApp()">✕</button></div>${rcSelected.size?`<button class="btn-acc btn-sm" onclick="batchSaqueSelected()">💳 Consultar ${rcSelected.size} selecionados</button>`:""}${rcSelected.size?`<button class="btn-cart btn-sm" onclick="batchDatafastBMG()">⚡ Datafast BMG (${rcSelected.size})</button>`:""}<button class="btn btn-grn btn-sm" onclick="exportRMC()">↓ Exportar</button><span style="font-size:10px;color:var(--t2)">${rcSelected.size} selecionados</span></div>`;
     html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th style="width:30px"><input type="checkbox" class="chk" onclick="let vis=S.data.rmcRcc.filter(r=>filtroRMC(r));if(this.checked)vis.forEach(r=>rcSelected.add(r.cpf));else vis.forEach(r=>rcSelected.delete(r.cpf));renderApp()"></th><th>Nome</th><th>CPF</th><th>Esp</th><th>Tel 1</th><th>Banco RMC</th><th class="right">Vlr RMC</th><th>Banco RCC</th><th class="right">Vlr RCC</th><th class="right">Margem Disp</th><th class="right">Cart Nova</th><th class="right">Emp Nova</th><th>Ação</th></tr></thead><tbody>`;
     for(let r of items){let cc=cardCache[r.cpf];let cached=!!cc;let saqueDisp=0;if(cc&&cc.cartoes)for(let cd of cc.cartoes)saqueDisp+=(cd.limiteSaqueDisp||0);let rcCk=rcSelected.has(r.cpf);
       html+=`<tr class="rh" style="${rcCk?"background:rgba(167,139,250,0.06)":cached?"border-left:3px solid var(--grn)":""}"><td><input type="checkbox" class="chk" ${rcCk?"checked":""} onclick="toggleRcSel('${r.cpf}')"></td><td>${esc(r.nome)}</td><td class="mono">${esc(r.cpf)}</td><td>${esc(r.esp)}</td><td class="mono">${esc(r.t1)}</td><td><span class="pill pill-default">${esc(r.cRmc)}</span></td><td class="right mono" style="color:${r.vRmc>0?"var(--grn)":"var(--t3)"}">${r.vRmc>0?R$(r.vRmc):"—"}</td><td><span class="pill pill-default">${esc(r.cRcc)}</span></td><td class="right mono" style="color:${r.vRcc>0?"var(--pur)":"var(--t3)"}">${r.vRcc>0?R$(r.vRcc):"—"}</td><td class="right mono" style="color:${r.mrgCart>0?"var(--cyan)":"var(--t3)"}">${r.mrgCart>0?R$(r.mrgCart):"—"}</td><td class="right mono" style="color:${r.mrgCartNova>0?"var(--ylw)":"var(--t3)"}">${cached&&saqueDisp>0?`<span style="color:var(--grn);font-weight:800">${R$(saqueDisp)}</span> <span style="font-size:9px;color:var(--t3)">real</span>`:r.mrgCartNova>0?R$(r.mrgCartNova):"—"}</td><td class="right mono" style="color:${r.mrgEmpNova>0?"var(--org)":"var(--t3)"}">${r.mrgEmpNova>0?R$(r.mrgEmpNova):"—"}</td><td><button class="btn btn-sm ${cached?"btn-grn":"btn-cyan"}" onclick="consultarCartao('${r.cpf}','${esc(r.nome)}','${esc(r.ben)}')">${cached?"💳 Ver":"💳"}</button></td></tr>`}
