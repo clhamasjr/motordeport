@@ -642,6 +642,7 @@ const PER=50;const R$=v=>"R$ "+v.toLocaleString("pt-BR",{minimumFractionDigits:2
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
 
 // ══════ CARRINHO DE DIGITACAO ══════
+var portContratos=[]; // global — preenchido em renderConsulta, usado pelo carrinho
 let cart=new Map();
 const CART_KEY='ff_cart';
 
