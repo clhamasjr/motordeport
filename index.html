@@ -1430,6 +1430,97 @@ function exportCamp(campId){
   let wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(c.cpfs.map(x=>{let st=crm[x.cpf];return{Nome:x.nome,CPF:x.cpf,"Qtd Contratos":x.qtd,"Troco Port":x.troco||0,"Saque Complementar":x.saqueDisp||0,"Cartão Nova":x.mrgCartNova||0,"Emp Novo":x.mrgEmpNova||0,"Total":Math.round(((x.troco||0)+(x.saqueDisp||0)+(x.mrgCartNova||0)+(x.mrgEmpNova||0))*100)/100,"Tel 1":x.t1||"",Status:st?st.status:"",Obs:st?st.obs:""}})),"Campanha");
   XLSX.writeFile(wb,`flowforce_campanha_${c.nome.replace(/[^a-zA-Z0-9]/g,"_")}.xlsx`);
 }
+// ══════ ESTEIRA DE DIGITACAO ══════
+let esteiraData=null;let esteiraStage='all';let esteiraLoading=false;
+
+async function loadEsteira(){
+  esteiraLoading=true;renderApp();
+  try{
+    const r=await apiFetch('/api/digitacao',{method:'POST',body:JSON.stringify({action:'list',limit:200})});
+    const d=await r.json();
+    esteiraData=d.ok?d.items:[];
+  }catch{esteiraData=[]}
+  esteiraLoading=false;renderApp();
+}
+
+function renderEsteira(){
+  let h='<div style="margin-bottom:16px"><div style="font-size:18px;font-weight:800;margin-bottom:4px">📝 Esteira de Digitação</div><div style="font-size:12px;color:var(--t2)">Pipeline de propostas enviadas para digitação</div></div>';
+
+  // Merge: carrinho local + supabase
+  const cartItems=getCartItems();
+  const dbItems=esteiraData||[];
+  // Deduplicate by dbId
+  const dbIds=new Set(dbItems.map(i=>String(i.id)));
+  const localOnly=cartItems.filter(i=>!i.dbId||!dbIds.has(String(i.dbId)));
+  const allItems=[...localOnly.map(i=>({...i,_source:'cart',_id:i.id})),...dbItems.map(i=>({...i,_source:'db',_id:i.id}))];
+
+  // Stages
+  const stages=[
+    {k:'all',l:'Todos',c:''},
+    {k:'pendente',l:'Pendente',c:'var(--ylw)'},
+    {k:'em_digitacao',l:'Em Digitação',c:'var(--acc)'},
+    {k:'enviada',l:'Enviada',c:'var(--cyan)'},
+    {k:'em_analise',l:'Em Análise',c:'var(--pur)'},
+    {k:'aprovada',l:'Aprovada',c:'var(--grn)'},
+    {k:'paga',l:'Paga',c:'var(--grn)'},
+    {k:'cancelada',l:'Cancelada',c:'var(--red)'},
+    {k:'recusada',l:'Recusada',c:'var(--red)'}
+  ];
+
+  // Count per stage
+  const counts={};
+  stages.forEach(s=>{counts[s.k]=s.k==='all'?allItems.length:allItems.filter(i=>i.status===s.k).length});
+
+  h+='<div class="pipe-stages" style="margin-bottom:16px">';
+  for(const s of stages){
+    if(s.k!=='all'&&counts[s.k]===0)continue;
+    const active=esteiraStage===s.k;
+    h+=`<button class="pipe-stage ${active?'active':''}" onclick="esteiraStage='${s.k}';renderApp()" style="${!active&&s.c?'border-color:'+s.c+';color:'+s.c:''}">${s.l}<span class="pipe-n">${counts[s.k]}</span></button>`;
+  }
+  h+='</div>';
+
+  // Load button
+  if(!esteiraData){
+    h+='<div style="text-align:center;padding:30px"><button class="btn-acc" onclick="loadEsteira()">Carregar Esteira do Servidor</button><div style="font-size:11px;color:var(--t3);margin-top:8px">Mostrando apenas itens do carrinho local</div></div>';
+  }else if(esteiraLoading){
+    h+='<div style="text-align:center;padding:30px;color:var(--t2)">⏳ Carregando...</div>';
+  }else{
+    h+='<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;color:var(--t3)">'+allItems.length+' registro(s) | Servidor: '+(dbItems.length)+' | Carrinho: '+localOnly.length+'</span><button class="btn btn-sm" onclick="loadEsteira()">↻ Atualizar</button></div>';
+  }
+
+  // Filter
+  const filtered=esteiraStage==='all'?allItems:allItems.filter(i=>i.status===esteiraStage);
+
+  if(!filtered.length){
+    h+='<div style="text-align:center;padding:40px;color:var(--t3)">Nenhuma proposta '+(esteiraStage!=='all'?'com status "'+esteiraStage+'"':'')+'</div>';
+    return h;
+  }
+
+  // Table
+  h+='<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Cliente</th><th>CPF</th><th>Tipo</th><th>Banco</th><th>Contrato</th><th class="right">Saldo</th><th class="right">Parcela</th><th class="right" style="color:var(--grn)">Troco</th><th>Status</th><th>Código AF</th><th>Data</th><th></th></tr></thead><tbody>';
+
+  for(const item of filtered.slice(0,100)){
+    const tipoPill=item.tipo==='portabilidade'?'pill-pur':item.tipo==='emprestimo_novo'?'pill-acc':item.tipo==='cartao_beneficio'?'pill-pnk':item.tipo==='refinanciamento'?'pill-cyan':'pill-default';
+    const statusPill=item.status==='pendente'?'pill-ylw':item.status==='em_digitacao'||item.status==='simulando'?'pill-acc':item.status==='enviada'?'pill-cyan':item.status==='em_analise'?'pill-pur':item.status==='aprovada'||item.status==='formalizada'||item.status==='paga'?'pill-grn':item.status==='cancelada'||item.status==='recusada'?'pill-red':'pill-default';
+    const tipoLabel={'portabilidade':'Port','emprestimo_novo':'Novo','refinanciamento':'Refin','cartao_beneficio':'Cartão','margem_complementar':'Margem','saque_rmc':'Saque'}[item.tipo]||item.tipo||'—';
+    const dt=item.created_at?new Date(item.created_at).toLocaleDateString('pt-BR'):(item.addedAt?new Date(item.addedAt).toLocaleDateString('pt-BR'):'—');
+    const saldo=item.saldo_devedor||'—';
+    const parcela=item.parcela_origem||'—';
+    const troco=item.valor_troco||'—';
+    const af=item.codigo_af||item.url_formalizacao||'—';
+
+    h+=`<tr class="rh"><td style="max-width:140px">${esc(item.nome||'—')}</td><td class="mono" style="font-size:11px">${esc(item.cpf||'—')}</td><td><span class="pill ${tipoPill}">${tipoLabel}</span></td><td><span class="pill pill-default">${esc(item.banco||'—')}</span></td><td class="mono" style="font-size:11px">${esc(item.contrato_origem||'—')}</td><td class="right mono">${esc(saldo)}</td><td class="right mono">${esc(parcela)}</td><td class="right mono" style="color:var(--grn);font-weight:700">${esc(troco)}</td><td><span class="pill ${statusPill}">${esc(item.status||'—')}</span></td><td class="mono" style="font-size:10px">${esc(af)}</td><td style="font-size:10px;color:var(--t3)">${dt}</td><td>`;
+    if(item._source==='cart'&&item.status==='pendente'){
+      h+=`<button class="btn-cart btn-cart-sm" onclick="digitarCartItem('${item._id}')">Digitar</button> `;
+      h+=`<button class="btn btn-red btn-sm" onclick="removeFromCart('${item._id}')">✕</button>`;
+    }
+    h+=`</td></tr>`;
+  }
+
+  h+='</tbody></table></div></div>';
+  return h;
+}
+
 function renderCampanhas(){
   let camps=getCamp();let users=getU()||[];
   let html=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><div style="font-size:18px;font-weight:800">📋 Campanhas</div></div>`;
@@ -2350,11 +2441,12 @@ let D=S.data,c=document.getElementById("appContainer"),html="";
 let isAdm=CU&&CU.role==="admin",isGes=CU&&(CU.role==="gestor"||CU.role==="admin"),isOp=CU&&CU.role==="operador";
 if(!D){
   document.getElementById("headerActions").style.display="none";
-  let noDataTabs=[{k:"home",l:"🏠 Início"},{k:"consulta",l:"🔍 Consulta"},{k:"camp",l:"📋 Campanhas"},{k:"crm",l:"🏷️ CRM",n:Object.keys(getCrmData()).length||""},{k:"wppchat",l:"💬 Chat"}];
+  let noDataTabs=[{k:"home",l:"🏠 Início"},{k:"consulta",l:"🔍 Consulta"},{k:"est",l:"📝 Esteira",n:cart.size||""},{k:"camp",l:"📋 Campanhas"},{k:"crm",l:"🏷️ CRM",n:Object.keys(getCrmData()).length||""},{k:"wppchat",l:"💬 Chat"}];
   if(isAdm){noDataTabs.push({k:"wpp",l:"📱 Conexões"});noDataTabs.push({k:"admin",l:"👥 Admin"})}
-  if(!["home","consulta","camp","crm","wppchat","wpp","admin"].includes(S.tab))S.tab="home";
+  if(!["home","consulta","est","camp","crm","wppchat","wpp","admin"].includes(S.tab))S.tab="home";
   html+=`<div class="tabs">${noDataTabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
   if(S.tab==="consulta"){c.innerHTML=html+renderConsulta();return}
+  if(S.tab==="est"){c.innerHTML=html+renderEsteira();return}
   if(S.tab==="camp"){c.innerHTML=html+renderCampanhas();return}
   if(S.tab==="crm"){c.innerHTML=html+renderCRM();return}
   if(S.tab==="wppchat"){c.innerHTML=html+renderWppChat();return}
@@ -2369,6 +2461,7 @@ if(!D){
   let tabs=[];
   if(isGes){tabs.push({k:"dash",l:"Dashboard"},{k:"an",l:"Análise",n:N((D.totalAnalise||D.analise.length))},{k:"el",l:"✅ Elegíveis",n:N(D.elegiveis.length)},{k:"pipe",l:"🔄 Pipeline",n:nSel||""},{k:"mp",l:"Mapa"},{k:"rc",l:"RMC/RCC",n:N(D.rmcRcc.length)})}
   tabs.push({k:"consulta",l:"🔍 Consulta"});
+  tabs.push({k:"est",l:"📝 Esteira",n:cart.size||""});
   tabs.push({k:"camp",l:"📋 Campanhas"});
   let crmCount=Object.keys(getCrmData()).length;
   tabs.push({k:"in100",l:"🔍 IN100",n:Object.keys(in100Cache).length||""});
@@ -2381,6 +2474,7 @@ if(!D){
   if(S.tab==="camp"){c.innerHTML=html+renderCampanhas();return}
   if(S.tab==="wpp"){c.innerHTML=html+renderWhatsApp();return}
   if(S.tab==="wppchat"){c.innerHTML=html+renderWppChat();return}
+  if(S.tab==="est"){c.innerHTML=html+renderEsteira();return}
   if(S.tab==="in100"){c.innerHTML=html+renderIN100();return}
   if(S.tab==="crm"){c.innerHTML=html+renderCRM();return}
 
