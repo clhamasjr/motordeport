@@ -1887,7 +1887,7 @@ async function wppSendMsg(){
     el.scrollTop=el.scrollHeight;
   }
   try{
-    await wppCall('send',{number,text});
+    await wppCall('send',{number,text,contactName:wppState.activeChat.name||number});
     // Mark as sent
     let statusEl=el?.querySelector('.msg-status:last-child')||el?.lastElementChild?.querySelector('.msg-status');
     if(statusEl)statusEl.textContent='✓';
@@ -1980,12 +1980,23 @@ function wppExtractText(m){
 
 // ── New chat from phone number ──
 function wppNewChat(){
-  let num=prompt('Digite o número (com DDD, ex: 15991234567):');
+  let num=prompt('Digite o numero (com DDD, ex: 15991234567):');
   if(!num)return;
   num=num.replace(/\D/g,'');
   if(!num)return;
   if(!num.startsWith('55')&&num.length<=11)num='55'+num;
-  wppStartChat(num);
+  let jid=num+'@s.whatsapp.net';
+  // Add to local chat list immediately
+  if(!wppState.chats.find(c=>c.id===jid)){
+    wppState.chats.unshift({
+      id:jid,
+      name:num,
+      lastMsgTimestamp:Math.floor(Date.now()/1000),
+      unreadMessages:0,
+      lastMessage:''
+    });
+  }
+  S.tab='wppchat';wppOpenChat(jid,num);
 }
 
 function renderWhatsApp(){

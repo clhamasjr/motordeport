@@ -1,6 +1,7 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
+import { dbSelect, dbInsert, dbUpdate, dbQuery } from './_lib/supabase.js';
 
 function getConfig() {
   return {
@@ -20,6 +21,32 @@ async function evo(method, path, body) {
   return { ok: r.ok, status: r.status, data: d };
 }
 
+// Upsert chat in Supabase (create or update)
+async function upsertChat(instance, jid, updates) {
+  const phone = jid.replace('@s.whatsapp.net', '');
+  const existing = await dbSelect('wpp_chats', { filters: { instance, jid }, single: true });
+
+  if (existing.data) {
+    await dbUpdate('wpp_chats', { id: existing.data.id }, {
+      ...updates,
+      last_message_at: new Date().toISOString()
+    });
+    return existing.data.id;
+  } else {
+    const { data } = await dbInsert('wpp_chats', {
+      instance,
+      jid,
+      phone,
+      name: updates.name || phone,
+      last_message: updates.last_message || '',
+      last_message_at: new Date().toISOString(),
+      unread_count: updates.unread_count || 0,
+      status: 'aberto'
+    });
+    return data?.id;
+  }
+}
+
 const j = (data, status = 200, req = null) => jsonResp(data, status, req);
 
 export default async function handler(req) {
@@ -33,6 +60,7 @@ export default async function handler(req) {
     const action = body.action || '';
     const inst = body.instance || '';
 
+    // ── Instance management ─────────────────────────────────
     if (action === 'list') {
       const r = await evo('GET', '/instance/fetchInstances');
       return j(r.data, 200, req);
@@ -89,85 +117,151 @@ export default async function handler(req) {
       return j(r.data, 200, req);
     }
 
+    // ── CHATS: load from Supabase (our own database) ────────
     if (action === 'chats') {
-      // Try multiple Evolution API endpoints/formats
-      let chats = [];
+      if (!inst) return jsonError('instance obrigatorio', 400, req);
 
-      // 1. POST /chat/findChats (v2 standard)
-      const r1 = await evo('POST', '/chat/findChats/' + inst, {});
-      if (Array.isArray(r1.data) && r1.data.length > 0) {
-        chats = r1.data;
-      }
+      const { data: chats } = await dbQuery('wpp_chats',
+        `select=*&instance=eq.${encodeURIComponent(inst)}&order=last_message_at.desc&limit=100`
+      );
 
-      // 2. Fallback: GET /chat/findChats
-      if (!chats.length) {
-        const r2 = await evo('GET', '/chat/findChats/' + inst);
-        if (Array.isArray(r2.data) && r2.data.length > 0) chats = r2.data;
-      }
+      // Transform to frontend format
+      const result = (chats || []).map(c => ({
+        id: c.jid,
+        name: c.name || c.phone || c.jid.replace('@s.whatsapp.net', ''),
+        lastMsgTimestamp: c.last_message_at ? Math.floor(new Date(c.last_message_at).getTime() / 1000) : 0,
+        unreadMessages: c.unread_count || 0,
+        lastMessage: c.last_message || '',
+        status: c.status,
+        cpf: c.cpf || '',
+        tags: c.tags || [],
+        notes: c.notes || '',
+        _dbId: c.id
+      }));
 
-      // 3. Fallback: POST with where clause (some v2 versions need this)
-      if (!chats.length) {
-        const r3 = await evo('POST', '/chat/findChats/' + inst, { where: {} });
-        if (Array.isArray(r3.data) && r3.data.length > 0) chats = r3.data;
-      }
-
-      // 4. Fallback: try /chat/findContacts to get at least contacts
-      if (!chats.length) {
-        const r4 = await evo('POST', '/chat/findContacts/' + inst, {});
-        if (Array.isArray(r4.data) && r4.data.length > 0) {
-          chats = r4.data.filter(c => c.id && !c.id.includes('@g.us')).map(c => ({
-            id: c.id || c.remoteJid || '',
-            name: c.pushName || c.name || c.verifiedName || '',
-            lastMsgTimestamp: 0,
-            unreadMessages: 0,
-            _fromContacts: true
-          }));
-        }
-      }
-
-      return j(chats, 200, req);
+      return j(result, 200, req);
     }
 
+    // ── MESSAGES: load from Evolution API ────────────────────
     if (action === 'messages') {
-      // Try POST then GET for messages
-      const r = await evo('POST', '/chat/findMessages/' + inst, { where: { key: { remoteJid: body.jid || '' } }, limit: body.limit || 50 });
+      const jid = body.jid || '';
+      const r = await evo('POST', '/chat/findMessages/' + inst, {
+        where: { key: { remoteJid: jid } },
+        limit: body.limit || 50
+      });
       let msgs = r.data;
 
-      // Fallback: some v2 versions use different structure
-      if (!Array.isArray(msgs) || msgs.length === 0) {
-        if (msgs && msgs.messages) msgs = msgs.messages;
-        else if (msgs && msgs.records) msgs = msgs.records;
+      // Handle paginated response format
+      if (!Array.isArray(msgs)) {
+        if (msgs && msgs.records) msgs = msgs.records;
+        else if (msgs && msgs.messages) msgs = msgs.messages;
+        else msgs = [];
       }
 
-      // Fallback: try GET endpoint
-      if (!Array.isArray(msgs) || msgs.length === 0) {
-        const r2 = await evo('GET', '/chat/findMessages/' + inst + '?where[key][remoteJid]=' + encodeURIComponent(body.jid || '') + '&limit=' + (body.limit || 50));
-        if (Array.isArray(r2.data)) msgs = r2.data;
-        else if (r2.data && r2.data.messages) msgs = r2.data.messages;
+      // Mark as read in our DB
+      if (jid && inst) {
+        const { data: chat } = await dbSelect('wpp_chats', { filters: { instance: inst, jid }, single: true });
+        if (chat) await dbUpdate('wpp_chats', { id: chat.id }, { unread_count: 0 });
       }
 
       return j(msgs, 200, req);
     }
 
+    // ── SEND: send via Evolution + save chat in Supabase ────
     if (action === 'send') {
       const number = (body.number || '').replace(/\D/g, '');
       const text = body.text || '';
       if (!number || !text) return jsonError('number e text obrigatorios', 400, req);
+
       const r = await evo('POST', '/message/sendText/' + inst, { number, text });
+
+      // Save/update chat in Supabase
+      const jid = number + '@s.whatsapp.net';
+      await upsertChat(inst, jid, {
+        name: body.contactName || number,
+        last_message: text.substring(0, 200),
+        unread_count: 0
+      });
+
       return j(r.data, 200, req);
     }
 
+    // ── SEND BULK ───────────────────────────────────────────
     if (action === 'sendBulk') {
       const messages = body.messages || [];
       const results = [];
       for (const m of messages) {
+        const num = (m.number || '').replace(/\D/g, '');
         try {
-          const r = await evo('POST', '/message/sendText/' + inst, { number: (m.number || '').replace(/\D/g, ''), text: m.text });
+          const r = await evo('POST', '/message/sendText/' + inst, { number: num, text: m.text });
           results.push({ number: m.number, ok: r.ok, data: r.data });
+          // Save chat
+          await upsertChat(inst, num + '@s.whatsapp.net', {
+            name: m.contactName || num,
+            last_message: (m.text || '').substring(0, 200)
+          });
         } catch (e) { results.push({ number: m.number, ok: false, error: 'Erro no envio' }); }
         await new Promise(r => setTimeout(r, 1500));
       }
       return j({ results }, 200, req);
+    }
+
+    // ── UPDATE CHAT: update chat metadata in Supabase ───────
+    if (action === 'updateChat') {
+      const jid = body.jid || '';
+      if (!jid || !inst) return jsonError('jid e instance obrigatorios', 400, req);
+
+      const { data: chat } = await dbSelect('wpp_chats', { filters: { instance: inst, jid }, single: true });
+      if (!chat) return jsonError('Chat nao encontrado', 404, req);
+
+      const updates = {};
+      if (body.name !== undefined) updates.name = body.name;
+      if (body.status !== undefined) updates.status = body.status;
+      if (body.cpf !== undefined) updates.cpf = body.cpf;
+      if (body.tags !== undefined) updates.tags = body.tags;
+      if (body.notes !== undefined) updates.notes = body.notes;
+      if (body.assigned_to !== undefined) updates.assigned_to = body.assigned_to;
+
+      if (Object.keys(updates).length === 0) return jsonError('Nada pra atualizar', 400, req);
+
+      await dbUpdate('wpp_chats', { id: chat.id }, updates);
+      return j({ ok: true }, 200, req);
+    }
+
+    // ── WEBHOOK: Evolution sends incoming messages here ──────
+    if (action === 'webhook') {
+      const event = body.event || '';
+      const data = body.data || {};
+
+      if (event === 'messages.upsert') {
+        const msg = data.message || data;
+        const key = msg.key || {};
+        const jid = key.remoteJid || '';
+        const instance = data.instance || inst;
+
+        if (jid && !jid.includes('@g.us') && !key.fromMe) {
+          const text = msg.message?.conversation
+            || msg.message?.extendedTextMessage?.text
+            || msg.message?.imageMessage ? '📷 Imagem'
+            : msg.message?.audioMessage ? '🎤 Audio'
+            : msg.message?.videoMessage ? '🎥 Video'
+            : msg.message?.documentMessage ? '📎 Documento'
+            : '';
+          const name = msg.pushName || key.remoteJid?.replace('@s.whatsapp.net', '') || '';
+
+          // Get current unread count and increment
+          const { data: existing } = await dbSelect('wpp_chats', { filters: { instance, jid }, single: true });
+          const newUnread = (existing?.unread_count || 0) + 1;
+
+          await upsertChat(instance, jid, {
+            name: name || existing?.name || '',
+            last_message: (typeof text === 'string' ? text : '').substring(0, 200),
+            unread_count: newUnread
+          });
+        }
+      }
+
+      return j({ ok: true }, 200, req);
     }
 
     return jsonError('action invalida', 400, req);
