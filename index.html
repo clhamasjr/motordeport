@@ -1198,10 +1198,10 @@ async function runSimulacao(){
         const rendaC=document.getElementById('simRendaCartao').value;
         if(rendaC)payload.valor_renda=rendaC;
       }
-      const r=await fetch(API_BASE+'/facta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const r=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify(payload)});
       result=await r.json();
     }else{
-      const r=await fetch(API_BASE+'/joinbank',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'listRules',operation:Number(op),limit:100})});
+      const r=await apiFetch('/api/joinbank',{method:'POST',body:JSON.stringify({action:'listRules',operation:Number(op),limit:100})});
       result=await r.json();
       if(result.items&&result.items.length){
         const opNames={1:['novo','new','entrante'],2:['refin'],3:['port','portab'],4:['port','refin']};
@@ -1337,7 +1337,7 @@ async function runIN100(){
   document.getElementById('simIN100').style.display='block';
   document.getElementById('simIN100Content').innerHTML='<div style="text-align:center;padding:20px"><div style="font-size:20px">⏳</div><div style="font-size:12px;color:var(--t2)">Consultando DATAPREV via JoinBank...</div></div>';
   try{
-    const r=await fetch(API_BASE+'/joinbank',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'in100',cpf,beneficio:ben})});
+    const r=await apiFetch('/api/joinbank',{method:'POST',body:JSON.stringify({action:'in100',cpf,beneficio:ben})});
     const d=await r.json();
     if(!d.success){
       document.getElementById('simIN100Content').innerHTML=`<div style="color:var(--red);padding:12px">❌ Erro: ${esc(d.error||'Falha na consulta')}</div>`;
@@ -3111,7 +3111,7 @@ async function batchCartao(){
     let r=src.find(x=>x.cpf===cpf);
     document.getElementById("bStat").textContent=r?r.nome:cpf;
     try{
-      const res=await fetch("/api/cartao",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cpf:cpf.replace(/\D/g,""),matricula:r?r.ben:""})});
+      const res=await apiFetch("/api/cartao",{method:"POST",body:JSON.stringify({cpf:cpf.replace(/\D/g,""),matricula:r?r.ben:""})});
       const data=await res.json();
       if(data.success||data.cartoes){cardCache[cpf]=data;ok++}else{fail++}
     }catch{fail++}
