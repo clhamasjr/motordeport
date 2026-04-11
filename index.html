@@ -14,9 +14,12 @@ body{background:var(--bg);color:var(--t1);font-family:'Inter','Segoe UI',system-
 ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--brd);border-radius:3px}
 ::selection{background:var(--acc);color:#fff}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes tabIn{from{opacity:0}to{opacity:1}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
 .fi{animation:fadeIn .35s ease both}.shake{animation:shake .3s ease}
+#appContainer{min-height:80vh}
+.tab-content{animation:tabIn .2s ease both}
 button{font-family:inherit;cursor:pointer;transition:all .15s;border:none;background:none}button:hover{filter:brightness(1.15)}
 input,select,textarea{font-family:inherit;outline:none;font-size:14px}.rh:hover{background:rgba(59,130,246,0.04)!important}
 .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:radial-gradient(ellipse at top,rgba(59,130,246,.06),transparent 60%)}
@@ -2658,24 +2661,149 @@ if(oportunidades.length){
   return html;
 }  
 
+// ══════ GESTAO (Painel Admin) ══════
+let gestaoData=null;let gestaoLoading=false;
+async function loadGestao(){
+  if(gestaoLoading)return;gestaoLoading=true;
+  try{
+    const res=await apiFetch('/api/gestao',{method:'POST',body:JSON.stringify({action:'dashboard'})});
+    const d=await res.json();
+    if(d.ok)gestaoData=d;
+  }catch(e){console.log('[Gestao] erro:',e.message)}
+  gestaoLoading=false;renderApp();
+}
+function renderGestao(){
+  if(!gestaoData){setTimeout(()=>loadGestao(),100);return'<div style="text-align:center;padding:60px"><div style="font-size:30px;animation:pulse 1.2s ease infinite">📊</div><div style="font-size:13px;color:var(--t2);margin-top:12px">Carregando painel de gestao...</div></div>'}
+  let g=gestaoData;let html='';
+  // Header
+  html+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+    <div style="font-size:18px;font-weight:800">📊 Painel de Gestao</div>
+    <div style="display:flex;gap:8px"><button class="btn btn-sm btn-cyan" onclick="gestaoData=null;loadGestao()">🔄 Atualizar</button></div>
+  </div>`;
+  // KPIs
+  html+=`<div class="kpi-grid" style="margin-bottom:20px">
+    <div class="kpi"><div class="kpi-label">👥 Online Agora</div><div class="kpi-value" style="color:var(--grn)">${g.onlineCount}</div></div>
+    <div class="kpi"><div class="kpi-label">🔍 Consultas Hoje</div><div class="kpi-value" style="color:var(--acc)">${g.consultas.hoje}</div></div>
+    <div class="kpi"><div class="kpi-label">📝 Digitacoes</div><div class="kpi-value" style="color:var(--pur)">${g.digitacao.total}</div></div>
+    <div class="kpi"><div class="kpi-label">💰 Valor Digitado</div><div class="kpi-value" style="color:var(--ylw)">${R$(g.digitacao.totalValor)}</div></div>
+    <div class="kpi"><div class="kpi-label">💬 Chats Ativos</div><div class="kpi-value" style="color:var(--cyan)">${g.chats.abertos}</div></div>
+    <div class="kpi"><div class="kpi-label">📩 Nao Lidos</div><div class="kpi-value" style="color:var(--org)">${g.chats.unread}</div></div>
+  </div>`;
+  // Digitacao pipeline
+  let statuses=['pendente','em_digitacao','enviada','em_analise','aprovada','formalizada','paga','cancelada'];
+  let stColors={pendente:'var(--t3)',em_digitacao:'var(--ylw)',enviada:'var(--acc)',em_analise:'var(--org)',aprovada:'var(--grn)',formalizada:'var(--cyan)',paga:'var(--grn)',cancelada:'var(--red)'};
+  html+=`<div style="background:var(--card);border-radius:12px;padding:18px;border:1px solid var(--brd);margin-bottom:20px">
+    <div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:12px;text-transform:uppercase">Pipeline de Digitacao</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">`;
+  for(let st of statuses){let n=g.digitacao.perStatus[st]||0;
+    html+=`<div style="flex:1;min-width:90px;background:var(--sf);border-radius:10px;padding:12px;text-align:center;border:1px solid var(--brd)">
+      <div style="font-size:20px;font-weight:900;color:${stColors[st]||'var(--t1)'}">${n}</div>
+      <div style="font-size:9px;color:var(--t3);text-transform:uppercase;margin-top:4px">${st.replace(/_/g,' ')}</div>
+    </div>`}
+  html+=`</div></div>`;
+  // Users activity table
+  html+=`<div style="background:var(--card);border-radius:12px;padding:18px;border:1px solid var(--brd);margin-bottom:20px">
+    <div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:12px;text-transform:uppercase">Atividade por Operador</div>
+    <div style="overflow:auto;border-radius:8px;border:1px solid var(--brd)"><table><thead><tr>
+      <th>Status</th><th>Operador</th><th>Cargo</th><th>Consultas Hoje</th><th>Digitacoes</th><th>Pendentes</th><th>Aprovadas</th><th>Pagas</th><th class="right">Valor Total</th>
+    </tr></thead><tbody>`;
+  for(let u of g.users.sort((a,b)=>b.consultasHoje-a.consultasHoje)){
+    let dot=u.online?'<span style="color:var(--grn)">●</span>':'<span style="color:var(--red)">○</span>';
+    html+=`<tr>
+      <td>${dot}</td>
+      <td style="font-weight:700">${esc(u.name)}</td>
+      <td><span class="pill ${u.role==='admin'?'pill-acc':u.role==='gestor'?'pill-pur':'pill-default'}" style="font-size:10px">${u.role}</span></td>
+      <td style="text-align:center;font-weight:700;color:var(--acc)">${u.consultasHoje}</td>
+      <td style="text-align:center">${u.digitacoes}</td>
+      <td style="text-align:center;color:var(--ylw)">${u.digPendente}</td>
+      <td style="text-align:center;color:var(--grn)">${u.digAprovada}</td>
+      <td style="text-align:center;color:var(--cyan)">${u.digPaga}</td>
+      <td class="right" style="font-weight:700">${R$(u.digValor)}</td>
+    </tr>`}
+  html+=`</tbody></table></div></div>`;
+  // Recent consultations
+  html+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">`;
+  // Left: consultas recentes
+  html+=`<div style="background:var(--card);border-radius:12px;padding:18px;border:1px solid var(--brd)">
+    <div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:12px;text-transform:uppercase">Consultas Recentes</div>
+    <div style="max-height:350px;overflow-y:auto">`;
+  for(let c of (g.consultas.recentes||[])){
+    let dt=c.created_at?new Date(c.created_at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+    html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--brd)">
+      <div><div style="font-size:12px;font-weight:600">${esc(c.nome||c.cpf||'?')}</div>
+      <div style="font-size:10px;color:var(--t3)">${esc(c.userName)} • ${esc(c.tipo||'')} • ${esc(c.fonte||'')}</div></div>
+      <div style="font-size:10px;color:var(--t3);white-space:nowrap">${dt}</div>
+    </div>`}
+  if(!g.consultas.recentes||!g.consultas.recentes.length)html+='<div style="text-align:center;color:var(--t3);font-size:12px;padding:20px">Nenhuma consulta recente</div>';
+  html+=`</div></div>`;
+  // Right: audit log
+  html+=`<div style="background:var(--card);border-radius:12px;padding:18px;border:1px solid var(--brd)">
+    <div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:12px;text-transform:uppercase">Log de Atividades</div>
+    <div style="max-height:350px;overflow-y:auto">`;
+  let actionIcons={login:'🔑',create_user:'👤',delete_user:'❌',logout:'🚪'};
+  for(let a of (g.audit||[])){
+    let dt=a.created_at?new Date(a.created_at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+    let icon=actionIcons[a.action]||'📋';
+    let detail='';
+    if(a.details&&typeof a.details==='object'){
+      if(a.details.target)detail=' → '+a.details.target;
+      if(a.details.role)detail+=' ('+a.details.role+')';
+    }
+    html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--brd)">
+      <div><div style="font-size:12px;font-weight:600">${icon} ${esc(a.action)}${esc(detail)}</div>
+      <div style="font-size:10px;color:var(--t3)">${esc(a.userName)} • ${esc(a.ip_address||'')}</div></div>
+      <div style="font-size:10px;color:var(--t3);white-space:nowrap">${dt}</div>
+    </div>`}
+  if(!g.audit||!g.audit.length)html+='<div style="text-align:center;color:var(--t3);font-size:12px;padding:20px">Nenhuma atividade</div>';
+  html+=`</div></div>`;
+  html+=`</div>`;
+  // Chats WhatsApp recentes
+  html+=`<div style="background:var(--card);border-radius:12px;padding:18px;border:1px solid var(--brd);margin-top:20px">
+    <div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:12px;text-transform:uppercase">Chats WhatsApp Recentes</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px">`;
+  for(let ch of (g.chats.recentes||[])){
+    let dt=ch.last_message_at?new Date(ch.last_message_at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+    let stPill=ch.status==='aberto'?'pill-grn':ch.status==='pendente'?'pill-ylw':'pill-default';
+    html+=`<div style="background:var(--sf);border-radius:10px;padding:12px;border:1px solid var(--brd)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px">${esc(ch.name||ch.phone||'?')}</div>
+        <span class="pill ${stPill}" style="font-size:9px">${ch.status}</span>
+      </div>
+      <div style="font-size:11px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ch.last_message||'...')}</div>
+      <div style="font-size:9px;color:var(--t3);margin-top:4px;display:flex;justify-content:space-between">
+        <span>${esc(ch.instance||'')}</span><span>${dt}</span>
+        ${ch.unread_count>0?`<span style="color:var(--grn);font-weight:700">${ch.unread_count} novas</span>`:''}
+      </div>
+    </div>`}
+  if(!g.chats.recentes||!g.chats.recentes.length)html+='<div style="text-align:center;color:var(--t3);font-size:12px;padding:20px">Nenhum chat</div>';
+  html+=`</div></div>`;
+  return html;
+}
+
 // ══════ RENDER ══════
+let _lastTab='';
 function renderApp(){
 renderCartBadge();
 let D=S.data,c=document.getElementById("appContainer"),html="";
 let isAdm=CU&&CU.role==="admin",isGes=CU&&(CU.role==="gestor"||CU.role==="admin"),isOp=CU&&CU.role==="operador";
+let tabChanged=_lastTab!==S.tab;_lastTab=S.tab;
 if(!D){
   document.getElementById("headerActions").style.display="none";
   let noDataTabs=[{k:"home",l:"🏠 Início"},{k:"consulta",l:"🔍 Consulta"},{k:"est",l:"📝 Esteira",n:cart.size||""},{k:"camp",l:"📋 Campanhas"},{k:"crm",l:"🏷️ CRM",n:Object.keys(getCrmData()).length||""},{k:"wppchat",l:"💬 Chat",n:wppUnreadTotal()||""}];
-  if(isAdm){noDataTabs.push({k:"wpp",l:"📱 Conexões"});noDataTabs.push({k:"admin",l:"👥 Admin"})}
-  if(!["home","consulta","est","camp","crm","wppchat","wpp","admin"].includes(S.tab))S.tab="home";
-  html+=`<div class="tabs">${noDataTabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
-  if(S.tab==="consulta"){c.innerHTML=html+renderConsulta();return}
-  if(S.tab==="est"){c.innerHTML=html+renderEsteira();return}
-  if(S.tab==="camp"){c.innerHTML=html+renderCampanhas();return}
-  if(S.tab==="crm"){c.innerHTML=html+renderCRM();return}
-  if(S.tab==="wppchat"){c.innerHTML=html+renderWppChat();return}
-  if(S.tab==="wpp"&&isAdm){c.innerHTML=html+renderWhatsApp();return}
-  if(S.tab==="admin"&&isAdm){c.innerHTML=html+renderAdmin();return}
+  if(isAdm){noDataTabs.push({k:"wpp",l:"📱 Conexões"});noDataTabs.push({k:"gestao",l:"📊 Gestão"});noDataTabs.push({k:"admin",l:"👥 Admin"})}
+  if(!["home","consulta","est","camp","crm","wppchat","wpp","gestao","admin"].includes(S.tab))S.tab="home";
+  // Only update tabs bar if it exists, otherwise build full
+  let tabsHtml=`<div class="tabs" id="tabsBar">${noDataTabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
+  let content='';
+  if(S.tab==="consulta")content=renderConsulta();
+  else if(S.tab==="est")content=renderEsteira();
+  else if(S.tab==="camp")content=renderCampanhas();
+  else if(S.tab==="crm")content=renderCRM();
+  else if(S.tab==="wppchat")content=renderWppChat();
+  else if(S.tab==="wpp"&&isAdm)content=renderWhatsApp();
+  else if(S.tab==="gestao"&&isAdm)content=renderGestao();
+  else if(S.tab==="admin"&&isAdm)content=renderAdmin();
+  if(content){c.innerHTML=tabsHtml+'<div class="tab-content">'+content+'</div>';return}
   let hist=getMyHist();
   html+=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:${hist.length?'40vh':'60vh'}" class="fi"><div style="cursor:pointer;background:var(--sf);border:2px solid var(--acc);border-radius:20px;padding:40px 48px;text-align:center;max-width:500px;width:100%;margin-bottom:20px;box-shadow:0 0 30px rgba(59,130,246,.15)" onclick="S.tab='consulta';renderApp()"><div style="font-size:36px;margin-bottom:16px">🔍</div><div style="font-size:19px;font-weight:700;margin-bottom:8px">Consulta Unitária</div><div style="font-size:14px;color:var(--t2);margin-bottom:16px">Consulte extrato completo por CPF</div><div class="btn-acc">Consultar CPF</div></div><div class="upload-box" id="uploadBox" onclick="document.getElementById('fileInput').click()"><div style="font-size:36px;margin-bottom:16px">📊</div><div style="font-size:19px;font-weight:700;margin-bottom:8px">Consulta em Lote</div><div style="font-size:14px;color:var(--t2);margin-bottom:24px">Suba a base completa offline</div><div class="btn-acc">Selecionar Arquivo</div><div style="font-size:9px;color:var(--t3);margin-top:10px">.xlsx .xls .csv</div><input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)"></div></div>`;
   if(hist.length){html+=`<div class="fi" style="margin-top:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:700">📁 Histórico</div><button class="btn btn-red btn-sm" onclick="clearHist()">Limpar</button></div><div style="display:grid;gap:8px">`;for(let h of hist){let sm=h.summary||{};let bensStr=sm.beneficios&&sm.beneficios.length?sm.beneficios.slice(0,5).join(", ")+(sm.beneficios.length>5?" ...":""):"";html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div style="flex:1;min-width:180px"><div style="font-size:12px;font-weight:700">${esc(h.fname)}</div><div style="font-size:10px;color:var(--t2)">${h.date}${CU&&CU.role==="admin"?` — <span style="color:var(--cyan)">${esc(h.user)}</span>`:""}</div>${bensStr?`<div style="font-size:9px;color:var(--t3);margin-top:3px;font-family:monospace">Ben: ${esc(bensStr)}</div>`:""}</div><div style="display:flex;gap:12px"><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):"-"}</div><div style="font-size:8px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--ylw)">${sm.valorContrato?R$(sm.valorContrato):"-"}</div><div style="font-size:8px;color:var(--t3)">VLR CONT</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):"-"}</div><div style="font-size:8px;color:var(--t3)">TROCO</div></div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn-acc" style="padding:4px 12px;font-size:10px;border-radius:5px" onclick="loadHist(${h.id})">📂 Carregar</button><button class="btn btn-red btn-sm" onclick="delHist(${h.id})">✕</button></div></div>`}html+=`</div></div>`}
@@ -2691,16 +2819,19 @@ if(!D){
   tabs.push({k:"in100",l:"🔍 IN100",n:Object.keys(in100Cache).length||""});
   tabs.push({k:"crm",l:"🏷️ CRM",n:crmCount||""});
   tabs.push({k:"wppchat",l:"💬 Chat",n:wppUnreadTotal()||""});
-  if(isAdm){tabs.push({k:"wpp",l:"📱 Conexões"});tabs.push({k:"admin",l:"👥"})}
-  html+=`<div class="tabs">${tabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
-  if(S.tab==="admin"){c.innerHTML=html+renderAdmin();return}
-  if(S.tab==="consulta"){c.innerHTML=html+renderConsulta();return}
-  if(S.tab==="camp"){c.innerHTML=html+renderCampanhas();return}
-  if(S.tab==="wpp"){c.innerHTML=html+renderWhatsApp();return}
-  if(S.tab==="wppchat"){c.innerHTML=html+renderWppChat();return}
-  if(S.tab==="est"){c.innerHTML=html+renderEsteira();return}
-  if(S.tab==="in100"){c.innerHTML=html+renderIN100();return}
-  if(S.tab==="crm"){c.innerHTML=html+renderCRM();return}
+  if(isAdm){tabs.push({k:"wpp",l:"📱 Conexões"});tabs.push({k:"gestao",l:"📊 Gestão"});tabs.push({k:"admin",l:"👥"})}
+  html+=`<div class="tabs" id="tabsBar">${tabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
+  let tcontent='';
+  if(S.tab==="admin")tcontent=renderAdmin();
+  else if(S.tab==="consulta")tcontent=renderConsulta();
+  else if(S.tab==="camp")tcontent=renderCampanhas();
+  else if(S.tab==="wpp")tcontent=renderWhatsApp();
+  else if(S.tab==="wppchat")tcontent=renderWppChat();
+  else if(S.tab==="est")tcontent=renderEsteira();
+  else if(S.tab==="in100")tcontent=renderIN100();
+  else if(S.tab==="crm")tcontent=renderCRM();
+  else if(S.tab==="gestao"&&isAdm)tcontent=renderGestao();
+  if(tcontent){c.innerHTML=html+'<div class="tab-content">'+tcontent+'</div>';return}
 
   // ═══ DASHBOARD ═══
   if(S.tab==="dash"){let tT=D.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=D.elegiveis.reduce((s,e)=>s+e.vc,0);
