@@ -841,7 +841,10 @@ function restoreSession(){
 
 function handleFile(inp){let f=inp.files[0];if(!f)return;S.fname=f.name;document.getElementById("appContainer").innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:60vh;flex-direction:column;gap:12px"><div style="font-size:30px;animation:pulse 1.2s ease infinite">⚙️</div><div style="font-size:13px;color:var(--t2)">Processando...</div></div>';setTimeout(()=>{let reader=new FileReader();reader.onload=function(e){try{let wb=XLSX.read(e.target.result,{type:"array",cellDates:true});let ws=wb.Sheets[wb.SheetNames[0]];S.data=processar(XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:true}));S.tab="dash";S.pg=0;selected.clear();phoneCache={};wppSent.clear();sessionStorage.removeItem('ff_ss');if(S.data){let tT=S.data.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=S.data.elegiveis.reduce((s,e)=>s+e.vc,0);let bens=[...new Set(S.data.analise.map(r=>r.ben).filter(b=>b))].slice(0,20);addHist(S.fname,{contratos:S.data.analise.length,elegiveis:S.data.elegiveis.length,troco:tT,valorContrato:tVC,rmcRcc:S.data.rmcRcc.length,beneficios:bens},S.data)}renderApp()}catch(err){alert("Erro: "+err.message);renderApp()}};reader.readAsArrayBuffer(f)},50)}
 function resetData(){S.data=null;S.fname="";S.tab="dash";selected.clear();phoneCache={};wppSent.clear();rcSelected.clear();localStorage.removeItem("ff_active");localStorage.removeItem("ff_tab");sessionStorage.removeItem("ff_ss");renderApp()}
-function setTab(t){S.tab=t;S.sort={c:null,d:"asc"};S.pg=0;localStorage.setItem("ff_tab",t);renderApp();
+function setTab(t){S.tab=t;S.sort={c:null,d:"asc"};S.pg=0;localStorage.setItem("ff_tab",t);
+  // Stop polling when leaving chat tab
+  if(t!=='wppchat')wppStopPolling();
+  renderApp();
   // Auto-load WhatsApp chats when switching to chat tab
   if(t==='wppchat'&&wppState.connected&&!wppState.chats.length)wppLoadChats();
 }
@@ -1821,24 +1824,38 @@ async function wppLoadChats(){
     wppState.chats=chats.filter(c=>{
       const chatId=c.id||c.jid||c.remoteJid||'';
       return chatId && !chatId.includes('@g.us') && !chatId.includes('@broadcast');
-    }).map(c=>({
-      ...c,
-      id: c.id||c.jid||c.remoteJid||'',
-      name: c.name||c.pushName||c.contact?.name||(c.id||c.jid||'').replace('@s.whatsapp.net',''),
-      lastMsgTimestamp: c.lastMsgTimestamp||c.updatedAt||c.timestamp||0,
-      unreadMessages: c.unreadMessages||c.unreadCount||0
-    })).slice(0,100);
+    }).map(c=>{
+      // Extract last message text for preview
+      let lastMsg='';
+      if(c.lastMessage){
+        let lm=c.lastMessage;
+        if(typeof lm==='string')lastMsg=lm;
+        else lastMsg=lm.conversation||lm.body||lm.text||(lm.extendedTextMessage&&lm.extendedTextMessage.text)||'';
+        if(lm.imageMessage)lastMsg='📷 Imagem';
+        if(lm.audioMessage)lastMsg='🎤 Audio';
+        if(lm.videoMessage)lastMsg='🎥 Video';
+        if(lm.documentMessage)lastMsg='📎 Documento';
+      }
+      return{
+        ...c,
+        id: c.id||c.jid||c.remoteJid||'',
+        name: c.name||c.pushName||c.contact?.name||(c.id||c.jid||'').replace('@s.whatsapp.net',''),
+        lastMsgTimestamp: c.lastMsgTimestamp||c.updatedAt||c.timestamp||0,
+        unreadMessages: c.unreadMessages||c.unreadCount||0,
+        lastMessage: lastMsg
+      };
+    }).slice(0,100);
     wppState.chats.sort((a,b)=>(b.lastMsgTimestamp||0)-(a.lastMsgTimestamp||0));
     renderApp();
   }catch(e){console.log('[WPP] loadChats error:', e.message);renderApp()}
 }
 
 async function wppOpenChat(jid,name){
+  wppStopPolling();
   wppState.activeChat={jid,name};wppState.messages=[];renderApp();
   try{
     const d=await wppCall('messages',{jid,limit:50});
     console.log('[WPP] findMessages response:', typeof d, Array.isArray(d) ? d.length + ' msgs' : JSON.stringify(d).substring(0,200));
-    // Handle various response formats
     let msgs=[];
     if(Array.isArray(d)){msgs=d}
     else if(d&&Array.isArray(d.messages)){msgs=d.messages}
@@ -1847,19 +1864,38 @@ async function wppOpenChat(jid,name){
     wppState.messages=msgs.reverse();
     renderApp();
     setTimeout(()=>{let el=document.getElementById('wppMsgList');if(el)el.scrollTop=el.scrollHeight},100);
+    // Mark chat as read in local state
+    let ch=wppState.chats.find(c=>c.id===jid);
+    if(ch)ch.unreadMessages=0;
   }catch(e){console.log('[WPP] openChat error:', e.message);renderApp()}
 }
 
 async function wppSendMsg(){
   let inp=document.getElementById('wppMsgInput');if(!inp||!inp.value.trim())return;
-  let text=inp.value.trim();inp.value='';
+  let text=inp.value.trim();inp.value='';inp.focus();
   let number=wppState.activeChat.jid.replace('@s.whatsapp.net','');
+  // Append message to DOM immediately (no full renderApp)
+  let msg={key:{fromMe:true},message:{conversation:text},messageTimestamp:Math.floor(Date.now()/1000)};
+  wppState.messages.push(msg);
+  let el=document.getElementById('wppMsgList');
+  if(el){
+    let time=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    let div=document.createElement('div');
+    div.style.cssText='align-self:flex-end;max-width:70%;padding:10px 14px;border-radius:12px 12px 2px 12px;background:rgba(14,165,233,.12);border:1px solid rgba(14,165,233,.2);animation:fadeIn .2s ease';
+    div.innerHTML=`<div style="font-size:13px;color:var(--t1);white-space:pre-wrap;word-break:break-word">${esc(text)}</div><div style="font-size:9px;color:var(--t3);text-align:right;margin-top:4px">${time} <span class="msg-status">⏳</span></div>`;
+    el.appendChild(div);
+    el.scrollTop=el.scrollHeight;
+  }
   try{
     await wppCall('send',{number,text});
-    wppState.messages.push({key:{fromMe:true},message:{conversation:text},messageTimestamp:Math.floor(Date.now()/1000)});
-    renderApp();
-    setTimeout(()=>{let el=document.getElementById('wppMsgList');if(el)el.scrollTop=el.scrollHeight},50);
-  }catch(e){alert('Erro: '+e.message)}
+    // Mark as sent
+    let statusEl=el?.querySelector('.msg-status:last-child')||el?.lastElementChild?.querySelector('.msg-status');
+    if(statusEl)statusEl.textContent='✓';
+  }catch(e){
+    let statusEl=el?.lastElementChild?.querySelector('.msg-status');
+    if(statusEl){statusEl.textContent='✕';statusEl.style.color='var(--red)'}
+    showToast('Erro ao enviar: '+e.message,'error');
+  }
 }
 
 async function wppStartChat(number){
@@ -1868,6 +1904,88 @@ async function wppStartChat(number){
   if(!number.startsWith('55')&&number.length<=11)number='55'+number;
   let jid=number+'@s.whatsapp.net';
   S.tab='wppchat';wppOpenChat(jid,number);
+}
+
+// ── Auto-refresh polling ──
+let wppPollTimer=null;
+function wppStartPolling(){
+  wppStopPolling();
+  if(!wppState.connected||!wppState.activeChat)return;
+  wppPollTimer=setInterval(async()=>{
+    if(S.tab!=='wppchat'||!wppState.activeChat)return wppStopPolling();
+    try{
+      let d=await wppCall('messages',{jid:wppState.activeChat.jid,limit:20});
+      let msgs=[];
+      if(Array.isArray(d))msgs=d;
+      else if(d&&Array.isArray(d.messages))msgs=d.messages;
+      else if(d&&Array.isArray(d.data))msgs=d.data;
+      else if(d&&d.records&&Array.isArray(d.records))msgs=d.records;
+      msgs=msgs.reverse();
+      // Only update if new messages arrived
+      if(msgs.length&&msgs.length!==wppState.messages.length){
+        let lastOld=wppState.messages.length?wppState.messages[wppState.messages.length-1].messageTimestamp:0;
+        let lastNew=msgs.length?msgs[msgs.length-1].messageTimestamp:0;
+        if(lastNew>lastOld||msgs.length>wppState.messages.length){
+          wppState.messages=msgs;
+          wppRenderMessages();
+        }
+      }
+    }catch(e){console.log('[WPP] poll error:',e.message)}
+  },5000);
+}
+function wppStopPolling(){if(wppPollTimer){clearInterval(wppPollTimer);wppPollTimer=null}}
+
+// ── Smart message render (no full renderApp) ──
+function wppRenderMessages(){
+  let el=document.getElementById('wppMsgList');
+  if(!el)return;
+  let wasAtBottom=el.scrollHeight-el.scrollTop-el.clientHeight<60;
+  let html='';
+  for(let m of wppState.messages){
+    let fromMe=m.key&&m.key.fromMe;
+    let text=wppExtractText(m);
+    if(!text)continue;
+    let time=m.messageTimestamp?new Date(m.messageTimestamp*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+    html+=`<div style="align-self:${fromMe?'flex-end':'flex-start'};max-width:70%;padding:10px 14px;border-radius:${fromMe?'12px 12px 2px 12px':'12px 12px 12px 2px'};background:${fromMe?'rgba(14,165,233,.12)':'var(--card)'};border:1px solid ${fromMe?'rgba(14,165,233,.2)':'var(--brd)'}">
+      <div style="font-size:13px;color:var(--t1);white-space:pre-wrap;word-break:break-word">${esc(text)}</div>
+      <div style="font-size:9px;color:var(--t3);text-align:${fromMe?'right':'left'};margin-top:4px">${time}${fromMe?' ✓':''}</div>
+    </div>`;
+  }
+  if(!wppState.messages.length)html='<div style="text-align:center;padding:30px;color:var(--t3)">Nenhuma mensagem</div>';
+  el.innerHTML=html;
+  if(wasAtBottom)el.scrollTop=el.scrollHeight;
+}
+
+// ── Extract text from any message type ──
+function wppExtractText(m){
+  if(!m.message)return '';
+  let msg=m.message;
+  // Text messages
+  if(msg.conversation)return msg.conversation;
+  if(msg.extendedTextMessage&&msg.extendedTextMessage.text)return msg.extendedTextMessage.text;
+  // Media messages — show placeholder with caption
+  if(msg.imageMessage)return '📷 Imagem'+(msg.imageMessage.caption?' — '+msg.imageMessage.caption:'');
+  if(msg.videoMessage)return '🎥 Vídeo'+(msg.videoMessage.caption?' — '+msg.videoMessage.caption:'');
+  if(msg.audioMessage)return msg.audioMessage.ptt?'🎤 Áudio':'🎵 Áudio';
+  if(msg.documentMessage)return '📎 '+(msg.documentMessage.fileName||'Documento');
+  if(msg.stickerMessage)return '🏷️ Sticker';
+  if(msg.contactMessage)return '👤 Contato: '+(msg.contactMessage.displayName||'');
+  if(msg.locationMessage)return '📍 Localização';
+  if(msg.reactionMessage)return '';
+  // Fallback for other types
+  let keys=Object.keys(msg).filter(k=>k!=='messageContextInfo');
+  if(keys.length)return '['+keys[0].replace('Message','').replace(/([A-Z])/g,' $1').trim()+']';
+  return '';
+}
+
+// ── New chat from phone number ──
+function wppNewChat(){
+  let num=prompt('Digite o número (com DDD, ex: 15991234567):');
+  if(!num)return;
+  num=num.replace(/\D/g,'');
+  if(!num)return;
+  if(!num.startsWith('55')&&num.length<=11)num='55'+num;
+  wppStartChat(num);
 }
 
 function renderWhatsApp(){
@@ -1976,22 +2094,30 @@ function renderWhatsApp(){
   return html;
 }
 
-function filterWppChats(q){let items=document.querySelectorAll('#wppChatList > div');for(let item of items)item.style.display=!q||item.textContent.toLowerCase().includes(q.toLowerCase())?'block':'none'}
+function filterWppChats(q){let items=document.querySelectorAll('#wppChatList > div[data-chat]');for(let item of items)item.style.display=!q||item.textContent.toLowerCase().includes(q.toLowerCase())?'flex':'none'}
+
+// Sofia AI state per chat
+let sofiaState={};// {jid: true/false}
+function getSofiaEnabled(jid){return sofiaState[jid]===true}
+function toggleSofia(jid){sofiaState[jid]=!sofiaState[jid];renderApp();showToast(sofiaState[jid]?'Sofia AI ativada neste chat':'Sofia AI desativada','info')}
+
+// Get total unread count for tab badge
+function wppUnreadTotal(){return wppState.chats.reduce((s,c)=>s+(c.unreadMessages||0),0)}
 
 function renderWppChat(){
   let html='';let myInst=getMyInstance();
-  if(!myInst){return`<div style="text-align:center;padding:60px"><div style="font-size:48px;margin-bottom:16px">💬</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">Nenhuma instância atribuída</div><div style="font-size:13px;color:var(--t2)">Peça ao administrador para atribuir um WhatsApp a você.</div></div>`}
+  if(!myInst){return`<div style="text-align:center;padding:60px"><div style="font-size:48px;margin-bottom:16px">💬</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">Nenhuma instancia atribuida</div><div style="font-size:13px;color:var(--t2)">Peca ao administrador para atribuir um WhatsApp a voce.</div></div>`}
   if(!wppState.connected){
-    return`<div style="text-align:center;padding:60px"><div style="font-size:48px;margin-bottom:16px">📱</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">WhatsApp desconectado</div><div style="font-size:13px;color:var(--t2);margin-bottom:20px">Instância: <strong>${myInst}</strong></div><button class="btn-acc" onclick="wppConnect()">📱 Conectar</button></div>`}
+    return`<div style="text-align:center;padding:60px"><div style="font-size:48px;margin-bottom:16px">📱</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">WhatsApp desconectado</div><div style="font-size:13px;color:var(--t2);margin-bottom:20px">Instancia: <strong>${myInst}</strong></div><button class="btn-acc" onclick="wppConnect()">📱 Conectar</button></div>`}
   // Status bar
-  html+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:800">💬 Chat WhatsApp</div><div style="display:flex;gap:8px;align-items:center"><span style="font-size:12px;color:var(--t2)">${myInst}</span><span class="pill pill-grn">● Online</span><button class="btn btn-sm btn-cyan" onclick="wppLoadChats()">🔄</button></div></div>`;
+  html+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:800">💬 Chat WhatsApp</div><div style="display:flex;gap:8px;align-items:center"><span style="font-size:12px;color:var(--t2)">${myInst}</span><span class="pill pill-grn">● Online</span><button class="btn btn-sm btn-cyan" onclick="wppNewChat()" title="Nova conversa">➕</button><button class="btn btn-sm btn-cyan" onclick="wppLoadChats()">🔄</button></div></div>`;
   // Chat UI
   html+=`<div style="display:grid;grid-template-columns:320px 1fr;gap:0;height:calc(100vh - 200px);background:var(--card);border-radius:16px;border:1px solid var(--brd);overflow:hidden">`;
   // Left: Chat list
   html+=`<div style="border-right:1px solid var(--brd);display:flex;flex-direction:column">
-    <div style="padding:12px;border-bottom:1px solid var(--brd);display:flex;gap:6px">
-      <input type="text" placeholder="Buscar..." style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:13px" oninput="filterWppChats(this.value)">
-      <button class="btn btn-sm btn-cyan" onclick="wppLoadChats()">🔄</button>
+    <div style="padding:10px;border-bottom:1px solid var(--brd);display:flex;gap:6px">
+      <input type="text" placeholder="Buscar conversa..." style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:13px" oninput="filterWppChats(this.value)">
+      <button class="btn btn-sm btn-cyan" onclick="wppNewChat()" title="Nova conversa" style="font-size:14px">➕</button>
     </div>
     <div style="overflow-y:auto;flex:1" id="wppChatList">`;
   for(let ch of wppState.chats){
@@ -1999,19 +2125,34 @@ function renderWppChat(){
     let isActive=wppState.activeChat&&wppState.activeChat.jid===ch.id;
     let time=ch.lastMsgTimestamp?new Date(ch.lastMsgTimestamp*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
     let unread=ch.unreadMessages||0;
-    html+=`<div onclick="wppOpenChat('${ch.id}','${esc(name)}')" style="padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--brd);background:${isActive?'rgba(59,130,246,.08)':'transparent'}">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div style="font-size:13px;font-weight:${isActive?'800':'600'};color:${isActive?'var(--acc)':'var(--t1)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px">${esc(name)}</div>
-        <div style="display:flex;align-items:center;gap:6px">${unread>0?`<span style="background:var(--grn);color:#000;font-size:10px;font-weight:800;padding:1px 6px;border-radius:10px">${unread}</span>`:''}<span style="font-size:10px;color:var(--t3)">${time}</span></div>
+    let lastMsg=ch.lastMessage||ch.lastMsg||'';
+    if(typeof lastMsg==='object'&&lastMsg){lastMsg=lastMsg.conversation||lastMsg.body||lastMsg.text||''}
+    if(lastMsg&&lastMsg.length>40)lastMsg=lastMsg.substring(0,40)+'...';
+    let initial=(name||'?')[0].toUpperCase();
+    let avatarColors=['var(--acc)','var(--pur)','var(--grn)','var(--org)','var(--pnk)','var(--cyan)'];
+    let avatarColor=avatarColors[(name||'').charCodeAt(0)%avatarColors.length];
+    html+=`<div data-chat="${ch.id}" onclick="wppOpenChat('${ch.id}','${esc(name)}')" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--brd);background:${isActive?'rgba(59,130,246,.1)':'transparent'};display:flex;gap:10px;align-items:center;transition:background .15s" onmouseover="if(!${isActive})this.style.background='rgba(255,255,255,.03)'" onmouseout="if(!${isActive})this.style.background='transparent'">
+      <div style="width:40px;height:40px;min-width:40px;border-radius:50%;background:linear-gradient(135deg,${avatarColor},rgba(0,0,0,.3));display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff">${initial}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+          <div style="font-size:13px;font-weight:${isActive||unread?'800':'600'};color:${isActive?'var(--acc)':'var(--t1)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">${esc(name)}</div>
+          <span style="font-size:10px;color:${unread?'var(--grn)':'var(--t3)'};white-space:nowrap;font-weight:${unread?'700':'400'}">${time}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:11px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px">${lastMsg?esc(lastMsg):'...'}</div>
+          ${unread>0?`<span style="background:var(--grn);color:#000;font-size:10px;font-weight:800;padding:1px 7px;border-radius:10px;min-width:18px;text-align:center">${unread}</span>`:''}
+        </div>
       </div>
     </div>`}
   if(!wppState.chats.length){
-    html+=`<div style="padding:20px;text-align:center;color:var(--t3);font-size:12px">
-      <div style="font-size:20px;margin-bottom:8px;animation:pulse 1.2s ease infinite">💬</div>
-      Carregando conversas...<br>
+    html+=`<div style="padding:30px 20px;text-align:center;color:var(--t3);font-size:12px">
+      <div style="font-size:28px;margin-bottom:12px;animation:pulse 1.2s ease infinite">💬</div>
+      <div style="font-weight:600;margin-bottom:6px">Carregando conversas...</div>
       <button class="btn btn-sm btn-cyan" style="margin-top:8px" onclick="wppLoadChats()">🔄 Recarregar</button>
+      <div style="margin-top:12px;border-top:1px solid var(--brd);padding-top:12px">
+        <button class="btn btn-sm" onclick="wppNewChat()">➕ Nova conversa</button>
+      </div>
     </div>`;
-    // Auto-trigger load once (guard prevents loop)
     if(!wppState._chatLoadAttempted){wppState._chatLoadAttempted=true;setTimeout(()=>wppLoadChats(),300)}
   } else { wppState._chatLoadAttempted=false; }
   html+=`</div></div>`;
@@ -2019,41 +2160,75 @@ function renderWppChat(){
   html+=`<div style="display:flex;flex-direction:column;background:var(--sf)">`;
   if(wppState.activeChat){
     let chatNum=wppState.activeChat.jid.replace('@s.whatsapp.net','');
-    html+=`<div style="padding:12px 18px;border-bottom:1px solid var(--brd);display:flex;align-items:center;gap:10px;background:var(--card)">
-      <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--acc),var(--pur));display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#fff">${(wppState.activeChat.name||'?')[0].toUpperCase()}</div>
-      <div style="flex:1"><div style="font-size:14px;font-weight:700">${esc(wppState.activeChat.name)}</div><div style="font-size:10px;color:var(--t3);font-family:monospace">${chatNum}</div></div>
-      <button class="btn btn-sm" onclick="openCrmModal('${chatNum}','${esc(wppState.activeChat.name)}')">🏷️</button>
-      <button class="btn btn-sm" onclick="wppOpenChat('${wppState.activeChat.jid}','${esc(wppState.activeChat.name)}')">🔄</button>
+    let chatName=wppState.activeChat.name||chatNum;
+    let sofiaOn=getSofiaEnabled(wppState.activeChat.jid);
+    // ── Chat header ──
+    html+=`<div style="padding:10px 16px;border-bottom:1px solid var(--brd);display:flex;align-items:center;gap:10px;background:var(--card)">
+      <div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--acc),var(--pur));display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff">${(chatName)[0].toUpperCase()}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(chatName)}</div>
+        <div style="font-size:10px;color:var(--t3);font-family:monospace;display:flex;align-items:center;gap:6px">
+          <span>${chatNum}</span>
+          ${sofiaOn?'<span class="pill pill-pur" style="font-size:8px;padding:1px 5px">Sofia AI</span>':''}
+        </div>
+      </div>
+      <div style="display:flex;gap:4px">
+        <button class="btn btn-sm" onclick="toggleSofia('${wppState.activeChat.jid}')" title="${sofiaOn?'Desativar':'Ativar'} Sofia AI" style="background:${sofiaOn?'rgba(167,139,250,.15)':'transparent'};border-color:${sofiaOn?'var(--pur)':'var(--brd)'}">🤖</button>
+        <button class="btn btn-sm" onclick="runConsulta('${chatNum}')" title="Consultar CPF">🔍</button>
+        <button class="btn btn-sm" onclick="openCrmModal('${chatNum}','${esc(chatName)}')" title="CRM">🏷️</button>
+        <a href="tel:+${chatNum}" class="btn btn-sm" title="Ligar" style="text-decoration:none">📞</a>
+        <button class="btn btn-sm" onclick="wppOpenChat('${wppState.activeChat.jid}','${esc(chatName)}')" title="Recarregar">🔄</button>
+      </div>
     </div>`;
+    // ── Messages area ──
     html+=`<div id="wppMsgList" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:6px">`;
     for(let m of wppState.messages){
       let fromMe=m.key&&m.key.fromMe;
-      let text=m.message?(m.message.conversation||m.message.extendedTextMessage&&m.message.extendedTextMessage.text||''):'';
+      let text=wppExtractText(m);
       if(!text)continue;
       let time=m.messageTimestamp?new Date(m.messageTimestamp*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+      let isMedia=text.startsWith('📷')||text.startsWith('🎥')||text.startsWith('🎤')||text.startsWith('🎵')||text.startsWith('📎')||text.startsWith('🏷')||text.startsWith('👤')||text.startsWith('📍');
       html+=`<div style="align-self:${fromMe?'flex-end':'flex-start'};max-width:70%;padding:10px 14px;border-radius:${fromMe?'12px 12px 2px 12px':'12px 12px 12px 2px'};background:${fromMe?'rgba(14,165,233,.12)':'var(--card)'};border:1px solid ${fromMe?'rgba(14,165,233,.2)':'var(--brd)'}">
-        <div style="font-size:13px;color:var(--t1);white-space:pre-wrap;word-break:break-word">${esc(text)}</div>
+        <div style="font-size:13px;color:${isMedia?'var(--t3)':'var(--t1)'};white-space:pre-wrap;word-break:break-word;${isMedia?'font-style:italic':''}">${esc(text)}</div>
         <div style="font-size:9px;color:var(--t3);text-align:${fromMe?'right':'left'};margin-top:4px">${time}${fromMe?' ✓':''}</div>
       </div>`}
     if(!wppState.messages.length)html+=`<div style="text-align:center;padding:30px;color:var(--t3)">Carregando mensagens...</div>`;
     html+=`</div>`;
+    // ── Quick replies bar ──
     html+=`<div style="padding:6px 16px;border-top:1px solid var(--brd);background:var(--card);display:flex;gap:4px;flex-wrap:wrap;overflow-x:auto">
       <button class="btn btn-sm" style="font-size:10px;white-space:nowrap" onclick="showWppTemplates()">📋 Templates</button>
-      <button class="btn btn-sm" style="font-size:10px;white-space:nowrap" onclick="document.getElementById('wppMsgInput').value='Olá! Aqui é da Central Bancária. Tudo bem?'">👋 Saudação</button>
-      <button class="btn btn-sm" style="font-size:10px;white-space:nowrap" onclick="document.getElementById('wppMsgInput').value='Perfeito! Vou preparar a proposta. Aguarde um momento.'">✅ Confirmar</button>
-      <button class="btn btn-sm" style="font-size:10px;white-space:nowrap" onclick="document.getElementById('wppMsgInput').value='Muito obrigado! Qualquer dúvida estou à disposição.'">🙏 Agradecer</button>
+      <button class="btn btn-sm" style="font-size:10px;white-space:nowrap" onclick="document.getElementById('wppMsgInput').value='Ola! Aqui e da Central Bancaria. Tudo bem?';document.getElementById('wppMsgInput').focus()">👋 Saudacao</button>
+      <button class="btn btn-sm" style="font-size:10px;white-space:nowrap" onclick="document.getElementById('wppMsgInput').value='Perfeito! Vou preparar a proposta. Aguarde um momento.';document.getElementById('wppMsgInput').focus()">✅ Confirmar</button>
+      <button class="btn btn-sm" style="font-size:10px;white-space:nowrap" onclick="document.getElementById('wppMsgInput').value='Muito obrigado! Qualquer duvida estou a disposicao.';document.getElementById('wppMsgInput').focus()">🙏 Agradecer</button>
+      <button class="btn btn-sm" style="font-size:10px;white-space:nowrap" onclick="document.getElementById('wppMsgInput').value='Consigo reduzir sua parcela e ainda liberar um valor pra voce. Posso explicar?';document.getElementById('wppMsgInput').focus()">💰 Oferta</button>
     </div>`;
-    html+=`<div style="padding:8px 16px 12px;display:flex;gap:10px;background:var(--card)">
-      <input type="text" id="wppMsgInput" placeholder="Digite uma mensagem..." style="flex:1;padding:10px 14px;border-radius:10px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:14px" onkeydown="if(event.key==='Enter')wppSendMsg()">
-      <button class="btn-acc" style="padding:10px 20px" onclick="wppSendMsg()">➤</button>
+    // ── Input bar ──
+    html+=`<div style="padding:8px 16px 12px;display:flex;gap:8px;background:var(--card);align-items:center">
+      <input type="text" id="wppMsgInput" placeholder="Digite uma mensagem..." style="flex:1;padding:10px 14px;border-radius:10px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:14px" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();wppSendMsg()}" autofocus>
+      <button class="btn-acc" style="padding:10px 20px;font-size:16px" onclick="wppSendMsg()">➤</button>
     </div>`;
+    // Start polling for new messages
+    wppStartPolling();
   }else{
-    html+=`<div style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px">
-      <div style="font-size:48px;opacity:.3">💬</div>
-      <div style="font-size:14px;color:var(--t3)">Selecione uma conversa</div>
+    wppStopPolling();
+    html+=`<div style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px">
+      <div style="font-size:64px;opacity:.15">💬</div>
+      <div style="font-size:16px;color:var(--t3);font-weight:600">Selecione uma conversa</div>
+      <div style="font-size:12px;color:var(--t3)">ou inicie uma nova</div>
+      <button class="btn btn-sm btn-cyan" onclick="wppNewChat()" style="margin-top:8px">➕ Nova conversa</button>
     </div>`}
   html+=`</div></div>`;
   return html;
+}
+
+// ── Helper: run consulta from chat ──
+function runConsulta(num){
+  let cpf=num.replace(/\D/g,'');
+  if(cpf.startsWith('55')&&cpf.length>11)cpf=cpf.substring(2);
+  if(cpf.length>11)cpf=cpf.substring(cpf.length-11);
+  S.tab='consulta';renderApp();
+  let inp=document.getElementById('consultaCPF');
+  if(inp){inp.value=cpf;setTimeout(()=>consultarCPFUnitario(),300)}
 }
 
 // ══════ RMC SELECTION ══════
@@ -2479,7 +2654,7 @@ let D=S.data,c=document.getElementById("appContainer"),html="";
 let isAdm=CU&&CU.role==="admin",isGes=CU&&(CU.role==="gestor"||CU.role==="admin"),isOp=CU&&CU.role==="operador";
 if(!D){
   document.getElementById("headerActions").style.display="none";
-  let noDataTabs=[{k:"home",l:"🏠 Início"},{k:"consulta",l:"🔍 Consulta"},{k:"est",l:"📝 Esteira",n:cart.size||""},{k:"camp",l:"📋 Campanhas"},{k:"crm",l:"🏷️ CRM",n:Object.keys(getCrmData()).length||""},{k:"wppchat",l:"💬 Chat"}];
+  let noDataTabs=[{k:"home",l:"🏠 Início"},{k:"consulta",l:"🔍 Consulta"},{k:"est",l:"📝 Esteira",n:cart.size||""},{k:"camp",l:"📋 Campanhas"},{k:"crm",l:"🏷️ CRM",n:Object.keys(getCrmData()).length||""},{k:"wppchat",l:"💬 Chat",n:wppUnreadTotal()||""}];
   if(isAdm){noDataTabs.push({k:"wpp",l:"📱 Conexões"});noDataTabs.push({k:"admin",l:"👥 Admin"})}
   if(!["home","consulta","est","camp","crm","wppchat","wpp","admin"].includes(S.tab))S.tab="home";
   html+=`<div class="tabs">${noDataTabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
@@ -2504,7 +2679,7 @@ if(!D){
   let crmCount=Object.keys(getCrmData()).length;
   tabs.push({k:"in100",l:"🔍 IN100",n:Object.keys(in100Cache).length||""});
   tabs.push({k:"crm",l:"🏷️ CRM",n:crmCount||""});
-  tabs.push({k:"wppchat",l:"💬 Chat"});
+  tabs.push({k:"wppchat",l:"💬 Chat",n:wppUnreadTotal()||""});
   if(isAdm){tabs.push({k:"wpp",l:"📱 Conexões"});tabs.push({k:"admin",l:"👥"})}
   html+=`<div class="tabs">${tabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
   if(S.tab==="admin"){c.innerHTML=html+renderAdmin();return}

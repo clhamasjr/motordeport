@@ -90,13 +90,63 @@ export default async function handler(req) {
     }
 
     if (action === 'chats') {
-      const r = await evo('POST', '/chat/findChats/' + inst, {});
-      return j(r.data, 200, req);
+      // Try multiple Evolution API endpoints/formats
+      let chats = [];
+
+      // 1. POST /chat/findChats (v2 standard)
+      const r1 = await evo('POST', '/chat/findChats/' + inst, {});
+      if (Array.isArray(r1.data) && r1.data.length > 0) {
+        chats = r1.data;
+      }
+
+      // 2. Fallback: GET /chat/findChats
+      if (!chats.length) {
+        const r2 = await evo('GET', '/chat/findChats/' + inst);
+        if (Array.isArray(r2.data) && r2.data.length > 0) chats = r2.data;
+      }
+
+      // 3. Fallback: POST with where clause (some v2 versions need this)
+      if (!chats.length) {
+        const r3 = await evo('POST', '/chat/findChats/' + inst, { where: {} });
+        if (Array.isArray(r3.data) && r3.data.length > 0) chats = r3.data;
+      }
+
+      // 4. Fallback: try /chat/findContacts to get at least contacts
+      if (!chats.length) {
+        const r4 = await evo('POST', '/chat/findContacts/' + inst, {});
+        if (Array.isArray(r4.data) && r4.data.length > 0) {
+          chats = r4.data.filter(c => c.id && !c.id.includes('@g.us')).map(c => ({
+            id: c.id || c.remoteJid || '',
+            name: c.pushName || c.name || c.verifiedName || '',
+            lastMsgTimestamp: 0,
+            unreadMessages: 0,
+            _fromContacts: true
+          }));
+        }
+      }
+
+      return j(chats, 200, req);
     }
 
     if (action === 'messages') {
+      // Try POST then GET for messages
       const r = await evo('POST', '/chat/findMessages/' + inst, { where: { key: { remoteJid: body.jid || '' } }, limit: body.limit || 50 });
-      return j(r.data, 200, req);
+      let msgs = r.data;
+
+      // Fallback: some v2 versions use different structure
+      if (!Array.isArray(msgs) || msgs.length === 0) {
+        if (msgs && msgs.messages) msgs = msgs.messages;
+        else if (msgs && msgs.records) msgs = msgs.records;
+      }
+
+      // Fallback: try GET endpoint
+      if (!Array.isArray(msgs) || msgs.length === 0) {
+        const r2 = await evo('GET', '/chat/findMessages/' + inst + '?where[key][remoteJid]=' + encodeURIComponent(body.jid || '') + '&limit=' + (body.limit || 50));
+        if (Array.isArray(r2.data)) msgs = r2.data;
+        else if (r2.data && r2.data.messages) msgs = r2.data.messages;
+      }
+
+      return j(msgs, 200, req);
     }
 
     if (action === 'send') {
