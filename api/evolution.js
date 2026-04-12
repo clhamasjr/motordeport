@@ -270,8 +270,9 @@ export default async function handler(req) {
       let r = null;
       let lastErr = null;
       for (const payload of formats) {
-        r = await evo('POST', '/message/sendText/' + inst, payload, 12000);
+        r = await evo('POST', '/message/sendText/' + inst, payload, 8000);
         if (r.ok) break;
+        if (r.status === 408) break; // timeout = server is slow, don't retry
         lastErr = r;
       }
 
@@ -298,19 +299,21 @@ export default async function handler(req) {
 
       const tests = [
         { label: 'v2: {number, text}', payload: { number, text } },
-        { label: 'v2: {number, text, delay}', payload: { number, text, delay: 0 } },
         { label: 'v2: {number, textMessage}', payload: { number, textMessage: { text } } },
         { label: 'v1: {number@jid, textMessage}', payload: { number: number + '@s.whatsapp.net', textMessage: { text } } },
-        { label: 'v1: {number@jid, text}', payload: { number: number + '@s.whatsapp.net', text } },
       ];
 
       const results = [];
       for (const t of tests) {
-        const r = await evo('POST', '/message/sendText/' + inst, t.payload, 10000);
-        results.push({ label: t.label, ok: r.ok, status: r.status, response: r.data });
-        if (r.ok) break; // Stop on first success
+        const r = await evo('POST', '/message/sendText/' + inst, t.payload, 3000);
+        results.push({ label: t.label, ok: r.ok, status: r.status, response: typeof r.data === 'string' ? r.data.substring(0, 200) : r.data });
+        if (r.ok) break;
       }
-      return j({ results, instance: inst }, 200, req);
+
+      // Also test instance status for reference
+      const st = await evo('GET', '/instance/connectionState/' + inst, null, 3000);
+
+      return j({ results, instanceStatus: st.data, instance: inst }, 200, req);
     }
 
     // ── SEND BULK ───────────────────────────────────────────
