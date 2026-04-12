@@ -2192,7 +2192,17 @@ async function cwSendMessage(){
     el.appendChild(div);el.scrollTop=el.scrollHeight;
   }
   try{
+    // 1. Send via Chatwoot (record)
     await cwCall('send',{id:cwState.activeConv.id,content:text});
+    // 2. Send via Evolution API (actually deliver to WhatsApp)
+    let phone=cwState.activeConv?.meta?.sender?.phone_number||cwState.activeConv?.contact?.phone_number||'';
+    let number=phone.replace(/\D/g,'');
+    if(number){
+      let myInst=getMyInstance();
+      if(myInst){
+        await wppCall('send',{instance:myInst,number,text});
+      }
+    }
     let statusEl=el?.lastElementChild?.querySelector('.msg-status');
     if(statusEl)statusEl.textContent='✓';
   }catch(e){
