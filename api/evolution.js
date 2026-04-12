@@ -10,6 +10,27 @@ function getConfig() {
   };
 }
 
+function getCwConfig() {
+  return {
+    url: (process.env.CHATWOOT_URL || '').replace(/\/+$/, ''),
+    token: process.env.CHATWOOT_TOKEN || '',
+    accountId: process.env.CHATWOOT_ACCOUNT_ID || '1'
+  };
+}
+
+async function cwApi(method, path, body) {
+  const cfg = getCwConfig();
+  if (!cfg.url || !cfg.token) return null;
+  const opts = { method, headers: { 'Content-Type': 'application/json', 'api_access_token': cfg.token } };
+  if (body && method !== 'GET') opts.body = JSON.stringify(body);
+  try {
+    const r = await fetch(`${cfg.url}/api/v1/accounts/${cfg.accountId}${path}`, opts);
+    const t = await r.text();
+    let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 1000) }; }
+    return { ok: r.ok, data: d };
+  } catch { return null; }
+}
+
 async function evo(method, path, body) {
   const cfg = getConfig();
   if (!cfg.URL || !cfg.KEY) throw new Error('EVOLUTION_URL/KEY nao configurados');
@@ -77,13 +98,67 @@ export default async function handler(req) {
         else if (d.base64) qrBase64 = d.base64;
         else if (Array.isArray(d) && d[0] && d[0].qrcode) qrBase64 = d[0].qrcode.base64;
       }
-      return j({ success: r.ok, name, qrcode: qrBase64, instance: d.instance || d, hash: d.hash || null }, 200, req);
+
+      // ── Auto-create Chatwoot inbox for this instance ──
+      let cwInbox = null;
+      try {
+        const cwCfg = getCwConfig();
+        if (cwCfg.url && cwCfg.token) {
+          // Create API inbox in Chatwoot
+          const inboxR = await cwApi('POST', '/inboxes', {
+            name: 'WhatsApp ' + name,
+            channel: { type: 'api', webhook_url: '' }
+          });
+          if (inboxR && inboxR.ok && inboxR.data) {
+            cwInbox = inboxR.data;
+            // Set Evolution webhook to forward messages to our API
+            const webhookUrl = (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : '') + '/api/evolution';
+            if (webhookUrl.startsWith('https://')) {
+              await evo('POST', '/webhook/set/' + name, {
+                webhook: { url: webhookUrl, events: ['MESSAGES_UPSERT'], webhook_by_events: false }
+              });
+            }
+          }
+        }
+      } catch (e) { /* Chatwoot integration optional */ }
+
+      return j({ success: r.ok, name, qrcode: qrBase64, instance: d.instance || d, hash: d.hash || null, chatwootInbox: cwInbox?.id || null }, 200, req);
     }
 
     if (action === 'delete') {
       if (!inst) return jsonError('instance obrigatorio', 400, req);
       const r = await evo('DELETE', '/instance/delete/' + inst);
       return j(r.data, 200, req);
+    }
+
+    // ── SETUP CHATWOOT: create inbox for existing instance ──
+    if (action === 'setupChatwoot') {
+      if (!inst) return jsonError('instance obrigatorio', 400, req);
+      const cwCfg = getCwConfig();
+      if (!cwCfg.url || !cwCfg.token) return jsonError('Chatwoot nao configurado (env vars)', 400, req);
+
+      // Check if inbox already exists
+      const existingR = await cwApi('GET', '/inboxes');
+      const existing = existingR?.data?.payload || [];
+      const found = existing.find(i => (i.name || '').toLowerCase().includes(inst.toLowerCase()));
+      if (found) return j({ ok: true, inbox: found, message: 'Inbox ja existe' }, 200, req);
+
+      // Create API inbox
+      const inboxR = await cwApi('POST', '/inboxes', {
+        name: 'WhatsApp ' + inst,
+        channel: { type: 'api', webhook_url: '' }
+      });
+      if (!inboxR || !inboxR.ok) return j({ ok: false, error: 'Erro ao criar inbox', detail: inboxR?.data }, 500, req);
+
+      // Set Evolution webhook
+      const webhookUrl = (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : '') + '/api/evolution';
+      if (webhookUrl.startsWith('https://')) {
+        await evo('POST', '/webhook/set/' + inst, {
+          webhook: { url: webhookUrl, events: ['MESSAGES_UPSERT'], webhook_by_events: false }
+        });
+      }
+
+      return j({ ok: true, inbox: inboxR.data, message: 'Inbox criada com sucesso' }, 200, req);
     }
 
     if (action === 'status') {

@@ -1783,6 +1783,15 @@ async function wppDeleteInstance(name){
   }catch(e){alert("Erro: "+e.message)}
 }
 
+async function wppSetupChatwoot(instName){
+  try{
+    showToast('Configurando Chatwoot para '+instName+'...','info');
+    const r=await wppCall('setupChatwoot',{instance:instName});
+    if(r.ok){showToast(r.message||'Chatwoot configurado!','success');cwState.inboxes=[];await cwLoadInboxes()}
+    else{showToast('Erro: '+(r.error||'Falha ao configurar'),'error')}
+  }catch(e){showToast('Erro: '+e.message,'error')}
+}
+
 function wppAssignUser(instName,userLogin){
   let a=getWppAssign();
   if(a[userLogin]===instName)delete a[userLogin];
@@ -2066,7 +2075,8 @@ function renderWhatsApp(){
           let isAssigned=assign[u.user]===name;
           html+=`<button class="btn btn-sm ${isAssigned?'btn-grn':''}" style="font-size:10px;${isAssigned?'background:rgba(34,197,94,.1)':''}" onclick="wppAssignUser('${esc(name)}','${u.user}')">${isAssigned?'✅ ':''}${esc(u.name)}</button>`;
         }
-        html+=` <button class="btn btn-sm btn-red" onclick="wppDeleteInstance('${esc(name)}')">🗑️</button>
+        html+=` <button class="btn btn-sm" style="border-color:var(--pur);color:var(--pur)" onclick="wppSetupChatwoot('${esc(name)}')" title="Configurar Chatwoot">🔗 Chatwoot</button>
+            <button class="btn btn-sm btn-red" onclick="wppDeleteInstance('${esc(name)}')">🗑️</button>
           </div>
           ${assignedUsers.length?`<div style="font-size:10px;color:var(--cyan);width:100%">→ ${assignedUsers.join(', ')}</div>`:''}
         </div>`;
