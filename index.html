@@ -846,10 +846,10 @@ function handleFile(inp){let f=inp.files[0];if(!f)return;S.fname=f.name;document
 function resetData(){S.data=null;S.fname="";S.tab="dash";selected.clear();phoneCache={};wppSent.clear();rcSelected.clear();localStorage.removeItem("ff_active");localStorage.removeItem("ff_tab");sessionStorage.removeItem("ff_ss");renderApp()}
 function setTab(t){S.tab=t;S.sort={c:null,d:"asc"};S.pg=0;localStorage.setItem("ff_tab",t);
   // Stop polling when leaving chat tab
-  if(t!=='wppchat')wppStopPolling();
+  if(t!=='wppchat')cwStopPolling();
   renderApp();
-  // Auto-load WhatsApp chats when switching to chat tab
-  if(t==='wppchat'&&wppState.connected&&!wppState.chats.length)wppLoadChats();
+  // Auto-load Chatwoot conversations when switching to chat tab
+  if(t==='wppchat'&&!cwState.conversations.length)cwLoadConversations();
 }
 function setQ(v){S.q=v;S.pg=0;renderApp()}
 function doSort(col){if(S.sort.c===col)S.sort.d=S.sort.d==="asc"?"desc":"asc";else S.sort={c:col,d:"asc"};S.pg=0;renderApp()}
@@ -1902,11 +1902,25 @@ async function wppSendMsg(){
 }
 
 async function wppStartChat(number){
-  if(!wppState.connected){alert('WhatsApp não conectado');return}
   number=String(number).replace(/\D/g,'');
+  if(!number)return;
   if(!number.startsWith('55')&&number.length<=11)number='55'+number;
-  let jid=number+'@s.whatsapp.net';
-  S.tab='wppchat';wppOpenChat(jid,number);
+  S.tab='wppchat';renderApp();
+  // Search for existing conversation with this contact in Chatwoot
+  try{
+    const d=await cwCall('contacts',{q:number});
+    const contacts=d?.payload||d||[];
+    if(contacts.length>0){
+      // Find conversation for this contact
+      const contactId=contacts[0].id;
+      const convs=await cwCall('conversations',{status:'open',page:1});
+      const allConvs=convs?.data?.payload||convs?.payload||[];
+      const match=allConvs.find(c=>c.meta?.sender?.id===contactId||c.contact_last_seen_at);
+      if(match){cwOpenConversation(match.id);return}
+    }
+  }catch(e){console.log('[CW] search error:',e.message)}
+  // No existing conversation found — create new one
+  cwNewConversation(number);
 }
 
 // ── Auto-refresh polling ──
@@ -2110,46 +2124,193 @@ function renderWhatsApp(){
 
 function filterWppChats(q){let items=document.querySelectorAll('#wppChatList > div[data-chat]');for(let item of items)item.style.display=!q||item.textContent.toLowerCase().includes(q.toLowerCase())?'flex':'none'}
 
-// Sofia AI state per chat
-let sofiaState={};// {jid: true/false}
-function getSofiaEnabled(jid){return sofiaState[jid]===true}
-function toggleSofia(jid){sofiaState[jid]=!sofiaState[jid];renderApp();showToast(sofiaState[jid]?'Sofia AI ativada neste chat':'Sofia AI desativada','info')}
-
 // Get total unread count for tab badge
-function wppUnreadTotal(){return wppState.chats.reduce((s,c)=>s+(c.unreadMessages||0),0)}
+function wppUnreadTotal(){return cwState.conversations.reduce((s,c)=>s+(c.unread_count||0),0)}
+
+// ══════ CHATWOOT INTEGRATION ══════
+let cwState={conversations:[],activeConv:null,messages:[],agents:[],inboxes:[],loading:false,filter:'open',pollTimer:null};
+
+async function cwCall(action,data={}){
+  const res=await apiFetch('/api/chatwoot',{method:'POST',body:JSON.stringify({action,...data})});
+  return res.json();
+}
+
+async function cwLoadConversations(status){
+  cwState.loading=true;
+  if(status)cwState.filter=status;
+  try{
+    const d=await cwCall('conversations',{status:cwState.filter,page:1});
+    cwState.conversations=d?.data?.payload||d?.payload||[];
+    if(!cwState.conversations.length&&Array.isArray(d?.data))cwState.conversations=d.data;
+  }catch(e){console.log('[CW] loadConvs error:',e.message);cwState.conversations=[]}
+  cwState.loading=false;
+  let tc=document.getElementById('tabContent');
+  if(tc&&S.tab==='wppchat')tc.innerHTML=renderWppChat();
+  else renderApp();
+}
+
+async function cwOpenConversation(id){
+  cwStopPolling();
+  cwState.activeConv=cwState.conversations.find(c=>c.id===id)||{id};
+  cwState.messages=[];
+  // Re-render chat panel to show new active conversation
+  let tc=document.getElementById('tabContent');
+  if(tc&&S.tab==='wppchat')tc.innerHTML=renderWppChat();
+  try{
+    const d=await cwCall('messages',{id});
+    cwState.messages=d?.payload||d?.data||[];
+    if(!Array.isArray(cwState.messages))cwState.messages=[];
+    cwState.messages.sort((a,b)=>a.created_at-b.created_at);
+    cwRenderMessages();
+    setTimeout(()=>{let el=document.getElementById('wppMsgList');if(el)el.scrollTop=el.scrollHeight},100);
+    cwStartPolling();
+  }catch(e){console.log('[CW] openConv error:',e.message);cwRenderMessages()}
+}
+
+async function cwSendMessage(){
+  let inp=document.getElementById('wppMsgInput');if(!inp||!inp.value.trim()||!cwState.activeConv)return;
+  let text=inp.value.trim();inp.value='';inp.focus();
+  // Append immediately
+  let tempMsg={id:Date.now(),content:text,message_type:1,created_at:Math.floor(Date.now()/1000),_sending:true};
+  cwState.messages.push(tempMsg);
+  let el=document.getElementById('wppMsgList');
+  if(el){
+    let div=document.createElement('div');
+    div.style.cssText='align-self:flex-end;max-width:70%;padding:10px 14px;border-radius:12px 12px 2px 12px;background:rgba(14,165,233,.12);border:1px solid rgba(14,165,233,.2);animation:fadeIn .2s ease';
+    let time=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    div.innerHTML=`<div style="font-size:13px;color:var(--t1);white-space:pre-wrap;word-break:break-word">${esc(text)}</div><div style="font-size:9px;color:var(--t3);text-align:right;margin-top:4px">${time} <span class="msg-status">⏳</span></div>`;
+    el.appendChild(div);el.scrollTop=el.scrollHeight;
+  }
+  try{
+    await cwCall('send',{id:cwState.activeConv.id,content:text});
+    let statusEl=el?.lastElementChild?.querySelector('.msg-status');
+    if(statusEl)statusEl.textContent='✓';
+  }catch(e){
+    let statusEl=el?.lastElementChild?.querySelector('.msg-status');
+    if(statusEl){statusEl.textContent='✕';statusEl.style.color='var(--red)'}
+    showToast('Erro ao enviar: '+e.message,'error');
+  }
+}
+
+function cwStartPolling(){
+  cwStopPolling();
+  if(!cwState.activeConv)return;
+  cwState.pollTimer=setInterval(async()=>{
+    if(S.tab!=='wppchat'||!cwState.activeConv)return cwStopPolling();
+    try{
+      const d=await cwCall('messages',{id:cwState.activeConv.id});
+      let msgs=d?.payload||d?.data||[];
+      if(!Array.isArray(msgs))return;
+      msgs.sort((a,b)=>a.created_at-b.created_at);
+      if(msgs.length>cwState.messages.filter(m=>!m._sending).length){
+        cwState.messages=msgs;
+        cwRenderMessages();
+      }
+    }catch(e){console.log('[CW] poll error:',e.message)}
+  },5000);
+}
+function cwStopPolling(){if(cwState.pollTimer){clearInterval(cwState.pollTimer);cwState.pollTimer=null}}
+
+function cwRenderMessages(){
+  let el=document.getElementById('wppMsgList');if(!el)return;
+  let wasAtBottom=el.scrollHeight-el.scrollTop-el.clientHeight<60;
+  let html='';
+  for(let m of cwState.messages){
+    if(!m.content&&!m.content_attributes)continue;
+    let fromMe=m.message_type===1; // 0=incoming, 1=outgoing, 2=activity
+    if(m.message_type===2){
+      // Activity message (system)
+      html+=`<div style="align-self:center;font-size:10px;color:var(--t3);padding:4px 12px;background:var(--sf);border-radius:10px;margin:4px 0">${esc(m.content||'')}</div>`;
+      continue;
+    }
+    let text=m.content||'';
+    // Handle attachments
+    if(m.attachments&&m.attachments.length){
+      for(let att of m.attachments){
+        if(att.file_type==='image')text+=(text?' — ':'')+'📷 Imagem';
+        else if(att.file_type==='audio')text+=(text?' — ':'')+'🎤 Audio';
+        else if(att.file_type==='video')text+=(text?' — ':'')+'🎥 Video';
+        else text+=(text?' — ':'')+'📎 '+(att.data_url||'Arquivo');
+      }
+    }
+    if(!text)continue;
+    let time=m.created_at?new Date(m.created_at*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+    let senderName=(!fromMe&&m.sender&&m.sender.name)?m.sender.name:'';
+    html+=`<div style="align-self:${fromMe?'flex-end':'flex-start'};max-width:70%;padding:10px 14px;border-radius:${fromMe?'12px 12px 2px 12px':'12px 12px 12px 2px'};background:${fromMe?'rgba(14,165,233,.12)':'var(--card)'};border:1px solid ${fromMe?'rgba(14,165,233,.2)':'var(--brd)'}">
+      ${senderName?`<div style="font-size:10px;font-weight:700;color:var(--acc);margin-bottom:2px">${esc(senderName)}</div>`:''}
+      <div style="font-size:13px;color:var(--t1);white-space:pre-wrap;word-break:break-word">${esc(text)}</div>
+      <div style="font-size:9px;color:var(--t3);text-align:${fromMe?'right':'left'};margin-top:4px">${time}${fromMe?' ✓':''}</div>
+    </div>`;
+  }
+  if(!cwState.messages.length)html='<div style="text-align:center;padding:30px;color:var(--t3)">Nenhuma mensagem</div>';
+  el.innerHTML=html;
+  if(wasAtBottom)el.scrollTop=el.scrollHeight;
+}
+
+async function cwToggleStatus(id,status){
+  try{await cwCall('toggleStatus',{id,status});showToast(status==='resolved'?'Conversa resolvida':'Conversa reaberta','success');cwLoadConversations()}catch(e){showToast('Erro: '+e.message,'error')}
+}
+
+async function cwLoadInboxes(){
+  try{const d=await cwCall('inboxes');cwState.inboxes=d?.payload||d||[]}catch{cwState.inboxes=[]}
+}
+
+async function cwNewConversation(prePhone){
+  if(!cwState.inboxes.length)await cwLoadInboxes();
+  let phone=prePhone||prompt('Numero (com DDD, ex: 15991234567):');
+  if(!phone)return;
+  phone=String(phone).replace(/\D/g,'');
+  if(!phone)return;
+  if(!phone.startsWith('55')&&phone.length<=11)phone='55'+phone;
+  // Find WhatsApp inbox
+  let wppInbox=cwState.inboxes.find(i=>i.channel_type==='Channel::Api'||i.channel_type==='Channel::Whatsapp'||(i.name||'').toLowerCase().includes('whatsapp')||(i.name||'').toLowerCase().includes('evolution'));
+  if(!wppInbox&&cwState.inboxes.length)wppInbox=cwState.inboxes[0];
+  if(!wppInbox){showToast('Nenhuma inbox encontrada no Chatwoot','error');return}
+  let name=prompt('Nome do contato (opcional):')||phone;
+  try{
+    let msg=prompt('Mensagem inicial:')||'Ola!';
+    const d=await cwCall('new',{phone,name,inbox_id:wppInbox.id,message:msg});
+    showToast('Conversa criada!','success');
+    cwLoadConversations();
+  }catch(e){showToast('Erro: '+e.message,'error')}
+}
 
 function renderWppChat(){
-  let html='';let myInst=getMyInstance();
-  if(!myInst){return`<div style="text-align:center;padding:60px"><div style="font-size:48px;margin-bottom:16px">💬</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">Nenhuma instancia atribuida</div><div style="font-size:13px;color:var(--t2)">Peca ao administrador para atribuir um WhatsApp a voce.</div></div>`}
-  if(!wppState.connected){
-    return`<div style="text-align:center;padding:60px"><div style="font-size:48px;margin-bottom:16px">📱</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">WhatsApp desconectado</div><div style="font-size:13px;color:var(--t2);margin-bottom:20px">Instancia: <strong>${myInst}</strong></div><button class="btn-acc" onclick="wppConnect()">📱 Conectar</button></div>`}
+  let html='';
   // Status bar
-  html+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:800">💬 Chat WhatsApp</div><div style="display:flex;gap:8px;align-items:center"><span style="font-size:12px;color:var(--t2)">${myInst}</span><span class="pill pill-grn">● Online</span><button class="btn btn-sm btn-cyan" onclick="wppNewChat()" title="Nova conversa">➕</button><button class="btn btn-sm btn-cyan" onclick="wppLoadChats()">🔄</button></div></div>`;
+  let filterBtns=['open','pending','resolved'].map(s=>{
+    let labels={open:'Abertas',pending:'Pendentes',resolved:'Resolvidas'};
+    let active=cwState.filter===s;
+    return`<button class="btn btn-sm${active?' btn-cyan':''}" onclick="cwLoadConversations('${s}')" style="font-size:11px">${labels[s]}</button>`;
+  }).join('');
+  html+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:16px;font-weight:800">💬 Chat WhatsApp</div><div style="display:flex;gap:6px;align-items:center">${filterBtns}<button class="btn btn-sm btn-cyan" onclick="cwNewConversation()" title="Nova conversa">➕</button><button class="btn btn-sm btn-cyan" onclick="cwLoadConversations()">🔄</button></div></div>`;
   // Chat UI
   html+=`<div style="display:grid;grid-template-columns:320px 1fr;gap:0;height:calc(100vh - 200px);background:var(--card);border-radius:16px;border:1px solid var(--brd);overflow:hidden">`;
   // Left: Chat list
   html+=`<div style="border-right:1px solid var(--brd);display:flex;flex-direction:column">
     <div style="padding:10px;border-bottom:1px solid var(--brd);display:flex;gap:6px">
       <input type="text" placeholder="Buscar conversa..." style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:13px" oninput="filterWppChats(this.value)">
-      <button class="btn btn-sm btn-cyan" onclick="wppNewChat()" title="Nova conversa" style="font-size:14px">➕</button>
+      <button class="btn btn-sm btn-cyan" onclick="cwNewConversation()" title="Nova conversa" style="font-size:14px">➕</button>
     </div>
     <div style="overflow-y:auto;flex:1" id="wppChatList">`;
-  for(let ch of wppState.chats){
-    let name=ch.name||ch.pushName||ch.id.replace('@s.whatsapp.net','');
-    let isActive=wppState.activeChat&&wppState.activeChat.jid===ch.id;
-    let time=ch.lastMsgTimestamp?new Date(ch.lastMsgTimestamp*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
-    let unread=ch.unreadMessages||0;
-    let lastMsg=ch.lastMessage||ch.lastMsg||'';
-    if(typeof lastMsg==='object'&&lastMsg){lastMsg=lastMsg.conversation||lastMsg.body||lastMsg.text||''}
+  for(let ch of cwState.conversations){
+    let sender=ch.meta?.sender||{};
+    let name=sender.name||ch.contact?.name||('Conversa #'+ch.id);
+    let isActive=cwState.activeConv&&cwState.activeConv.id===ch.id;
+    let lastAct=ch.last_activity_at||ch.created_at||'';
+    let time=lastAct?new Date(lastAct*1000>1e12?lastAct:lastAct*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+    let unread=ch.unread_count||0;
+    let lastMsg=ch.last_non_activity_message?.content||ch.messages?.[0]?.content||'';
     if(lastMsg&&lastMsg.length>40)lastMsg=lastMsg.substring(0,40)+'...';
     let initial=(name||'?')[0].toUpperCase();
     let avatarColors=['var(--acc)','var(--pur)','var(--grn)','var(--org)','var(--pnk)','var(--cyan)'];
     let avatarColor=avatarColors[(name||'').charCodeAt(0)%avatarColors.length];
-    html+=`<div data-chat="${ch.id}" onclick="wppOpenChat('${ch.id}','${esc(name)}')" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--brd);background:${isActive?'rgba(59,130,246,.1)':'transparent'};display:flex;gap:10px;align-items:center;transition:background .15s" onmouseover="if(!${isActive})this.style.background='rgba(255,255,255,.03)'" onmouseout="if(!${isActive})this.style.background='transparent'">
+    let statusPill=ch.status==='resolved'?'<span class="pill pill-grn" style="font-size:8px;padding:0 4px;margin-left:4px">✓</span>':ch.status==='pending'?'<span class="pill pill-ylw" style="font-size:8px;padding:0 4px;margin-left:4px">⏳</span>':'';
+    html+=`<div data-chat="${ch.id}" onclick="cwOpenConversation(${ch.id})" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--brd);background:${isActive?'rgba(59,130,246,.1)':'transparent'};display:flex;gap:10px;align-items:center;transition:background .15s" onmouseover="if(!${isActive})this.style.background='rgba(255,255,255,.03)'" onmouseout="if(!${isActive})this.style.background='transparent'">
       <div style="width:40px;height:40px;min-width:40px;border-radius:50%;background:linear-gradient(135deg,${avatarColor},rgba(0,0,0,.3));display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff">${initial}</div>
       <div style="flex:1;min-width:0">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-          <div style="font-size:13px;font-weight:${isActive||unread?'800':'600'};color:${isActive?'var(--acc)':'var(--t1)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">${esc(name)}</div>
+          <div style="font-size:13px;font-weight:${isActive||unread?'800':'600'};color:${isActive?'var(--acc)':'var(--t1)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px">${esc(name)}${statusPill}</div>
           <span style="font-size:10px;color:${unread?'var(--grn)':'var(--t3)'};white-space:nowrap;font-weight:${unread?'700':'400'}">${time}</span>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -2158,55 +2319,59 @@ function renderWppChat(){
         </div>
       </div>
     </div>`}
-  if(!wppState.chats.length){
+  if(!cwState.conversations.length){
     html+=`<div style="padding:30px 20px;text-align:center;color:var(--t3);font-size:12px">
       <div style="font-size:28px;margin-bottom:12px;animation:pulse 1.2s ease infinite">💬</div>
-      <div style="font-weight:600;margin-bottom:6px">Carregando conversas...</div>
-      <button class="btn btn-sm btn-cyan" style="margin-top:8px" onclick="wppLoadChats()">🔄 Recarregar</button>
+      <div style="font-weight:600;margin-bottom:6px">${cwState.loading?'Carregando conversas...':'Nenhuma conversa '+cwState.filter}</div>
+      <button class="btn btn-sm btn-cyan" style="margin-top:8px" onclick="cwLoadConversations()">🔄 Recarregar</button>
       <div style="margin-top:12px;border-top:1px solid var(--brd);padding-top:12px">
-        <button class="btn btn-sm" onclick="wppNewChat()">➕ Nova conversa</button>
+        <button class="btn btn-sm" onclick="cwNewConversation()">➕ Nova conversa</button>
       </div>
     </div>`;
-    if(!wppState._chatLoadAttempted){wppState._chatLoadAttempted=true;setTimeout(()=>wppLoadChats(),300)}
-  } else { wppState._chatLoadAttempted=false; }
+    if(!cwState._loadAttempted){cwState._loadAttempted=true;setTimeout(()=>cwLoadConversations(),300)}
+  } else { cwState._loadAttempted=false; }
   html+=`</div></div>`;
   // Right: Messages
   html+=`<div style="display:flex;flex-direction:column;background:var(--sf)">`;
-  if(wppState.activeChat){
-    let chatNum=wppState.activeChat.jid.replace('@s.whatsapp.net','');
-    let chatName=wppState.activeChat.name||chatNum;
-    let sofiaOn=getSofiaEnabled(wppState.activeChat.jid);
+  if(cwState.activeConv){
+    let conv=cwState.activeConv;
+    let chatName=conv.meta?.sender?.name||conv.contact?.name||('Conversa #'+conv.id);
+    let chatPhone=conv.meta?.sender?.phone_number||conv.contact?.phone_number||'';
+    let chatNum=chatPhone.replace(/\D/g,'');
+    let convStatus=conv.status||'open';
     // ── Chat header ──
     html+=`<div style="padding:10px 16px;border-bottom:1px solid var(--brd);display:flex;align-items:center;gap:10px;background:var(--card)">
       <div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--acc),var(--pur));display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff">${(chatName)[0].toUpperCase()}</div>
       <div style="flex:1;min-width:0">
         <div style="font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(chatName)}</div>
         <div style="font-size:10px;color:var(--t3);font-family:monospace;display:flex;align-items:center;gap:6px">
-          <span>${chatNum}</span>
-          ${sofiaOn?'<span class="pill pill-pur" style="font-size:8px;padding:1px 5px">Sofia AI</span>':''}
+          <span>${chatPhone||'#'+conv.id}</span>
+          <span class="pill pill-${convStatus==='open'?'acc':convStatus==='resolved'?'grn':'ylw'}" style="font-size:8px;padding:1px 5px">${convStatus}</span>
         </div>
       </div>
       <div style="display:flex;gap:4px">
-        <button class="btn btn-sm" onclick="toggleSofia('${wppState.activeChat.jid}')" title="${sofiaOn?'Desativar':'Ativar'} Sofia AI" style="background:${sofiaOn?'rgba(167,139,250,.15)':'transparent'};border-color:${sofiaOn?'var(--pur)':'var(--brd)'}">🤖</button>
-        <button class="btn btn-sm" onclick="runConsulta('${chatNum}')" title="Consultar CPF">🔍</button>
-        <button class="btn btn-sm" onclick="openCrmModal('${chatNum}','${esc(chatName)}')" title="CRM">🏷️</button>
-        <a href="tel:+${chatNum}" class="btn btn-sm" title="Ligar" style="text-decoration:none">📞</a>
-        <button class="btn btn-sm" onclick="wppOpenChat('${wppState.activeChat.jid}','${esc(chatName)}')" title="Recarregar">🔄</button>
+        ${chatNum?`<button class="btn btn-sm" onclick="runConsulta('${chatNum}')" title="Consultar CPF">🔍</button>`:''}
+        ${chatNum?`<button class="btn btn-sm" onclick="openCrmModal('${chatNum}','${esc(chatName)}')" title="CRM">🏷️</button>`:''}
+        ${chatNum?`<a href="tel:+${chatNum}" class="btn btn-sm" title="Ligar" style="text-decoration:none">📞</a>`:''}
+        <button class="btn btn-sm" onclick="cwToggleStatus(${conv.id},'${convStatus==='open'?'resolved':'open'}')" title="${convStatus==='open'?'Resolver':'Reabrir'}">${convStatus==='open'?'✅':'🔓'}</button>
+        <button class="btn btn-sm" onclick="cwOpenConversation(${conv.id})" title="Recarregar">🔄</button>
       </div>
     </div>`;
     // ── Messages area ──
     html+=`<div id="wppMsgList" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:6px">`;
-    for(let m of wppState.messages){
-      let fromMe=m.key&&m.key.fromMe;
-      let text=wppExtractText(m);
+    for(let m of cwState.messages){
+      if(m.message_type===2)continue; // skip activity messages
+      let fromMe=m.message_type===1; // 0=incoming, 1=outgoing
+      let text=m.content||'';
       if(!text)continue;
-      let time=m.messageTimestamp?new Date(m.messageTimestamp*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
-      let isMedia=text.startsWith('📷')||text.startsWith('🎥')||text.startsWith('🎤')||text.startsWith('🎵')||text.startsWith('📎')||text.startsWith('🏷')||text.startsWith('👤')||text.startsWith('📍');
-      html+=`<div style="align-self:${fromMe?'flex-end':'flex-start'};max-width:70%;padding:10px 14px;border-radius:${fromMe?'12px 12px 2px 12px':'12px 12px 12px 2px'};background:${fromMe?'rgba(14,165,233,.12)':'var(--card)'};border:1px solid ${fromMe?'rgba(14,165,233,.2)':'var(--brd)'}">
+      if(m.private)text='🔒 '+text;
+      let time=m.created_at?new Date(typeof m.created_at==='number'?m.created_at*1000:m.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+      let isMedia=!!(m.content_type&&m.content_type!=='text');
+      html+=`<div style="align-self:${fromMe?'flex-end':'flex-start'};max-width:70%;padding:10px 14px;border-radius:${fromMe?'12px 12px 2px 12px':'12px 12px 12px 2px'};background:${fromMe?'rgba(14,165,233,.12)':m.private?'rgba(167,139,250,.08)':'var(--card)'};border:1px solid ${fromMe?'rgba(14,165,233,.2)':m.private?'rgba(167,139,250,.2)':'var(--brd)'}">
         <div style="font-size:13px;color:${isMedia?'var(--t3)':'var(--t1)'};white-space:pre-wrap;word-break:break-word;${isMedia?'font-style:italic':''}">${esc(text)}</div>
         <div style="font-size:9px;color:var(--t3);text-align:${fromMe?'right':'left'};margin-top:4px">${time}${fromMe?' ✓':''}</div>
       </div>`}
-    if(!wppState.messages.length)html+=`<div style="text-align:center;padding:30px;color:var(--t3)">Carregando mensagens...</div>`;
+    if(!cwState.messages.length)html+=`<div style="text-align:center;padding:30px;color:var(--t3)">Carregando mensagens...</div>`;
     html+=`</div>`;
     // ── Quick replies bar ──
     html+=`<div style="padding:6px 16px;border-top:1px solid var(--brd);background:var(--card);display:flex;gap:4px;flex-wrap:wrap;overflow-x:auto">
@@ -2218,18 +2383,18 @@ function renderWppChat(){
     </div>`;
     // ── Input bar ──
     html+=`<div style="padding:8px 16px 12px;display:flex;gap:8px;background:var(--card);align-items:center">
-      <input type="text" id="wppMsgInput" placeholder="Digite uma mensagem..." style="flex:1;padding:10px 14px;border-radius:10px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:14px" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();wppSendMsg()}" autofocus>
-      <button class="btn-acc" style="padding:10px 20px;font-size:16px" onclick="wppSendMsg()">➤</button>
+      <input type="text" id="wppMsgInput" placeholder="Digite uma mensagem..." style="flex:1;padding:10px 14px;border-radius:10px;border:1px solid var(--brd);background:var(--sf);color:var(--t1);font-size:14px" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();cwSendMessage()}" autofocus>
+      <button class="btn-acc" style="padding:10px 20px;font-size:16px" onclick="cwSendMessage()">➤</button>
     </div>`;
     // Start polling for new messages
-    wppStartPolling();
+    cwStartPolling();
   }else{
-    wppStopPolling();
+    cwStopPolling();
     html+=`<div style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px">
       <div style="font-size:64px;opacity:.15">💬</div>
       <div style="font-size:16px;color:var(--t3);font-weight:600">Selecione uma conversa</div>
       <div style="font-size:12px;color:var(--t3)">ou inicie uma nova</div>
-      <button class="btn btn-sm btn-cyan" onclick="wppNewChat()" style="margin-top:8px">➕ Nova conversa</button>
+      <button class="btn btn-sm btn-cyan" onclick="cwNewConversation()" style="margin-top:8px">➕ Nova conversa</button>
     </div>`}
   html+=`</div></div>`;
   return html;
@@ -2787,13 +2952,22 @@ renderCartBadge();
 let D=S.data,c=document.getElementById("appContainer"),html="";
 let isAdm=CU&&CU.role==="admin",isGes=CU&&(CU.role==="gestor"||CU.role==="admin"),isOp=CU&&CU.role==="operador";
 let tabChanged=_lastTab!==S.tab;_lastTab=S.tab;
+
+// ── Ensure shell (tabs + content container) exists ──
+let tabsBar=document.getElementById("tabsBar");
+let tabContent=document.getElementById("tabContent");
+if(!tabsBar||!tabContent){
+  c.innerHTML='<div class="tabs" id="tabsBar"></div><div class="tab-content" id="tabContent"></div>';
+  tabsBar=document.getElementById("tabsBar");
+  tabContent=document.getElementById("tabContent");
+}
+
 if(!D){
   document.getElementById("headerActions").style.display="none";
   let noDataTabs=[{k:"home",l:"🏠 Início"},{k:"consulta",l:"🔍 Consulta"},{k:"est",l:"📝 Esteira",n:cart.size||""},{k:"camp",l:"📋 Campanhas"},{k:"crm",l:"🏷️ CRM",n:Object.keys(getCrmData()).length||""},{k:"wppchat",l:"💬 Chat",n:wppUnreadTotal()||""}];
   if(isAdm){noDataTabs.push({k:"wpp",l:"📱 Conexões"});noDataTabs.push({k:"gestao",l:"📊 Gestão"});noDataTabs.push({k:"admin",l:"👥 Admin"})}
   if(!["home","consulta","est","camp","crm","wppchat","wpp","gestao","admin"].includes(S.tab))S.tab="home";
-  // Only update tabs bar if it exists, otherwise build full
-  let tabsHtml=`<div class="tabs" id="tabsBar">${noDataTabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
+  tabsBar.innerHTML=noDataTabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("");
   let content='';
   if(S.tab==="consulta")content=renderConsulta();
   else if(S.tab==="est")content=renderEsteira();
@@ -2803,11 +2977,11 @@ if(!D){
   else if(S.tab==="wpp"&&isAdm)content=renderWhatsApp();
   else if(S.tab==="gestao"&&isAdm)content=renderGestao();
   else if(S.tab==="admin"&&isAdm)content=renderAdmin();
-  if(content){c.innerHTML=tabsHtml+'<div class="tab-content">'+content+'</div>';return}
+  if(content){tabContent.innerHTML=content;return}
   let hist=getMyHist();
   html+=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:${hist.length?'40vh':'60vh'}" class="fi"><div style="cursor:pointer;background:var(--sf);border:2px solid var(--acc);border-radius:20px;padding:40px 48px;text-align:center;max-width:500px;width:100%;margin-bottom:20px;box-shadow:0 0 30px rgba(59,130,246,.15)" onclick="S.tab='consulta';renderApp()"><div style="font-size:36px;margin-bottom:16px">🔍</div><div style="font-size:19px;font-weight:700;margin-bottom:8px">Consulta Unitária</div><div style="font-size:14px;color:var(--t2);margin-bottom:16px">Consulte extrato completo por CPF</div><div class="btn-acc">Consultar CPF</div></div><div class="upload-box" id="uploadBox" onclick="document.getElementById('fileInput').click()"><div style="font-size:36px;margin-bottom:16px">📊</div><div style="font-size:19px;font-weight:700;margin-bottom:8px">Consulta em Lote</div><div style="font-size:14px;color:var(--t2);margin-bottom:24px">Suba a base completa offline</div><div class="btn-acc">Selecionar Arquivo</div><div style="font-size:9px;color:var(--t3);margin-top:10px">.xlsx .xls .csv</div><input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)"></div></div>`;
   if(hist.length){html+=`<div class="fi" style="margin-top:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div style="font-size:14px;font-weight:700">📁 Histórico</div><button class="btn btn-red btn-sm" onclick="clearHist()">Limpar</button></div><div style="display:grid;gap:8px">`;for(let h of hist){let sm=h.summary||{};let bensStr=sm.beneficios&&sm.beneficios.length?sm.beneficios.slice(0,5).join(", ")+(sm.beneficios.length>5?" ...":""):"";html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div style="flex:1;min-width:180px"><div style="font-size:12px;font-weight:700">${esc(h.fname)}</div><div style="font-size:10px;color:var(--t2)">${h.date}${CU&&CU.role==="admin"?` — <span style="color:var(--cyan)">${esc(h.user)}</span>`:""}</div>${bensStr?`<div style="font-size:9px;color:var(--t3);margin-top:3px;font-family:monospace">Ben: ${esc(bensStr)}</div>`:""}</div><div style="display:flex;gap:12px"><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):"-"}</div><div style="font-size:8px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--ylw)">${sm.valorContrato?R$(sm.valorContrato):"-"}</div><div style="font-size:8px;color:var(--t3)">VLR CONT</div></div><div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):"-"}</div><div style="font-size:8px;color:var(--t3)">TROCO</div></div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn-acc" style="padding:4px 12px;font-size:10px;border-radius:5px" onclick="loadHist(${h.id})">📂 Carregar</button><button class="btn btn-red btn-sm" onclick="delHist(${h.id})">✕</button></div></div>`}html+=`</div></div>`}
-  c.innerHTML=html;let ub=document.getElementById("uploadBox");if(ub){ub.addEventListener("dragover",e=>{e.preventDefault();ub.classList.add("drag")});ub.addEventListener("dragleave",()=>ub.classList.remove("drag"));ub.addEventListener("drop",e=>{e.preventDefault();ub.classList.remove("drag");if(e.dataTransfer.files[0]){let inp=document.getElementById("fileInput");let dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);inp.files=dt.files;handleFile(inp)}})}return}
+  tabContent.innerHTML=html;let ub=document.getElementById("uploadBox");if(ub){ub.addEventListener("dragover",e=>{e.preventDefault();ub.classList.add("drag")});ub.addEventListener("dragleave",()=>ub.classList.remove("drag"));ub.addEventListener("drop",e=>{e.preventDefault();ub.classList.remove("drag");if(e.dataTransfer.files[0]){let inp=document.getElementById("fileInput");let dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);inp.files=dt.files;handleFile(inp)}})}return}
   document.getElementById("headerActions").style.display="flex";document.getElementById("fileName").textContent="📁 "+S.fname;
   let nSel=selected.size,nHig=[...selected].filter(c=>phoneCache[c]).length,nWpp=[...selected].filter(c=>wppSent.has(c)).length;
   let tabs=[];
@@ -2820,7 +2994,7 @@ if(!D){
   tabs.push({k:"crm",l:"🏷️ CRM",n:crmCount||""});
   tabs.push({k:"wppchat",l:"💬 Chat",n:wppUnreadTotal()||""});
   if(isAdm){tabs.push({k:"wpp",l:"📱 Conexões"});tabs.push({k:"gestao",l:"📊 Gestão"});tabs.push({k:"admin",l:"👥"})}
-  html+=`<div class="tabs" id="tabsBar">${tabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("")}</div>`;
+  tabsBar.innerHTML=tabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("");
   let tcontent='';
   if(S.tab==="admin")tcontent=renderAdmin();
   else if(S.tab==="consulta")tcontent=renderConsulta();
@@ -2831,7 +3005,7 @@ if(!D){
   else if(S.tab==="in100")tcontent=renderIN100();
   else if(S.tab==="crm")tcontent=renderCRM();
   else if(S.tab==="gestao"&&isAdm)tcontent=renderGestao();
-  if(tcontent){c.innerHTML=html+'<div class="tab-content">'+tcontent+'</div>';return}
+  if(tcontent){tabContent.innerHTML=tcontent;return}
 
   // ═══ DASHBOARD ═══
   if(S.tab==="dash"){let tT=D.elegiveis.reduce((s,e)=>s+e.troco,0),tVC=D.elegiveis.reduce((s,e)=>s+e.vc,0);
@@ -3014,7 +3188,7 @@ if(!D){
       html+=`<tr class="rh" style="${rcCk?"background:rgba(167,139,250,0.06)":cached?"border-left:3px solid var(--grn)":""}"><td><input type="checkbox" class="chk" ${rcCk?"checked":""} onclick="toggleRcSel('${r.cpf}')"></td><td>${esc(r.nome)}</td><td class="mono">${esc(r.cpf)}</td><td>${esc(r.esp)}</td><td class="mono">${esc(r.t1)}</td><td><span class="pill pill-default">${esc(r.cRmc)}</span></td><td class="right mono" style="color:${r.vRmc>0?"var(--grn)":"var(--t3)"}">${r.vRmc>0?R$(r.vRmc):"—"}</td><td><span class="pill pill-default">${esc(r.cRcc)}</span></td><td class="right mono" style="color:${r.vRcc>0?"var(--pur)":"var(--t3)"}">${r.vRcc>0?R$(r.vRcc):"—"}</td><td class="right mono" style="color:${r.mrgCart>0?"var(--cyan)":"var(--t3)"}">${r.mrgCart>0?R$(r.mrgCart):"—"}</td><td class="right mono" style="color:${r.mrgCartNova>0?"var(--ylw)":"var(--t3)"}">${cached&&saqueDisp>0?`<span style="color:var(--grn);font-weight:800">${R$(saqueDisp)}</span> <span style="font-size:9px;color:var(--t3)">real</span>`:r.mrgCartNova>0?R$(r.mrgCartNova):"—"}</td><td class="right mono" style="color:${r.mrgEmpNova>0?"var(--org)":"var(--t3)"}">${r.mrgEmpNova>0?R$(r.mrgEmpNova):"—"}</td><td><button class="btn btn-sm ${cached?"btn-grn":"btn-cyan"}" onclick="consultarCartao('${r.cpf}','${esc(r.nome)}','${esc(r.ben)}')">${cached?"💳 Ver":"💳"}</button></td></tr>`}
     if(!items.length)html+=`<tr><td colspan="13" style="padding:40px;text-align:center;color:var(--t3)">Nenhum</td></tr>`;
     html+=`</tbody></table></div>${pgr(filtered.length)}</div>`}
-  c.innerHTML=html;saveSession()}
+  tabContent.innerHTML=html;saveSession()}
 
 // ══════ SAQUE PIPELINE ══════
 // Helper: call cartao API with active bank credentials
