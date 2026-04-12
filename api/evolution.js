@@ -257,19 +257,22 @@ export default async function handler(req) {
       const text = body.text || '';
       if (!number || !text) return jsonError('number e text obrigatorios', 400, req);
 
-      // Try Evolution v2 format first (numberJid), fallback to v1
-      let r = await evo('POST', '/message/sendText/' + inst, {
-        number: number,
-        text: text,
-        delay: 0
-      }, 12000);
+      // Try multiple Evolution API payload formats
+      const formats = [
+        // Evolution v2 format
+        { number: number, text: text },
+        // Evolution v2 with textMessage wrapper
+        { number: number, textMessage: { text: text } },
+        // Evolution v1 with @s.whatsapp.net
+        { number: number + '@s.whatsapp.net', textMessage: { text: text } },
+      ];
 
-      // If timeout or error, try alternative payload format
-      if (!r.ok && r.status === 408) {
-        r = await evo('POST', '/message/sendText/' + inst, {
-          number: number + '@s.whatsapp.net',
-          textMessage: { text: text }
-        }, 12000);
+      let r = null;
+      let lastErr = null;
+      for (const payload of formats) {
+        r = await evo('POST', '/message/sendText/' + inst, payload, 12000);
+        if (r.ok) break;
+        lastErr = r;
       }
 
       // Save/update chat in Supabase (non-blocking)
@@ -280,10 +283,34 @@ export default async function handler(req) {
         unread_count: 0
       }).catch(() => {});
 
-      if (!r.ok) {
-        return j({ ok: false, error: r.data?.error || 'Evolution API falhou', status: r.status, detail: r.data }, r.status === 408 ? 504 : 500, req);
+      if (!r || !r.ok) {
+        const errDetail = lastErr?.data || r?.data || {};
+        return j({ ok: false, error: errDetail.error || errDetail.message || JSON.stringify(errDetail).substring(0, 300), status: r?.status, detail: errDetail, triedFormats: formats.length }, r?.status === 408 ? 504 : 500, req);
       }
       return j({ ok: true, data: r.data }, 200, req);
+    }
+
+    // ── DEBUG SEND: test all formats and return results ───
+    if (action === 'debugSend') {
+      const number = (body.number || '').replace(/\D/g, '');
+      const text = body.text || 'Teste FlowForce';
+      if (!number) return jsonError('number obrigatorio', 400, req);
+
+      const tests = [
+        { label: 'v2: {number, text}', payload: { number, text } },
+        { label: 'v2: {number, text, delay}', payload: { number, text, delay: 0 } },
+        { label: 'v2: {number, textMessage}', payload: { number, textMessage: { text } } },
+        { label: 'v1: {number@jid, textMessage}', payload: { number: number + '@s.whatsapp.net', textMessage: { text } } },
+        { label: 'v1: {number@jid, text}', payload: { number: number + '@s.whatsapp.net', text } },
+      ];
+
+      const results = [];
+      for (const t of tests) {
+        const r = await evo('POST', '/message/sendText/' + inst, t.payload, 10000);
+        results.push({ label: t.label, ok: r.ok, status: r.status, response: r.data });
+        if (r.ok) break; // Stop on first success
+      }
+      return j({ results, instance: inst }, 200, req);
     }
 
     // ── SEND BULK ───────────────────────────────────────────
