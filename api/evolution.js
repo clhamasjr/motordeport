@@ -251,7 +251,7 @@ export default async function handler(req) {
       return j(msgs, 200, req);
     }
 
-    // ── SEND: send via Evolution + save chat in Supabase ────
+    // ── SEND: send via Evolution (waits for response) ─────
     if (action === 'send') {
       const number = (body.number || '').replace(/\D/g, '');
       const text = body.text || '';
@@ -264,22 +264,39 @@ export default async function handler(req) {
         state = st.data?.instance?.state || st.data?.state || 'unknown';
       } catch {}
 
-      // If instance confirmed disconnected, fail fast
       if (state !== 'open' && state !== 'unknown') {
-        upsertChat(inst, number + '@s.whatsapp.net', { name: body.contactName || number, last_message: text.substring(0, 200), unread_count: 0 }).catch(() => {});
         return j({ ok: false, error: 'WhatsApp nao conectado (estado: ' + state + '). Reconecte na aba WhatsApp.', state }, 503, req);
       }
 
-      // Fire send to Evolution — DON'T await, return immediately
-      // The message is already saved in Chatwoot by the frontend
-      const sendPromise = evo('POST', '/message/sendText/' + inst, { number, text }, 25000).catch(() => null);
-
-      // Non-blocking DB save
+      // Send with 6s timeout
+      const r = await evo('POST', '/message/sendText/' + inst, { number, text }, 6000);
       upsertChat(inst, number + '@s.whatsapp.net', { name: body.contactName || number, last_message: text.substring(0, 200), unread_count: 0 }).catch(() => {});
 
-      // Return immediately — Evolution send is fire-and-forget
-      // On Vercel Edge, the promise continues after response is sent
-      return j({ ok: true, message: 'Enviando via WhatsApp...', state, fireAndForget: true }, 200, req);
+      if (r.ok) return j({ ok: true, delivered: true, data: r.data }, 200, req);
+      return j({ ok: false, error: r.data?.error || r.data?.message || 'Timeout', status: r.status, state, detail: r.data }, r.status === 408 ? 504 : 500, req);
+    }
+
+    // ── SEND ASYNC: fire-and-forget (returns immediately) ──
+    if (action === 'sendAsync') {
+      const number = (body.number || '').replace(/\D/g, '');
+      const text = body.text || '';
+      if (!number || !text) return jsonError('number e text obrigatorios', 400, req);
+
+      let state = 'unknown';
+      try {
+        const st = await evo('GET', '/instance/connectionState/' + inst, null, 2000);
+        state = st.data?.instance?.state || st.data?.state || 'unknown';
+      } catch {}
+
+      if (state !== 'open' && state !== 'unknown') {
+        return j({ ok: false, error: 'WhatsApp nao conectado (estado: ' + state + '). Reconecte na aba WhatsApp.', state }, 503, req);
+      }
+
+      // Fire-and-forget: don't await
+      evo('POST', '/message/sendText/' + inst, { number, text }, 30000).catch(() => {});
+      upsertChat(inst, number + '@s.whatsapp.net', { name: body.contactName || number, last_message: text.substring(0, 200), unread_count: 0 }).catch(() => {});
+
+      return j({ ok: true, queued: true, message: 'Enviando via WhatsApp...', state }, 200, req);
     }
 
     // ── DEBUG SEND: test all formats and return results ───

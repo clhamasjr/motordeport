@@ -2223,14 +2223,17 @@ async function cwSendMessage(){
     let phone=cwState.activeConv?.meta?.sender?.phone_number||cwState.activeConv?.contact?.phone_number||'';
     let number=phone.replace(/\D/g,'');
     let statusEl=el?.lastElementChild?.querySelector('.msg-status');
-    if(statusEl)statusEl.textContent='✓'; // Saved in Chatwoot
+    if(statusEl)statusEl.textContent='✓'; // Saved in Chatwoot only
     if(number){
       let myInst=getMyInstance();
       if(myInst){
         // Non-blocking: send via Evolution in background
-        wppCall('send',{instance:myInst,number,text}).then(evoR=>{
-          if(evoR&&evoR.ok!==false){
+        wppCall('sendAsync',{instance:myInst,number,text}).then(evoR=>{
+          if(evoR&&evoR.delivered){
             if(statusEl)statusEl.textContent='✓✓';
+          }else if(evoR&&evoR.queued){
+            // fire-and-forget accepted, can't confirm delivery
+            if(statusEl){statusEl.textContent='✓↗';statusEl.title='Enviado para Evolution (aguardando entrega)'}
           }else{
             let errMsg=evoR?.error||'Falha no envio';
             if(evoR?.state&&evoR.state!=='open')errMsg='WhatsApp desconectado ('+evoR.state+'). Reconecte na aba WhatsApp.';
