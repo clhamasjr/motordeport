@@ -257,36 +257,24 @@ export default async function handler(req) {
       const text = body.text || '';
       if (!number || !text) return jsonError('number e text obrigatorios', 400, req);
 
-      // Try multiple Evolution API payload formats
-      const formats = [
-        // Evolution v2 format
-        { number: number, text: text },
-        // Evolution v2 with textMessage wrapper
-        { number: number, textMessage: { text: text } },
-        // Evolution v1 with @s.whatsapp.net
-        { number: number + '@s.whatsapp.net', textMessage: { text: text } },
-      ];
-
-      let r = null;
-      let lastErr = null;
-      for (const payload of formats) {
-        r = await evo('POST', '/message/sendText/' + inst, payload, 8000);
-        if (r.ok) break;
-        if (r.status === 408) break; // timeout = server is slow, don't retry
-        lastErr = r;
+      // Check instance connection first (fast, 3s timeout)
+      const st = await evo('GET', '/instance/connectionState/' + inst, null, 3000);
+      const state = st.data?.instance?.state || st.data?.state || 'unknown';
+      if (state !== 'open') {
+        // Save in Supabase anyway
+        upsertChat(inst, number + '@s.whatsapp.net', { name: body.contactName || number, last_message: text.substring(0, 200), unread_count: 0 }).catch(() => {});
+        return j({ ok: false, error: 'Instancia "' + inst + '" nao conectada (estado: ' + state + '). Reconecte o WhatsApp primeiro.', state }, 503, req);
       }
 
-      // Save/update chat in Supabase (non-blocking)
-      const jid = number + '@s.whatsapp.net';
-      upsertChat(inst, jid, {
-        name: body.contactName || number,
-        last_message: text.substring(0, 200),
-        unread_count: 0
-      }).catch(() => {});
+      // Send with correct format: {number, text}
+      const r = await evo('POST', '/message/sendText/' + inst, { number, text }, 8000);
 
-      if (!r || !r.ok) {
-        const errDetail = lastErr?.data || r?.data || {};
-        return j({ ok: false, error: errDetail.error || errDetail.message || JSON.stringify(errDetail).substring(0, 300), status: r?.status, detail: errDetail, triedFormats: formats.length }, r?.status === 408 ? 504 : 500, req);
+      // Save/update chat in Supabase (non-blocking)
+      upsertChat(inst, number + '@s.whatsapp.net', { name: body.contactName || number, last_message: text.substring(0, 200), unread_count: 0 }).catch(() => {});
+
+      if (!r.ok) {
+        const err = r.data?.error || r.data?.message || (r.status === 408 ? 'Timeout ao enviar' : 'Erro desconhecido');
+        return j({ ok: false, error: err, status: r.status, detail: r.data }, r.status === 408 ? 504 : 500, req);
       }
       return j({ ok: true, data: r.data }, 200, req);
     }

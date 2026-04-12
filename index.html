@@ -2229,7 +2229,11 @@ async function cwSendMessage(){
         try{
           let evoR=await wppCall('send',{instance:myInst,number,text});
           evoOk=evoR&&evoR.ok!==false;
-          if(!evoOk)showToast('Salvo no Chatwoot, mas Evolution nao entregou ao WhatsApp: '+(evoR?.error||'timeout'),'warning');
+          if(!evoOk){
+            let errMsg=evoR?.error||'Falha no envio';
+            if(evoR?.state&&evoR.state!=='open')errMsg='WhatsApp desconectado ('+evoR.state+'). Va em WhatsApp > Reconectar.';
+            showToast(errMsg,'error');
+          }
         }catch(evoErr){
           showToast('Salvo no Chatwoot, mas erro ao enviar via WhatsApp: '+evoErr.message,'warning');
         }
