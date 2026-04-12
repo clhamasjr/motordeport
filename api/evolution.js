@@ -250,13 +250,13 @@ export default async function handler(req) {
 
       const r = await evo('POST', '/message/sendText/' + inst, { number, text });
 
-      // Save/update chat in Supabase
+      // Save/update chat in Supabase (non-blocking)
       const jid = number + '@s.whatsapp.net';
-      await upsertChat(inst, jid, {
+      upsertChat(inst, jid, {
         name: body.contactName || number,
         last_message: text.substring(0, 200),
         unread_count: 0
-      });
+      }).catch(() => {});
 
       return j(r.data, 200, req);
     }
