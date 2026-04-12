@@ -2219,28 +2219,30 @@ async function cwSendMessage(){
   try{
     // 1. Send via Chatwoot (record)
     await cwCall('send',{id:cwState.activeConv.id,content:text});
-    // 2. Send via Evolution API (actually deliver to WhatsApp)
+    // 2. Send via Evolution API (fire-and-forget, don't block UI)
     let phone=cwState.activeConv?.meta?.sender?.phone_number||cwState.activeConv?.contact?.phone_number||'';
     let number=phone.replace(/\D/g,'');
-    let evoOk=false;
+    let statusEl=el?.lastElementChild?.querySelector('.msg-status');
+    if(statusEl)statusEl.textContent='✓'; // Saved in Chatwoot
     if(number){
       let myInst=getMyInstance();
       if(myInst){
-        try{
-          let evoR=await wppCall('send',{instance:myInst,number,text});
-          evoOk=evoR&&evoR.ok!==false;
-          if(!evoOk){
+        // Non-blocking: send via Evolution in background
+        wppCall('send',{instance:myInst,number,text}).then(evoR=>{
+          if(evoR&&evoR.ok!==false){
+            if(statusEl)statusEl.textContent='✓✓';
+          }else{
             let errMsg=evoR?.error||'Falha no envio';
-            if(evoR?.state&&evoR.state!=='open')errMsg='WhatsApp desconectado ('+evoR.state+'). Va em WhatsApp > Reconectar.';
+            if(evoR?.state&&evoR.state!=='open')errMsg='WhatsApp desconectado ('+evoR.state+'). Reconecte na aba WhatsApp.';
             showToast(errMsg,'error');
+            if(statusEl){statusEl.textContent='✓⚠';statusEl.style.color='var(--org)'}
           }
-        }catch(evoErr){
-          showToast('Salvo no Chatwoot, mas erro ao enviar via WhatsApp: '+evoErr.message,'warning');
-        }
-      }else{showToast('Salvo no Chatwoot (nenhuma instancia atribuida para envio WhatsApp)','info')}
+        }).catch(evoErr=>{
+          showToast('Salvo no Chatwoot. Envio WhatsApp falhou: '+evoErr.message,'warning');
+          if(statusEl){statusEl.textContent='✓⚠';statusEl.style.color='var(--org)'}
+        });
+      }else{showToast('Salvo no Chatwoot (nenhuma instancia atribuida)','info')}
     }
-    let statusEl=el?.lastElementChild?.querySelector('.msg-status');
-    if(statusEl)statusEl.textContent=evoOk?'✓✓':'✓';
   }catch(e){
     let statusEl=el?.lastElementChild?.querySelector('.msg-status');
     if(statusEl){statusEl.textContent='✕';statusEl.style.color='var(--red)'}

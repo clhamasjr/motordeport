@@ -257,33 +257,29 @@ export default async function handler(req) {
       const text = body.text || '';
       if (!number || !text) return jsonError('number e text obrigatorios', 400, req);
 
-      // Quick status check (3s timeout)
-      const st = await evo('GET', '/instance/connectionState/' + inst, null, 3000);
-      const state = st.data?.instance?.state || st.data?.state || null;
+      // Quick status check (2s timeout)
+      let state = 'unknown';
+      try {
+        const st = await evo('GET', '/instance/connectionState/' + inst, null, 2000);
+        state = st.data?.instance?.state || st.data?.state || 'unknown';
+      } catch {}
 
-      // If status check timed out or server unreachable, fail fast
-      if (!state || st.status === 408) {
+      // If instance confirmed disconnected, fail fast
+      if (state !== 'open' && state !== 'unknown') {
         upsertChat(inst, number + '@s.whatsapp.net', { name: body.contactName || number, last_message: text.substring(0, 200), unread_count: 0 }).catch(() => {});
-        return j({ ok: false, error: 'Servidor Evolution nao respondeu. Verifique se esta online em ' + (getConfig().URL || 'N/A'), state: 'unreachable' }, 503, req);
+        return j({ ok: false, error: 'WhatsApp nao conectado (estado: ' + state + '). Reconecte na aba WhatsApp.', state }, 503, req);
       }
 
-      // If instance not connected, fail fast
-      if (state !== 'open') {
-        upsertChat(inst, number + '@s.whatsapp.net', { name: body.contactName || number, last_message: text.substring(0, 200), unread_count: 0 }).catch(() => {});
-        return j({ ok: false, error: 'WhatsApp nao conectado (estado: ' + state + '). Escaneie o QR code na aba WhatsApp.', state }, 503, req);
-      }
-
-      // Instance is open — send with 5s timeout
-      const r = await evo('POST', '/message/sendText/' + inst, { number, text }, 5000);
+      // Fire send to Evolution — DON'T await, return immediately
+      // The message is already saved in Chatwoot by the frontend
+      const sendPromise = evo('POST', '/message/sendText/' + inst, { number, text }, 25000).catch(() => null);
 
       // Non-blocking DB save
       upsertChat(inst, number + '@s.whatsapp.net', { name: body.contactName || number, last_message: text.substring(0, 200), unread_count: 0 }).catch(() => {});
 
-      if (!r.ok) {
-        const err = r.data?.error || r.data?.message || (r.status === 408 ? 'Timeout ao enviar' : 'Erro ao enviar');
-        return j({ ok: false, error: err, status: r.status, state, detail: r.data }, r.status === 408 ? 504 : 500, req);
-      }
-      return j({ ok: true, data: r.data }, 200, req);
+      // Return immediately — Evolution send is fire-and-forget
+      // On Vercel Edge, the promise continues after response is sent
+      return j({ ok: true, message: 'Enviando via WhatsApp...', state, fireAndForget: true }, 200, req);
     }
 
     // ── DEBUG SEND: test all formats and return results ───
