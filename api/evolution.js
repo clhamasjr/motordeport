@@ -191,7 +191,14 @@ export default async function handler(req) {
 
     if (action === 'restart') {
       if (!inst) return jsonError('instance obrigatorio', 400, req);
-      const r = await evo('PUT', '/instance/restart/' + inst);
+      // Try POST first (v2), fallback to PUT (v1)
+      let r = await evo('POST', '/instance/restart/' + inst, {}, 5000);
+      if (!r.ok && r.status === 404) r = await evo('PUT', '/instance/restart/' + inst, {}, 5000);
+      if (!r.ok && r.status === 404) {
+        // No restart endpoint — do logout + connect
+        await evo('DELETE', '/instance/logout/' + inst, null, 5000);
+        r = await evo('GET', '/instance/connect/' + inst, null, 5000);
+      }
       return j(r.data, 200, req);
     }
 
