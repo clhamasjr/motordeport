@@ -6,6 +6,7 @@ export const config = { runtime: 'edge' };
 // ══════════════════════════════════════════════════════════════════
 
 import { json, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
+import { dbQuery } from './_lib/supabase.js';
 
 function getCfg() {
   return {
@@ -188,6 +189,99 @@ export default async function handler(req) {
         pending: pending.data?.data?.meta?.all_count || 0,
         resolved: resolved.data?.data?.meta?.all_count || 0
       }, 200, req);
+    }
+
+    // ── CLIENT BY PHONE: buscar dados do cliente pelo telefone ──
+    if (action === 'clientByPhone') {
+      const phone = (body.phone || '').replace(/\D/g, '');
+      if (!phone) return jsonError('phone obrigatorio', 400, req);
+      // Try multiple phone formats: full, without country code, last 11 digits
+      const phoneLast11 = phone.length > 11 ? phone.slice(-11) : phone;
+      const phoneLast10 = phone.length > 10 ? phone.slice(-10) : phone;
+      const result = { phone, cpf: null, nome: null, beneficio: null, dados: null, source: null };
+
+      // 1. Search campanha_contatos (has telefone directly)
+      try {
+        const { data: contatos } = await dbQuery('campanha_contatos',
+          `select=cpf,nome,telefone,dados_cliente&or=(telefone.like.%25${phoneLast11},telefone.like.%25${phoneLast10})&limit=1`
+        );
+        if (contatos && contatos.length) {
+          const c = contatos[0];
+          result.cpf = c.cpf || null;
+          result.nome = c.nome || null;
+          result.dados = c.dados_cliente || null;
+          result.source = 'campanha';
+        }
+      } catch {}
+
+      // 2. Search consultas (may have phone in resultado JSONB)
+      if (!result.cpf) {
+        try {
+          const { data: consultas } = await dbQuery('consultas',
+            `select=cpf,nome,resultado,tipo&cpf=not.is.null&order=created_at.desc&limit=20`
+          );
+          if (consultas) {
+            for (const c of consultas) {
+              const r = c.resultado || {};
+              const phones = [r.telefone, r.celular, r.phone, r.fone, ...(r.telefones || [])].filter(Boolean);
+              const matchPhone = phones.some(p => {
+                const clean = String(p).replace(/\D/g, '');
+                return clean.endsWith(phoneLast10) || phoneLast11.endsWith(clean.slice(-10));
+              });
+              if (matchPhone) {
+                result.cpf = c.cpf;
+                result.nome = c.nome || r.nome || r.name;
+                result.beneficio = r.beneficio || r.nb || null;
+                result.dados = r;
+                result.source = 'consulta';
+                break;
+              }
+            }
+          }
+        } catch {}
+      }
+
+      // 3. Search digitacao by CPF (if we found CPF, enrich with digitacao data)
+      if (result.cpf) {
+        try {
+          const { data: digs } = await dbQuery('digitacao',
+            `select=cpf,nome,beneficio,tipo,banco,status,valor_operacao,valor_parcela&cpf=eq.${encodeURIComponent(result.cpf)}&order=created_at.desc&limit=5`
+          );
+          if (digs && digs.length) {
+            result.digitacoes = digs;
+            if (!result.nome) result.nome = digs[0].nome;
+          }
+        } catch {}
+      }
+
+      // 4. Search base_registros (dados JSONB may contain phone)
+      if (!result.cpf) {
+        try {
+          const { data: regs } = await dbQuery('base_registros',
+            `select=cpf,nome,beneficio,dados&limit=50&order=created_at.desc`
+          );
+          if (regs) {
+            for (const r of regs) {
+              const d = r.dados || {};
+              const phones = [d.telefone, d.celular, d.phone, d.fone, d.tel, ...(d.telefones || [])].filter(Boolean);
+              const matchPhone = phones.some(p => {
+                const clean = String(p).replace(/\D/g, '');
+                return clean.endsWith(phoneLast10) || phoneLast11.endsWith(clean.slice(-10));
+              });
+              if (matchPhone) {
+                result.cpf = r.cpf;
+                result.nome = r.nome || d.nome;
+                result.beneficio = r.beneficio || d.beneficio;
+                result.dados = d;
+                result.source = 'base';
+                break;
+              }
+            }
+          }
+        } catch {}
+      }
+
+      return json(result, 200, req);
     }
 
     return jsonError('action invalida', 400, req);

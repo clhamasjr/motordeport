@@ -31,15 +31,24 @@ async function cwApi(method, path, body) {
   } catch { return null; }
 }
 
-async function evo(method, path, body) {
+async function evo(method, path, body, timeoutMs = 15000) {
   const cfg = getConfig();
   if (!cfg.URL || !cfg.KEY) throw new Error('EVOLUTION_URL/KEY nao configurados');
-  const opts = { method, headers: { 'Content-Type': 'application/json', 'apikey': cfg.KEY } };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const opts = { method, headers: { 'Content-Type': 'application/json', 'apikey': cfg.KEY }, signal: ctrl.signal };
   if (body && method !== 'GET') opts.body = JSON.stringify(body);
-  const r = await fetch(cfg.URL + path, opts);
-  const t = await r.text();
-  let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 1000) }; }
-  return { ok: r.ok, status: r.status, data: d };
+  try {
+    const r = await fetch(cfg.URL + path, opts);
+    clearTimeout(timer);
+    const t = await r.text();
+    let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 1000) }; }
+    return { ok: r.ok, status: r.status, data: d };
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') return { ok: false, status: 408, data: { error: 'Timeout: Evolution API nao respondeu em ' + (timeoutMs/1000) + 's' } };
+    throw e;
+  }
 }
 
 // Upsert chat in Supabase (create or update)
@@ -248,7 +257,20 @@ export default async function handler(req) {
       const text = body.text || '';
       if (!number || !text) return jsonError('number e text obrigatorios', 400, req);
 
-      const r = await evo('POST', '/message/sendText/' + inst, { number, text });
+      // Try Evolution v2 format first (numberJid), fallback to v1
+      let r = await evo('POST', '/message/sendText/' + inst, {
+        number: number,
+        text: text,
+        delay: 0
+      }, 12000);
+
+      // If timeout or error, try alternative payload format
+      if (!r.ok && r.status === 408) {
+        r = await evo('POST', '/message/sendText/' + inst, {
+          number: number + '@s.whatsapp.net',
+          textMessage: { text: text }
+        }, 12000);
+      }
 
       // Save/update chat in Supabase (non-blocking)
       const jid = number + '@s.whatsapp.net';
@@ -258,7 +280,10 @@ export default async function handler(req) {
         unread_count: 0
       }).catch(() => {});
 
-      return j(r.data, 200, req);
+      if (!r.ok) {
+        return j({ ok: false, error: r.data?.error || 'Evolution API falhou', status: r.status, detail: r.data }, r.status === 408 ? 504 : 500, req);
+      }
+      return j({ ok: true, data: r.data }, 200, req);
     }
 
     // ── SEND BULK ───────────────────────────────────────────

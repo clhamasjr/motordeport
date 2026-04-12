@@ -2138,7 +2138,7 @@ function filterWppChats(q){let items=document.querySelectorAll('#wppChatList > d
 function wppUnreadTotal(){return cwState.conversations.reduce((s,c)=>s+(c.unread_count||0),0)}
 
 // ══════ CHATWOOT INTEGRATION ══════
-let cwState={conversations:[],activeConv:null,messages:[],agents:[],inboxes:[],loading:false,filter:'open',pollTimer:null};
+let cwState={conversations:[],activeConv:null,messages:[],agents:[],inboxes:[],loading:false,filter:'open',pollTimer:null,clientData:null};
 
 async function cwCall(action,data={}){
   const res=await apiFetch('/api/chatwoot',{method:'POST',body:JSON.stringify({action,...data})});
@@ -2163,6 +2163,7 @@ async function cwOpenConversation(id){
   cwStopPolling();
   cwState.activeConv=cwState.conversations.find(c=>c.id===id)||{id};
   cwState.messages=[];
+  cwState.clientData=null;
   // Re-render chat panel to show new active conversation
   let tc=document.getElementById('tabContent');
   if(tc&&S.tab==='wppchat')tc.innerHTML=renderWppChat();
@@ -2174,7 +2175,31 @@ async function cwOpenConversation(id){
     cwRenderMessages();
     setTimeout(()=>{let el=document.getElementById('wppMsgList');if(el)el.scrollTop=el.scrollHeight},100);
     cwStartPolling();
+    // Lookup client data by phone (non-blocking)
+    let phone=cwState.activeConv?.meta?.sender?.phone_number||cwState.activeConv?.contact?.phone_number||'';
+    let pNum=phone.replace(/\D/g,'');
+    if(pNum){
+      cwCall('clientByPhone',{phone:pNum}).then(cd=>{
+        if(cd&&cd.cpf){cwState.clientData=cd;cwRenderClientBadge()}
+      }).catch(()=>{});
+    }
   }catch(e){console.log('[CW] openConv error:',e.message);cwRenderMessages()}
+}
+function cwRenderClientBadge(){
+  let badge=document.getElementById('cwClientBadge');if(!badge)return;
+  let cd=cwState.clientData;if(!cd||!cd.cpf){badge.innerHTML='';return;}
+  let cpfMask=cd.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4');
+  let digHtml='';
+  if(cd.digitacoes&&cd.digitacoes.length){
+    digHtml=cd.digitacoes.slice(0,3).map(d=>`<span class="pill pill-${d.status==='paga'?'grn':d.status==='cancelada'||d.status==='recusada'?'red':'acc'}" style="font-size:8px;padding:1px 5px">${d.tipo.substring(0,4)} ${d.banco} ${d.status}</span>`).join(' ');
+  }
+  badge.innerHTML=`<div style="display:flex;align-items:center;gap:8px;padding:6px 16px;background:rgba(14,165,233,.06);border-bottom:1px solid var(--brd);font-size:11px">
+    <span style="font-weight:700;color:var(--acc)">📋 ${cpfMask}</span>
+    <span style="color:var(--t2)">${esc(cd.nome||'')}</span>
+    ${cd.beneficio?`<span style="color:var(--t3)">NB: ${cd.beneficio}</span>`:''}
+    ${cd.source?`<span class="pill pill-grn" style="font-size:8px;padding:1px 4px">${cd.source}</span>`:''}
+    ${digHtml}
+  </div>`;
 }
 
 async function cwSendMessage(){
@@ -2197,14 +2222,21 @@ async function cwSendMessage(){
     // 2. Send via Evolution API (actually deliver to WhatsApp)
     let phone=cwState.activeConv?.meta?.sender?.phone_number||cwState.activeConv?.contact?.phone_number||'';
     let number=phone.replace(/\D/g,'');
+    let evoOk=false;
     if(number){
       let myInst=getMyInstance();
       if(myInst){
-        await wppCall('send',{instance:myInst,number,text});
-      }
+        try{
+          let evoR=await wppCall('send',{instance:myInst,number,text});
+          evoOk=evoR&&evoR.ok!==false;
+          if(!evoOk)showToast('Salvo no Chatwoot, mas Evolution nao entregou ao WhatsApp: '+(evoR?.error||'timeout'),'warning');
+        }catch(evoErr){
+          showToast('Salvo no Chatwoot, mas erro ao enviar via WhatsApp: '+evoErr.message,'warning');
+        }
+      }else{showToast('Salvo no Chatwoot (nenhuma instancia atribuida para envio WhatsApp)','info')}
     }
     let statusEl=el?.lastElementChild?.querySelector('.msg-status');
-    if(statusEl)statusEl.textContent='✓';
+    if(statusEl)statusEl.textContent=evoOk?'✓✓':'✓';
   }catch(e){
     let statusEl=el?.lastElementChild?.querySelector('.msg-status');
     if(statusEl){statusEl.textContent='✕';statusEl.style.color='var(--red)'}
@@ -2352,7 +2384,7 @@ function renderWppChat(){
   } else { cwState._loadAttempted=false; }
   html+=`</div></div>`;
   // Right: Messages
-  html+=`<div style="display:flex;flex-direction:column;background:var(--sf)">`;
+  html+=`<div style="display:flex;flex-direction:column;background:var(--sf);min-height:0;overflow:hidden">`;
   if(cwState.activeConv){
     let conv=cwState.activeConv;
     let chatName=conv.meta?.sender?.name||conv.contact?.name||('Conversa #'+conv.id);
@@ -2377,8 +2409,10 @@ function renderWppChat(){
         <button class="btn btn-sm" onclick="cwOpenConversation(${conv.id})" title="Recarregar">🔄</button>
       </div>
     </div>`;
+    // ── Client data badge ──
+    html+=`<div id="cwClientBadge"></div>`;
     // ── Messages area ──
-    html+=`<div id="wppMsgList" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:6px">`;
+    html+=`<div id="wppMsgList" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:6px;min-height:0">`;
     for(let m of cwState.messages){
       if(m.message_type===2)continue; // skip activity messages
       let fromMe=m.message_type===1; // 0=incoming, 1=outgoing
