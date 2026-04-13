@@ -136,8 +136,27 @@ export default async function handler(req) {
 
     if (action === 'delete') {
       if (!inst) return jsonError('instance obrigatorio', 400, req);
-      const r = await evo('DELETE', '/instance/delete/' + inst);
-      return j(r.data, 200, req);
+      const force = body.force || false;
+
+      // Step 1: Try direct delete
+      let r = await evo('DELETE', '/instance/delete/' + inst, null, 5000);
+      if (r.ok) return j({ ok: true, method: 'direct' }, 200, req);
+
+      // Step 2: Force — logout first, wait, then delete
+      if (force) {
+        try { await evo('DELETE', '/instance/logout/' + inst, null, 3000); } catch {}
+        await new Promise(resolve => setTimeout(resolve, 500));
+        r = await evo('DELETE', '/instance/delete/' + inst, null, 5000);
+        if (r.ok) return j({ ok: true, method: 'logout+delete' }, 200, req);
+      }
+
+      // Step 3: Return failure but allow local removal
+      return j({
+        ok: false,
+        error: r.data?.response?.message?.[0] || r.data?.error || 'Delete failed',
+        status: r.status,
+        canLocalRemove: true
+      }, 200, req);
     }
 
     // ── SETUP CHATWOOT: create inbox for existing instance ──
