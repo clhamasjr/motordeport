@@ -3142,7 +3142,8 @@ if(!tabsBar||!tabContent){
 if(!D){
   document.getElementById("headerActions").style.display="none";
   let noDataTabs=[{k:"home",l:"🏠 Início"},{k:"consulta",l:"🔍 Consulta"},{k:"est",l:"📝 Esteira",n:cart.size||""},{k:"camp",l:"📋 Campanhas"},{k:"crm",l:"🏷️ CRM",n:Object.keys(getCrmData()).length||""},{k:"wppchat",l:"💬 Chat",n:wppUnreadTotal()||""}];
-  if(isAdm){noDataTabs.push({k:"wpp",l:"📱 Conexões"});noDataTabs.push({k:"gestao",l:"📊 Gestão"});noDataTabs.push({k:"admin",l:"👥 Admin"})}
+  if(isGes){noDataTabs.push({k:"wpp",l:"📱 Conexões"});noDataTabs.push({k:"gestao",l:"📊 Gestão"})}
+  if(isAdm){noDataTabs.push({k:"admin",l:"👥 Admin"})}
   if(!["home","consulta","est","camp","crm","wppchat","wpp","gestao","admin"].includes(S.tab))S.tab="home";
   tabsBar.innerHTML=noDataTabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("");
   let content='';
@@ -3151,8 +3152,8 @@ if(!D){
   else if(S.tab==="camp")content=renderCampanhas();
   else if(S.tab==="crm")content=renderCRM();
   else if(S.tab==="wppchat")content=renderWppChat();
-  else if(S.tab==="wpp"&&isAdm)content=renderWhatsApp();
-  else if(S.tab==="gestao"&&isAdm)content=renderGestao();
+  else if(S.tab==="wpp"&&isGes)content=renderWhatsApp();
+  else if(S.tab==="gestao"&&isGes)content=renderGestao();
   else if(S.tab==="admin"&&isAdm)content=renderAdmin();
   if(content){tabContent.innerHTML=content;return}
   let hist=getMyHist();
@@ -3170,7 +3171,8 @@ if(!D){
   tabs.push({k:"in100",l:"🔍 IN100",n:Object.keys(in100Cache).length||""});
   tabs.push({k:"crm",l:"🏷️ CRM",n:crmCount||""});
   tabs.push({k:"wppchat",l:"💬 Chat",n:wppUnreadTotal()||""});
-  if(isAdm){tabs.push({k:"wpp",l:"📱 Conexões"});tabs.push({k:"gestao",l:"📊 Gestão"});tabs.push({k:"admin",l:"👥"})}
+  if(isGes){tabs.push({k:"wpp",l:"📱 Conexões"});tabs.push({k:"gestao",l:"📊 Gestão"})}
+  if(isAdm){tabs.push({k:"admin",l:"👥"})}
   tabsBar.innerHTML=tabs.map(t=>`<button class="tab ${S.tab===t.k?"active":""}" onclick="setTab('${t.k}')">${t.l}${t.n?`<span class="tab-badge">${t.n}</span>`:""}</button>`).join("");
   let tcontent='';
   if(S.tab==="admin")tcontent=renderAdmin();
