@@ -166,6 +166,25 @@ export default async function handler(req) {
     return json({ ok: true, mensagem: 'Usuario desativado' }, 200, req);
   }
 
+  // ── UPDATE ROLE (admin only) ────────────────────────────────
+  if (action === 'update_role') {
+    const roleErr = requireRole(currentUser, ['admin']);
+    if (roleErr) return roleErr;
+
+    const { targetUser, role } = body;
+    if (!targetUser || !role) return json({ ok: false, error: 'targetUser e role obrigatorios' }, 400, req);
+    if (!['admin', 'gestor', 'operador'].includes(role)) return json({ ok: false, error: 'Role invalido' }, 400, req);
+
+    const { data: target } = await dbSelect('users', { filters: { username: targetUser }, select: 'id', single: true });
+    if (!target) return json({ ok: false, error: 'Usuario nao encontrado' }, 400, req);
+
+    await dbUpdate('users', { id: target.id }, { role });
+
+    await dbInsert('audit_log', { user_id: currentUser.id, action: 'update_role', details: { target: targetUser, role } });
+
+    return json({ ok: true, mensagem: 'Role atualizado para ' + role }, 200, req);
+  }
+
   // ── RESET PASSWORD (admin only) ────────────────────────────
   if (action === 'reset_pw') {
     const roleErr = requireRole(currentUser, ['admin']);
