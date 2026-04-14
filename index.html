@@ -569,9 +569,9 @@ function exportWppList(){
 }
 
 // ══════ ENGINE ══════
-const COEFS=[{t:1.85,c:0.02299},{t:1.83,c:0.02360},{t:1.80,c:0.02451},{t:1.78,c:0.02250},{t:1.75,c:0.021985},{t:1.72,c:0.02175},{t:1.70,c:0.021604},{t:1.68,c:0.02145},{t:1.66,c:0.02130},{t:1.65,c:0.02123}];
-const BD={QUALI:{sMin:2000,tMin:250,pMin:0,pgMin:0,faixa:null,coefF:null,block:["359","246","025","047","063","070","320","394","422","654","212","626","935","753","330","149","012","752","082","079","329","643","243"]},FACTA:{sMin:0,tMin:100,pMin:50,pgMin:0,faixa:[1.70,1.85],coefF:null,block:["070","071","925","935","149","012","611","643","917"]},BRB:{sMin:3000,tMin:250,pMin:0,pgMin:0,faixa:null,coefF:0.02130,block:["070","623","935","149","012","071","925","380","079"]},DIGIO:{sMin:4500,tMin:250,pMin:0,pgMin:12,faixa:null,coefF:null,block:["237","001","041"]}};
-const ORDEM=["QUALI","FACTA","BRB","DIGIO"],B1P=["149","422","739","925","380","033","326","290","041","389","121"],ESP_INV=[4,5,6,32,33,34,51,83,92],ESP_AUX=[31,36,91,94],CARTAO={PAN:"623",BMG:"318",Daycoval:"707"};
+const COEFS=[{t:1.85,c:0.02299},{t:1.83,c:0.02360},{t:1.80,c:0.02451},{t:1.78,c:0.02250},{t:1.75,c:0.021985},{t:1.72,c:0.02175},{t:1.70,c:0.021604},{t:1.68,c:0.02145},{t:1.66,c:0.02130},{t:1.65,c:0.02123},{t:1.60,c:0.02046},{t:1.55,c:0.02009},{t:1.50,c:0.01973},{t:1.45,c:0.01937},{t:1.40,c:0.01900},{t:1.35,c:0.01864}];
+const BD={QUALI:{sMin:2000,tMin:250,pMin:0,pgMin:0,faixa:null,coefF:null,block:["359","246","025","047","063","070","320","394","422","654","212","626","935","753","330","149","012","752","082","079","329","643","243"]},FACTA:{sMin:0,tMin:100,pMin:50,pgMin:0,faixa:[1.70,1.85],coefF:null,block:["070","071","925","935","149","012","611","643","917"]},C6:{sMin:2000,tMin:50,pMin:0,pgMin:0,faixa:[1.35,1.85],coefF:null,block:["707","121","012","422","070","329"],pgMinMap:{"149":13,"254":13,"623":37},espBlock:[87,88]},BRB:{sMin:3000,tMin:250,pMin:0,pgMin:0,faixa:null,coefF:0.02130,block:["070","623","935","149","012","071","925","380","079"]},DIGIO:{sMin:4500,tMin:250,pMin:0,pgMin:12,faixa:null,coefF:null,block:["237","001","041"]}};
+const ORDEM=["QUALI","FACTA","C6","BRB","DIGIO"],B1P=["149","422","739","925","380","033","326","290","041","389","121"],ESP_INV=[4,5,6,32,33,34,51,83,92],ESP_AUX=[31,36,91,94],ESP_LOAS=[87,88],CARTAO={PAN:"623",BMG:"318",Daycoval:"707"};
 function pV(v){if(v==null||v==="")return 0;if(typeof v==="number")return v;let s=String(v).replace(/R\$\s*/g,"").replace(/\s/g,"");if(s.includes(","))return parseFloat(s.replace(/\./g,"").replace(",","."))||0;if(s.includes("."))return parseFloat(s)||0;let n=parseInt(s,10);return isNaN(n)?0:n>99?n/100:n}
 function pP(v){if(v==null||v==="")return[0,0,0];let m=String(v).match(/(\d+)\s*[/\\]\s*(\d+)/);if(m){let r=+m[1],t=+m[2];return[r,t,t-r]}let n=parseInt(v,10);return[n||0,n||0,0]}
 function pC(v){if(v==null||v==="")return"";return String(typeof v==="number"?Math.floor(v):v).trim().padStart(3,"0")}
@@ -579,7 +579,7 @@ function pEN(e){if(!e)return 0;let m=String(e).match(/^(\d+)/);return m?parseInt
 function cAge(ns){if(ns==null)return null;let d;if(ns instanceof Date)d=ns;else if(typeof ns==="number")d=new Date((ns-25569)*864e5);else{let s=String(ns).trim(),m=s.match(/(\d{2})[/-](\d{2})[/-](\d{4})/);if(m)d=new Date(+m[3],+m[2]-1,+m[1]);else d=new Date(s)}if(!d||isNaN(d.getTime()))return null;let now=new Date(),a=now.getFullYear()-d.getFullYear();if(now.getMonth()<d.getMonth()||(now.getMonth()===d.getMonth()&&now.getDate()<d.getDate()))a--;return{age:a}}
 function cBY(dib){if(dib==null)return null;let d;if(dib instanceof Date)d=dib;else if(typeof dib==="number")d=new Date((dib-25569)*864e5);else{let s=String(dib).trim(),m=s.match(/(\d{2})[/-](\d{2})[/-](\d{4})/);if(m)d=new Date(+m[3],+m[2]-1,+m[1]);else d=new Date(s)}if(!d||isNaN(d.getTime()))return null;let now=new Date(),y=now.getFullYear()-d.getFullYear();if(now.getMonth()<d.getMonth()||(now.getMonth()===d.getMonth()&&now.getDate()<d.getDate()))y--;return y}
 function bestR(p,s,t,fx){let pool=fx?COEFS.filter(c=>c.t>=fx[0]&&c.t<=fx[1]):COEFS;for(let{t:tx,c}of pool){let vc=p/c,tr=vc-s;if(tr>=t)return{t:tx,c,vc,tr}}return null}
-function testar(p,s,pg,cd,inv,age,bY,rest){let i1=B1P.includes(cd);for(let b of ORDEM){let r=BD[b];if(r.block.includes(cd))continue;if(r.pMin&&p<r.pMin)continue;if(r.sMin&&s<r.sMin)continue;let pgR=i1?1:r.pgMin;if(pgR&&pg<pgR)continue;if(inv&&age!==null){if(age<55)continue;if(age>=55&&age<=57&&(bY===null||bY<15))continue;if(rest>0&&rest>(75-age)*12)continue}if(r.coefF){let vc=p/r.coefF,tr=vc-s;if(tr<r.tMin)continue;let tx=COEFS.find(x=>x.c===r.coefF);return{banco:b,troco:tr,vc,taxa:tx?tx.t:0,i1}}let res=bestR(p,s,r.tMin,r.faixa);if(res)return{banco:b,troco:res.tr,vc:res.vc,taxa:res.t,i1}}return null}
+function testar(p,s,pg,cd,inv,age,bY,rest,espN){let i1=B1P.includes(cd);for(let b of ORDEM){let r=BD[b];if(r.block.includes(cd))continue;if(r.espBlock&&espN&&r.espBlock.includes(espN))continue;if(r.pMin&&p<r.pMin)continue;if(r.sMin&&s<r.sMin)continue;let pgR=i1?1:(r.pgMinMap&&r.pgMinMap[cd]?r.pgMinMap[cd]:r.pgMin);if(pgR&&pg<pgR)continue;if(inv&&age!==null){if(age<55)continue;if(age>=55&&age<=57&&(bY===null||bY<15))continue;if(rest>0&&rest>(75-age)*12)continue}if(r.coefF){let vc=p/r.coefF,tr=vc-s;if(tr<r.tMin)continue;let tx=COEFS.find(x=>x.c===r.coefF);return{banco:b,troco:tr,vc,taxa:tx?tx.t:0,i1}}let res=bestR(p,s,r.tMin,r.faixa);if(res)return{banco:b,troco:res.tr,vc:res.vc,taxa:res.t,i1}}return null}
 function findAllPos(H,nm){let r=[],n=nm.toLowerCase().replace(/[^a-z0-9 ]/g,"").trim();for(let i=0;i<H.length;i++){let h=String(H[i]||"").toLowerCase().replace(/[^a-z0-9 ]/g,"").trim();if(h===n)r.push(i)}return r}
 function findFirst(H,ns){for(let nm of ns){let n=nm.toLowerCase().replace(/[^a-z0-9 ]/g,"").trim();for(let i=0;i<H.length;i++){let h=String(H[i]||"").toLowerCase().replace(/[^a-z0-9 ]/g,"").trim();if(h===n)return i}}return-1}
 function processar(data){
@@ -628,7 +628,7 @@ function processar(data){
     }
     for(let lb of lbs){
       let con=g(row,lb.cc),par=gv(row,lb.cp),sal=gv(row,lb.cs);let[rest,tot,pag]=lb.cz!=null?pP(row[lb.cz]):[0,0,0];let cod=lb.ck!=null?pC(gr(row,lb.ck)??""):"";
-      if(!con&&par===0&&sal===0)continue;let i1=B1P.includes(cod);let res=testar(par,sal,pag,cod,isInv,idade,bY,rest);
+      if(!con&&par===0&&sal===0)continue;let i1=B1P.includes(cod);let res=testar(par,sal,pag,cod,isInv,idade,bY,rest,eN);
       let reg={nome,cpf,ben,esp,con,cod,par:Math.round(par*100)/100,sal:Math.round(sal*100)/100,prazo:`${rest}/${tot}`,pag,idade:idade??"-",isInv,is1p:i1,dest:res?res.banco:"-",troco:res?Math.round(res.troco*100)/100:0,vc:res?Math.round(res.vc*100)/100:0,taxa:res?res.taxa:"-",ok:!!res,t1,t2,t3};
       analise.push(reg);if(res)elegiveis.push(reg);
     }
@@ -772,7 +772,7 @@ async function digitarCartBatch(){
 
 // Helper: build cart item from portabilidade contract
 function buildCartFromPort(pc,r){
-  return{cpf:r?.beneficiario?.cpf||'',nome:r?.beneficiario?.nome||'',beneficio:r?.beneficiario?.nb||r?.beneficio?.nb||'',tipo:'portabilidade',banco:'FACTA',contrato_origem:pc.contrato,banco_origem:pc.banco,parcela_origem:pc.parcela,saldo_devedor:pc.saldo,taxa_origem:pc.taxa,prazo_restante:pc.prazo,valor_troco:pc.troco,destino:pc.destino,taxa_nova:pc.novaTaxa,valor_operacao:pc.vc};
+  return{cpf:r?.beneficiario?.cpf||'',nome:r?.beneficiario?.nome||'',beneficio:r?.beneficiario?.nb||r?.beneficio?.nb||'',tipo:'portabilidade',banco:pc.destino||'FACTA',contrato_origem:pc.contrato,banco_origem:pc.banco,parcela_origem:pc.parcela,saldo_devedor:pc.saldo,taxa_origem:pc.taxa,prazo_restante:pc.prazo,valor_troco:pc.troco,destino:pc.destino,taxa_nova:pc.novaTaxa,valor_operacao:pc.vc};
 }
 // Helper: build cart item from emprestimo novo (margem)
 function buildCartFromMargem(r,tipo){
@@ -780,7 +780,7 @@ function buildCartFromMargem(r,tipo){
 }
 // Helper: build cart item from elegivel record
 function buildCartFromEleg(el){
-  return{cpf:el.cpf,nome:el.nome,beneficio:el.ben||'',tipo:'portabilidade',banco:'FACTA',contrato_origem:el.contrato||'',banco_origem:el.cod,parcela_origem:el.par,saldo_devedor:el.sal,taxa_origem:el.taxa,prazo_restante:el.prazo,valor_troco:el.troco,destino:el.dest,valor_operacao:el.vc};
+  return{cpf:el.cpf,nome:el.nome,beneficio:el.ben||'',tipo:'portabilidade',banco:el.dest||'FACTA',contrato_origem:el.contrato||'',banco_origem:el.cod,parcela_origem:el.par,saldo_devedor:el.sal,taxa_origem:el.taxa,prazo_restante:el.prazo,valor_troco:el.troco,destino:el.dest,valor_operacao:el.vc};
 }
 
 // Add selected elegiveis to cart
@@ -855,8 +855,8 @@ function setQ(v){S.q=v;S.pg=0;renderApp()}
 function doSort(col){if(S.sort.c===col)S.sort.d=S.sort.d==="asc"?"desc":"asc";else S.sort={c:col,d:"asc"};S.pg=0;renderApp()}
 function setPg(p){S.pg=p;renderApp()}
 function filt(list){let f=list;if(S.q){let ql=S.q.toLowerCase();f=f.filter(r=>(r.nome||"").toLowerCase().includes(ql)||(r.cpf||"").includes(ql)||(r.con||"").includes(ql))}if(S.sort.c){let sc=S.sort.c,sd=S.sort.d;f=[...f].sort((a,b)=>{let va=a[sc],vb=b[sc];if(typeof va==="string"){va=va.toLowerCase();vb=String(vb||"").toLowerCase()}return(va<vb?-1:va>vb?1:0)*(sd==="asc"?1:-1)})}return f}
-const DC={QUALI:{c:"var(--acc)",bg:"rgba(59,130,246,.1)"},FACTA:{c:"var(--pur)",bg:"rgba(167,139,250,.1)"},BRB:{c:"var(--ylw)",bg:"rgba(234,179,8,.1)"},DIGIO:{c:"var(--grn)",bg:"rgba(34,197,94,.1)"}};
-const pCls={QUALI:"pill-acc",FACTA:"pill-pur",BRB:"pill-ylw",DIGIO:"pill-grn"};
+const DC={QUALI:{c:"var(--acc)",bg:"rgba(59,130,246,.1)"},FACTA:{c:"var(--pur)",bg:"rgba(167,139,250,.1)"},C6:{c:"var(--cyan)",bg:"rgba(6,182,212,.1)"},BRB:{c:"var(--ylw)",bg:"rgba(234,179,8,.1)"},DIGIO:{c:"var(--grn)",bg:"rgba(34,197,94,.1)"}};
+const pCls={QUALI:"pill-acc",FACTA:"pill-pur",C6:"pill-cyan",BRB:"pill-ylw",DIGIO:"pill-grn"};
 function si(col){if(S.sort.c!==col)return'<span style="opacity:.2;margin-left:3px;font-size:8px">⇅</span>';return`<span style="margin-left:3px;font-size:8px">${S.sort.d==="asc"?"▲":"▼"}</span>`}
 function TH(col,l,right){return`<th class="${right?"right":""}" onclick="doSort('${col}')">${l}${si(col)}</th>`}
 function pgr(cnt){let tot=Math.ceil(cnt/PER)||1;return`<div class="pager"><span style="color:var(--t3)">${N(cnt)} registros</span><div class="pager-btns"><button onclick="setPg(Math.max(0,S.pg-1))" ${S.pg===0?"disabled":""}>‹</button><span style="color:var(--t2);padding:0 6px;font-size:11px">${S.pg+1}/${tot}</span><button onclick="setPg(Math.min(${tot-1},S.pg+1))" ${S.pg>=tot-1?"disabled":""}>›</button></div></div>`}
@@ -2871,6 +2871,7 @@ if(mrgDisp>0){
 }
 if(carts.length){for(let cd of carts){let mrgC=parseFloat(String(cd.margem||'0').replace(/\./g,'').replace(',','.'))||0;if(mrgC>0){oportunidades.push({icon:'💳',tipo:'Saque '+((cd.tipo||'')+' '+(cd.banco||'')).trim(),cor:'var(--pur)',valor:mrgC,desc:'Cartão ativo com margem'});totalOport+=mrgC}}}
 var portContratos=[];
+let espN=pEN(ben.especie);
 if(r.contratos&&r.contratos.length){for(let ct of r.contratos){
   let par=parseFloat(String(ct.parcela||'0').replace(/\./g,'').replace(',','.'))||0;
   let sal=parseFloat(String(ct.saldo||ct.saldo_quitacao||'0').replace(/\./g,'').replace(',','.'))||0;
@@ -2879,7 +2880,7 @@ if(r.contratos&&r.contratos.length){for(let ct of r.contratos){
   let rest=parseInt(ct.prazo||ct.prazo_restante||'0')||0;
   let total=parseInt(ct.prazo_original||'0')||0;
   let pag=total>0&&rest>0?total-rest:0;
-  if(par>0&&sal>0&&cod&&cod!=='000'){let res=testar(par,sal,pag,cod,false,null,null,rest);
+  if(par>0&&sal>0&&cod&&cod!=='000'){let res=testar(par,sal,pag,cod,false,null,null,rest,espN);
   if(res){portContratos.push({contrato:ct.contrato||ct.id||'?',banco:cod,parcela:par,saldo:sal,taxa,destino:res.banco,novaTaxa:res.taxa,vc:res.vc,troco:res.troco});totalOport+=res.vc}
 }}}
 if(portContratos.length){oportunidades.push({icon:'🔄',tipo:'Portabilidade',cor:'var(--grn)',valor:portContratos.reduce((s,c)=>s+c.troco,0),desc:portContratos.length+' contrato(s) elegível(is)'})}
