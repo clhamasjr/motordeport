@@ -1767,7 +1767,13 @@ async function wppLoadInstances(){
   wppState.loading=true;renderApp();
   try{
     const d=await wppCall('list',{instance:''});
-    wppState.instances=Array.isArray(d)?d:[];
+    let allInsts=Array.isArray(d)?d:[];
+    // Filter out hidden instances
+    let hidden=getHiddenInstances();
+    wppState.instances=hidden.length?allInsts.filter(i=>{
+      let n=i.instance?.instanceName||i.instanceName||i.name||'';
+      return !hidden.includes(n);
+    }):allInsts;
     // Build status map from list response
     wppState.instanceStatuses={};
     for(let inst of wppState.instances){
@@ -1819,14 +1825,21 @@ async function wppCreateInstance(){
   }catch(e){wppState.loading=false;alert("Erro: "+e.message);renderApp()}
 }
 
+function getHiddenInstances(){try{return JSON.parse(localStorage.getItem('ff_hidden_inst')||'[]')}catch{return[]}}
+function saveHiddenInstances(list){localStorage.setItem('ff_hidden_inst',JSON.stringify(list))}
+function unhideInstance(name){let h=getHiddenInstances();saveHiddenInstances(h.filter(x=>x!==name));wppLoadInstances()}
+
 async function wppDeleteInstance(name){
   if(!confirm(`Excluir instância "${name}"? Isso desconecta o WhatsApp.`))return;
   try{
+    showToast('Excluindo "'+name+'"...','info');
     let r=await wppCall('delete',{instance:name,force:true});
     if(!r.ok&&r.canLocalRemove){
-      if(confirm('Não foi possível excluir no servidor Evolution. Remover do sistema local mesmo assim?')){
-        // Remove from local assignments only
-      }else return;
+      if(!confirm('Não foi possível excluir no servidor Evolution.\n\nOcultar esta instância da lista?'))return;
+      // Hide locally — won't show up even after refresh
+      let hidden=getHiddenInstances();
+      if(!hidden.includes(name))hidden.push(name);
+      saveHiddenInstances(hidden);
     }
     // Remove from all user assignments
     let a=getWppAssign();
