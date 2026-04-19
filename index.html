@@ -1768,12 +1768,32 @@ async function wppLoadInstances(){
   try{
     const d=await wppCall('list',{instance:''});
     let allInsts=Array.isArray(d)?d:[];
-    // Filter out hidden instances
+    // Auto-adopt any instance already assigned to a user (migration)
+    let assigns=getWppAssign();
+    let assignedNames=new Set();
+    for(let u in assigns){(assigns[u].instances||[]).forEach(n=>n&&assignedNames.add(n))}
+    if(assignedNames.size){
+      let known=new Set(getProjectInstances());
+      let changed=false;
+      for(let n of assignedNames){if(!known.has(n)){known.add(n);changed=true}}
+      if(changed)saveProjectInstances([...known]);
+    }
+    // Filter: only show instances in project whitelist; exclude hidden
     let hidden=getHiddenInstances();
-    wppState.instances=hidden.length?allInsts.filter(i=>{
+    let project=getProjectInstances();
+    let projectSet=new Set(project);
+    wppState.instances=allInsts.filter(i=>{
       let n=i.instance?.instanceName||i.instanceName||i.name||'';
-      return !hidden.includes(n);
-    }):allInsts;
+      if(!n)return false;
+      if(hidden.includes(n))return false;
+      // Only show whitelisted (FlowForce-owned) instances
+      return projectSet.has(n);
+    });
+    // Store "unclaimed" instances (present on server but not in this project) for adoption UI
+    wppState.unclaimedInstances=allInsts.filter(i=>{
+      let n=i.instance?.instanceName||i.instanceName||i.name||'';
+      return n&&!projectSet.has(n)&&!hidden.includes(n);
+    }).map(i=>i.instance?.instanceName||i.instanceName||i.name);
     // Build status map from list response
     wppState.instanceStatuses={};
     for(let inst of wppState.instances){
@@ -1801,6 +1821,8 @@ async function wppCreateInstance(){
     if(!qr&&d.instance&&d.instance.qrcode)qr=d.instance.qrcode;
     if(qr){
       wppState.qr=qr;wppState.qrInstance=name;
+      // Register in FlowForce project whitelist
+      adoptInstance(name);
       // Auto-assign to current user
       let d=getUserAssign(CU.user);if(!d.instances)d.instances=[];
       if(!d.instances.includes(name))d.instances.push(name);
@@ -1828,6 +1850,22 @@ async function wppCreateInstance(){
 function getHiddenInstances(){try{return JSON.parse(localStorage.getItem('ff_hidden_inst')||'[]')}catch{return[]}}
 function saveHiddenInstances(list){localStorage.setItem('ff_hidden_inst',JSON.stringify(list))}
 function unhideInstance(name){let h=getHiddenInstances();saveHiddenInstances(h.filter(x=>x!==name));wppLoadInstances()}
+// Project whitelist: instances that belong to FlowForce (separate from other apps sharing same Evolution server)
+function getProjectInstances(){try{return JSON.parse(localStorage.getItem('ff_project_inst')||'[]')}catch{return[]}}
+function saveProjectInstances(list){localStorage.setItem('ff_project_inst',JSON.stringify(list))}
+function adoptInstance(name){let p=new Set(getProjectInstances());p.add(name);saveProjectInstances([...p]);wppLoadInstances()}
+function unadoptInstance(name){let p=getProjectInstances();saveProjectInstances(p.filter(x=>x!==name));wppLoadInstances()}
+async function adoptInstancePrompt(){
+  let names=wppState.unclaimedInstances||[];
+  if(!names.length){alert('Nenhuma instância disponível no servidor Evolution fora do FlowForce');return}
+  let msg='Instâncias no servidor Evolution (fora do FlowForce):\n\n'+names.map((n,i)=>`${i+1}. ${n}`).join('\n')+'\n\nDigite o nome EXATO para adotar no FlowForce:';
+  let pick=prompt(msg);
+  if(!pick)return;
+  pick=pick.trim();
+  if(!names.includes(pick)){alert('Nome não encontrado na lista');return}
+  adoptInstance(pick);
+  showToast('Instância '+pick+' adotada no FlowForce','success');
+}
 
 async function wppDeleteInstance(name){
   if(!confirm(`Excluir instância "${name}"? Isso desconecta o WhatsApp.`))return;
@@ -2118,6 +2156,7 @@ function renderWhatsApp(){
     <div style="font-size:18px;font-weight:800">📱 Conexões WhatsApp</div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span style="font-size:12px;color:var(--t3)">${myInsts.length} instância${myInsts.length!==1?'s':''}</span>
+      ${isAdmin&&(wppState.unclaimedInstances||[]).length?`<button class="btn btn-sm" style="border-color:var(--ylw);color:var(--ylw)" onclick="adoptInstancePrompt()" title="Outras instâncias no servidor Evolution não atribuídas ao FlowForce">+ Adotar (${wppState.unclaimedInstances.length})</button>`:''}
       <button class="btn btn-sm btn-cyan" onclick="wppLoadInstances()">🔄 Atualizar</button>
       ${isAdmin?'<button class="btn-acc btn-sm" onclick="wppCreateInstance()">+ Nova Instância</button>':''}
     </div>
