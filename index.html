@@ -3311,8 +3311,8 @@ if(!D){
         for(let g of grouped){let hig=!!phoneCache[g.cpf];let sent=wppSent.has(g.cpf);let destinos=[...g.bancos].map(b=>`<span class="pill ${pCls[b]||"pill-default"}" style="margin-right:2px">${b}</span>`).join("");
           let telBase=g.t1||g.t2||g.t3||"";
           let telNum=telBase.replace(/\D/g,"");
-          let wppBase=telNum.length>=10?`https://wa.me/55${telNum}`:"";
-          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td>${destinos}</td><td class="right mono" style="color:var(--ylw)">${R$(g.vcTotal)}</td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td class="mono">${telBase?`${esc(telBase)} ${wppBase?`<a href="${wppBase}" target="_blank" style="text-decoration:none"><span class="pill pill-grn" style="cursor:pointer">💬</span></a>`:""}`:'<span style="color:var(--t3)">—</span>'}</td><td>${sent?'<span class="pill pill-cyan">ENVIADO</span>':hig?'<span class="pill pill-grn">HIGIENIZADO</span>':`<span class="pill ${telBase?"pill-org":"pill-default"}">${telBase?"TEM TEL":"SEM TEL"}</span>`}</td><td>${phoneMode==="api"?`<button class="btn btn-sm ${hig?"btn-grn":"btn-cyan"}" onclick="higienizarCPF('${g.cpf}','${esc(g.nome)}','${esc(g.t1)}','${esc(g.t2)}','${esc(g.t3)}')">${hig?"📱 Ver":"📡 Hig"}</button> `:""}${wppBase&&phoneMode==="base"?`<a href="${wppBase}" target="_blank" style="text-decoration:none"><span class="pill pill-grn" style="cursor:pointer">💬 Wpp</span></a> `:""}<button class="btn btn-red btn-sm" onclick="selected.delete('${g.cpf}');renderApp()">✕</button></td></tr>`}
+          let hasTel=telNum.length>=10;
+          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td>${destinos}</td><td class="right mono" style="color:var(--ylw)">${R$(g.vcTotal)}</td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td class="mono">${telBase?`${esc(telBase)} ${hasTel?`<span class="pill pill-grn" style="cursor:pointer" onclick="wppStartChat('${telNum}')">💬</span>`:""}`:'<span style="color:var(--t3)">—</span>'}</td><td>${sent?'<span class="pill pill-cyan">ENVIADO</span>':hig?'<span class="pill pill-grn">HIGIENIZADO</span>':`<span class="pill ${telBase?"pill-org":"pill-default"}">${telBase?"TEM TEL":"SEM TEL"}</span>`}</td><td>${phoneMode==="api"?`<button class="btn btn-sm ${hig?"btn-grn":"btn-cyan"}" onclick="higienizarCPF('${g.cpf}','${esc(g.nome)}','${esc(g.t1)}','${esc(g.t2)}','${esc(g.t3)}')">${hig?"📱 Ver":"📡 Hig"}</button> `:""}${hasTel&&phoneMode==="base"?`<span class="pill pill-grn" style="cursor:pointer" onclick="wppStartChat('${telNum}')">💬 Wpp</span> `:""}<button class="btn btn-red btn-sm" onclick="selected.delete('${g.cpf}');renderApp()">✕</button></td></tr>`}
         html+=`</tbody></table></div></div>`}}
 
     // Stage 2: Higienizados / Pronto p/ WhatsApp
@@ -3325,17 +3325,17 @@ if(!D){
         html+=`<div class="search-bar"><button class="btn-acc" style="padding:6px 14px;font-size:10px" onclick="openWppModal()">💬 WhatsApp (${wppCount} contatos)</button><button class="btn btn-grn" onclick="exportWppList()">↓ Exportar</button><span style="font-size:10px;color:var(--t3)">Usando: ${phoneMode==="base"?"telefone da base":"NovaVida"}</span></div>`;
         html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Cliente</th><th>CPF</th><th style="text-align:center">Contr</th><th class="right">Troco Total</th><th>Telefone</th><th>WhatsApp</th><th>Ação</th></tr></thead><tbody>`;
         for(let g of readyItems){
-          let telFinal="",wppLink="";
+          let telFinal="",wppNum="";
           if(phoneMode==="base"){
             telFinal=g.t1||g.t2||g.t3||"";
             let num=telFinal.replace(/\D/g,"");
-            if(num.length>=10)wppLink=`https://wa.me/55${num}`;
+            if(num.length>=10)wppNum=num;
           }else{
             let ph=phoneCache[g.cpf];let phones=ph?ph.telefones:[];let wpp=phones.find(t=>t.whatsapp);
             telFinal=wpp?`(${wpp.ddd}) ${wpp.telefone}`:phones[0]?`(${phones[0].ddd}) ${phones[0].telefone}`:"";
-            if(wpp)wppLink=`https://wa.me/55${wpp.ddd}${wpp.telefone}`;
+            if(wpp)wppNum=wpp.ddd+wpp.telefone;
           }
-          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td class="mono">${telFinal?esc(telFinal):'<span style="color:var(--t3)">—</span>'}</td><td>${wppLink?`<span class="pill pill-grn">SIM</span>`:'<span class="pill pill-red">NÃO</span>'}</td><td>${wppLink?`<a href="${wppLink}" target="_blank" style="text-decoration:none"><span class="pill pill-grn" style="cursor:pointer">💬 Abrir</span></a> `:""}<button class="btn btn-sm btn-cyan" onclick="higienizarCPF('${g.cpf}','${esc(g.nome)}','${esc(g.t1)}','${esc(g.t2)}','${esc(g.t3)}')">📱</button></td></tr>`}
+          html+=`<tr class="rh"><td>${esc(g.nome)}</td><td class="mono">${esc(g.cpf)}</td><td style="text-align:center"><span class="pill pill-acc">${g.qtd}</span></td><td class="right mono" style="color:var(--grn);font-weight:700">${R$(g.trocoTotal)}</td><td class="mono">${telFinal?esc(telFinal):'<span style="color:var(--t3)">—</span>'}</td><td>${wppNum?`<span class="pill pill-grn">SIM</span>`:'<span class="pill pill-red">NÃO</span>'}</td><td>${wppNum?`<span class="pill pill-grn" style="cursor:pointer" onclick="wppStartChat('${wppNum}')">💬 Abrir</span> `:""}<button class="btn btn-sm btn-cyan" onclick="higienizarCPF('${g.cpf}','${esc(g.nome)}','${esc(g.t1)}','${esc(g.t2)}','${esc(g.t3)}')">📱</button></td></tr>`}
         html+=`</tbody></table></div></div>`}}
 
     // Stage 3: WhatsApp Enviados (agrupados)
