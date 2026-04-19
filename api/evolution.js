@@ -159,6 +159,73 @@ export default async function handler(req) {
       }, 200, req);
     }
 
+    // ── DIAGNOSE: check current webhook + chatwoot config ──
+    if (action === 'diagnose') {
+      if (!inst) return jsonError('instance obrigatorio', 400, req);
+      const result = { instance: inst };
+      try {
+        const wh = await evo('GET', '/webhook/find/' + inst, null, 5000);
+        result.webhook = wh.data;
+        result.webhookUrl = wh.data?.url || wh.data?.webhook?.url || null;
+        result.webhookIsN8n = !!(result.webhookUrl && /n8n/i.test(result.webhookUrl));
+      } catch (e) { result.webhookError = e.message; }
+      try {
+        const cw = await evo('GET', '/chatwoot/find/' + inst, null, 5000);
+        result.chatwoot = cw.data;
+        result.chatwootEnabled = !!(cw.data && cw.data.enabled);
+      } catch (e) { result.chatwootError = e.message; }
+      try {
+        const st = await evo('GET', '/instance/connectionState/' + inst, null, 5000);
+        result.connectionState = st.data?.instance?.state || st.data?.state || null;
+      } catch (e) { result.stateError = e.message; }
+      return j(result, 200, req);
+    }
+
+    // ── NATIVE CHATWOOT INTEGRATION: Evolution syncs with Chatwoot automatically ──
+    if (action === 'nativeChatwoot') {
+      if (!inst) return jsonError('instance obrigatorio', 400, req);
+      const cwCfg = getCwConfig();
+      if (!cwCfg.url || !cwCfg.token) return jsonError('Chatwoot nao configurado (env vars)', 400, req);
+
+      // Remove any existing webhook that could be intercepting messages (e.g. n8n)
+      try {
+        await evo('POST', '/webhook/set/' + inst, {
+          webhook: { enabled: false, url: '', events: [] }
+        }, 5000);
+      } catch {}
+
+      // Configure native Chatwoot integration
+      const r = await evo('POST', '/chatwoot/set/' + inst, {
+        enabled: true,
+        accountId: String(cwCfg.accountId),
+        token: cwCfg.token,
+        url: cwCfg.url,
+        signMsg: false,
+        signDelimiter: '\n',
+        reopenConversation: true,
+        conversationPending: false,
+        nameInbox: 'WhatsApp ' + inst,
+        mergeBrazilContacts: true,
+        importContacts: false,
+        importMessages: false,
+        daysLimitImportMessages: 7,
+        autoCreate: true,
+        organization: '',
+        logo: ''
+      }, 15000);
+
+      return j({ ok: r.ok, status: r.status, data: r.data, message: r.ok ? 'Integracao nativa Chatwoot+Evolution configurada. Agora o Chatwoot encaminha mensagens direto pro WhatsApp.' : 'Falha na configuracao' }, 200, req);
+    }
+
+    // ── REMOVE WEBHOOK: clear any external webhook (e.g. n8n) ──
+    if (action === 'clearWebhook') {
+      if (!inst) return jsonError('instance obrigatorio', 400, req);
+      const r = await evo('POST', '/webhook/set/' + inst, {
+        webhook: { enabled: false, url: '', events: [] }
+      }, 5000);
+      return j({ ok: r.ok, data: r.data }, 200, req);
+    }
+
     // ── SETUP CHATWOOT: create inbox for existing instance ──
     if (action === 'setupChatwoot') {
       if (!inst) return jsonError('instance obrigatorio', 400, req);
