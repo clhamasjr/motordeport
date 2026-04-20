@@ -569,8 +569,8 @@ function exportWppList(){
 }
 
 // ══════ ENGINE ══════
-// Coeficientes de REFIN (nao entrada). Taxas de 1.50% a 1.879% (96 meses).
-const COEFS=[{t:1.879,c:0.02320},{t:1.85,c:0.02299},{t:1.83,c:0.02360},{t:1.80,c:0.02451},{t:1.78,c:0.02250},{t:1.75,c:0.021985},{t:1.72,c:0.02175},{t:1.70,c:0.021604},{t:1.68,c:0.02145},{t:1.66,c:0.02130},{t:1.65,c:0.02123},{t:1.60,c:0.02046},{t:1.55,c:0.02009},{t:1.50,c:0.01973}];
+// Coeficientes de REFIN (nao entrada). Teto INSS = 1.85%. Taxas de 1.50% a 1.85% (96 meses).
+const COEFS=[{t:1.85,c:0.02299},{t:1.83,c:0.02360},{t:1.80,c:0.02451},{t:1.78,c:0.02250},{t:1.75,c:0.021985},{t:1.72,c:0.02175},{t:1.70,c:0.021604},{t:1.68,c:0.02145},{t:1.66,c:0.02130},{t:1.65,c:0.02123},{t:1.60,c:0.02046},{t:1.55,c:0.02009},{t:1.50,c:0.01973}];
 // Faixas de REFIN por banco (taxa minima..maxima)
 // QUALI: 1.66-1.85 | FACTA: 1.75-1.85 | C6: 1.55-1.85 | BRB: 1.85-1.879 | DIGIO: 1.50-1.85
 const BD={
@@ -579,7 +579,7 @@ const BD={
   // C6: priorityFor = origens exclusivas (QI TECH, FACTA, PINE) -> C6 vira prioridade com taxa 1.55
   // contractPrefixBlock: para 329 (QI TECH), NAO aceita contratos com prefixo FIN/QUA/FDC
   C6:{sMin:2000,tMin:50,pMin:0,pgMin:0,faixa:[1.55,1.85],coefF:null,block:["707","121","012","422","070"],pgMinMap:{"254":13,"623":37},blockInv:true,priorityFor:["329","149","935","643"],priorityRate:1.55,contractPrefixBlock:{"329":["FIN","QUA","FDC"]}},
-  BRB:{sMin:3000,tMin:250,pMin:0,pgMin:0,faixa:[1.85,1.879],coefF:null,block:["070","623","935","149","012","071","925","380","079"],invRules:{minAge:60}},
+  BRB:{sMin:3000,tMin:250,pMin:0,pgMin:0,faixa:null,coefF:0.02299,block:["070","623","935","149","012","071","925","380","079"],invRules:{minAge:60}},
   DIGIO:{sMin:4500,tMin:250,pMin:0,pgMin:12,faixa:[1.50,1.85],coefF:null,block:["237","001","041"],invRules:{minAge:60}}
 };
 const ORDEM=["QUALI","FACTA","C6","BRB","DIGIO"],B1P=["149","422","739","925","380","033","326","290","041","389","121"],ESP_INV=[4,5,6,32,33,34,51,83,92],ESP_AUX=[31,36,91,94],ESP_LOAS=[87,88],ESP_AGE_MIN={21:45},CARTAO={PAN:"623",BMG:"318",Daycoval:"707"};
