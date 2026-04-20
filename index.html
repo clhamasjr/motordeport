@@ -268,11 +268,21 @@ async function apiFetch(url,opts={}){
 }
 // Compat: manter hp() para funcoes legadas que ainda usam localStorage local
 function hp(p){let h=0;const s=p+"lhamas2024";for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0}return"H"+Math.abs(h).toString(36)}
-function getU(){try{return JSON.parse(localStorage.getItem("lhm_users"))}catch{return null}}
-function saveU(u){localStorage.setItem("lhm_users",JSON.stringify(u))}
-function initU(){let u=getU();if(!u){u=[{id:1,user:"admin",name:"Administrador",pw:hp("admin123"),role:"admin",created:Date.now()},{id:2,user:"gestor",name:"Gestor",pw:hp("gestor123"),role:"gestor",created:Date.now()},{id:3,user:"operador",name:"Operador",pw:hp("op123"),role:"operador",created:Date.now()}];saveU(u)}
-  let changed=false;for(let x of u)if(x.role==="user"){x.role="operador";changed=true}if(changed)saveU(u);
-  return u}
+// Cache de usuarios (sincronizado com Supabase via API)
+let _usersCache=null;
+function getU(){return _usersCache||[]}
+function saveU(u){_usersCache=u} // stub compat
+async function loadUsersFromApi(){
+  try{
+    const r=await apiFetch('/api/auth',{method:'POST',body:JSON.stringify({action:'list'})});
+    const d=await r.json();
+    if(d&&d.ok&&Array.isArray(d.users)){
+      // Normaliza para o formato legado usado em renderAdmin (user, name, role)
+      _usersCache=d.users.map(x=>({id:x.id,user:x.username,name:x.name,role:x.role,active:x.active,created:x.created_at}));
+    }
+  }catch(e){console.warn('Falha ao carregar usuarios:',e.message)}
+  return _usersCache||[]}
+function initU(){return[]}
 function getSess(){try{let s=JSON.parse(localStorage.getItem("lhm_sess"));if(!s||Date.now()-s.ts>864e5)return null;return s}catch{return null}}
 let CU=null;
 async function doLogin(){const u=document.getElementById("loginUser").value.trim().toLowerCase(),p=document.getElementById("loginPass").value,err=document.getElementById("loginError");if(!u||!p){err.textContent="Preencha todos os campos";return}
@@ -284,8 +294,8 @@ async function doLogin(){const u=document.getElementById("loginUser").value.trim
     setToken(d.token);
     CU={id:d.user.id,user:d.user.user,name:d.user.name,role:d.user.role,pw:""};
     localStorage.setItem("lhm_sess",JSON.stringify({user:d.user.user,name:d.user.name,role:d.user.role,ts:Date.now()}));
-    // Manter compat local
-    let users=getU()||[];if(!users.find(x=>x.user===d.user.user)){users.push({id:d.user.id,user:d.user.user,name:d.user.name,pw:"",role:d.user.role,created:Date.now()});saveU(users)}
+    // Para admin/gestor, carrega lista de usuarios da API
+    if(CU.role==='admin'||CU.role==='gestor')loadUsersFromApi();
     showApp();
   }catch(e){
     // Fallback: login local se API nao disponivel
@@ -920,6 +930,8 @@ function setTab(t){S.tab=t;S.sort={c:null,d:"asc"};S.pg=0;localStorage.setItem("
   renderApp();
   // Auto-load Chatwoot conversations when switching to chat tab
   if(t==='wppchat'&&!cwState.conversations.length)cwLoadConversations();
+  // Auto-refresh lista de usuarios quando abre tela Admin
+  if(t==='admin'&&CU&&CU.role==='admin')loadUsersFromApi().then(()=>renderApp());
 }
 function setQ(v){S.q=v;S.pg=0;renderApp()}
 function doSort(col){if(S.sort.c===col)S.sort.d=S.sort.d==="asc"?"desc":"asc";else S.sort={c:col,d:"asc"};S.pg=0;renderApp()}
@@ -989,9 +1001,55 @@ function renderAdmin(){if(!CU||CU.role!=="admin")return"";const users=getU()||[]
   }
   bankHtml+=`</div></div>`;
   return`<div class="admin-panel fi"><div style="font-size:16px;font-weight:800;margin-bottom:16px">👥 Usuários</div><table class="users-table"><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table><div class="add-user-form"><div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="nN"></div><div class="form-group"><label class="form-label">Login</label><input class="form-input" id="nU"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" id="nP" type="password"></div><div class="form-group"><label class="form-label">Perfil</label><select class="form-input" id="nR"><option value="operador">Operador</option><option value="gestor">Gestor</option><option value="admin">Admin</option></select></div><button class="btn-acc" style="height:36px;padding:0 20px;font-size:11px" onclick="addU()">+ Add</button></div><div class="login-error" id="aErr" style="text-align:left;margin-top:8px"></div></div>${bankHtml}`}
-function addU(){const n=document.getElementById("nN").value.trim(),u=document.getElementById("nU").value.trim().toLowerCase(),p=document.getElementById("nP").value,r=document.getElementById("nR").value,err=document.getElementById("aErr");if(!n||!u||!p){err.style.color="var(--red)";err.textContent="Preencha tudo";return}let users=getU()||[];if(users.find(x=>x.user===u)){err.style.color="var(--red)";err.textContent="Já existe";return}users.push({id:Date.now(),user:u,name:n,pw:hp(p),role:r,created:Date.now()});saveU(users);err.style.color="var(--grn)";err.textContent="Criado!";setTimeout(renderApp,500)}
-function dlu(u){if(confirm(`Excluir "${u}"?`)){saveU(getU().filter(x=>x.user!==u));renderApp()}}
-function rpw(u){const p=prompt(`Nova senha para "${u}":`);if(!p||p.length<4)return;let users=getU();let i=users.findIndex(x=>x.user===u);if(i>=0){users[i].pw=hp(p);saveU(users);alert("OK!")}}
+async function addU(){
+  const n=document.getElementById("nN").value.trim(),
+        u=document.getElementById("nU").value.trim().toLowerCase(),
+        p=document.getElementById("nP").value,
+        r=document.getElementById("nR").value,
+        err=document.getElementById("aErr");
+  if(!n||!u||!p){err.style.color="var(--red)";err.textContent="Preencha tudo";return}
+  if(p.length<4){err.style.color="var(--red)";err.textContent="Senha min 4 caracteres";return}
+  err.style.color="var(--t2)";err.textContent="Criando...";
+  try{
+    const res=await apiFetch('/api/auth',{method:'POST',body:JSON.stringify({action:'create',name:n,user:u,pass:p,role:r})});
+    const d=await res.json();
+    if(!d.ok){err.style.color="var(--red)";err.textContent=d.error||"Falha ao criar";return}
+    // Limpa form
+    document.getElementById("nN").value="";
+    document.getElementById("nU").value="";
+    document.getElementById("nP").value="";
+    err.style.color="var(--grn)";err.textContent="Usuario criado! Ja pode fazer login.";
+    await loadUsersFromApi();
+    setTimeout(renderApp,800);
+  }catch(e){err.style.color="var(--red)";err.textContent="Erro: "+e.message}
+}
+async function dlu(u){
+  if(!confirm(`Excluir "${u}"?`))return;
+  try{
+    const res=await apiFetch('/api/auth',{method:'POST',body:JSON.stringify({action:'delete',targetUser:u})});
+    const d=await res.json();
+    if(!d.ok){alert(d.error||"Erro ao excluir");return}
+    await loadUsersFromApi();renderApp();
+  }catch(e){alert("Erro: "+e.message)}
+}
+async function rpw(u){
+  const p=prompt(`Nova senha para "${u}":`);
+  if(!p||p.length<4){if(p)alert("Min 4 caracteres");return}
+  try{
+    const res=await apiFetch('/api/auth',{method:'POST',body:JSON.stringify({action:'reset_pw',targetUser:u,newPass:p})});
+    const d=await res.json();
+    if(!d.ok){alert(d.error||"Erro");return}
+    alert("Senha alterada! Informe ao usuario: "+p);
+  }catch(e){alert("Erro: "+e.message)}
+}
+async function changeRole(u,newRole){
+  try{
+    const res=await apiFetch('/api/auth',{method:'POST',body:JSON.stringify({action:'update_role',targetUser:u,role:newRole})});
+    const d=await res.json();
+    if(!d.ok){alert(d.error||"Erro");return}
+    await loadUsersFromApi();renderApp();
+  }catch(e){alert("Erro: "+e.message)}
+}
 
 // ══════ GLOBAL CPF SEARCH ══════
 function globalSearch(q){
@@ -3878,6 +3936,6 @@ function exportXLSX(){let D=S.data;if(!D)return;let wb=XLSX.utils.book_new(),mk=
   mk(D.rmcRcc.filter(r=>!r.temCartao&&r.mrgCart>0).map(r=>({Nome:r.nome,CPF:r.cpf,Tel1:r.t1,"Margem":r.mrgCart,"Cartão Nova":r.mrgCartNova,"Empréstimo Novo":r.mrgEmpNova})),"Sem Cartão");
   XLSX.writeFile(wb,"flowforce_resultado.xlsx")}
 
-(function(){initU();let s=getSess();if(s){let u=getU()||[];let f=u.find(x=>x.user===s.user);if(f){CU=f;showApp();return}}document.getElementById("loginScreen").style.display="flex"})();
+(function(){let s=getSess();if(s){CU={id:s.id||null,user:s.user,name:s.name,role:s.role,pw:""};if(CU.role==='admin'||CU.role==='gestor')loadUsersFromApi();showApp();return}document.getElementById("loginScreen").style.display="flex"})();
 </script>
 </body></html>
