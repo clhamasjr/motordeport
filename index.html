@@ -1764,9 +1764,13 @@ function toggleUserInstance(login,instName){
   setUserAssign(login,d);renderApp();
 }
 
+// Backend WhatsApp: 'waha' (padrao) ou 'evolution' (legado). Mudanca via localStorage.ff_wpp_backend
+function getWppBackend(){return localStorage.getItem('ff_wpp_backend')||'waha'}
+function setWppBackend(b){localStorage.setItem('ff_wpp_backend',b);location.reload()}
 async function wppCall(action,data={}){
   let inst=data.instance||getMyInstance()||'';
-  const res=await apiFetch('/api/evolution',{method:'POST',body:JSON.stringify({action,instance:inst,...data})});
+  const endpoint=getWppBackend()==='evolution'?'/api/evolution':'/api/waha';
+  const res=await apiFetch(endpoint,{method:'POST',body:JSON.stringify({action,instance:inst,...data})});
   return res.json();
 }
 
@@ -2163,7 +2167,8 @@ function renderWhatsApp(){
     <div style="font-size:18px;font-weight:800">📱 Conexões WhatsApp</div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span style="font-size:12px;color:var(--t3)">${myInsts.length} instância${myInsts.length!==1?'s':''}</span>
-      ${isAdmin&&(wppState.unclaimedInstances||[]).length?`<button class="btn btn-sm" style="border-color:var(--ylw);color:var(--ylw)" onclick="adoptInstancePrompt()" title="Outras instâncias no servidor Evolution não atribuídas ao FlowForce">+ Adotar (${wppState.unclaimedInstances.length})</button>`:''}
+      ${isAdmin?`<span class="pill ${getWppBackend()==='waha'?'pill-grn':'pill-pur'}" style="cursor:pointer" onclick="if(confirm('Alternar backend WhatsApp entre WAHA e Evolution? A pagina vai recarregar.'))setWppBackend(getWppBackend()==='waha'?'evolution':'waha')" title="Backend atual: ${getWppBackend().toUpperCase()}">⚙ ${getWppBackend().toUpperCase()}</span>`:''}
+      ${isAdmin&&(wppState.unclaimedInstances||[]).length?`<button class="btn btn-sm" style="border-color:var(--ylw);color:var(--ylw)" onclick="adoptInstancePrompt()" title="Outras instâncias no servidor não atribuídas ao FlowForce">+ Adotar (${wppState.unclaimedInstances.length})</button>`:''}
       <button class="btn btn-sm btn-cyan" onclick="wppLoadInstances()">🔄 Atualizar</button>
       ${isAdmin?'<button class="btn-acc btn-sm" onclick="wppCreateInstance()">+ Nova Instância</button>':''}
     </div>
