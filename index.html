@@ -3044,6 +3044,15 @@ if(mrgDisp>0){
 if(carts.length){for(let cd of carts){let mrgC=parseFloat(String(cd.margem||'0').replace(/\./g,'').replace(',','.'))||0;if(mrgC>0){oportunidades.push({icon:'💳',tipo:'Saque '+((cd.tipo||'')+' '+(cd.banco||'')).trim(),cor:'var(--pur)',valor:mrgC,desc:'Cartão ativo com margem'});totalOport+=mrgC}}}
 var portContratos=[];
 let espN=pEN(ben.especie);
+// Extrai idade (pode vir como "76 Anos", "76", 76, etc) do beneficiario
+let idadeNum=null;
+if(b.idade!=null){let m=String(b.idade).match(/\d+/);if(m)idadeNum=parseInt(m[0],10)}
+// Se nao tem idade direta, tenta calcular pela data de nascimento
+if(idadeNum===null&&b.data_nascimento){const ai=cAge(b.data_nascimento);if(ai)idadeNum=ai.age}
+// Invalidez baseado na especie
+let isInvCons=ESP_INV.includes(espN);
+// Anos de beneficio (DIB)
+let bYCons=null;if(b.dib||ben.dib){const d=b.dib||ben.dib;const by=cBY(d);if(by!==null)bYCons=by}
 if(r.contratos&&r.contratos.length){for(let ct of r.contratos){
   let par=parseFloat(String(ct.parcela||'0').replace(/\./g,'').replace(',','.'))||0;
   let sal=parseFloat(String(ct.saldo||ct.saldo_quitacao||'0').replace(/\./g,'').replace(',','.'))||0;
@@ -3052,7 +3061,7 @@ if(r.contratos&&r.contratos.length){for(let ct of r.contratos){
   let rest=parseInt(ct.prazo||ct.prazo_restante||'0')||0;
   let total=parseInt(ct.prazo_original||'0')||0;
   let pag=total>0&&rest>0?total-rest:0;
-  if(par>0&&sal>0&&cod&&cod!=='000'){let res=testar(par,sal,pag,cod,false,null,null,rest,espN,ct.contrato||ct.id||'');
+  if(par>0&&sal>0&&cod&&cod!=='000'){let res=testar(par,sal,pag,cod,isInvCons,idadeNum,bYCons,rest,espN,ct.contrato||ct.id||'');
   if(res){portContratos.push({contrato:ct.contrato||ct.id||'?',banco:cod,parcela:par,saldo:sal,taxa,destino:res.banco,novaTaxa:res.taxa,vc:res.vc,troco:res.troco});totalOport+=res.vc}
 }}}
 if(portContratos.length){oportunidades.push({icon:'🔄',tipo:'Portabilidade',cor:'var(--grn)',valor:portContratos.reduce((s,c)=>s+c.troco,0),desc:portContratos.length+' contrato(s) elegível(is)'})}
