@@ -29,7 +29,10 @@ async function factaFetch(path, { method = 'GET', headers = {}, body = null, con
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Proxy-Key': cfg.PROXY_SECRET
+        'X-Proxy-Key': cfg.PROXY_SECRET,
+        // User-Agent de navegador padrao pra evitar Cloudflare Bot Fight Mode
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
       },
       body: JSON.stringify(payload)
     });
