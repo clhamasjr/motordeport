@@ -272,6 +272,14 @@ export default async function handler(req) {
 
     return jsonError('action invalida', 400, req);
   } catch (err) {
-    return j({ error: 'Erro interno' }, 500, req);
+    console.error('[FACTA] erro interno:', err?.message, err?.stack);
+    return j({
+      error: 'Erro interno',
+      mensagem: err?.message || 'Erro nao especificado',
+      stack: (err?.stack || '').substring(0, 500),
+      proxyUsed: !!(getConfig().PROXY_URL && getConfig().PROXY_SECRET),
+      proxyUrl: getConfig().PROXY_URL || null,
+      factaBase: getConfig().BASE
+    }, 500, req);
   }
 }
