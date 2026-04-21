@@ -8,11 +8,11 @@ import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/
 
 function getConfig() {
   return {
-    BASE: process.env.FACTA_BASE_URL || 'https://webservice-homol.facta.com.br',
-    AUTH: process.env.FACTA_AUTH,
-    LOGIN_CERT: process.env.FACTA_LOGIN_CERT || '93596',
-    PROXY_URL: (process.env.FACTA_PROXY_URL || '').replace(/\/+$/, ''),
-    PROXY_SECRET: process.env.FACTA_PROXY_SECRET || ''
+    BASE: (process.env.FACTA_BASE_URL || 'https://webservice-homol.facta.com.br').trim().replace(/\/+$/, ''),
+    AUTH: (process.env.FACTA_AUTH || '').trim(),
+    LOGIN_CERT: (process.env.FACTA_LOGIN_CERT || '93596').trim(),
+    PROXY_URL: (process.env.FACTA_PROXY_URL || '').trim().replace(/\/+$/, ''),
+    PROXY_SECRET: (process.env.FACTA_PROXY_SECRET || '').trim()
   };
 }
 
