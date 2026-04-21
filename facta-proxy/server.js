@@ -4,6 +4,27 @@
 // vindas do Vercel. Autenticado via header X-Proxy-Key.
 // ═══════════════════════════════════════════════════════════════
 
+// Carrega .env (sem dependencia externa)
+const fs = require('fs');
+const path = require('path');
+try {
+  const envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    const content = fs.readFileSync(envPath, 'utf8');
+    content.split(/\r?\n/).forEach(line => {
+      const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/i);
+      if (m && !process.env[m[1]]) {
+        let v = m[2];
+        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+          v = v.slice(1, -1);
+        }
+        process.env[m[1]] = v;
+      }
+    });
+    console.log('[env] .env carregado');
+  }
+} catch (e) { console.warn('[env] erro ao carregar .env:', e.message); }
+
 const express = require('express');
 const app = express();
 
