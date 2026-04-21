@@ -3042,7 +3042,8 @@ if(mrgDisp>0){
   if(!carts.length){let potCart=Math.round((mrgDisp/0.029214)*100)/100;oportunidades.push({icon:'🆕',tipo:'Cartão Novo',cor:'var(--cyan)',valor:potCart,desc:'Sem cartão ativo'});totalOport+=potCart}
 }
 if(carts.length){for(let cd of carts){let mrgC=parseFloat(String(cd.margem||'0').replace(/\./g,'').replace(',','.'))||0;if(mrgC>0){oportunidades.push({icon:'💳',tipo:'Saque '+((cd.tipo||'')+' '+(cd.banco||'')).trim(),cor:'var(--pur)',valor:mrgC,desc:'Cartão ativo com margem'});totalOport+=mrgC}}}
-var portContratos=[];
+// Usa o portContratos global (declarado antes de renderConsulta) pra que os botoes do carrinho consigam acessar via onclick
+portContratos=[];
 let espN=pEN(ben.especie);
 // Extrai idade (pode vir como "76 Anos", "76", 76, etc) do beneficiario
 let idadeNum=null;
