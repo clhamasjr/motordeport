@@ -847,6 +847,20 @@ async function digitarCartItem(id){
   saveCart();renderCartContent();renderCartBadge();
 }
 
+// Busca os codigos FACTA do usuario logado (vendedor, master, gerente comercial)
+// Cache na sessao via _myFactaCodes; retorna {} se nao configurado
+let _myFactaCodes=null;
+async function factaGetMyCodes(){
+  if(_myFactaCodes)return _myFactaCodes;
+  try{
+    const r=await apiFetch('/api/auth',{method:'POST',body:JSON.stringify({action:'me'})});
+    const d=await r.json();
+    if(d.ok&&d.user){_myFactaCodes={facta_vendedor:d.user.facta_vendedor||'',facta_codigo_master:d.user.facta_codigo_master||'',facta_gerente_comercial:d.user.facta_gerente_comercial||''};return _myFactaCodes}
+  }catch{}
+  return _myFactaCodes={};
+}
+function clearFactaCodesCache(){_myFactaCodes=null}
+
 // ═══════════════════════════════════════════════════════════════
 // Digitacao automatica FACTA — Portabilidade + Refin (003500)
 // Fluxo: registro interno -> simular -> etapa1 -> etapa1RefinPort
@@ -907,8 +921,11 @@ async function digitarFactaPortFull(item){
 
     stepMsg('Reservando proposta (etapa1)...');
 
+    // Busca codigos FACTA do usuario logado (vendedor, master, gerente)
+    const myCodes=await factaGetMyCodes();
+
     // 2) Etapa1 — reserva a proposta no simulador
-    const e1R=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify({
+    const e1Body={
       action:'etapa1',
       tipo_operacao:'003500',
       cpf:item.cpf,
@@ -922,7 +939,13 @@ async function digitarFactaPortFull(item){
       prazo_original:item.prazo_original||(parseInt(item.prazo_restante)+10),
       valor_renda:item.valor_renda||0,
       contratos_refin:item.contrato_origem
-    })});
+    };
+    // Atribuicao de vendedor pra comissao
+    if(myCodes.facta_vendedor)e1Body.vendedor=myCodes.facta_vendedor;
+    if(myCodes.facta_codigo_master)e1Body.codigo_master=myCodes.facta_codigo_master;
+    if(myCodes.facta_gerente_comercial)e1Body.gerente_comercial=myCodes.facta_gerente_comercial;
+
+    const e1R=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify(e1Body)});
     const e1D=await e1R.json();
     if(!e1D.success||!e1D.id_simulador){return fail(e1D.mensagem||'Falha na etapa1')}
     item.facta_id_simulador=e1D.id_simulador;
@@ -1185,7 +1208,7 @@ function toggleBankActive(bankId){
 }
 function getActiveBanks(){let c=getBankCreds();return Object.entries(c).filter(([k,v])=>v.active&&v.user&&v.pass).map(([k])=>k)}
 
-function renderAdmin(){if(!CU||CU.role!=="admin")return"";const users=getU()||[];let roleLabel=r=>r==="admin"?"Admin":r==="gestor"?"Gestor":"Operador";let roleClass=r=>r==="admin"?"role-admin":r==="gestor"?"role-gestor":"role-user";let rows=users.map(u=>`<tr><td><strong>${esc(u.name)}</strong></td><td style="font-family:monospace;font-size:11px">${esc(u.user)}</td><td><span class="${roleClass(u.role)}">${roleLabel(u.role)}</span></td><td>${u.user==="admin"?"—":`<button class="btn btn-sm" onclick="rpw('${u.user}')">Reset</button> <button class="btn btn-red btn-sm" onclick="dlu('${u.user}')">Excluir</button>`}</td></tr>`).join("");
+function renderAdmin(){if(!CU||CU.role!=="admin")return"";const users=getU()||[];let roleLabel=r=>r==="admin"?"Admin":r==="gestor"?"Gestor":"Operador";let roleClass=r=>r==="admin"?"role-admin":r==="gestor"?"role-gestor":"role-user";let rows=users.map(u=>{const vend=u.facta_vendedor?`<span class="pill pill-acc" style="font-size:10px">V:${esc(u.facta_vendedor)}</span>`:'<span style="color:var(--t3);font-size:10px">—</span>';return`<tr><td><strong>${esc(u.name)}</strong></td><td style="font-family:monospace;font-size:11px">${esc(u.user)}</td><td><span class="${roleClass(u.role)}">${roleLabel(u.role)}</span></td><td>${vend}</td><td>${u.user==="admin"?"—":`<button class="btn btn-sm" title="Senha" onclick="rpw('${u.user}')">🔑</button> <button class="btn btn-sm" title="Codigos FACTA" style="border-color:var(--grn);color:var(--grn)" onclick="editFacta('${u.user}')">📋 FACTA</button> <button class="btn btn-red btn-sm" title="Excluir" onclick="dlu('${u.user}')">🗑</button>`}</td></tr>`}).join("");
   // Bank credentials section
   let creds=getBankCreds();let activeBanks=getActiveBanks();
   let bankHtml=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:22px;margin-top:24px">
@@ -1213,7 +1236,7 @@ function renderAdmin(){if(!CU||CU.role!=="admin")return"";const users=getU()||[]
     </div>`;
   }
   bankHtml+=`</div></div>`;
-  return`<div class="admin-panel fi"><div style="font-size:16px;font-weight:800;margin-bottom:16px">👥 Usuários</div><table class="users-table"><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table><div class="add-user-form"><div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="nN"></div><div class="form-group"><label class="form-label">Login</label><input class="form-input" id="nU"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" id="nP" type="password"></div><div class="form-group"><label class="form-label">Perfil</label><select class="form-input" id="nR"><option value="operador">Operador</option><option value="gestor">Gestor</option><option value="admin">Admin</option></select></div><button class="btn-acc" style="height:36px;padding:0 20px;font-size:11px" onclick="addU()">+ Add</button></div><div class="login-error" id="aErr" style="text-align:left;margin-top:8px"></div></div>${bankHtml}`}
+  return`<div class="admin-panel fi"><div style="font-size:16px;font-weight:800;margin-bottom:16px">👥 Usuários</div><table class="users-table"><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>FACTA</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table><div class="add-user-form"><div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="nN"></div><div class="form-group"><label class="form-label">Login</label><input class="form-input" id="nU"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" id="nP" type="password"></div><div class="form-group"><label class="form-label">Perfil</label><select class="form-input" id="nR"><option value="operador">Operador</option><option value="gestor">Gestor</option><option value="admin">Admin</option></select></div><button class="btn-acc" style="height:36px;padding:0 20px;font-size:11px" onclick="addU()">+ Add</button></div><div class="login-error" id="aErr" style="text-align:left;margin-top:8px"></div></div>${bankHtml}`}
 async function addU(){
   const n=document.getElementById("nN").value.trim(),
         u=document.getElementById("nU").value.trim().toLowerCase(),
@@ -1254,6 +1277,25 @@ async function rpw(u){
     if(!d.ok){alert(d.error||"Erro");return}
     alert("Senha alterada! Informe ao usuario: "+p);
   }catch(e){alert("Erro: "+e.message)}
+}
+async function editFacta(u){
+  const users=getU()||[];
+  const user=users.find(x=>x.user===u);
+  if(!user){alert('Usuario nao encontrado');return}
+  const vend=prompt(`Codigo do VENDEDOR FACTA para "${u}":\n(Esse codigo sera usado como vendedor na digitacao das propostas)`,user.facta_vendedor||'');
+  if(vend===null)return;
+  const cm=prompt(`Codigo MASTER FACTA (opcional, ENTER pra pular):`,user.facta_codigo_master||'');
+  if(cm===null)return;
+  const gc=prompt(`Codigo GERENTE COMERCIAL FACTA (opcional, ENTER pra pular):`,user.facta_gerente_comercial||'');
+  if(gc===null)return;
+  try{
+    const r=await apiFetch('/api/auth',{method:'POST',body:JSON.stringify({action:'update_facta',targetUser:u,facta_vendedor:vend.trim(),facta_codigo_master:cm.trim(),facta_gerente_comercial:gc.trim()})});
+    const d=await r.json();
+    if(!d.ok){alert(d.error||'Erro');return}
+    alert('Codigos FACTA atualizados!');
+    clearFactaCodesCache();
+    await loadUsersFromApi();renderApp();
+  }catch(e){alert('Erro: '+e.message)}
 }
 async function changeRole(u,newRole){
   try{
@@ -2261,7 +2303,7 @@ function toggleUserInstance(login,instName){
 }
 
 // Backend WhatsApp: 'waha' (padrao) ou 'evolution' (legado). Mudanca via localStorage.ff_wpp_backend
-function getWppBackend(){return localStorage.getItem('ff_wpp_backend')||'waha'}
+function getWppBackend(){return localStorage.getItem('ff_wpp_backend')||'evolution'}
 function setWppBackend(b){localStorage.setItem('ff_wpp_backend',b);location.reload()}
 async function wppCall(action,data={}){
   let inst=data.instance||getMyInstance()||'';
