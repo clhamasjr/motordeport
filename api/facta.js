@@ -23,7 +23,9 @@ async function factaFetch(path, { method = 'GET', headers = {}, body = null, con
   if (cfg.PROXY_URL && cfg.PROXY_SECRET) {
     // Rota via proxy do escritorio
     const payload = { method, path, headers, body, contentType };
-    return fetch(cfg.PROXY_URL + '/relay', {
+    const fullUrl = cfg.PROXY_URL + '/relay';
+    console.log('[factaFetch] via PROXY:', method, path, '->', fullUrl);
+    const r = await fetch(fullUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -31,11 +33,14 @@ async function factaFetch(path, { method = 'GET', headers = {}, body = null, con
       },
       body: JSON.stringify(payload)
     });
+    console.log('[factaFetch] PROXY resp status:', r.status, 'content-type:', r.headers.get('content-type'));
+    return r;
   }
   // Chamada direta (funciona apenas se o IP do Vercel estiver autorizado na FACTA)
   const fwd = { method, headers: { ...headers } };
   if (contentType) fwd.headers['Content-Type'] = contentType;
   if (body !== null && method !== 'GET') fwd.body = typeof body === 'string' ? body : JSON.stringify(body);
+  console.log('[factaFetch] DIRETO:', method, cfg.BASE + path);
   return fetch(cfg.BASE + path, fwd);
 }
 
@@ -47,7 +52,12 @@ async function getToken() {
   const cfg = getConfig();
   if (!cfg.AUTH) throw new Error('FACTA_AUTH nao configurado');
   const r = await factaFetch('/gera-token', { headers: { 'Authorization': cfg.AUTH } });
-  const d = await r.json();
+  const rawText = await r.text();
+  let d;
+  try { d = JSON.parse(rawText); }
+  catch (e) {
+    throw new Error('getToken: resposta nao-JSON (status=' + r.status + '): ' + rawText.substring(0, 400));
+  }
   if (d.erro === false && d.token) {
     _tk = { token: d.token, exp: Date.now() + 50 * 60 * 1000 };
     return d.token;
