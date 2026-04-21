@@ -137,6 +137,39 @@ export default async function handler(req) {
       }
     }
 
+    // Diagnostico: mostra env vars + faz ping direto no proxy
+    if (action === 'diag') {
+      const cfg = getConfig();
+      const d = {
+        hasProxyUrl: !!cfg.PROXY_URL,
+        proxyUrl: cfg.PROXY_URL,
+        hasProxySecret: !!cfg.PROXY_SECRET,
+        proxySecretLen: cfg.PROXY_SECRET.length,
+        hasCfAccessId: !!cfg.CF_ACCESS_CLIENT_ID,
+        cfAccessIdPreview: cfg.CF_ACCESS_CLIENT_ID ? cfg.CF_ACCESS_CLIENT_ID.substring(0, 15) + '...' : null,
+        hasCfAccessSecret: !!cfg.CF_ACCESS_CLIENT_SECRET,
+        cfAccessSecretLen: cfg.CF_ACCESS_CLIENT_SECRET.length,
+        factaBase: cfg.BASE,
+        hasFactaAuth: !!cfg.AUTH
+      };
+      // Teste: GET /health do proxy direto (sem relay)
+      try {
+        const healthUrl = cfg.PROXY_URL + '/health';
+        const h = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' };
+        if (cfg.CF_ACCESS_CLIENT_ID && cfg.CF_ACCESS_CLIENT_SECRET) {
+          h['CF-Access-Client-Id'] = cfg.CF_ACCESS_CLIENT_ID;
+          h['CF-Access-Client-Secret'] = cfg.CF_ACCESS_CLIENT_SECRET;
+        }
+        const r = await fetch(healthUrl, { headers: h });
+        const text = await r.text();
+        d.healthStatus = r.status;
+        d.healthContentType = r.headers.get('content-type');
+        d.healthCfRay = r.headers.get('cf-ray');
+        d.healthBody = text.substring(0, 500);
+      } catch (e) { d.healthError = e.message; }
+      return j(d, 200, req);
+    }
+
     if (action === 'simular') {
       const cpf = (body.cpf || '').replace(/\D/g, '');
       if (!cpf) return jsonError('CPF obrigatorio', 400, req);
