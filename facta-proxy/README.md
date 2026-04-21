@@ -74,26 +74,54 @@ O `/ip` mostra o IP público de saída — confira se é o mesmo que está cadas
 
 ### 5.1 Instalar cloudflared
 
-Baixe o `.msi` em: https://github.com/cloudflare/cloudflared/releases  
-Procure por `cloudflared-windows-amd64.msi` — instale normalmente.
+Baixe o `.msi` em: https://github.com/cloudflare/cloudflared/releases/latest  
+Procure por `cloudflared-windows-amd64.msi` — instale normalmente (next → next → install).
 
-### 5.2 Autenticar
+O instalador coloca o programa em:
+```
+C:\Program Files (x86)\cloudflared\cloudflared.exe
+```
+
+### 5.2 (Opcional) Adicionar ao PATH
+
+Por padrão o instalador NÃO adiciona ao PATH. Você pode:
+- **Digitar o caminho completo** em todos os comandos (ex: `& "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel login`), ou
+- **Adicionar ao PATH uma vez só** — abra PowerShell **como Administrador** e rode:
 
 ```powershell
-cloudflared tunnel login
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "Machine") + ";C:\Program Files (x86)\cloudflared", "Machine")
 ```
-Abre o navegador — faça login na Cloudflare e autorize o domínio `cbdw.com.br`.
 
-### 5.3 Criar o túnel
+Depois **feche todos os PowerShells e abra um novo**. Agora os comandos abaixo podem usar só `cloudflared`.
+
+### 5.3 Autenticar
+
+Abre o navegador, faz login na Cloudflare e autoriza o domínio `cbdw.com.br`:
 
 ```powershell
-cloudflared tunnel create facta-proxy
+& "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel login
 ```
-Salva credenciais em `C:\Users\<seu-usuario>\.cloudflared\<uuid>.json`
 
-### 5.4 Configurar o túnel
+(ou só `cloudflared tunnel login` se adicionou ao PATH)
 
-Crie `C:\Users\<seu-usuario>\.cloudflared\config.yml`:
+Salva `cert.pem` em `C:\Users\<seu-usuario>\.cloudflared\`.
+
+### 5.4 Criar o túnel
+
+```powershell
+& "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel create facta-proxy
+```
+
+Saída:
+```
+Created tunnel facta-proxy with id abc123-uuid-def456...
+```
+
+**Anote o UUID** — vai usar no próximo passo. As credenciais ficam em `C:\Users\<seu-usuario>\.cloudflared\<uuid>.json`
+
+### 5.5 Configurar o túnel
+
+Crie `C:\Users\<seu-usuario>\.cloudflared\config.yml` (use o Bloco de Notas):
 
 ```yaml
 tunnel: facta-proxy
@@ -105,22 +133,29 @@ ingress:
   - service: http_status:404
 ```
 
-### 5.5 Criar registro DNS
+**Troque** `<seu-usuario>` pelo nome de usuário Windows, e `<uuid>` pelo UUID gerado no passo anterior.
+
+### 5.6 Criar registro DNS
 
 ```powershell
-cloudflared tunnel route dns facta-proxy facta-proxy.cbdw.com.br
+& "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel route dns facta-proxy facta-proxy.cbdw.com.br
 ```
 
-### 5.6 Rodar o túnel
+Isso cria o CNAME automaticamente na Cloudflare — não precisa mexer no painel DNS.
+
+### 5.7 Rodar o túnel (teste)
 
 ```powershell
-cloudflared tunnel run facta-proxy
+& "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel run facta-proxy
 ```
 
-Testa de fora:
+Deixa esse PowerShell aberto. Em outro (ou do celular), testa:
+
 ```powershell
 curl https://facta-proxy.cbdw.com.br/health
 ```
+
+Deve retornar `{"ok":true,...}`.
 
 ## 6 — Rodar como serviço (24/7 sem abrir terminal)
 
@@ -144,10 +179,10 @@ net start FactaProxy
 
 ### Túnel Cloudflared como serviço
 
-Já incluído no instalador. Como Administrador:
+Abra PowerShell **como Administrador** e rode:
 
 ```powershell
-cloudflared service install
+& "C:\Program Files (x86)\cloudflared\cloudflared.exe" service install
 net start cloudflared
 ```
 
@@ -174,7 +209,7 @@ Abra o FlowForce, faça login, e na tela **Consulta Unitária** chame um CPF. Ve
 
 - **Atualizar o proxy**: `cd C:\motordeport && git pull && cd facta-proxy && npm install && net stop FactaProxy && net start FactaProxy`
 - **Ver logs do proxy**: `C:\motordeport\facta-proxy` — ou use NSSM AppStdout/AppStderr pra arquivo
-- **Ver logs do túnel**: `cloudflared tunnel info facta-proxy`
+- **Ver logs do túnel**: `& "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel info facta-proxy`
 
 ## Troubleshooting
 
