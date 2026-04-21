@@ -1,14 +1,19 @@
--- Migration: Adiciona campos de atribuicao FACTA por usuario
+-- Migration: Códigos de partner por banco (genérico)
 -- Roda no SQL Editor do Supabase
 
+-- Limpa colunas antigas se foram criadas na primeira versão
 ALTER TABLE users
-  ADD COLUMN IF NOT EXISTS facta_vendedor TEXT,
-  ADD COLUMN IF NOT EXISTS facta_codigo_master TEXT,
-  ADD COLUMN IF NOT EXISTS facta_gerente_comercial TEXT;
+  DROP COLUMN IF EXISTS facta_vendedor,
+  DROP COLUMN IF EXISTS facta_codigo_master,
+  DROP COLUMN IF EXISTS facta_gerente_comercial;
 
--- Indexar facta_vendedor pra facilitar queries
-CREATE INDEX IF NOT EXISTS idx_users_facta_vendedor ON users(facta_vendedor) WHERE facta_vendedor IS NOT NULL;
+-- Coluna JSONB genérica: guarda o código do vendedor em cada banco
+-- Exemplo: { "facta": "93596", "qitech": "xyz", "daycoval": "abc", "c6": "123" }
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS bank_codes JSONB DEFAULT '{}'::jsonb;
 
-COMMENT ON COLUMN users.facta_vendedor IS 'Codigo de vendedor na FACTA (usado na etapa1 pra atribuir a proposta)';
-COMMENT ON COLUMN users.facta_codigo_master IS 'Codigo master FACTA (opcional)';
-COMMENT ON COLUMN users.facta_gerente_comercial IS 'Codigo gerente comercial FACTA (opcional)';
+-- Index pra buscas futuras
+CREATE INDEX IF NOT EXISTS idx_users_bank_codes ON users USING GIN (bank_codes);
+
+COMMENT ON COLUMN users.bank_codes IS
+  'Códigos de partner/vendedor em cada banco. Ex: {"facta":"93596","qitech":"xyz"}. Master/gerente vem de env vars.';

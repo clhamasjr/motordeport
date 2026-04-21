@@ -96,40 +96,42 @@ export default async function handler(req) {
     const roleErr = requireRole(currentUser, ['admin', 'gestor']);
     if (roleErr) return roleErr;
 
+    // bank_codes e um JSON por banco: { facta: 'codigo_vendedor', qitech: 'id', daycoval: 'codigo', ... }
     const { data, error } = await dbSelect('users', {
-      select: 'id,username,name,role,active,created_at,facta_vendedor,facta_codigo_master,facta_gerente_comercial',
+      select: 'id,username,name,role,active,created_at,bank_codes',
       order: 'created_at.asc'
     });
     if (error) return jsonError('Erro ao buscar usuarios', 500, req);
     return json({ ok: true, users: data }, 200, req);
   }
 
-  // ── GET CURRENT USER (inclui codigos FACTA) ──────────────
+  // ── GET CURRENT USER (inclui codigos por banco) ──────────
   if (action === 'me') {
     const { data } = await dbSelect('users', {
       filters: { id: currentUser.id },
-      select: 'id,username,name,role,facta_vendedor,facta_codigo_master,facta_gerente_comercial',
+      select: 'id,username,name,role,bank_codes',
       single: true
     });
     return json({ ok: true, user: data }, 200, req);
   }
 
-  // ── UPDATE FACTA codes (admin only) ────────────────────
-  if (action === 'update_facta') {
+  // ── UPDATE BANK CODES (admin only) ─────────────────────
+  // body.codes = { facta: 'XXX', qitech: 'YYY', ... }
+  if (action === 'update_bank_codes') {
     const roleErr = requireRole(currentUser, ['admin']);
     if (roleErr) return roleErr;
-    const { targetUser, facta_vendedor, facta_codigo_master, facta_gerente_comercial } = body;
+    const { targetUser, codes } = body;
     if (!targetUser) return json({ ok: false, error: 'targetUser obrigatorio' }, 400, req);
-    const { data: target } = await dbSelect('users', { filters: { username: targetUser }, select: 'id', single: true });
+    if (!codes || typeof codes !== 'object') return json({ ok: false, error: 'codes deve ser objeto' }, 400, req);
+    const { data: target } = await dbSelect('users', { filters: { username: targetUser }, select: 'id,bank_codes', single: true });
     if (!target) return json({ ok: false, error: 'Usuario nao encontrado' }, 400, req);
-    const updates = {};
-    if (facta_vendedor !== undefined) updates.facta_vendedor = facta_vendedor || null;
-    if (facta_codigo_master !== undefined) updates.facta_codigo_master = facta_codigo_master || null;
-    if (facta_gerente_comercial !== undefined) updates.facta_gerente_comercial = facta_gerente_comercial || null;
-    if (!Object.keys(updates).length) return json({ ok: false, error: 'Nada pra atualizar' }, 400, req);
-    await dbUpdate('users', { id: target.id }, updates);
-    await dbInsert('audit_log', { user_id: currentUser.id, action: 'update_facta', details: { target: targetUser, ...updates } });
-    return json({ ok: true, mensagem: 'Codigos FACTA atualizados' }, 200, req);
+    // Merge com codigos existentes
+    const merged = Object.assign({}, target.bank_codes || {}, codes);
+    // Remove chaves vazias/null
+    Object.keys(merged).forEach(k => { if (!merged[k]) delete merged[k]; });
+    await dbUpdate('users', { id: target.id }, { bank_codes: merged });
+    await dbInsert('audit_log', { user_id: currentUser.id, action: 'update_bank_codes', details: { target: targetUser, codes: merged } });
+    return json({ ok: true, mensagem: 'Codigos atualizados', bank_codes: merged }, 200, req);
   }
 
   // ── CREATE USER (admin only) ───────────────────────────────

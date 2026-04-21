@@ -847,19 +847,21 @@ async function digitarCartItem(id){
   saveCart();renderCartContent();renderCartBadge();
 }
 
-// Busca os codigos FACTA do usuario logado (vendedor, master, gerente comercial)
-// Cache na sessao via _myFactaCodes; retorna {} se nao configurado
-let _myFactaCodes=null;
-async function factaGetMyCodes(){
-  if(_myFactaCodes)return _myFactaCodes;
+// Cache dos codigos de partner por banco do usuario logado
+// Estrutura: {facta:"93596", qitech:"xyz", daycoval:"abc", ...}
+let _myBankCodes=null;
+async function getMyBankCodes(){
+  if(_myBankCodes)return _myBankCodes;
   try{
     const r=await apiFetch('/api/auth',{method:'POST',body:JSON.stringify({action:'me'})});
     const d=await r.json();
-    if(d.ok&&d.user){_myFactaCodes={facta_vendedor:d.user.facta_vendedor||'',facta_codigo_master:d.user.facta_codigo_master||'',facta_gerente_comercial:d.user.facta_gerente_comercial||''};return _myFactaCodes}
+    if(d.ok&&d.user){_myBankCodes=d.user.bank_codes||{};return _myBankCodes}
   }catch{}
-  return _myFactaCodes={};
+  return _myBankCodes={};
 }
-function clearFactaCodesCache(){_myFactaCodes=null}
+function clearBankCodesCache(){_myBankCodes=null}
+// Helper: pega o codigo pra um banco especifico
+async function getMyBankCode(bank){const c=await getMyBankCodes();return c[bank.toLowerCase()]||''}
 
 // ═══════════════════════════════════════════════════════════════
 // Digitacao automatica FACTA — Portabilidade + Refin (003500)
@@ -921,8 +923,8 @@ async function digitarFactaPortFull(item){
 
     stepMsg('Reservando proposta (etapa1)...');
 
-    // Busca codigos FACTA do usuario logado (vendedor, master, gerente)
-    const myCodes=await factaGetMyCodes();
+    // Pega codigo do partner FACTA do usuario logado (master/gerente vem do env var no backend)
+    const factaVendedor=await getMyBankCode('facta');
 
     // 2) Etapa1 — reserva a proposta no simulador
     const e1Body={
@@ -940,10 +942,7 @@ async function digitarFactaPortFull(item){
       valor_renda:item.valor_renda||0,
       contratos_refin:item.contrato_origem
     };
-    // Atribuicao de vendedor pra comissao
-    if(myCodes.facta_vendedor)e1Body.vendedor=myCodes.facta_vendedor;
-    if(myCodes.facta_codigo_master)e1Body.codigo_master=myCodes.facta_codigo_master;
-    if(myCodes.facta_gerente_comercial)e1Body.gerente_comercial=myCodes.facta_gerente_comercial;
+    if(factaVendedor)e1Body.vendedor=factaVendedor;
 
     const e1R=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify(e1Body)});
     const e1D=await e1R.json();
@@ -1278,25 +1277,33 @@ async function rpw(u){
     alert("Senha alterada! Informe ao usuario: "+p);
   }catch(e){alert("Erro: "+e.message)}
 }
-async function editFacta(u){
+// Bancos que usam codigo por partner na digitacao
+const BANK_CODE_LIST=['facta','qitech','daycoval','c6'];
+async function editBankCodes(u){
   const users=getU()||[];
   const user=users.find(x=>x.user===u);
   if(!user){alert('Usuario nao encontrado');return}
-  const vend=prompt(`Codigo do VENDEDOR FACTA para "${u}":\n(Esse codigo sera usado como vendedor na digitacao das propostas)`,user.facta_vendedor||'');
-  if(vend===null)return;
-  const cm=prompt(`Codigo MASTER FACTA (opcional, ENTER pra pular):`,user.facta_codigo_master||'');
-  if(cm===null)return;
-  const gc=prompt(`Codigo GERENTE COMERCIAL FACTA (opcional, ENTER pra pular):`,user.facta_gerente_comercial||'');
-  if(gc===null)return;
+  const codes=Object.assign({},user.bank_codes||{});
+  let changed=false;
+  for(const bank of BANK_CODE_LIST){
+    const current=codes[bank]||'';
+    const v=prompt(`Codigo do partner em ${bank.toUpperCase()} para "${u}":\n(Deixa em branco se nao trabalha com esse banco. ENTER pra manter)`,current);
+    if(v===null)return; // cancelou
+    const trimmed=v.trim();
+    if(trimmed!==current){codes[bank]=trimmed;changed=true}
+  }
+  if(!changed){alert('Nada alterado');return}
   try{
-    const r=await apiFetch('/api/auth',{method:'POST',body:JSON.stringify({action:'update_facta',targetUser:u,facta_vendedor:vend.trim(),facta_codigo_master:cm.trim(),facta_gerente_comercial:gc.trim()})});
+    const r=await apiFetch('/api/auth',{method:'POST',body:JSON.stringify({action:'update_bank_codes',targetUser:u,codes})});
     const d=await r.json();
     if(!d.ok){alert(d.error||'Erro');return}
-    alert('Codigos FACTA atualizados!');
-    clearFactaCodesCache();
+    alert('Codigos atualizados!');
+    clearBankCodesCache();
     await loadUsersFromApi();renderApp();
   }catch(e){alert('Erro: '+e.message)}
 }
+// alias pra compat com a tela antiga
+const editFacta=editBankCodes;
 async function changeRole(u,newRole){
   try{
     const res=await apiFetch('/api/auth',{method:'POST',body:JSON.stringify({action:'update_role',targetUser:u,role:newRole})});

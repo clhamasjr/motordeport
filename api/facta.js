@@ -14,7 +14,10 @@ function getConfig() {
     PROXY_URL: (process.env.FACTA_PROXY_URL || '').trim().replace(/\/+$/, ''),
     PROXY_SECRET: (process.env.FACTA_PROXY_SECRET || '').trim(),
     CF_ACCESS_CLIENT_ID: (process.env.CF_ACCESS_CLIENT_ID || '').trim(),
-    CF_ACCESS_CLIENT_SECRET: (process.env.CF_ACCESS_CLIENT_SECRET || '').trim()
+    CF_ACCESS_CLIENT_SECRET: (process.env.CF_ACCESS_CLIENT_SECRET || '').trim(),
+    // Padroes da empresa — aplicados a TODA proposta (vendedor e por partner)
+    CODIGO_MASTER: (process.env.FACTA_CODIGO_MASTER || '').trim(),
+    GERENTE_COMERCIAL: (process.env.FACTA_GERENTE_COMERCIAL || '').trim()
   };
 }
 
@@ -203,9 +206,13 @@ export default async function handler(req) {
       const cpf = (body.cpf || '').replace(/\D/g, '');
       if (!cpf) return jsonError('CPF obrigatorio', 400, req);
       const fields = { produto: 'D', tipo_operacao: body.tipo_operacao || 13, averbador: body.averbador || 3, convenio: body.convenio || 3, cpf, data_nascimento: body.data_nascimento, login_certificado: body.login_certificado || cfg.LOGIN_CERT, codigo_tabela: body.codigo_tabela, prazo: body.prazo, valor_operacao: body.valor_operacao, valor_parcela: body.valor_parcela, coeficiente: body.coeficiente };
+      // Vendedor: por partner (frontend envia baseado no user logado)
       if (body.vendedor) fields.vendedor = body.vendedor;
-      if (body.codigo_master) fields.codigo_master = body.codigo_master;
-      if (body.gerente_comercial) fields.gerente_comercial = body.gerente_comercial;
+      // Codigo master e gerente: padrao da empresa (env vars) — so usa do body se explicitamente passado
+      fields.codigo_master = body.codigo_master || cfg.CODIGO_MASTER || '';
+      fields.gerente_comercial = body.gerente_comercial || cfg.GERENTE_COMERCIAL || '';
+      if (!fields.codigo_master) delete fields.codigo_master;
+      if (!fields.gerente_comercial) delete fields.gerente_comercial;
       if (body.cpf_representante) fields.cpf_representante = body.cpf_representante;
       if (body.nome_representante) fields.nome_representante = body.nome_representante;
       if (body.contratos_refin) fields.contratos_refin = body.contratos_refin;
