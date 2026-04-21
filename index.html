@@ -581,8 +581,10 @@ function exportWppList(){
 // ══════ ENGINE ══════
 // Coeficientes de REFIN (nao entrada). Teto INSS = 1.85%. Taxas de 1.50% a 1.85% (96 meses).
 const COEFS=[{t:1.85,c:0.02299},{t:1.83,c:0.02360},{t:1.80,c:0.02451},{t:1.78,c:0.02250},{t:1.75,c:0.021985},{t:1.72,c:0.02175},{t:1.70,c:0.021604},{t:1.68,c:0.02145},{t:1.66,c:0.02130},{t:1.65,c:0.02123},{t:1.60,c:0.02046},{t:1.55,c:0.02009},{t:1.50,c:0.01973}];
+// Daycoval REFIN PORT INSS (96 meses) — 11 tabelas oficiais (805990-806002). Usa pool proprio, nao COEFS global.
+const COEFS_DAY=[{t:1.85,c:0.02283},{t:1.80,c:0.02243},{t:1.77,c:0.02219},{t:1.74,c:0.02195},{t:1.71,c:0.02171},{t:1.68,c:0.02147},{t:1.66,c:0.02132},{t:1.62,c:0.02101},{t:1.60,c:0.02085},{t:1.58,c:0.02069},{t:1.56,c:0.02054}];
 // Faixas de REFIN por banco (taxa minima..maxima)
-// QUALI: 1.66-1.85 | FACTA: 1.75-1.85 | C6: 1.55-1.85 | BRB: 1.85-1.879 | DIGIO: 1.50-1.85
+// QUALI: 1.66-1.85 | FACTA: 1.75-1.85 | C6: 1.55-1.85 | BRB: 1.85 fixa | DIGIO: 1.50-1.85 | DAYCOVAL: 1.56-1.85 (pool proprio COEFS_DAY)
 const BD={
   QUALI:{sMin:2000,tMin:250,pMin:0,pgMin:0,faixa:[1.66,1.85],coefF:null,block:["359","246","025","047","063","070","320","394","422","654","212","626","935","753","330","149","012","752","082","079","329","643","243"],invRules:{minAge:55,dibAgeRange:[55,57],dibMinYears:15}},
   FACTA:{sMin:0,tMin:100,pMin:50,pgMin:0,faixa:[1.75,1.85],coefF:null,block:["070","071","925","935","149","012","611","643","917"],invRules:{minAge:60}},
@@ -590,12 +592,15 @@ const BD={
   // contractPrefixBlock: para 329 (QI TECH), NAO aceita contratos com prefixo FIN/QUA/FDC
   C6:{sMin:2000,tMin:50,pMin:0,pgMin:0,faixa:[1.55,1.85],coefF:null,block:["707","121","012","422","070"],pgMinMap:{"254":13,"623":37},blockInv:true,priorityFor:["329","149","935","643"],priorityRate:1.55,contractPrefixBlock:{"329":["FIN","QUA","FDC"]}},
   BRB:{sMin:3000,tMin:250,pMin:0,pgMin:0,faixa:null,coefF:0.02299,block:["070","623","935","149","012","071","925","380","079"],invRules:{minAge:60}},
-  DIGIO:{sMin:4500,tMin:250,pMin:0,pgMin:12,faixa:[1.50,1.85],coefF:null,block:["237","001","041"],invRules:{minAge:60}}
+  DIGIO:{sMin:4500,tMin:250,pMin:0,pgMin:12,faixa:[1.50,1.85],coefF:null,block:["237","001","041"],invRules:{minAge:60}},
+  // DAYCOVAL: NAO porta de C6 (336), SAFRA (422), ALFA (025), MASTER (243). Troco min = max(R$100, 2% do saldo).
+  // pgMinMap: AGIBANK 15, INBURSA 13, FACTA 24, PAN 12. PINE/BRB/QUALI 0 (ja implicito pois 0<=6 default).
+  DAYCOVAL:{sMin:500,tMin:100,tMinPct:0.02,pMin:20,pgMin:6,faixa:[1.56,1.85],coefF:null,coefs:COEFS_DAY,block:["336","422","025","243"],pgMinMap:{"121":15,"012":13,"935":24,"623":12},invRules:{minAge:60}}
 };
 // PICPAY (380) portado a partir de 1 paga em TODOS os bancos que nao tem restricao (bloqueio) para ele
 const PICPAY_CODE="380";
 // B1P = bancos com portabilidade liberada a partir de 1 paga (inclui PICPAY)
-const ORDEM=["QUALI","FACTA","C6","BRB","DIGIO"],B1P=["149","422","739","925","380","033","326","290","041","389","121"],ESP_INV=[4,5,6,32,33,34,51,83,92],ESP_AUX=[31,36,91,94],ESP_LOAS=[87,88],ESP_AGE_MIN={21:45},CARTAO={PAN:"623",BMG:"318",Daycoval:"707"};
+const ORDEM=["QUALI","FACTA","C6","BRB","DIGIO","DAYCOVAL"],B1P=["149","422","739","925","380","033","326","290","041","389","121"],ESP_INV=[4,5,6,32,33,34,51,83,92],ESP_AUX=[31,36,91,94],ESP_LOAS=[87,88],ESP_AGE_MIN={21:45},CARTAO={PAN:"623",BMG:"318",Daycoval:"707"};
 // Garantia: PICPAY sempre em B1P
 if(!B1P.includes(PICPAY_CODE))B1P.push(PICPAY_CODE);
 function pV(v){if(v==null||v==="")return 0;if(typeof v==="number")return v;let s=String(v).replace(/R\$\s*/g,"").replace(/\s/g,"");if(s.includes(","))return parseFloat(s.replace(/\./g,"").replace(",","."))||0;if(s.includes("."))return parseFloat(s)||0;let n=parseInt(s,10);return isNaN(n)?0:n>99?n/100:n}
@@ -604,7 +609,7 @@ function pC(v){if(v==null||v==="")return"";return String(typeof v==="number"?Mat
 function pEN(e){if(!e)return 0;let m=String(e).match(/^(\d+)/);return m?parseInt(m[1],10):0}
 function cAge(ns){if(ns==null)return null;let d;if(ns instanceof Date)d=ns;else if(typeof ns==="number")d=new Date((ns-25569)*864e5);else{let s=String(ns).trim(),m=s.match(/(\d{2})[/-](\d{2})[/-](\d{4})/);if(m)d=new Date(+m[3],+m[2]-1,+m[1]);else d=new Date(s)}if(!d||isNaN(d.getTime()))return null;let now=new Date(),a=now.getFullYear()-d.getFullYear();if(now.getMonth()<d.getMonth()||(now.getMonth()===d.getMonth()&&now.getDate()<d.getDate()))a--;return{age:a}}
 function cBY(dib){if(dib==null)return null;let d;if(dib instanceof Date)d=dib;else if(typeof dib==="number")d=new Date((dib-25569)*864e5);else{let s=String(dib).trim(),m=s.match(/(\d{2})[/-](\d{2})[/-](\d{4})/);if(m)d=new Date(+m[3],+m[2]-1,+m[1]);else d=new Date(s)}if(!d||isNaN(d.getTime()))return null;let now=new Date(),y=now.getFullYear()-d.getFullYear();if(now.getMonth()<d.getMonth()||(now.getMonth()===d.getMonth()&&now.getDate()<d.getDate()))y--;return y}
-function bestR(p,s,t,fx){let pool=fx?COEFS.filter(c=>c.t>=fx[0]&&c.t<=fx[1]):COEFS;for(let{t:tx,c}of pool){let vc=p/c,tr=vc-s;if(tr>=t)return{t:tx,c,vc,tr}}return null}
+function bestR(p,s,t,fx,src){let base=src||COEFS;let pool=fx?base.filter(c=>c.t>=fx[0]&&c.t<=fx[1]):base;for(let{t:tx,c}of pool){let vc=p/c,tr=vc-s;if(tr>=t)return{t:tx,c,vc,tr}}return null}
 // Regra de idade: contrato novo sempre 96 meses (8 anos)
 // Teto = 80 anos no fim → idade atual max 72 (todos os bancos, inclusive invalidez)
 const IDADE_MAX=72;
@@ -633,8 +638,11 @@ function bankAccepts(b,r,cd,con,p,s,pg,i1,inv,age,bY,espN){
   return true;
 }
 function tryBank(b,r,p,s){
-  if(r.coefF){let vc=p/r.coefF,tr=vc-s;if(tr<r.tMin)return null;let tx=COEFS.find(x=>x.c===r.coefF);return{banco:b,troco:tr,vc,taxa:tx?tx.t:0}}
-  const res=bestR(p,s,r.tMin,r.faixa);
+  // Troco minimo efetivo: se banco tem tMinPct, usa max(tMin, saldo*tMinPct). Ex: Daycoval 2% OU R$100.
+  const tMinEff=r.tMinPct?Math.max(r.tMin||0,s*r.tMinPct):r.tMin;
+  if(r.coefF){let vc=p/r.coefF,tr=vc-s;if(tr<tMinEff)return null;let tx=COEFS.find(x=>x.c===r.coefF);return{banco:b,troco:tr,vc,taxa:tx?tx.t:0}}
+  // Pool de coefs: usa banco.coefs se definido (ex: DAYCOVAL com COEFS_DAY), senao COEFS global.
+  const res=bestR(p,s,tMinEff,r.faixa,r.coefs);
   if(res)return{banco:b,troco:res.tr,vc:res.vc,taxa:res.t};
   return null;
 }
@@ -1172,8 +1180,8 @@ function setQ(v){S.q=v;S.pg=0;renderApp()}
 function doSort(col){if(S.sort.c===col)S.sort.d=S.sort.d==="asc"?"desc":"asc";else S.sort={c:col,d:"asc"};S.pg=0;renderApp()}
 function setPg(p){S.pg=p;renderApp()}
 function filt(list){let f=list;if(S.q){let ql=S.q.toLowerCase();f=f.filter(r=>(r.nome||"").toLowerCase().includes(ql)||(r.cpf||"").includes(ql)||(r.con||"").includes(ql))}if(S.sort.c){let sc=S.sort.c,sd=S.sort.d;f=[...f].sort((a,b)=>{let va=a[sc],vb=b[sc];if(typeof va==="string"){va=va.toLowerCase();vb=String(vb||"").toLowerCase()}return(va<vb?-1:va>vb?1:0)*(sd==="asc"?1:-1)})}return f}
-const DC={QUALI:{c:"var(--acc)",bg:"rgba(59,130,246,.1)"},FACTA:{c:"var(--pur)",bg:"rgba(167,139,250,.1)"},C6:{c:"var(--cyan)",bg:"rgba(6,182,212,.1)"},BRB:{c:"var(--ylw)",bg:"rgba(234,179,8,.1)"},DIGIO:{c:"var(--grn)",bg:"rgba(34,197,94,.1)"}};
-const pCls={QUALI:"pill-acc",FACTA:"pill-pur",C6:"pill-cyan",BRB:"pill-ylw",DIGIO:"pill-grn"};
+const DC={QUALI:{c:"var(--acc)",bg:"rgba(59,130,246,.1)"},FACTA:{c:"var(--pur)",bg:"rgba(167,139,250,.1)"},C6:{c:"var(--cyan)",bg:"rgba(6,182,212,.1)"},BRB:{c:"var(--ylw)",bg:"rgba(234,179,8,.1)"},DIGIO:{c:"var(--grn)",bg:"rgba(34,197,94,.1)"},DAYCOVAL:{c:"var(--pnk)",bg:"rgba(236,72,153,.1)"}};
+const pCls={QUALI:"pill-acc",FACTA:"pill-pur",C6:"pill-cyan",BRB:"pill-ylw",DIGIO:"pill-grn",DAYCOVAL:"pill-pnk"};
 function si(col){if(S.sort.c!==col)return'<span style="opacity:.2;margin-left:3px;font-size:8px">⇅</span>';return`<span style="margin-left:3px;font-size:8px">${S.sort.d==="asc"?"▲":"▼"}</span>`}
 function TH(col,l,right){return`<th class="${right?"right":""}" onclick="doSort('${col}')">${l}${si(col)}</th>`}
 function pgr(cnt){let tot=Math.ceil(cnt/PER)||1;return`<div class="pager"><span style="color:var(--t3)">${N(cnt)} registros</span><div class="pager-btns"><button onclick="setPg(Math.max(0,S.pg-1))" ${S.pg===0?"disabled":""}>‹</button><span style="color:var(--t2);padding:0 6px;font-size:11px">${S.pg+1}/${tot}</span><button onclick="setPg(Math.min(${tot-1},S.pg+1))" ${S.pg>=tot-1?"disabled":""}>›</button></div></div>`}
