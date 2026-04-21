@@ -828,6 +828,11 @@ function mapOpToTipo(op){
 
 async function digitarCartItem(id){
   const item=cart.get(id);if(!item){showToast('Item nao encontrado','err');return}
+  // Para portabilidade em FACTA: digita automaticamente (simular -> etapa1 -> etapa2 -> etapa3 -> link)
+  if(item.banco==='FACTA'&&item.tipo==='portabilidade'){
+    return digitarFactaPortFull(item);
+  }
+  // Outros casos: so registra no backend (fluxo antigo)
   item.status='simulando';saveCart();renderCartContent();
   try{
     const res=await apiFetch('/api/digitacao',{method:'POST',body:JSON.stringify({action:'create',...item})});
@@ -842,6 +847,171 @@ async function digitarCartItem(id){
   saveCart();renderCartContent();renderCartBadge();
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Digitacao automatica FACTA — Portabilidade + Refin (003500)
+// Fluxo: registro interno -> simular -> etapa1 -> etapa1RefinPort
+//        -> etapa2 -> etapa3 -> enviarLink (WhatsApp)
+// ═══════════════════════════════════════════════════════════════
+async function digitarFactaPortFull(item){
+  const stepMsg=(s)=>{item.status_detail=s;saveCart();renderCartContent()};
+  const fail=(msg)=>{item.status='pendente';item.status_detail=msg;saveCart();renderCartContent();renderCartBadge();showToast('FACTA: '+msg,'err');return false};
+  try{
+    // 0) Checagem de dados obrigatorios
+    if(!item.cpf||!item.data_nascimento){return fail('CPF ou data de nascimento ausente')}
+    if(!item.saldo_devedor||!item.parcela_origem||!item.prazo_restante){return fail('Dados do contrato origem incompletos')}
+    if(!item.banco_origem||!item.contrato_origem){return fail('Banco/contrato de origem ausente')}
+
+    item.status='simulando';stepMsg('Simulando FACTA...');
+    renderCartBadge();
+
+    // 1) Simular — pega as tabelas de Port+Refin disponiveis
+    const simR=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify({
+      action:'simulacaoRapida',
+      tipo_operacao:'003500',
+      cpf:item.cpf,
+      data_nascimento:item.data_nascimento,
+      valor_parcela:item.parcela_origem,
+      prazo:96,
+      prazo_restante:item.prazo_restante,
+      saldo_devedor:item.saldo_devedor,
+      valor_parcela_original:item.parcela_origem,
+      prazo_original:item.prazo_original||(parseInt(item.prazo_restante)+10),
+      valor_renda:item.valor_renda||0,
+      contratos_refin:item.contrato_origem
+    })});
+    const simD=await simR.json();
+    if(!simD.success){return fail(simD.mensagem||'Falha na simulacao')}
+    const tabs=simD.tabelas_refin_portabilidade||simD.tabelas_portabilidade||simD.tabelas||[];
+    if(!tabs.length){return fail('Sem tabelas Port+Refin disponiveis')}
+    // Pega a tabela com maior troco (ou a primeira)
+    const tab=tabs.reduce((b,t)=>((+t.troco||+t.vr_troco||0)>(+b.troco||+b.vr_troco||0)?t:b),tabs[0]);
+    item.facta_tabela=tab.codigo_tabela||tab.codigoTabela||tab.tabela;
+    item.facta_coef=tab.coeficiente||tab.coef;
+    item.facta_valor_op=tab.valor_operacao||tab.vr_operacao||tab.valor_contrato;
+    item.facta_valor_parcela=tab.valor_parcela||tab.vr_parcela||item.parcela_origem;
+
+    stepMsg('Reservando proposta (etapa1)...');
+
+    // 2) Etapa1 — reserva a proposta no simulador
+    const e1R=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify({
+      action:'etapa1',
+      tipo_operacao:'003500',
+      cpf:item.cpf,
+      data_nascimento:item.data_nascimento,
+      codigo_tabela:item.facta_tabela,
+      prazo:96,
+      valor_operacao:item.facta_valor_op,
+      valor_parcela:item.facta_valor_parcela,
+      coeficiente:item.facta_coef,
+      saldo_devedor:item.saldo_devedor,
+      prazo_original:item.prazo_original||(parseInt(item.prazo_restante)+10),
+      valor_renda:item.valor_renda||0,
+      contratos_refin:item.contrato_origem
+    })});
+    const e1D=await e1R.json();
+    if(!e1D.success||!e1D.id_simulador){return fail(e1D.mensagem||'Falha na etapa1')}
+    item.facta_id_simulador=e1D.id_simulador;
+
+    stepMsg('Registrando contrato origem (refin port)...');
+
+    // 2b) Etapa1 Refin Port — vincula contrato que sera portado
+    const e1rpR=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify({
+      action:'etapa1RefinPort',
+      id_simulador:item.facta_id_simulador,
+      banco_compra:item.banco_origem,
+      contrato_compra:item.contrato_origem,
+      prazo_restante:item.prazo_restante,
+      saldo_devedor:item.saldo_devedor,
+      valor_parcela_original:item.parcela_origem,
+      prazo:96,
+      codigo_tabela:item.facta_tabela,
+      coeficiente:item.facta_coef,
+      valor_operacao:item.facta_valor_op,
+      valor_parcela:item.facta_valor_parcela
+    })});
+    const e1rpD=await e1rpR.json();
+    if(e1rpD.erro===true){return fail(e1rpD.mensagem||'Falha na etapa1 refin port')}
+
+    item.status='em_digitacao';stepMsg('Enviando dados pessoais (etapa2)...');saveCart();renderCartContent();
+
+    // 3) Etapa2 — dados pessoais
+    const e2Fields={
+      action:'etapa2',
+      id_simulador:item.facta_id_simulador,
+      cpf:item.cpf,
+      nome:item.nome,
+      data_nascimento:item.data_nascimento,
+      rg:item.rg,
+      sexo:item.sexo,
+      nome_mae:item.nome_mae,
+      nome_pai:item.nome_pai,
+      estado_civil:item.estado_civil,
+      cep:(item.cep||'').replace(/\D/g,''),
+      endereco:item.endereco,
+      numero:item.numero,
+      complemento:item.complemento,
+      bairro:item.bairro,
+      cidade:item.cidade,
+      estado:item.estado,
+      banco:item.banco_cliente,
+      agencia:item.agencia,
+      conta:item.conta,
+      digito_conta:item.digito_conta,
+      tipo_conta:item.tipo_conta,
+      telefone:item.telefone,
+      beneficio:item.beneficio,
+      especie:item.especie,
+      valor_renda:item.valor_renda
+    };
+    const e2R=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify(e2Fields)});
+    const e2D=await e2R.json();
+    if(!e2D.success||!e2D.codigo_cliente){return fail(e2D.mensagem||'Falha na etapa2 (dados pessoais)')}
+    item.facta_codigo_cliente=e2D.codigo_cliente;
+
+    stepMsg('Formalizando proposta (etapa3)...');
+
+    // 4) Etapa3 — formalizacao
+    const e3R=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify({
+      action:'etapa3',
+      codigo_cliente:item.facta_codigo_cliente,
+      id_simulador:item.facta_id_simulador,
+      tipo_formalizacao:'whatsapp'
+    })});
+    const e3D=await e3R.json();
+    if(!e3D.success||!e3D.codigo_af){return fail(e3D.mensagem||'Falha na etapa3')}
+    item.facta_codigo_af=e3D.codigo_af;
+
+    stepMsg('Enviando link WhatsApp...');
+
+    // 5) Envio link WhatsApp (nao bloqueia se falhar)
+    try{
+      await apiFetch('/api/facta',{method:'POST',body:JSON.stringify({
+        action:'enviarLink',
+        codigo_af:item.facta_codigo_af,
+        tipo_envio:'whatsapp'
+      })});
+    }catch{}
+
+    // Salva na base interna pra aparecer na Esteira
+    try{
+      await apiFetch('/api/digitacao',{method:'POST',body:JSON.stringify({
+        action:'create',
+        ...item,
+        codigo_af:item.facta_codigo_af,
+        id_simulador:item.facta_id_simulador,
+        status:'enviada'
+      })});
+    }catch{}
+
+    item.status='enviada';item.status_detail='Link enviado. AF: '+item.facta_codigo_af;
+    saveCart();renderCartContent();renderCartBadge();
+    showToast('✅ Proposta AF '+item.facta_codigo_af+' enviada!');
+    return true;
+  }catch(e){
+    return fail(e.message||'Erro inesperado');
+  }
+}
+
 async function digitarCartBatch(){
   const pendentes=getCartItems().filter(i=>i.status==='pendente');
   if(!pendentes.length){showToast('Nenhum item pendente','err');return}
@@ -851,8 +1021,36 @@ async function digitarCartBatch(){
 }
 
 // Helper: build cart item from portabilidade contract
+// Enriquece com todos os dados do cliente pra permitir digitacao automatica (etapa1-3 da FACTA)
 function buildCartFromPort(pc,r){
-  return{cpf:r?.beneficiario?.cpf||'',nome:r?.beneficiario?.nome||'',beneficio:r?.beneficiario?.nb||r?.beneficio?.nb||'',tipo:'portabilidade',banco:pc.destino||'FACTA',contrato_origem:pc.contrato,banco_origem:pc.banco,parcela_origem:pc.parcela,saldo_devedor:pc.saldo,taxa_origem:pc.taxa,prazo_restante:pc.prazo,valor_troco:pc.troco,destino:pc.destino,taxa_nova:pc.novaTaxa,valor_operacao:pc.vc};
+  const b=r?.beneficiario||{},ben=r?.beneficio||{},end=r?.endereco||{},bco=r?.banco||{},tels=r?.telefones||[];
+  const telPrim=tels.find(t=>t.whatsapp)||tels[0]||{};
+  return{
+    // Identificacao
+    cpf:b.cpf||'',nome:b.nome||'',beneficio:b.nb||ben.nb||'',
+    tipo:'portabilidade',banco:pc.destino||'FACTA',
+    // Contrato origem (portabilidade)
+    contrato_origem:pc.contrato,banco_origem:pc.banco,
+    parcela_origem:pc.parcela,saldo_devedor:pc.saldo,
+    taxa_origem:pc.taxa,prazo_restante:pc.prazo,
+    valor_troco:pc.troco,destino:pc.destino,
+    taxa_nova:pc.novaTaxa,valor_operacao:pc.vc,
+    // Dados pessoais (etapa2)
+    data_nascimento:b.data_nascimento||b.dt_nascimento||'',
+    rg:b.rg||'',sexo:b.sexo||'',nome_mae:b.nome_mae||'',nome_pai:b.nome_pai||'',
+    estado_civil:b.estado_civil||'',
+    // Endereco (etapa2)
+    cep:end.cep||'',endereco:end.logradouro||end.endereco||'',
+    numero:end.numero||'',complemento:end.complemento||'',
+    bairro:end.bairro||'',cidade:end.cidade||'',estado:end.uf||end.estado||'',
+    // Conta bancaria (etapa2)
+    banco_cliente:bco.banco||bco.codigo||'',agencia:bco.agencia||'',
+    conta:bco.conta||'',digito_conta:bco.digito||'',tipo_conta:bco.tipo_conta||'',
+    // Beneficio (etapa2)
+    especie:ben.especie||'',valor_renda:ben.valor||ben.base_calculo||0,
+    // Contato (enviar link)
+    telefone:telPrim.ddd&&telPrim.telefone?(telPrim.ddd+telPrim.telefone):''
+  };
 }
 // Helper: build cart item from emprestimo novo (margem)
 function buildCartFromMargem(r,tipo){
