@@ -864,23 +864,38 @@ async function digitarFactaPortFull(item){
     item.status='simulando';stepMsg('Simulando FACTA...');
     renderCartBadge();
 
+    // Normaliza data_nascimento pra DD/MM/YYYY (FACTA exige esse formato)
+    const fmtDate=(d)=>{
+      if(!d)return'';
+      const s=String(d).trim();
+      if(/^\d{4}-\d{2}-\d{2}/.test(s)){const m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);return m[3]+'/'+m[2]+'/'+m[1]}
+      if(/^\d{2}\/\d{2}\/\d{4}/.test(s))return s.substring(0,10);
+      return s;
+    };
+    const dtNasc=fmtDate(item.data_nascimento);
+    if(!dtNasc)return fail('Data de nascimento ausente');
+
     // 1) Simular — pega as tabelas de Port+Refin disponiveis
-    const simR=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify({
+    const simPayload={
       action:'simulacaoRapida',
       tipo_operacao:'003500',
-      cpf:item.cpf,
-      data_nascimento:item.data_nascimento,
-      valor_parcela:item.parcela_origem,
+      cpf:String(item.cpf).replace(/\D/g,''),
+      data_nascimento:dtNasc,
+      valor_parcela:Number(item.parcela_origem),
       prazo:96,
-      prazo_restante:item.prazo_restante,
-      saldo_devedor:item.saldo_devedor,
-      valor_parcela_original:item.parcela_origem,
-      prazo_original:item.prazo_original||(parseInt(item.prazo_restante)+10),
-      valor_renda:item.valor_renda||0,
-      contratos_refin:item.contrato_origem
-    })});
+      prazo_restante:parseInt(item.prazo_restante),
+      saldo_devedor:Number(item.saldo_devedor),
+      valor_parcela_original:Number(item.parcela_origem),
+      prazo_original:parseInt(item.prazo_original)||(parseInt(item.prazo_restante)+10)
+    };
+    console.log('[FACTA] simular payload:',simPayload);
+    const simR=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify(simPayload)});
     const simD=await simR.json();
-    if(!simD.success){return fail(simD.mensagem||'Falha na simulacao')}
+    console.log('[FACTA] simular resposta:',simD);
+    if(!simD.success){
+      const msg=simD.mensagem||simD.erro||simD.error||'Sem mensagem';
+      return fail('Simulacao: '+msg.substring(0,200));
+    }
     const tabs=simD.tabelas_refin_portabilidade||simD.tabelas_portabilidade||simD.tabelas||[];
     if(!tabs.length){return fail('Sem tabelas Port+Refin disponiveis')}
     // Pega a tabela com maior troco (ou a primeira)
