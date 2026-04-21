@@ -71,6 +71,12 @@ app.post('/relay', async (req, res) => {
   const targetUrl = FACTA_BASE + path;
   const fwdHeaders = { ...headers };
   if (contentType) fwdHeaders['Content-Type'] = contentType;
+  // Headers de navegador padrao pra bypass Cloudflare bot detection
+  if (!fwdHeaders['User-Agent'] && !fwdHeaders['user-agent']) {
+    fwdHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  }
+  if (!fwdHeaders['Accept']) fwdHeaders['Accept'] = 'application/json, text/plain, */*';
+  if (!fwdHeaders['Accept-Language']) fwdHeaders['Accept-Language'] = 'pt-BR,pt;q=0.9,en;q=0.8';
   // Nao repassa hop-by-hop
   delete fwdHeaders.Host;
   delete fwdHeaders.host;
