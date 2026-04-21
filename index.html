@@ -1032,7 +1032,7 @@ function buildCartFromPort(pc,r){
     // Contrato origem (portabilidade)
     contrato_origem:pc.contrato,banco_origem:pc.banco,
     parcela_origem:pc.parcela,saldo_devedor:pc.saldo,
-    taxa_origem:pc.taxa,prazo_restante:pc.prazo,
+    taxa_origem:pc.taxa,prazo_restante:pc.prazo,prazo_original:pc.prazo_original||(pc.prazo?pc.prazo+10:null),
     valor_troco:pc.troco,destino:pc.destino,
     taxa_nova:pc.novaTaxa,valor_operacao:pc.vc,
     // Dados pessoais (etapa2)
@@ -1841,16 +1841,178 @@ function renderEsteira(){
     const troco=item.valor_troco||'—';
     const af=item.codigo_af||item.url_formalizacao||'—';
 
-    h+=`<tr class="rh"><td style="max-width:140px">${esc(item.nome||'—')}</td><td class="mono" style="font-size:11px">${esc(item.cpf||'—')}</td><td><span class="pill ${tipoPill}">${tipoLabel}</span></td><td><span class="pill pill-default">${esc(item.banco||'—')}</span></td><td class="mono" style="font-size:11px">${esc(item.contrato_origem||'—')}</td><td class="right mono">${esc(saldo)}</td><td class="right mono">${esc(parcela)}</td><td class="right mono" style="color:var(--grn);font-weight:700">${esc(troco)}</td><td><span class="pill ${statusPill}">${esc(item.status||'—')}</span></td><td class="mono" style="font-size:10px">${esc(af)}</td><td style="font-size:10px;color:var(--t3)">${dt}</td><td>`;
-    if(item._source==='cart'&&item.status==='pendente'){
-      h+=`<button class="btn-cart btn-cart-sm" onclick="digitarCartItem('${item._id}')">Digitar</button> `;
-      h+=`<button class="btn btn-red btn-sm" onclick="removeFromCart('${item._id}')">✕</button>`;
+    const detail=item.status_detail?`<div style="font-size:10px;color:var(--t3);margin-top:2px">${esc(item.status_detail)}</div>`:'';
+    h+=`<tr class="rh"><td style="max-width:140px">${esc(item.nome||'—')}${detail}</td><td class="mono" style="font-size:11px">${esc(item.cpf||'—')}</td><td><span class="pill ${tipoPill}">${tipoLabel}</span></td><td><span class="pill pill-default">${esc(item.banco||'—')}</span></td><td class="mono" style="font-size:11px">${esc(item.contrato_origem||'—')}</td><td class="right mono">${esc(saldo)}</td><td class="right mono">${esc(parcela)}</td><td class="right mono" style="color:var(--grn);font-weight:700">${esc(troco)}</td><td><span class="pill ${statusPill}">${esc(item.status||'—')}</span></td><td class="mono" style="font-size:10px">${esc(af)}</td><td style="font-size:10px;color:var(--t3)">${dt}</td><td style="white-space:nowrap">`;
+    const st=item.status||'';
+    const src=item._source;
+    const key=JSON.stringify({s:src,i:item._id,db:item.id||item.dbId||null}).replace(/"/g,'&quot;');
+    // Detalhes (sempre)
+    h+=`<button class="btn btn-sm" title="Ver detalhes" onclick="esteiraVerDetalhes(${key})">👁</button> `;
+    // Acoes por status
+    if(src==='cart'&&st==='pendente'){
+      h+=`<button class="btn-cart btn-cart-sm" title="Digitar na FACTA" onclick="digitarCartItem('${item._id}')">📝 Digitar</button> `;
+      h+=`<button class="btn btn-red btn-sm" title="Remover do carrinho" onclick="removeFromCart('${item._id}')">✕</button>`;
+    }else if(st==='simulando'||st==='em_digitacao'){
+      h+=`<button class="btn btn-sm" style="border-color:var(--ylw);color:var(--ylw)" title="Reiniciar digitacao" onclick="esteiraReiniciar(${key})">🔄</button> `;
+      h+=`<button class="btn btn-red btn-sm" title="Cancelar localmente" onclick="esteiraCancelarLocal(${key})">✕</button>`;
+    }else if(st==='enviada'||st==='em_analise'){
+      if(af&&af!=='—'){
+        h+=`<button class="btn btn-sm btn-acc" title="Consultar andamento FACTA" onclick="esteiraAndamento(${key})">🔍</button> `;
+        h+=`<button class="btn btn-sm" style="border-color:var(--org);color:var(--org)" title="Cancelar proposta FACTA" onclick="esteiraCancelarFacta(${key})">🚫</button> `;
+      }
+    }else if(st==='aprovada'||st==='formalizada'){
+      if(af&&af!=='—')h+=`<button class="btn btn-sm btn-acc" title="Consultar andamento" onclick="esteiraAndamento(${key})">🔍</button> `;
+    }else if(st==='cancelada'||st==='recusada'){
+      h+=`<button class="btn btn-red btn-sm" title="Excluir definitivamente" onclick="esteiraExcluir(${key})">🗑</button>`;
+    }
+    // Admin pode excluir qualquer coisa
+    if(CU&&CU.role==='admin'&&src==='db'&&!['cancelada','recusada'].includes(st)){
+      h+=` <button class="btn btn-red btn-sm" title="Forcar exclusao (admin)" onclick="esteiraExcluirForca(${key})">🗑</button>`;
     }
     h+=`</td></tr>`;
   }
 
   h+='</tbody></table></div></div>';
   return h;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Acoes da Esteira
+// ═══════════════════════════════════════════════════════════════
+function _esteiraFindItem(ref){
+  if(!ref)return null;
+  if(ref.s==='cart')return cart.get(ref.i);
+  if(ref.s==='db'){const id=ref.db||ref.i;return (esteiraData||[]).find(x=>String(x.id)===String(id))}
+  return null;
+}
+
+function esteiraVerDetalhes(ref){
+  const item=_esteiraFindItem(ref);
+  if(!item){showToast('Item nao encontrado','err');return}
+  const rows=Object.entries(item).filter(([k,v])=>v!==null&&v!==undefined&&v!==''&&!k.startsWith('_')&&k!=='id'&&k!=='dbId');
+  let html=`<div style="display:grid;grid-template-columns:1fr 2fr;gap:6px;font-size:12px">`;
+  for(const[k,v]of rows){
+    const label=k.replace(/_/g,' ');
+    const val=typeof v==='object'?JSON.stringify(v):String(v);
+    html+=`<div style="color:var(--t3);font-weight:600">${esc(label)}</div><div class="mono" style="word-break:break-word">${esc(val.substring(0,300))}</div>`;
+  }
+  html+=`</div>`;
+  showModal('Detalhes da Proposta',html);
+}
+
+async function esteiraReiniciar(ref){
+  const item=_esteiraFindItem(ref);
+  if(!item){showToast('Item nao encontrado','err');return}
+  if(!confirm('Reiniciar digitacao? Os dados na FACTA serao descartados e tentaremos novamente.'))return;
+  item.status='pendente';item.status_detail='';
+  if(ref.s==='cart')saveCart();
+  digitarCartItem(item.id||ref.i);
+}
+
+function esteiraCancelarLocal(ref){
+  const item=_esteiraFindItem(ref);
+  if(!item)return;
+  if(!confirm('Cancelar esta proposta localmente? (nao cancela na FACTA)'))return;
+  if(ref.s==='cart'){
+    removeFromCart(item.id||ref.i);
+  }else{
+    // DB: marca como cancelada
+    apiFetch('/api/digitacao',{method:'POST',body:JSON.stringify({action:'update',id:item.id,status:'cancelada'})})
+      .then(r=>r.json()).then(d=>{if(d.ok){showToast('Cancelada');loadEsteira()}else showToast(d.error||'Erro','err')});
+  }
+}
+
+async function esteiraAndamento(ref){
+  const item=_esteiraFindItem(ref);
+  if(!item||!item.codigo_af){showToast('Sem codigo AF','err');return}
+  showToast('Consultando FACTA...');
+  try{
+    const r=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify({action:'andamentoPropostas',af:item.codigo_af})});
+    const d=await r.json();
+    if(!d.success){showToast(d.mensagem||'Erro ao consultar','err');return}
+    const props=d.propostas||d.data||[d];
+    const p=Array.isArray(props)?props[0]:props;
+    let html=`<div style="font-size:12px"><strong>AF:</strong> ${esc(item.codigo_af)}<br>`;
+    if(p){
+      html+=`<strong>Status FACTA:</strong> ${esc(p.status_contrato||p.status||'—')}<br>`;
+      if(p.observacao)html+=`<strong>Observacao:</strong> ${esc(p.observacao)}<br>`;
+      if(p.data_alteracao)html+=`<strong>Ult. alteracao:</strong> ${esc(p.data_alteracao)}<br>`;
+      if(p.situacao)html+=`<strong>Situacao:</strong> ${esc(p.situacao)}<br>`;
+    }
+    // Tambem busca ocorrencias
+    try{
+      const r2=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify({action:'consultaOcorrencias',af:item.codigo_af})});
+      const d2=await r2.json();
+      const ocs=d2.ocorrencias||d2.data||[];
+      if(ocs.length){
+        html+=`<hr style="border-color:var(--brd);margin:10px 0"><strong>Ocorrencias:</strong><ul style="padding-left:18px;margin:6px 0">`;
+        for(const oc of ocs.slice(0,10)){html+=`<li>${esc(oc.descricao||oc.ocorrencia||JSON.stringify(oc).substring(0,100))}</li>`}
+        html+=`</ul>`;
+      }
+    }catch{}
+    html+=`</div>`;
+    showModal('Andamento FACTA',html);
+  }catch(e){showToast('Erro: '+e.message,'err')}
+}
+
+async function esteiraCancelarFacta(ref){
+  const item=_esteiraFindItem(ref);
+  if(!item||!item.codigo_af){showToast('Sem codigo AF','err');return}
+  if(!confirm('Cancelar proposta '+item.codigo_af+' na FACTA? Essa acao tenta solicitar o cancelamento oficial.'))return;
+  try{
+    const r=await apiFetch('/api/facta',{method:'POST',body:JSON.stringify({action:'cancelarProposta',codigo_af:item.codigo_af})});
+    const d=await r.json();
+    if(d.success){
+      showToast('Cancelamento solicitado');
+      // Atualiza status local/DB
+      if(ref.s==='db'&&item.id){
+        await apiFetch('/api/digitacao',{method:'POST',body:JSON.stringify({action:'update',id:item.id,status:'cancelada'})});
+      }
+      if(ref.s==='cart'){item.status='cancelada';saveCart()}
+      loadEsteira();
+    }else{
+      showToast(d.mensagem||'Erro no cancelamento FACTA','err');
+    }
+  }catch(e){showToast('Erro: '+e.message,'err')}
+}
+
+async function esteiraExcluir(ref){
+  const item=_esteiraFindItem(ref);
+  if(!item)return;
+  if(!confirm('Excluir definitivamente do registro?'))return;
+  if(ref.s==='cart'){removeFromCart(item.id||ref.i);return}
+  try{
+    const r=await apiFetch('/api/digitacao',{method:'POST',body:JSON.stringify({action:'delete',id:item.id})});
+    const d=await r.json();
+    if(d.ok){showToast('Excluido');loadEsteira()}
+    else showToast(d.error||'Erro ao excluir','err');
+  }catch(e){showToast('Erro: '+e.message,'err')}
+}
+
+async function esteiraExcluirForca(ref){
+  const item=_esteiraFindItem(ref);
+  if(!item||!item.id)return;
+  if(!confirm('⚠ ADMIN: Forcar exclusao deste registro? Vai marcar como CANCELADA primeiro e depois excluir.'))return;
+  try{
+    await apiFetch('/api/digitacao',{method:'POST',body:JSON.stringify({action:'update',id:item.id,status:'cancelada'})});
+    const r=await apiFetch('/api/digitacao',{method:'POST',body:JSON.stringify({action:'delete',id:item.id})});
+    const d=await r.json();
+    if(d.ok){showToast('Excluido');loadEsteira()}
+    else showToast(d.error||'Erro','err');
+  }catch(e){showToast('Erro: '+e.message,'err')}
+}
+
+function showModal(title,htmlContent){
+  let modal=document.getElementById('genericModal');
+  if(!modal){
+    modal=document.createElement('div');
+    modal.id='genericModal';
+    modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px';
+    modal.onclick=function(e){if(e.target===modal)modal.style.display='none'};
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML=`<div style="background:var(--card);border-radius:14px;padding:20px;max-width:700px;width:100%;max-height:85vh;overflow-y:auto;border:1px solid var(--brd)"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--brd)"><div style="font-size:15px;font-weight:800">${esc(title)}</div><button class="btn btn-sm" onclick="document.getElementById('genericModal').style.display='none'">✕</button></div>${htmlContent}</div>`;
+  modal.style.display='flex';
 }
 
 function renderCampanhas(){
@@ -3261,7 +3423,7 @@ if(r.contratos&&r.contratos.length){for(let ct of r.contratos){
   let total=parseInt(ct.prazo_original||'0')||0;
   let pag=total>0&&rest>0?total-rest:0;
   if(par>0&&sal>0&&cod&&cod!=='000'){let res=testar(par,sal,pag,cod,isInvCons,idadeNum,bYCons,rest,espN,ct.contrato||ct.id||'');
-  if(res){portContratos.push({contrato:ct.contrato||ct.id||'?',banco:cod,parcela:par,saldo:sal,taxa,destino:res.banco,novaTaxa:res.taxa,vc:res.vc,troco:res.troco});totalOport+=res.vc}
+  if(res){portContratos.push({contrato:ct.contrato||ct.id||'?',banco:cod,parcela:par,saldo:sal,taxa,destino:res.banco,novaTaxa:res.taxa,vc:res.vc,troco:res.troco,prazo:rest,prazo_original:total});totalOport+=res.vc}
 }}}
 if(portContratos.length){oportunidades.push({icon:'🔄',tipo:'Portabilidade',cor:'var(--grn)',valor:portContratos.reduce((s,c)=>s+c.troco,0),desc:portContratos.length+' contrato(s) elegível(is)'})}
 if(r.contratos&&r.contratos.length&&!portContratos.length){oportunidades.push({icon:'📋',tipo:'Refinanciamento',cor:'var(--acc)',valor:0,desc:r.contratos.length+' contrato(s) — verificar condições'})}
