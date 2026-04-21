@@ -10,8 +10,33 @@ function getConfig() {
   return {
     BASE: process.env.FACTA_BASE_URL || 'https://webservice-homol.facta.com.br',
     AUTH: process.env.FACTA_AUTH,
-    LOGIN_CERT: process.env.FACTA_LOGIN_CERT || '93596'
+    LOGIN_CERT: process.env.FACTA_LOGIN_CERT || '93596',
+    PROXY_URL: (process.env.FACTA_PROXY_URL || '').replace(/\/+$/, ''),
+    PROXY_SECRET: process.env.FACTA_PROXY_SECRET || ''
   };
+}
+
+// Helper: chama FACTA direto ou via proxy do escritorio (IP autorizado)
+// Quando FACTA_PROXY_URL e FACTA_PROXY_SECRET estao setados, repassa pelo proxy.
+async function factaFetch(path, { method = 'GET', headers = {}, body = null, contentType = null } = {}) {
+  const cfg = getConfig();
+  if (cfg.PROXY_URL && cfg.PROXY_SECRET) {
+    // Rota via proxy do escritorio
+    const payload = { method, path, headers, body, contentType };
+    return fetch(cfg.PROXY_URL + '/relay', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Proxy-Key': cfg.PROXY_SECRET
+      },
+      body: JSON.stringify(payload)
+    });
+  }
+  // Chamada direta (funciona apenas se o IP do Vercel estiver autorizado na FACTA)
+  const fwd = { method, headers: { ...headers } };
+  if (contentType) fwd.headers['Content-Type'] = contentType;
+  if (body !== null && method !== 'GET') fwd.body = typeof body === 'string' ? body : JSON.stringify(body);
+  return fetch(cfg.BASE + path, fwd);
 }
 
 // Token cache
@@ -21,7 +46,7 @@ async function getToken() {
   if (_tk.token && Date.now() < _tk.exp) return _tk.token;
   const cfg = getConfig();
   if (!cfg.AUTH) throw new Error('FACTA_AUTH nao configurado');
-  const r = await fetch(cfg.BASE + '/gera-token', { headers: { 'Authorization': cfg.AUTH } });
+  const r = await factaFetch('/gera-token', { headers: { 'Authorization': cfg.AUTH } });
   const d = await r.json();
   if (d.erro === false && d.token) {
     _tk = { token: d.token, exp: Date.now() + 50 * 60 * 1000 };
@@ -31,25 +56,24 @@ async function getToken() {
 }
 
 async function fGet(path, params) {
-  const cfg = getConfig();
   const token = await getToken();
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-  const r = await fetch(cfg.BASE + path + qs, { headers: { 'Authorization': 'Bearer ' + token } });
+  const r = await factaFetch(path + qs, { headers: { 'Authorization': 'Bearer ' + token } });
   const t = await r.text();
   let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 3000) }; }
   return { ok: r.ok, status: r.status, data: d };
 }
 
 async function fPost(path, fields) {
-  const cfg = getConfig();
   const token = await getToken();
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(fields)) {
     if (v !== undefined && v !== null && v !== '') params.append(k, String(v));
   }
-  const r = await fetch(cfg.BASE + path, {
+  const r = await factaFetch(path, {
     method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Authorization': 'Bearer ' + token },
+    contentType: 'application/x-www-form-urlencoded',
     body: params.toString()
   });
   const t = await r.text();
@@ -58,11 +82,11 @@ async function fPost(path, fields) {
 }
 
 async function fPostJson(path, body) {
-  const cfg = getConfig();
   const token = await getToken();
-  const r = await fetch(cfg.BASE + path, {
+  const r = await factaFetch(path, {
     method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    headers: { 'Authorization': 'Bearer ' + token },
+    contentType: 'application/json',
     body: JSON.stringify(body)
   });
   const t = await r.text();
