@@ -12,7 +12,9 @@ function getConfig() {
     AUTH: (process.env.FACTA_AUTH || '').trim(),
     LOGIN_CERT: (process.env.FACTA_LOGIN_CERT || '93596').trim(),
     PROXY_URL: (process.env.FACTA_PROXY_URL || '').trim().replace(/\/+$/, ''),
-    PROXY_SECRET: (process.env.FACTA_PROXY_SECRET || '').trim()
+    PROXY_SECRET: (process.env.FACTA_PROXY_SECRET || '').trim(),
+    CF_ACCESS_CLIENT_ID: (process.env.CF_ACCESS_CLIENT_ID || '').trim(),
+    CF_ACCESS_CLIENT_SECRET: (process.env.CF_ACCESS_CLIENT_SECRET || '').trim()
   };
 }
 
@@ -25,15 +27,20 @@ async function factaFetch(path, { method = 'GET', headers = {}, body = null, con
     const payload = { method, path, headers, body, contentType };
     const fullUrl = cfg.PROXY_URL + '/relay';
     console.log('[factaFetch] via PROXY:', method, path, '->', fullUrl);
+    const reqHeaders = {
+      'Content-Type': 'application/json',
+      'X-Proxy-Key': cfg.PROXY_SECRET,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json'
+    };
+    // Cloudflare Access Service Token (autentica requisicao Vercel->Proxy no Zero Trust)
+    if (cfg.CF_ACCESS_CLIENT_ID && cfg.CF_ACCESS_CLIENT_SECRET) {
+      reqHeaders['CF-Access-Client-Id'] = cfg.CF_ACCESS_CLIENT_ID;
+      reqHeaders['CF-Access-Client-Secret'] = cfg.CF_ACCESS_CLIENT_SECRET;
+    }
     const r = await fetch(fullUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Proxy-Key': cfg.PROXY_SECRET,
-        // User-Agent de navegador padrao pra evitar Cloudflare Bot Fight Mode
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json'
-      },
+      headers: reqHeaders,
       body: JSON.stringify(payload)
     });
     console.log('[factaFetch] PROXY resp status:', r.status, 'content-type:', r.headers.get('content-type'));
