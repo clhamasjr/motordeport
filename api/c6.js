@@ -120,8 +120,11 @@ export default async function handler(req) {
       );
       const t = r.data?.trabalhador || {};
       const temOferta = !!(t.valor_cliente && parseFloat(t.valor_cliente) > 0);
+      // 404 do C6 = "cliente sem oferta" = resposta negativa legitima, nao erro
+      const isSemOferta404 = r.status === 404;
+      const chamadaOk = r.ok || isSemOferta404;
       return j({
-        success: r.ok,
+        success: chamadaOk,
         httpStatus: r.status,
         cpf,
         temOferta,

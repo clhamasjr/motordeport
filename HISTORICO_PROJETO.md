@@ -31,13 +31,31 @@ Motordeport passa a ser plataforma **multi-produto** (INSS já existente + novo 
 - **Env vars novas**: `C6_BASE_URL`, `C6_USERNAME`, `C6_PASSWORD`, `C6_PROMOTER_CODE`, `C6_CODIGO_ORIGEM`, `C6_CPF_CERTIFICADO` — documentadas em ENV_VARS.md
 - **Promoter code LhamasCred no C6**: `004684`
 
+### F2 — PresençaBank + JoinBank CLT (entregue 24/abr)
+
+**F2.a — PresençaBank (Consignado Privado)**
+- **Arquivo**: `api/presencabank.js` (edge runtime, rate limit 30 req/min documentado)
+- **Actions**: `test`, `gerarTermo` (LGPD), `consultarVinculos`, `consultarMargem`, `consultarTabelas`, `criarProposta`, `linkFormalizacao`, `consultarProposta`
+- **Fluxo obrigatório** (conforme docs): login → termo LGPD → cliente aceita → vínculos → margem → tabelas → criar operação → link formalização
+- **Token cache**: 15min conservador (doc não especifica TTL)
+- **Env vars**: `PRESENCABANK_BASE_URL`, `PRESENCABANK_LOGIN`, `PRESENCABANK_SENHA`, `PRESENCABANK_PRODUTO_ID` (default 28)
+
+**F2.b — JoinBank CLT (adicionado ao handler existente)**
+- **Arquivo modificado**: `api/joinbank.js` — novas actions `clt*` convivem com as INSS existentes
+- **Actions CLT**: `cltCreateSimulation` (higienização embutida), `cltCalculate`, `cltAuthTerm`, `cltSignTerm`, `cltSelectCondition`, `cltCreateLoans`, `cltTest`
+- **Reutiliza** `JOINBANK_URL` + `JOINBANK_KEY` do INSS — zero env var nova
+- **Providers CLT**: QITech `950002` (default), 321 Bank `950703`
+- **Prefix endpoints**: `/v3/loan-private-payroll-simulations/...` (diferente do INSS `/v3/loan-inss-simulations/...`)
+
+**F2.c — Ajuste semântico no C6**
+- `api/c6.js` action `oferta`: quando C6 retorna HTTP 404 (cliente sem oferta), agora retorna `success: true, temOferta: false` (antes retornava `success: false`). 404 é resposta legítima, não erro de integração.
+
 ### Fases seguintes
-- **F2**: `api/presencabank.js` + action CLT em `api/joinbank.js`
 - **F3**: Supabase schema novo — tabela `clt_conversas` (máquina de estado) + `api/agente-clt.js` (cérebro Claude 4.6 com tool use)
 - **F4**: Webhook Evolution CLT + loop conversacional (cliente → agente → cliente)
 - **F5**: Aba "CLT" no frontend (seletor de produto) — dashboard conversas ativas + intervenção manual
 - **F6**: RPA Prata Digital via Playwright na VPS CBDW
-- **F7**: V8 Sistema (via API quando liberar)
+- **F7**: V8 Sistema (via API quando liberar, 25/abr)
 
 ### Decisões pendentes
 - **Ordem de priorização das ofertas** ao cliente — dono vai definir critério (melhor valor líquido pro cliente / maior comissão pra Lhamas / cascata fixa)

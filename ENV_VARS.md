@@ -63,6 +63,23 @@ Configure todas no Vercel Dashboard:
 
 **Validado em produção em 2026-04-24**: auth HTTP 200, subject `C6BankMarketplaceProd`. Token vive ~20min (cacheado no handler).
 
+### PresençaBank (Consignado Privado CLT) — novo abr/2026
+| Variavel | Valor | Descricao |
+|----------|-------|-----------|
+| `PRESENCABANK_BASE_URL` | `https://presenca-bank-api.azurewebsites.net` | URL base produção (Azure) |
+| `PRESENCABANK_LOGIN` | `55677403873_f6JF` | Login LhamasCred |
+| `PRESENCABANK_SENHA` | *(passar via Vercel, nao commitar)* | Senha do usuario |
+| `PRESENCABANK_PRODUTO_ID` | `28` | ID do produto Consignado Privado (default 28) |
+
+Rate limit: 30 req/min (recomendado 1 req a cada 2s).
+
+### JoinBank/QualiBanking CLT — reutiliza credenciais INSS existentes
+Não precisa nenhuma env var nova. Usa `JOINBANK_URL` e `JOINBANK_KEY` já configuradas. Os endpoints CLT usam o prefixo `/v3/loan-private-payroll-simulations/...` em vez do INSS `/v3/loan-inss-simulations/...`.
+
+Providers CLT:
+- QITech: `950002` (default)
+- 321 Bank: `950703`
+
 ### Claude API — Agente Vendedor CLT (novo abr/2026)
 Pode reutilizar a `CLAUDE_API_KEY` existente OU criar uma separada:
 

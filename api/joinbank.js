@@ -129,6 +129,105 @@ export default async function handler(req) {
       return j({ apiActive: r.ok, httpStatus: r.status, productsFound: r.data.items ? r.data.items.length : 0, message: r.ok ? 'API JoinBank ativa!' : 'Erro de autenticacao' }, 200, req);
     }
 
+    // ══════════════════════════════════════════════════════════════
+    // CLT — Consignado Privado (providers: QITech 950002, 321 Bank 950703)
+    // Docs: https://docs.ukam.io/joinbank/docs/simulation-clt
+    // ══════════════════════════════════════════════════════════════
+
+    // Cria simulação CLT (higienização embutida) — retorna simulationId + employmentRelationships
+    if (action === 'cltCreateSimulation') {
+      const providerCode = body.providerCode || '950002'; // QITech default
+      if (!body.borrower) return jsonError('borrower obrigatorio', 400, req);
+      const r = await jb('POST', `/v3/loan-private-payroll-simulations/providers/${providerCode}`, {
+        borrower: body.borrower,
+        creditMethod: body.creditMethod || 0,
+        creditBankAccount: body.creditBankAccount || null,
+      });
+      return j({
+        success: r.ok, httpStatus: r.status,
+        simulationId: r.data?.id || r.data?.simulationId || null,
+        employmentRelationships: r.data?.employmentRelationships || [],
+        temVinculo: (r.data?.employmentRelationships || []).length > 0,
+        ...r.data,
+      }, 200, req);
+    }
+
+    // Calcula parcelas CLT (por valor parcela ou por valor líquido)
+    if (action === 'cltCalculate') {
+      if (!body.simulationId) return jsonError('simulationId obrigatorio', 400, req);
+      const payload = {
+        type: body.type || 1, // 1=por parcela, 2=por valor liquido
+        identity: (body.identity || body.cpf || '').replace(/\D/g, ''),
+        ruleId: body.ruleId,
+        term: body.term,
+        rate: body.rate,
+        installmentValue: body.installmentValue || 0,
+        registrationNumber: body.registrationNumber,
+        employerDocument: (body.employerDocument || '').replace(/\D/g, ''),
+        employerName: body.employerName,
+        isInitialCalculation: body.isInitialCalculation !== false,
+      };
+      const r = await jb('POST', `/v3/loan-private-payroll-simulations/${body.simulationId}/calculation`, payload);
+      return j({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
+    }
+
+    // Termo de autorização CLT
+    if (action === 'cltAuthTerm') {
+      if (!body.simulationId) return jsonError('simulationId obrigatorio', 400, req);
+      const r = await jb('GET', `/v3/loan-private-payroll-simulations/${body.simulationId}/auth-term`);
+      return j({
+        success: r.ok, httpStatus: r.status,
+        authTermKey: r.data?.key || null,
+        signed: r.data?.status?.key === 'signed',
+        status: r.data?.status || null,
+        content: r.data?.content || null,
+        _raw: r.data,
+      }, 200, req);
+    }
+
+    // Assina termo CLT (mesmo endpoint do INSS)
+    if (action === 'cltSignTerm') {
+      if (!body.authTermKey) return jsonError('authTermKey obrigatorio', 400, req);
+      const r = await jb('PUT', `/v3/signer/${body.authTermKey}/accept`, {
+        position: { latitude: body.latitude || '-235489', longitude: body.longitude || '-466388' },
+      });
+      return j({
+        success: r.ok, httpStatus: r.status,
+        signed: r.data?.status?.key === 'signed',
+        status: r.data?.status || null, ...r.data,
+      }, 200, req);
+    }
+
+    // Seleciona condição CLT (item escolhido)
+    if (action === 'cltSelectCondition') {
+      if (!body.simulationId || !body.items) return jsonError('simulationId e items obrigatorios', 400, req);
+      const r = await jb('PUT', `/v3/loan-private-payroll-simulations/${body.simulationId}`, { items: body.items });
+      return j({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
+    }
+
+    // Confirma criação do contrato CLT
+    if (action === 'cltCreateLoans') {
+      if (!body.simulationId) return jsonError('simulationId obrigatorio', 400, req);
+      const r = await jb('POST', `/v3/loan-private-payroll-simulations/${body.simulationId}/actions`, { command: 'create_loans' });
+      return j({
+        success: r.ok, httpStatus: r.status,
+        signature: r.data?.signature || null,
+        items: r.data?.items || [],
+        status: r.data?.status || null,
+        ...r.data,
+      }, 200, req);
+    }
+
+    // Test CLT — tenta criar simulação minima só com CPF pra validar conectividade
+    if (action === 'cltTest') {
+      const r = await jb('POST', '/v3/loan-products/search/basic', { type: { code: { eq: 21 } }, operation: { code: { eq: 1 } } });
+      return j({
+        apiActive: r.ok, httpStatus: r.status,
+        productsFound: r.data.items ? r.data.items.length : 0,
+        message: r.ok ? 'API JoinBank CLT ativa!' : 'Erro de autenticacao',
+      }, 200, req);
+    }
+
     return jsonError('action invalida', 400, req);
   } catch (err) {
     return j({ error: 'Erro interno' }, 500, req);
