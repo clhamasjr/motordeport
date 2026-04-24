@@ -4452,9 +4452,19 @@ function recalcContrato(idx,campo,valor){
 let cltConsultaState = { loading: false, result: null, error: null };
 let cltChatsState = { loading: false, conversas: [], selectedTel: null, detail: null, _loaded: false };
 
+// Normaliza CPF: só números + pad com zeros à esquerda até 11 dígitos.
+// Aceita 9 a 11 dígitos (zeros à esquerda costumam ser omitidos pelo usuário).
+function normalizeCPF(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.length > 11) return null; // pode ser outro documento colado
+  if (digits.length < 9) return null;  // muito curto
+  return digits.padStart(11, '0');
+}
+
 async function rodarConsultaCLT() {
-  const cpf = (document.getElementById('cltCpf').value || '').replace(/\D/g, '');
-  if (!cpf || cpf.length !== 11) { alert('CPF inválido (precisa 11 dígitos)'); return; }
+  const cpf = normalizeCPF(document.getElementById('cltCpf').value);
+  if (!cpf) { alert('CPF inválido. Digite um CPF com 11 dígitos (zeros à esquerda são adicionados automaticamente se precisar)'); return; }
 
   cltConsultaState.loading = true;
   cltConsultaState.result = null;
@@ -4528,8 +4538,8 @@ let cltBatchState = {
 async function rodarBatchCLT() {
   const raw = document.getElementById('cltBatchInput').value || '';
   const cpfs = raw.split(/[\n,;\s]+/)
-    .map(s => s.replace(/\D/g, ''))
-    .filter(s => s.length === 11);
+    .map(s => normalizeCPF(s))
+    .filter(s => s !== null);
   const unique = Array.from(new Set(cpfs));
 
   if (unique.length === 0) {

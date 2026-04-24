@@ -110,8 +110,10 @@ export default async function handler(req) {
     // Endpoint: POST /marketplace/worker-payroll-loan-offers
     // Retorno: valor pré-aprovado + qtd parcelas + valor parcela + seguro
     if (action === 'oferta') {
-      const cpf = (body.cpf || '').replace(/\D/g, '');
-      if (!cpf || cpf.length !== 11) return jsonError('CPF invalido', 400, req);
+      // Normaliza CPF: aceita CPFs com zeros a esquerda omitidos (9-11 digitos)
+      const digits = (body.cpf || '').replace(/\D/g, '');
+      const cpf = (digits.length >= 9 && digits.length <= 11) ? digits.padStart(11, '0') : '';
+      if (!cpf) return jsonError('CPF invalido (precisa ser 9-11 digitos numericos)', 400, req);
       const r = await c6Call(
         '/marketplace/worker-payroll-loan-offers',
         'POST',
