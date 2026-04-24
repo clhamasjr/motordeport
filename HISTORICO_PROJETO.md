@@ -50,9 +50,53 @@ Motordeport passa a ser plataforma **multi-produto** (INSS já existente + novo 
 **F2.c — Ajuste semântico no C6**
 - `api/c6.js` action `oferta`: quando C6 retorna HTTP 404 (cliente sem oferta), agora retorna `success: true, temOferta: false` (antes retornava `success: false`). 404 é resposta legítima, não erro de integração.
 
+### F3 — Agente Vendedor CLT (B2C via WhatsApp) — entregue 24/abr (madrugada)
+
+**Arquitetura**:
+```
+[Cliente WhatsApp]
+       ↓
+[Evolution webhook → /api/agente-clt]
+       ↓
+[Supabase clt_conversas (estado persistente)]
+       ↓
+[Claude Sonnet 4.5 + SYSTEM_PROMPT Volt]
+       ↓ (decide [ACAO:X])
+[Handlers bancos: c6.js / presencabank.js / joinbank.js cltSim]
+       ↓
+[Resposta → Evolution → Cliente]
+```
+
+**F3.a — Migration Supabase** (`supabase_migration_clt.sql`)
+- Tabela `clt_conversas`: estado da conversa por telefone (unique). Campos principais: telefone, nome, cpf, etapa, ofertas (JSONB), banco_escolhido, dados (JSONB), historico (JSONB), ativo, pausada_por_humano, escalada_para_humano.
+- Tabela `clt_conversas_eventos`: log de eventos (msg_recebida, simulacao_rodada, proposta_incluida, etc.) pra debug e auditoria.
+- Triggers: touch updated_at automático.
+- **NÃO aplicada ainda** — dono precisa rodar no Supabase antes de o agente funcionar.
+
+**F3.b — `api/agente-clt.js`** (cérebro)
+- Recebe webhook Evolution (MESSAGES_UPSERT) e responde em tempo real.
+- Modelo Claude: `claude-sonnet-4-5-20241022` (reaproveitando que já tá em produção com Sofia INSS).
+- **Persona**: "Volt", assistente LhamasCred B2C (linguagem humana, 3-5 linhas, emojis moderados).
+- **Máquina de estado via [FASE:]**: inicio → coletando_cpf → aguardando_autorizacao_c6 → simulando → apresentando_ofertas → coletando_dados → proposta_criada → link_enviado → fechada_*.
+- **Ações via [ACAO:]**: INICIAR_SIMULACAO, GERAR_AUTORIZACAO_C6, VERIFICAR_AUTORIZACAO, RESIMULAR, COLETAR_DADOS, INCLUIR_PROPOSTA, GERAR_LINK, ESCALAR_HUMANO, REINICIAR.
+- **Coleta via [DADO:campo=valor]**: persistido em `dados` JSONB.
+- **Chamadas internas**: usa `INTERNAL_SERVICE_TOKEN` (env) pra autenticar contra `/api/c6`, `/api/presencabank`, `/api/joinbank`.
+- **Consolidação de ofertas**: C6 (até 5 planos de seguro) + PresençaBank (tabelas) + JoinBank (calcs) → array único **ordenado por `valor_liquido` DESC** (maior valor pro cliente primeiro).
+- **Modo simulação**: env `CLT_WHATSAPP_WHITELIST` — só responde números na lista. Vazio = produção aberta.
+- **Comandos**: `/pausa` (transfere pra humano), `/reiniciar` (zera estado).
+- **Actions admin**: `test`, `conversasAtivas`, `getConversa`, `retomarConversa`, `configureWebhook`.
+
+**Env vars novas**:
+- `CLT_EVOLUTION_INSTANCE` (nome da instance WhatsApp dedicada)
+- `CLT_WHATSAPP_WHITELIST` (CSV de números em modo teste)
+- `INTERNAL_SERVICE_TOKEN` (token de sessão pra chamadas internas)
+- `APP_URL` atualizada pra `https://flowforce.vercel.app` (novo domínio)
+- `CLAUDE_API_KEY_AGENTE_CLT` (opcional, fallback na `CLAUDE_API_KEY` existente)
+
+**Priorização default**: maior valor líquido pro cliente (editável em `consolidarOfertas()` se precisar trocar regra).
+
 ### Fases seguintes
-- **F3**: Supabase schema novo — tabela `clt_conversas` (máquina de estado) + `api/agente-clt.js` (cérebro Claude 4.6 com tool use)
-- **F4**: Webhook Evolution CLT + loop conversacional (cliente → agente → cliente)
+- **F4**: Evolution instance dedicada criada + webhook apontado via action `configureWebhook` + teste end-to-end com número real da whitelist
 - **F5**: Aba "CLT" no frontend (seletor de produto) — dashboard conversas ativas + intervenção manual
 - **F6**: RPA Prata Digital via Playwright na VPS CBDW
 - **F7**: V8 Sistema (via API quando liberar, 25/abr)

@@ -87,12 +87,21 @@ Pode reutilizar a `CLAUDE_API_KEY` existente OU criar uma separada:
 |----------|-------|-----------|
 | `CLAUDE_API_KEY_AGENTE_CLT` | *(passar via Vercel, nao commitar)* | (Opcional) Chave dedicada ao agente CLT. Se nao setada, `api/agente-clt.js` usa `CLAUDE_API_KEY` |
 
+### Agente Vendedor CLT — Evolution + Whitelist (F3, novo abr/2026)
+
+| Variavel | Valor exemplo | Descricao |
+|----------|---------------|-----------|
+| `CLT_EVOLUTION_INSTANCE` | `lhamas-clt` | Nome da instance Evolution dedicada ao agente CLT (WhatsApp B2C) |
+| `CLT_WHATSAPP_WHITELIST` | `5515999111111,5515999222222` | CSV de numeros autorizados a conversar com o agente em modo simulacao. Vazio ou `*` = aberto pra todo mundo (producao) |
+| `INTERNAL_SERVICE_TOKEN` | *(gerar token de sessao valido)* | Token que o `api/agente-clt.js` usa pra chamar `/api/c6`, `/api/presencabank`, `/api/joinbank` internamente (essas APIs exigem auth). Crie via login normal e copie o `ff_token` de um usuario de servico dedicado |
+| `APP_URL` | `https://flowforce.vercel.app` | URL publica do app. Usada pra webhooks Evolution apontarem de volta pra ca. **Atualizar pro novo dominio flowforce.vercel.app** |
+
 ## OPCIONAIS
 
 | Variavel | Default | Descricao |
 |----------|---------|-----------|
-| `ALLOWED_ORIGINS` | `*` | Origens permitidas CORS (separadas por virgula). Em prod: `https://motordeport.vercel.app` |
-| `APP_URL` | `https://motordeport.vercel.app` | URL publica do app (usada nos webhooks) |
+| `ALLOWED_ORIGINS` | `*` | Origens permitidas CORS (separadas por virgula). Em prod: `https://flowforce.vercel.app` |
+| `APP_URL` | `https://flowforce.vercel.app` | URL publica do app (usada nos webhooks) |
 | `WEBHOOK_SECRET` | (vazio) | Secret para validar webhooks do Evolution |
 
 ## TOTAL: 14 variaveis
