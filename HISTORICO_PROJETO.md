@@ -95,6 +95,42 @@ Motordeport passa a ser plataforma **multi-produto** (INSS já existente + novo 
 
 **Priorização default**: maior valor líquido pro cliente (editável em `consolidarOfertas()` se precisar trocar regra).
 
+### F3 — Revisão 2 (24/abr madrugada, após orientação do dono)
+
+**Mudanças na persona**:
+- Removido personagem "Volt"
+- Agente assume identidade do VENDEDOR/PARCEIRO dinâmicamente: `"{nome_vendedor} da {nome_parceiro}"`
+- Ex: usuário da JVR → agente se apresenta como "João da JVR Financeira"
+- Colunas novas em `users`: `nome_vendedor`, `nome_parceiro`
+- Conversa armazena `nome_vendedor_atribuido`/`nome_parceiro_atribuido` no momento do dispatch
+- Lead orgânico (sem disparo) usa default "LhamasCred da LhamasCred"
+
+**Mudanças no fluxo**:
+- Adicionada etapa `aguardando_consentimento_lgpd` ANTES de qualquer ação
+- LGPD agora é CONVERSACIONAL (cliente responde SIM/AUTORIZO) — registra timestamp + texto em `clt_conversas.consentimento_lgpd*`
+- Disparo de base conhecida (CPF+nome no contexto): agente só CONFIRMA CPF, não pede de novo
+- Apresentação de ofertas: agente mostra 1 banco por vez (ordem definida pelo gestor), não cascata
+- Tom default: CONCISO, não insistente (configurável via `clt_config.modo_insistencia`)
+
+**Nova tabela `clt_config`** (singleton id=1):
+- `ordem_bancos` (array) — gestor edita diariamente se quiser mudar prioridade
+- `modo_insistencia` (conciso/moderado/insistente)
+- `seguro_c6_default` (0/2/4/6/9)
+- `max_mensagens_sem_resposta` (quantas msgs follow-up antes de pausar)
+- `horario_atendimento_inicio/fim/timezone`
+- `prompt_override` (se quiser substituir totalmente o prompt)
+
+**Enriquecimento automático**:
+- Antes de pedir dados ao cliente, agente tenta `api/presencabank.gerarTermo` → `consultarVinculos` → `consultarMargem`
+- PresençaBank retorna nome/nomeMae/dataNascimento/sexo + vínculo (cnpj, matricula, empregador) — grande economia de campos a pedir
+- Multicorban PF fica pra depois (não foi desenvolvido)
+
+**Suporte a mídia**:
+- **Imagem**: Claude Sonnet 4.5 suporta nativamente — webhook `webhookBase64: true` entrega o JPEG, agente lê e comenta
+- **Áudio**: tenta extrair `speechToText` do payload Evolution (transcrição nativa). Se falhar, pede pro cliente escrever. Whisper fica como fallback futuro.
+
+**Action nova: `dispatch`** — abre conversa proativa com cliente do lote, já personalizando persona baseada no `user` que disparou.
+
 ### Fases seguintes
 - **F4**: Evolution instance dedicada criada + webhook apontado via action `configureWebhook` + teste end-to-end com número real da whitelist
 - **F5**: Aba "CLT" no frontend (seletor de produto) — dashboard conversas ativas + intervenção manual

@@ -3,8 +3,12 @@
 // ──────────────────────────────────────────────────────────────────
 // Cliente entra em contato via WhatsApp → Evolution manda webhook aqui
 // → Este handler consulta estado no Supabase, chama Claude, e responde.
+//
 // Claude decide (via [ACAO:]) quando chamar APIs dos bancos (C6,
 // PresençaBank, JoinBank CLT) pra simular e incluir propostas.
+//
+// Persona dinâmica: agente assume "[nome_vendedor] da [nome_parceiro]"
+// vindo do usuário que disparou a conversa (ou default se lead orgânico).
 // ══════════════════════════════════════════════════════════════════
 
 export const config = { runtime: 'edge' };
@@ -20,138 +24,181 @@ const EVO_KEY    = () => process.env.EVOLUTION_KEY;
 const CLT_INSTANCE = () => process.env.CLT_EVOLUTION_INSTANCE || '';
 const APP_URL    = () => process.env.APP_URL || 'https://flowforce.vercel.app';
 const WEBHOOK_SECRET = () => process.env.WEBHOOK_SECRET || '';
+const INTERNAL_TOKEN = () => process.env.INTERNAL_SERVICE_TOKEN || '';
 
-// Whitelist em modo simulação — só responde números dessa lista
-// Formato env: CLT_WHATSAPP_WHITELIST=5515999111111,5515999222222
-// Se vazio ou '*', responde todo mundo (produção)
+// Whitelist de teste — se vazia ou '*', responde geral
 const WHITELIST = () => (process.env.CLT_WHATSAPP_WHITELIST || '')
   .split(',').map(s => s.trim()).filter(Boolean);
 
 // ══════════════════════════════════════════════════════════════
-// SYSTEM PROMPT — Voz do agente vendedor CLT
+// SYSTEM PROMPT — Vendedor CLT (persona dinâmica)
+// O {NOME_VENDEDOR} e {NOME_PARCEIRO} são substituídos em runtime.
 // ══════════════════════════════════════════════════════════════
-const SYSTEM_PROMPT = `Você é o Volt, assistente virtual de crédito da LhamasCred — promotora correspondente bancária autorizada pelo Banco Central, com sede em Sorocaba/SP.
+function buildSystemPrompt(nomeVendedor, nomeParceiro, ordemBancos, modoInsistencia = 'conciso') {
+  const tomInstrucao = modoInsistencia === 'conciso'
+    ? 'Seja CONCISO, CLARO e NUNCA insistente. Se cliente recusar, aceite com respeito e deixe a porta aberta.'
+    : modoInsistencia === 'moderado'
+    ? 'Seja educado e tente uma segunda abordagem se cliente parecer em dúvida, mas nunca pressione.'
+    : 'Persista com mais argumentos se cliente hesitar, sem ser agressivo.';
 
-═══ SEU PAPEL ═══
-Você atende trabalhadores CLT (carteira assinada) que querem contratar empréstimo consignado privado. Você conduz o cliente do "oi" até a assinatura do contrato, simulando em 3 bancos ao mesmo tempo e apresentando a MELHOR oferta pra ele (maior valor líquido).
+  return `Você é ${nomeVendedor}, consultor(a) de crédito da ${nomeParceiro} — promotora correspondente bancária autorizada pelo Banco Central.
+
+═══ SUA IDENTIDADE ═══
+- Quando se apresentar, diga: "${nomeVendedor} da ${nomeParceiro}"
+- NUNCA diga que é um robô, IA, bot ou sistema automático
+- Se cliente perguntar "é robô?" → responda: "Sou ${nomeVendedor} da ${nomeParceiro}! Uso ferramentas digitais pra te atender rápido, mas se preferir consultor humano é só pedir que transfiro agora mesmo 😊"
 
 ═══ SUA PERSONALIDADE ═══
-- Humano, próximo, NÃO robótico
+- Humano, próximo, profissional
 - Linguagem informal mas respeitosa (use "você")
-- Mensagens curtas pra WhatsApp: 3-5 linhas max por mensagem
-- 1-2 emojis por mensagem (sem exagero)
-- NUNCA invente valores — use APENAS o que vier do sistema
-- NUNCA peça senhas, tokens, códigos bancários de acesso
-- Se cliente perguntar "é robô?": "Sou o Volt, assistente da LhamasCred. Uso tecnologia pra te atender rápido 24h, mas se preferir falar com consultor humano é só pedir 😊"
+- Mensagens CURTAS pra WhatsApp — máximo 3-5 linhas por mensagem
+- 1-2 emojis por mensagem (nada de exagero)
+- NUNCA invente valores — use APENAS o que o sistema entrega no contexto
+- NUNCA peça senhas, tokens, códigos de app bancário
+- ${tomInstrucao}
+
+═══ SEU PRODUTO ═══
+Você vende EMPRÉSTIMO CONSIGNADO PRIVADO pra trabalhadores CLT (carteira assinada).
+Vantagens que você destaca quando for relevante:
+- Aprovação rápida (minutos, não dias)
+- Taxa MUITO menor que cartão, cheque especial ou empréstimo pessoal comum
+- Desconto direto na folha — cliente não esquece de pagar
+- Sem burocracia: formalização 100% digital, tudo por WhatsApp + selfie
+
+IMPORTANTE sobre taxas:
+- NÃO prometa taxa específica se não estiver no contexto
+- NÃO negocie taxa pra baixo pra fechar — nossa regra é não vender em taxa mais baixa
+- Se cliente reclamar da taxa: seja educado, compare com alternativas ruins (cheque especial, cartão), mas se ele quiser menos, aceite com respeito: "Entendo. Qualquer hora que precisar, tô aqui!"
 
 ═══ BANCOS QUE VOCÊ USA ═══
-Os 3 bancos rodam em paralelo. O sistema te entrega as ofertas prontas ordenadas por VALOR LÍQUIDO (quanto cai na conta do cliente). Você apresenta sempre a MELHOR primeiro.
+Ordem de apresentação HOJE (definida pelo gestor): ${ordemBancos.join(' → ')}
 
-1. **C6 Bank** — Consignado Trabalhador com seguro opcional (4, 6 ou 9 parcelas de cobertura)
-2. **PresençaBank** — Consignado Privado, parcerias com várias empresas
+1. **C6 Bank** — Consignado Trabalhador, com seguro opcional (4/6/9 parcelas de cobertura)
+2. **PresençaBank** — Consignado Privado, várias empresas conveniadas
 3. **JoinBank/QualiBanking** — Consignado Privado via QITech ou 321 Bank
+
+O sistema roda as simulações e te entrega as ofertas. Você apresenta SEMPRE a PRIMEIRA da lista (definida pelo gestor) — não entregue todas de uma vez. Se cliente pedir alternativa, aí você mostra a próxima.
 
 ═══ FLUXO DA CONVERSA ═══
 
-FASE 1 — BOAS-VINDAS + CAPTURA DE CPF
-Se é a primeira mensagem do cliente (etapa=inicio):
-  "Oi! Aqui é o Volt da LhamasCred 🚀
-  Vou te ajudar a conseguir o melhor empréstimo CLT. Me passa seu CPF que já vou verificar as ofertas pra você?"
-[DADO:cpf=12345678900] quando cliente mandar o CPF.
-[ACAO:INICIAR_SIMULACAO] quando tiver CPF válido → sistema vai disparar simulações.
+FASE 1 — BOAS-VINDAS + LGPD
+Cada primeira conversa (etapa=inicio):
+  - Se cliente veio de DISPARO (já temos nome/CPF no contexto):
+    "Olá, [Nome]! 👋 Aqui é ${nomeVendedor} da ${nomeParceiro}.
+    Entrei em contato porque identifiquei uma oportunidade boa de crédito pra você.
+    Antes de avançar, preciso da sua autorização pra consultar seus dados e buscar as melhores ofertas. ✅ Seus dados ficam 100% protegidos (LGPD) — consultamos só com bancos parceiros autorizados.
+    Posso seguir? Responde SIM, AUTORIZO ou NÃO."
 
-FASE 2 — AUTORIZAÇÃO LGPD (C6 exige)
-Quando sistema disser que gerou link de autorização:
-  "Pra conseguir as melhores ofertas, preciso que você autorize a consulta dos seus dados. Leva 30 segundos, só uma selfie 📸
-  [link que o sistema vai passar]
-  Avisa aqui quando terminar!"
+  - Se cliente iniciou sozinho (sem contexto):
+    "Olá! 👋 Aqui é ${nomeVendedor} da ${nomeParceiro}. Vou te ajudar a conseguir o melhor crédito CLT.
+    Antes de começar, preciso da sua autorização pra consultar seus dados (LGPD). Pode ser?
+    Se sim, me passa seu CPF que já busco as ofertas pra você."
+
+[FASE:aguardando_consentimento_lgpd]
+
+FASE 2 — COLETA CPF (só se autorização OK e ainda não tem CPF)
+  - Se cliente autorizou mas não tem CPF no contexto:
+    "Show! Me passa seu CPF pra eu consultar as ofertas. 📋"
+  - Se cliente veio de disparo com CPF: NÃO peça de novo, só confirme:
+    "Confirma pra mim seu CPF [XXX.XXX.XXX-XX]?"
+[DADO:cpf=12345678900] quando cliente responder com CPF válido.
+[ACAO:INICIAR_SIMULACAO] quando tiver CPF + consentimento OK.
+
+FASE 3 — SIMULAÇÃO
+O sistema vai rodar em paralelo. Pra C6 é necessário autorização LGPD adicional (selfie) — quando sistema pedir:
+  "Pra liberar as ofertas do C6 Bank (que costuma ter as melhores condições), precisa tirar uma selfie rápida pra autorizar a consulta. Leva 30 segundos:
+  [link]
+  Me avisa quando terminar!"
+[ACAO:GERAR_AUTORIZACAO_C6] quando precisar gerar o link.
 [ACAO:VERIFICAR_AUTORIZACAO] quando cliente disser que fez.
 
-FASE 3 — APRESENTAR OFERTAS
-Depois que sistema rodou simulações (você vai receber as ofertas no contexto):
-  Apresente APENAS A MELHOR primeiro, de forma entusiasmada e clara:
-  "[Nome], consegui uma oferta muito boa pra você:
-  💰 R$ [valor_liquido] na sua conta
+FASE 4 — APRESENTAR OFERTA (ordem definida pelo gestor)
+Depois que as simulações rodaram, você recebe as ofertas no contexto.
+
+PRIMEIRO MOMENTO — apresente APENAS a PRIMEIRA oferta da ordem (${ordemBancos[0]} hoje):
+  "[Nome], consegui uma proposta boa pra você:
+  💰 Libera R$ [valor_liquido] na sua conta
   📅 [parcelas]x de R$ [valor_parcela]
-  📊 Taxa: [taxa]% ao mês
-  Banco: [banco]
-  Topa seguir?"
+  Banco: [banco oficial]
+  Topa seguir com essa ou quer que eu veja outras opções?"
 
-Se cliente quiser comparar, mostre as outras.
-Se cliente quiser mais/menos valor ou prazo, peça e o sistema re-simula.
+NÃO entregue todas de uma vez. Só mostre as outras se cliente pedir.
+NÃO aprofunde em taxa, CET, seguro, CCB, convênio — só se cliente perguntar.
 [DADO:banco_escolhido=c6|presencabank|joinbank]
-[ACAO:COLETAR_DADOS] quando cliente aceitar a oferta.
+[DADO:id_simulacao_escolhida=valor]
+[ACAO:COLETAR_DADOS] quando cliente aceitar uma oferta.
 
-FASE 4 — COLETAR DADOS FALTANTES
-O sistema vai te dizer exatamente quais campos faltam pro banco escolhido. Peça 2-3 por vez (não bombardeie). Campos típicos:
-- Endereço completo (CEP, rua, número, bairro, cidade, UF)
-- Dados bancários pra depósito (banco, agência, conta, dígito)
-- Dados da empresa (CNPJ, matrícula, salário, cargo) — se for PresençaBank/JoinBank
-- Email
-- Nome da mãe (alguns bancos pedem)
+FASE 5 — COLETA DADOS FALTANTES
+O sistema vai te dizer quais dados já tem (do PresençaBank ou do disparo) e quais faltam.
+Peça APENAS O QUE FALTA, em blocos de 2-3 campos. Exemplo:
+  "Pra finalizar, preciso de mais 2 infos:
+  📍 CEP + número da casa
+  🏦 Sua conta pra receber (banco, agência, conta)
+  Manda aí!"
 
 Use [DADO:campo=valor] pra cada campo coletado.
+Quando TUDO estiver preenchido:
+[ACAO:INCLUIR_PROPOSTA]
 
-FASE 5 — INCLUIR PROPOSTA
-Quando tiver TODOS os dados:
-  "Show! Tudo preenchido. Tô criando sua proposta agora, só 1 minutinho..."
-[ACAO:INCLUIR_PROPOSTA] → sistema chama o banco escolhido.
-
-FASE 6 — LINK DE FORMALIZAÇÃO
-Quando sistema retornar o link:
-  "Pronto! ✅ Sua proposta foi criada.
-  Pra assinar o contrato, acesse: [link]
-  Vai tirar uma selfie e pronto, o dinheiro cai em até [prazo] dias úteis.
-  Qualquer dúvida, me chama!"
+FASE 6 — CRIAR PROPOSTA
+Depois do INCLUIR_PROPOSTA bem-sucedido:
+  "Pronto ✅ Proposta criada!
+  Te enviei o link pra assinar o contrato. Leva menos de 1 minuto (é só selfie):
+  [link]
+  Quando assinar, o crédito entra em análise e deve cair na sua conta em até [X] dias úteis. Qualquer dúvida, me chama!"
 [FASE:link_enviado]
 
-FASE 7 — PÓS-VENDA
-Cliente pode voltar perguntando status, comprovante, prazo. Você ajuda ou escala:
-[ACAO:ESCALAR_HUMANO] se for algo que você não sabe resolver.
+IMPORTANTE: só é CONFIRMADO quando cliente assina + banco aprova análise. Até lá, não afirme "tá aprovado", só "tá em análise".
 
-═══ COMANDOS QUE VOCÊ ENTENDE ═══
-Cliente mandou "/pausa" ou "quero falar com humano":
-  [ACAO:ESCALAR_HUMANO]
-  Mensagem: "Claro! Vou chamar um consultor da equipe pra continuar com você. Um momento."
+FASE 7 — PÓS-VENDA / FOLLOW-UP
+Cliente pode voltar perguntando status. Você responde com base no que sistema entregar no contexto.
+Se for algo que não consegue resolver (pendência específica, bloqueio, erro do banco):
+[ACAO:ESCALAR_HUMANO]
 
-Cliente mandou "/reiniciar" ou "começar de novo":
+═══ COMANDOS ESPECIAIS ═══
+- Cliente pede "humano", "atendente", "pessoa", "falar com alguém":
+  [ACAO:ESCALAR_HUMANO] + "Claro! Vou chamar um consultor da equipe. Um momento 😊"
+- Cliente manda "/reiniciar" ou "começar de novo":
   [ACAO:REINICIAR]
+- Cliente recusa definitivamente:
+  [ACAO:ENCERRAR] + "Tranquilo! Se mudar de ideia, é só chamar. 😊"
+
+═══ ÁUDIO E IMAGEM ═══
+- Cliente mandou ÁUDIO: sistema transcreve e te entrega como texto. Se a transcrição falhar, responda: "Não consegui ouvir o áudio aqui, pode me escrever?"
+- Cliente mandou IMAGEM (print RG, contracheque, tela, etc.): você consegue ver — extraia o que precisar e comente naturalmente.
 
 ═══ FORMATO DE RESPOSTA ═══
-Responda APENAS com a mensagem pro cliente, em PT-BR, natural. No FINAL, em linhas separadas, adicione as tags:
+Responda APENAS a mensagem pro cliente, em PT-BR, natural. No FINAL (em linhas separadas no fim), adicione:
 
 [FASE:nome_da_fase]          — mudar etapa
 [ACAO:NOME]                   — acionar sistema
 [DADO:campo=valor]            — dado coletado
 
 AÇÕES VÁLIDAS:
-- INICIAR_SIMULACAO     (tem CPF, rodar os 3 bancos)
-- GERAR_AUTORIZACAO_C6  (C6 exige antes da simulação)
-- VERIFICAR_AUTORIZACAO (cliente disse que autorizou)
-- RESIMULAR             (cliente quer valor/prazo diferente)
-- COLETAR_DADOS         (cliente aceitou uma oferta)
-- INCLUIR_PROPOSTA      (tem todos os dados)
-- GERAR_LINK            (depois de incluir)
-- ESCALAR_HUMANO        (cliente quer humano ou erro grave)
-- REINICIAR             (começar do zero)
+- INICIAR_SIMULACAO, GERAR_AUTORIZACAO_C6, VERIFICAR_AUTORIZACAO
+- RESIMULAR (cliente quer valor/prazo diferente)
+- COLETAR_DADOS (cliente aceitou oferta, iniciar coleta)
+- INCLUIR_PROPOSTA (tem todos dados, criar no banco)
+- ESCALAR_HUMANO, REINICIAR, ENCERRAR
 
 CAMPOS VÁLIDOS pra [DADO]:
-nome, cpf, data_nascimento, sexo, email, nome_mae,
+cpf, nome, data_nascimento, sexo, email, nome_mae,
 rg_numero, rg_orgao, rg_uf, rg_data,
 cep, rua, numero_end, complemento, bairro, cidade, uf,
 banco_deposito, agencia, conta, digito_conta, tipo_conta,
 empregador_cnpj, empregador_nome, matricula, cargo, salario,
 chave_pix, tipo_chave_pix,
-banco_escolhido, id_simulacao_escolhida`;
+banco_escolhido, id_simulacao_escolhida,
+consentimento_lgpd, valor_solicitado, prazo`;
+}
 
 // ══════════════════════════════════════════════════════════════
 // HELPERS — Supabase
 // ══════════════════════════════════════════════════════════════
 
-async function getOrCreateConversa(telefone, instance) {
+async function getOrCreateConversa(telefone, instance, extras = {}) {
   const { data: existing } = await dbSelect('clt_conversas', {
-    filters: { telefone },
-    single: true
+    filters: { telefone }, single: true
   });
   if (existing) return existing;
   const { data: created } = await dbInsert('clt_conversas', {
@@ -161,7 +208,8 @@ async function getOrCreateConversa(telefone, instance) {
     ofertas: [],
     dados: {},
     historico: [],
-    ativo: true
+    ativo: true,
+    ...extras
   });
   return created;
 }
@@ -176,7 +224,24 @@ async function logEvento(conversaId, telefone, tipo, detalhes = {}) {
     await dbInsert('clt_conversas_eventos', {
       conversa_id: conversaId, telefone, tipo, detalhes
     });
-  } catch { /* logging não pode quebrar o fluxo */ }
+  } catch { /* log nunca quebra fluxo */ }
+}
+
+async function getConfig() {
+  try {
+    const { data } = await dbSelect('clt_config', { filters: { id: 1 }, single: true });
+    return data || {
+      ordem_bancos: ['c6', 'presencabank', 'joinbank'],
+      modo_insistencia: 'conciso',
+      seguro_c6_default: 4
+    };
+  } catch {
+    return {
+      ordem_bancos: ['c6', 'presencabank', 'joinbank'],
+      modo_insistencia: 'conciso',
+      seguro_c6_default: 4
+    };
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -195,11 +260,43 @@ async function sendMsg(instance, number, text) {
   } catch { return false; }
 }
 
-// ══════════════════════════════════════════════════════════════
-// HELPERS — Claude
-// ══════════════════════════════════════════════════════════════
+// Extrai texto (ou indica áudio/imagem) de uma mensagem Evolution
+function extractMessageContent(data) {
+  const m = data.message || {};
+  // Texto direto
+  if (m.conversation) return { type: 'text', text: m.conversation };
+  if (m.extendedTextMessage?.text) return { type: 'text', text: m.extendedTextMessage.text };
 
-async function callClaude(messages) {
+  // Áudio (Evolution pode transcrever nativamente se configurado)
+  if (m.audioMessage) {
+    // Algumas versões do Evolution entregam transcrição em m.audioMessage.speechToText
+    // ou em data.speechToText. Tentamos ambos.
+    const transcribed = m.audioMessage.speechToText
+                     || data.speechToText
+                     || m.audioMessage.transcription;
+    if (transcribed) return { type: 'text', text: transcribed };
+    return { type: 'audio_no_transcript' };
+  }
+
+  // Imagem
+  if (m.imageMessage) {
+    const caption = m.imageMessage.caption || '';
+    const base64 = m.imageMessage.jpegThumbnail || data.imageBase64 || null;
+    return { type: 'image', caption, base64, mediaKey: m.imageMessage.url || null };
+  }
+
+  // Outros tipos (doc, video, sticker) — por enquanto ignora
+  if (m.documentMessage) return { type: 'document_ignored' };
+  if (m.videoMessage) return { type: 'video_ignored' };
+  if (m.stickerMessage) return { type: 'sticker_ignored' };
+
+  return { type: 'unknown' };
+}
+
+// ══════════════════════════════════════════════════════════════
+// HELPERS — Claude (suporta texto + imagem)
+// ══════════════════════════════════════════════════════════════
+async function callClaude(messages, systemPrompt) {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -210,12 +307,15 @@ async function callClaude(messages) {
     body: JSON.stringify({
       model: CLAUDE_MODEL,
       max_tokens: 1024,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       messages
     })
   });
   const d = await r.json();
-  if (d.content && d.content[0]) return d.content[0].text;
+  if (d.content && d.content[0]) {
+    // Concatena todos os blocks de text (se houver)
+    return d.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+  }
   return null;
 }
 
@@ -239,16 +339,10 @@ function parseResponse(reply) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// HELPERS — Chamar os handlers internos dos bancos
+// HELPERS — Chamar handlers internos dos bancos
 // ══════════════════════════════════════════════════════════════
-// Como estamos em Edge Function, chamamos via fetch ao próprio APP_URL.
-// Cada handler interno exige Authorization Bearer (sessão FlowForce).
-// Solução: agente usa um token de serviço interno (env INTERNAL_SERVICE_TOKEN)
-// OU marca a conversa como "sistema" e faz bypass. Abaixo, uso variável
-// INTERNAL_SERVICE_TOKEN que precisa ser criada (é um token de sessão válido).
-
 async function callBankApi(bank, payload) {
-  const token = process.env.INTERNAL_SERVICE_TOKEN || '';
+  const token = INTERNAL_TOKEN();
   const r = await fetch(APP_URL() + '/api/' + bank, {
     method: 'POST',
     headers: {
@@ -263,49 +357,76 @@ async function callBankApi(bank, payload) {
 }
 
 // ══════════════════════════════════════════════════════════════
+// ENRIQUECIMENTO — tenta preencher dados via PresençaBank
+// (fluxo: gerarTermo -> aguarda aceite -> consultarVinculos -> consultarMargem)
+// A margem retorna nome/dataNascimento/nomeMae/sexo → economia grande na coleta
+// ══════════════════════════════════════════════════════════════
+async function enriquecerComPresencaBank(cpf, nome, telefone) {
+  try {
+    // 1) Gerar termo (se ainda não tiver)
+    const termo = await callBankApi('presencabank', {
+      action: 'gerarTermo', cpf, nome, telefone
+    });
+    // 2) Consultar vínculos (só funciona depois do aceite do termo pelo cliente)
+    const vinc = await callBankApi('presencabank', {
+      action: 'consultarVinculos', cpf
+    });
+    if (!vinc.ok || !vinc.data?.temVinculo) {
+      return { termoLink: termo.data?.link, vinculo: null, enriquecido: false };
+    }
+    const v = vinc.data.vinculos[0];
+    // 3) Consultar margem (traz nome, nomeMae, dataNascimento, sexo)
+    const marg = await callBankApi('presencabank', {
+      action: 'consultarMargem', cpf, matricula: v.matricula, cnpj: v.cnpj
+    });
+    return {
+      termoLink: termo.data?.link,
+      vinculo: { matricula: v.matricula, cnpj: v.cnpj, empregador: v.empregador },
+      dadosCliente: marg.data?.dadosCliente || {},
+      margem: marg.data?.margemDisponivel || 0,
+      enriquecido: true
+    };
+  } catch (e) {
+    return { enriquecido: false, erro: e.message };
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
 // AÇÕES — executadas após Claude retornar [ACAO:X]
 // ══════════════════════════════════════════════════════════════
-
-async function executarAcao(acao, conversa, dadosNovos, texto) {
+async function executarAcao(acao, conversa, dadosNovos, config) {
   const cpf = (dadosNovos.cpf || conversa.cpf || '').replace(/\D/g, '');
   const nome = dadosNovos.nome || conversa.nome || '';
+  const ordem = config.ordem_bancos || ['c6', 'presencabank', 'joinbank'];
 
-  // ─── INICIAR_SIMULACAO: roda os 3 bancos em paralelo ───
   if (acao === 'INICIAR_SIMULACAO') {
     if (!cpf || cpf.length !== 11) return { ok: false, erro: 'CPF inválido' };
 
-    // C6 precisa de autorização LGPD ANTES. Então C6 só vem depois.
-    // Por enquanto: só higienização C6 (checa se tem oferta) + JoinBank (higienização embutida no create) + PresençaBank (gera termo).
-    const [c6Res, pbTermo, jbSim] = await Promise.all([
-      callBankApi('c6', { action: 'oferta', cpf }),
-      nome ? callBankApi('presencabank', {
-        action: 'gerarTermo',
-        cpf, nome,
-        telefone: conversa.telefone.replace(/^55/, '')
-      }) : Promise.resolve({ ok: false, data: { pendenteNome: true } }),
-      // JoinBank CLT: higienização faz parte do create, pulamos aqui — só simula depois de coletar mais dados
-      Promise.resolve({ ok: true, data: { pendenteDadosCompletos: true } })
-    ]);
+    // C6: higienização (confere se tem oferta)
+    const tarefas = [];
+    if (ordem.includes('c6')) tarefas.push(callBankApi('c6', { action: 'oferta', cpf }));
+    else tarefas.push(Promise.resolve({ ok: false, data: { skipped: true } }));
 
-    const resumo = {
+    // PresençaBank: gera termo + tenta enriquecer
+    if (ordem.includes('presencabank') && nome) {
+      tarefas.push(enriquecerComPresencaBank(cpf, nome, conversa.telefone.replace(/^55/, '')));
+    } else {
+      tarefas.push(Promise.resolve({ enriquecido: false }));
+    }
+
+    const [c6Res, pbEnrich] = await Promise.all(tarefas);
+
+    return {
+      ok: true,
+      ordem: ordem,
       c6: {
         temOferta: c6Res.data?.temOferta || false,
         oferta: c6Res.data?.oferta || null
       },
-      presencabank: {
-        termoLink: pbTermo.data?.link || null,
-        pendenteNome: pbTermo.data?.pendenteNome || false
-      },
-      joinbank: {
-        pendente: true,
-        motivo: 'Precisa borrower completo (endereço, banco). Será simulado depois.'
-      }
+      presencabank: pbEnrich
     };
-
-    return { ok: true, resumo };
   }
 
-  // ─── GERAR_AUTORIZACAO_C6 ───
   if (acao === 'GERAR_AUTORIZACAO_C6') {
     if (!cpf || !nome || !conversa.data_nascimento) {
       return { ok: false, erro: 'Faltam cpf, nome ou data_nascimento' };
@@ -314,89 +435,38 @@ async function executarAcao(acao, conversa, dadosNovos, texto) {
     const ddd = tel.substring(0, 2);
     const num = tel.substring(2);
     const r = await callBankApi('c6', {
-      action: 'gerarLinkAutorizacao',
-      cpf, nome,
-      dataNascimento: conversa.data_nascimento,
-      ddd, telefone: num
+      action: 'gerarLinkAutorizacao', cpf, nome,
+      dataNascimento: conversa.data_nascimento, ddd, telefone: num
     });
     return { ok: r.ok, link: r.data?.link, data: r.data };
   }
 
-  // ─── VERIFICAR_AUTORIZACAO ───
   if (acao === 'VERIFICAR_AUTORIZACAO') {
     const r = await callBankApi('c6', { action: 'statusAutorizacao', cpf });
-    return { ok: r.ok, autorizado: r.data?.autorizado || false, status: r.data?.statusAutorizacao };
+    return {
+      ok: r.ok,
+      autorizado: r.data?.autorizado || false,
+      status: r.data?.statusAutorizacao
+    };
   }
 
-  // ─── RESIMULAR: roda C6 simular (exige autorizado) ───
   if (acao === 'RESIMULAR' || acao === 'SIMULAR_C6_COMPLETO') {
-    const tipoSim = (dadosNovos.valorSolicitado || conversa.dados?.valorSolicitado)
+    const tipoSim = (dadosNovos.valor_solicitado || conversa.dados?.valor_solicitado)
       ? 'POR_VALOR_SOLICITADO' : 'POR_VALOR_MAXIMO';
     const payload = { action: 'simular', cpf, tipoSimulacao: tipoSim };
     if (tipoSim === 'POR_VALOR_SOLICITADO') {
       payload.prazo = parseInt(dadosNovos.prazo || conversa.dados?.prazo || 48);
-      payload.valorSolicitado = parseFloat(dadosNovos.valorSolicitado || conversa.dados?.valorSolicitado);
+      payload.valorSolicitado = parseFloat(dadosNovos.valor_solicitado || conversa.dados?.valor_solicitado);
     }
     const r = await callBankApi('c6', payload);
-    return { ok: r.ok, planos: r.data?.planos || [], dadosBancariosC6: r.data?.dadosBancariosC6 };
+    return {
+      ok: r.ok,
+      planos: r.data?.planos || [],
+      dadosBancariosC6: r.data?.dadosBancariosC6
+    };
   }
 
-  // Outras ações são tratadas lá fora (COLETAR_DADOS, INCLUIR_PROPOSTA etc.)
   return { ok: true, noop: true };
-}
-
-// Consolida ofertas vindas dos 3 bancos e ordena por valor_liquido desc
-function consolidarOfertas(c6Planos, pbTabelas, jbCalcs) {
-  const ofertas = [];
-
-  // C6 — cada plano vira uma oferta
-  for (const p of (c6Planos || [])) {
-    if (!p.valido) continue;
-    ofertas.push({
-      banco: 'c6',
-      id_simulacao: p.idSimulacao,
-      valor_liquido: p.valorLiquido,
-      valor_parcela: p.valorParcela,
-      parcelas: p.qtdParcelas,
-      taxa_mensal: p.taxaClienteMensal,
-      cet_mensal: p.cetMensal,
-      seguro: p.seguro ? { tipo: p.seguro.tipo, valor: p.seguro.valor } : null,
-      dados_bancarios: p.dadosBancariosC6 || null,
-      meta: { produto: p.produto?.descricao, convenio: p.convenio?.descricao }
-    });
-  }
-
-  // PresençaBank — cada tabela
-  for (const t of (pbTabelas || [])) {
-    ofertas.push({
-      banco: 'presencabank',
-      id_simulacao: t.tabelaId,
-      type: t.type,
-      valor_liquido: t.valorLiquido,
-      valor_parcela: t.valorParcela,
-      parcelas: t.quantidadeParcelas,
-      taxa_mensal: t.taxa,
-      cet_mensal: t.cet,
-      meta: { nome: t.nome }
-    });
-  }
-
-  // JoinBank — cada calculation
-  for (const c of (jbCalcs || [])) {
-    ofertas.push({
-      banco: 'joinbank',
-      id_simulacao: c.simulationId,
-      valor_liquido: c.netValue || c.loanValue,
-      valor_parcela: c.installmentValue,
-      parcelas: c.term,
-      taxa_mensal: c.rate,
-      meta: { provider: c.providerCode || '950002' }
-    });
-  }
-
-  // Ordena por valor líquido DESC (maior valor = melhor oferta pro cliente)
-  ofertas.sort((a, b) => (b.valor_liquido || 0) - (a.valor_liquido || 0));
-  return ofertas;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -432,92 +502,165 @@ export default async function handler(req) {
       if (jid.includes('@g.us')) return jsonResp({ ok: true, skip: 'group' }, 200, req);
 
       const telefone = jid.replace('@s.whatsapp.net', '');
-      const texto = data.message?.conversation
-                 || data.message?.extendedTextMessage?.text
-                 || '';
-      if (!texto) return jsonResp({ ok: true, skip: 'no_text' }, 200, req);
-
+      const msgContent = extractMessageContent(data);
       const instance = body.instance || CLT_INSTANCE();
       const pushName = data.pushName || '';
 
-      // ─── WHITELIST (modo simulação) ───
+      // ─── WHITELIST (modo teste) ───
       const wl = WHITELIST();
       if (wl.length > 0 && !wl.includes('*') && !wl.includes(telefone)) {
-        // Não responde — apenas registra
-        console.log('[agente-clt] Telefone fora da whitelist:', telefone);
-        return jsonResp({ ok: true, skip: 'whitelist' }, 200, req);
+        return jsonResp({ ok: true, skip: 'whitelist', telefone }, 200, req);
       }
 
-      // ─── Busca/cria conversa ───
+      // ─── Busca ou cria conversa ───
       const conversa = await getOrCreateConversa(telefone, instance);
 
-      // Se está pausada por humano, não responde
       if (conversa.pausada_por_humano) {
         return jsonResp({ ok: true, skip: 'pausada_humano' }, 200, req);
       }
 
-      await logEvento(conversa.id, telefone, 'msg_recebida', { texto: texto.substring(0, 200) });
+      // ─── Lida com áudio/imagem/outros ───
+      let textoDoCliente = '';
+      let imageBlock = null;
+      if (msgContent.type === 'text') {
+        textoDoCliente = msgContent.text;
+      } else if (msgContent.type === 'audio_no_transcript') {
+        await sendMsg(instance, telefone, 'Ops, não consegui ouvir o áudio aqui 😅 Pode escrever pra mim?');
+        await logEvento(conversa.id, telefone, 'audio_sem_transcricao');
+        return jsonResp({ ok: true, handled: 'audio_no_transcript' }, 200, req);
+      } else if (msgContent.type === 'image') {
+        textoDoCliente = msgContent.caption || '(cliente enviou uma imagem sem legenda)';
+        if (msgContent.base64) {
+          imageBlock = {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/jpeg', data: msgContent.base64 }
+          };
+        }
+      } else if (msgContent.type === 'document_ignored' || msgContent.type === 'video_ignored' || msgContent.type === 'sticker_ignored') {
+        await sendMsg(instance, telefone, 'Recebi o arquivo, mas no momento trabalho só com texto e imagem. Pode me escrever?');
+        return jsonResp({ ok: true, handled: 'media_ignored' }, 200, req);
+      } else {
+        return jsonResp({ ok: true, skip: 'unknown_message_type' }, 200, req);
+      }
+
+      await logEvento(conversa.id, telefone, 'msg_recebida', {
+        tipo: msgContent.type, texto: textoDoCliente.substring(0, 200)
+      });
 
       // ─── Comandos especiais ───
-      if (texto.trim().toLowerCase() === '/pausa') {
+      if (textoDoCliente.trim().toLowerCase() === '/pausa') {
         await updateConversa(conversa.id, { pausada_por_humano: true });
-        await sendMsg(instance, telefone, '⏸️ Pausei o atendimento. Um consultor humano vai continuar com você em breve.');
+        await sendMsg(instance, telefone, '⏸️ Atendimento pausado. Um consultor humano vai continuar com você em breve.');
         return jsonResp({ ok: true, paused: true }, 200, req);
       }
-      if (texto.trim().toLowerCase() === '/reiniciar') {
+      if (textoDoCliente.trim().toLowerCase() === '/reiniciar') {
         await updateConversa(conversa.id, {
           etapa: 'inicio', ofertas: [], dados: {}, historico: [],
-          banco_escolhido: null, proposta_numero: null, link_formalizacao: null
+          banco_escolhido: null, proposta_numero: null, link_formalizacao: null,
+          consentimento_lgpd: false, consentimento_lgpd_at: null
         });
         await sendMsg(instance, telefone, '🔄 Conversa reiniciada. Como posso te ajudar?');
         return jsonResp({ ok: true, restarted: true }, 200, req);
       }
+
+      // ─── Carrega config global ───
+      const config = await getConfig();
+
+      // ─── Detecta consentimento LGPD se ainda não deu ───
+      const textoLower = textoDoCliente.toLowerCase().trim();
+      if (!conversa.consentimento_lgpd && conversa.etapa === 'aguardando_consentimento_lgpd') {
+        if (/\b(sim|autorizo|autorizado|pode|concordo|beleza|ok)\b/.test(textoLower)) {
+          await updateConversa(conversa.id, {
+            consentimento_lgpd: true,
+            consentimento_lgpd_at: new Date().toISOString(),
+            consentimento_lgpd_texto: textoDoCliente.substring(0, 500),
+            etapa: 'coletando_cpf'
+          });
+          await logEvento(conversa.id, telefone, 'lgpd_autorizado');
+        } else if (/\b(não|nao|recusa|negativo|recuso)\b/.test(textoLower)) {
+          await updateConversa(conversa.id, { ativo: false, etapa: 'fechada_sem_venda' });
+          await sendMsg(instance, telefone, 'Tranquilo! Sem problema nenhum. Se mudar de ideia é só chamar. 😊');
+          await logEvento(conversa.id, telefone, 'lgpd_recusado');
+          return jsonResp({ ok: true, lgpd_denied: true }, 200, req);
+        }
+      }
+
+      // ─── Persona: busca do user que disparou OU default ───
+      const nomeVendedor = conversa.nome_vendedor || 'LhamasCred';
+      const nomeParceiro = conversa.nome_parceiro || 'LhamasCred';
 
       // ─── Monta contexto ───
       const historico = Array.isArray(conversa.historico) ? conversa.historico : [];
       const contextParts = [
         '[CONTEXTO DO SISTEMA — NÃO MOSTRAR AO CLIENTE]',
         `Telefone: ${telefone}`,
+        `Nome (WhatsApp push): ${pushName || '-'}`,
         `Nome conhecido: ${conversa.nome || pushName || 'desconhecido'}`,
         `CPF: ${conversa.cpf || 'não coletado'}`,
         `Etapa atual: ${conversa.etapa}`,
+        `Consentimento LGPD: ${conversa.consentimento_lgpd ? 'SIM em ' + conversa.consentimento_lgpd_at : 'ainda não'}`,
+        `Persona: você é ${nomeVendedor} da ${nomeParceiro}`,
+        `Ordem dos bancos hoje: ${config.ordem_bancos.join(' → ')}`,
       ];
 
       if (Array.isArray(conversa.ofertas) && conversa.ofertas.length > 0) {
-        contextParts.push('\n═══ OFERTAS JÁ SIMULADAS (ordenadas por valor líquido DESC) ═══');
-        for (const o of conversa.ofertas.slice(0, 5)) {
-          contextParts.push(`• ${o.banco.toUpperCase()}: R$ ${Number(o.valor_liquido || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} líquido | ${o.parcelas}x R$ ${Number(o.valor_parcela || 0).toFixed(2)} | taxa ${o.taxa_mensal}% | id=${o.id_simulacao}`);
+        contextParts.push('\n═══ OFERTAS JÁ SIMULADAS (apresente na ordem definida) ═══');
+        for (const o of conversa.ofertas.slice(0, 8)) {
+          const vl = Number(o.valor_liquido || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+          const vp = Number(o.valor_parcela || 0).toFixed(2);
+          contextParts.push(`• ${o.banco.toUpperCase()}: libera R$ ${vl} | ${o.parcelas}x R$ ${vp} | taxa ${o.taxa_mensal}%/mês | id=${o.id_simulacao}`);
         }
-        contextParts.push('⚡ Apresente a PRIMEIRA (maior valor) primeiro.');
+        contextParts.push(`⚡ Apresente primeiro o banco: ${config.ordem_bancos[0].toUpperCase()}`);
       }
 
       if (conversa.banco_escolhido) {
-        contextParts.push(`\nBanco escolhido: ${conversa.banco_escolhido}`);
+        contextParts.push(`\nBanco escolhido pelo cliente: ${conversa.banco_escolhido}`);
       }
 
       if (conversa.dados && Object.keys(conversa.dados).length > 0) {
         contextParts.push(`\nDados já coletados: ${JSON.stringify(conversa.dados)}`);
       }
 
-      contextParts.push(`\nMensagem do cliente: "${texto}"`);
+      if (!conversa.consentimento_lgpd && conversa.etapa === 'inicio') {
+        contextParts.push('\n⚡ PRIMEIRA INTERAÇÃO — apresente-se, peça consentimento LGPD, mude pra [FASE:aguardando_consentimento_lgpd]');
+      }
 
-      // Histórico + mensagem atual
+      contextParts.push(`\nMensagem do cliente: "${textoDoCliente}"`);
+
+      // ─── Monta messages pro Claude ───
       const claudeMessages = [];
       for (const h of historico.slice(-14)) {
         claudeMessages.push({ role: h.role, content: h.content });
       }
-      claudeMessages.push({ role: 'user', content: contextParts.join('\n') });
 
-      // Dedupe roles
-      const clean = [];
+      // Mensagem atual (texto ou texto+imagem)
+      const contextContent = contextParts.join('\n');
+      if (imageBlock) {
+        claudeMessages.push({
+          role: 'user',
+          content: [imageBlock, { type: 'text', text: contextContent }]
+        });
+      } else {
+        claudeMessages.push({ role: 'user', content: contextContent });
+      }
+
+      // Dedupe roles consecutivos
+      const cleanMsgs = [];
       let lastRole = null;
       for (const m of claudeMessages) {
-        if (m.role === lastRole) { clean[clean.length - 1].content += '\n' + m.content; }
-        else { clean.push({ ...m }); lastRole = m.role; }
+        if (m.role === lastRole && typeof m.content === 'string' && typeof cleanMsgs[cleanMsgs.length-1]?.content === 'string') {
+          cleanMsgs[cleanMsgs.length - 1].content += '\n' + m.content;
+        } else {
+          cleanMsgs.push({ ...m });
+          lastRole = m.role;
+        }
       }
 
       // ─── Chama Claude ───
-      const reply = await callClaude(clean);
+      const systemPrompt = config.prompt_override
+        || buildSystemPrompt(nomeVendedor, nomeParceiro, config.ordem_bancos, config.modo_insistencia);
+
+      const reply = await callClaude(cleanMsgs, systemPrompt);
       if (!reply) {
         await sendMsg(instance, telefone, 'Opa, tive um problema técnico. Pode repetir?');
         return jsonResp({ error: 'claude_no_response' }, 500, req);
@@ -525,7 +668,7 @@ export default async function handler(req) {
 
       const { clean: cleanReply, actions, fase, dados } = parseResponse(reply);
 
-      // ─── Persiste dados coletados ───
+      // ─── Persiste ───
       const patchConversa = {};
       if (fase) patchConversa.etapa = fase;
       if (dados.nome) patchConversa.nome = dados.nome;
@@ -536,62 +679,74 @@ export default async function handler(req) {
       if (dados.banco_escolhido) patchConversa.banco_escolhido = dados.banco_escolhido;
       if (dados.id_simulacao_escolhida) patchConversa.id_simulacao_escolhida = dados.id_simulacao_escolhida;
 
-      // Demais campos vão pro JSONB `dados`
       const camposJsonb = ['nome_mae','rg_numero','rg_orgao','rg_uf','rg_data',
         'cep','rua','numero_end','complemento','bairro','cidade','uf',
         'banco_deposito','agencia','conta','digito_conta','tipo_conta',
         'empregador_cnpj','empregador_nome','matricula','cargo','salario',
-        'chave_pix','tipo_chave_pix','valorSolicitado','prazo'];
+        'chave_pix','tipo_chave_pix','valor_solicitado','prazo'];
       const dadosJsonbNovo = { ...(conversa.dados || {}) };
       for (const c of camposJsonb) {
         if (dados[c] !== undefined) dadosJsonbNovo[c] = dados[c];
       }
       patchConversa.dados = dadosJsonbNovo;
 
-      // Atualiza histórico (cap 40 mensagens)
+      // Histórico (cap 40)
       const novoHistorico = [...historico,
-        { role: 'user', content: texto, ts: new Date().toISOString() },
+        { role: 'user', content: textoDoCliente, ts: new Date().toISOString() },
         { role: 'assistant', content: cleanReply, ts: new Date().toISOString() }
       ].slice(-40);
       patchConversa.historico = novoHistorico;
 
       await updateConversa(conversa.id, patchConversa);
 
-      // ─── Executa ações solicitadas pelo Claude ───
+      // ─── Executa ações ───
       const acoesResultado = {};
       for (const acao of actions) {
-        const mergedConversa = { ...conversa, ...patchConversa };
-        const r = await executarAcao(acao, mergedConversa, dados, texto);
+        const merged = { ...conversa, ...patchConversa };
+        const r = await executarAcao(acao, merged, dados, config);
         acoesResultado[acao] = r;
         await logEvento(conversa.id, telefone, 'acao_' + acao.toLowerCase(), r);
 
-        // Pós-processamento específico
         if (acao === 'INICIAR_SIMULACAO' && r.ok) {
-          // Se C6 tem oferta, precisamos de autorização LGPD antes de simular V2
-          // Por enquanto, só registramos o que temos no ofertas (higienização preliminar)
-          // A simulação completa vai rodar depois do VERIFICAR_AUTORIZACAO
+          // Se enriquecimento PresençaBank trouxe dados, mescla em conversa.dados
+          const enrich = r.presencabank;
+          if (enrich?.enriquecido && enrich.dadosCliente) {
+            const dadosMesclados = { ...merged.dados };
+            if (enrich.dadosCliente.nome && !merged.nome) {
+              await updateConversa(conversa.id, { nome: enrich.dadosCliente.nome });
+            }
+            if (enrich.dadosCliente.dataNascimento) dadosMesclados.data_nascimento_pb = enrich.dadosCliente.dataNascimento;
+            if (enrich.dadosCliente.nomeMae) dadosMesclados.nome_mae = enrich.dadosCliente.nomeMae;
+            if (enrich.dadosCliente.sexo) dadosMesclados.sexo_pb = enrich.dadosCliente.sexo;
+            if (enrich.vinculo?.cnpj) dadosMesclados.empregador_cnpj = enrich.vinculo.cnpj;
+            if (enrich.vinculo?.matricula) dadosMesclados.matricula = enrich.vinculo.matricula;
+            if (enrich.vinculo?.empregador) dadosMesclados.empregador_nome = enrich.vinculo.empregador;
+            await updateConversa(conversa.id, { dados: dadosMesclados });
+          }
           await updateConversa(conversa.id, {
-            etapa: r.resumo.c6.temOferta ? 'aguardando_autorizacao_c6' : 'simulando'
+            etapa: r.c6.temOferta ? 'aguardando_autorizacao_c6' : 'simulando'
           });
         }
 
         if (acao === 'ESCALAR_HUMANO') {
           await updateConversa(conversa.id, {
             pausada_por_humano: true, escalada_para_humano: true,
-            motivo_escalada: texto.substring(0, 200)
+            motivo_escalada: textoDoCliente.substring(0, 200)
           });
+        }
+
+        if (acao === 'ENCERRAR') {
+          await updateConversa(conversa.id, { ativo: false, etapa: 'fechada_sem_venda' });
         }
       }
 
       // ─── Envia resposta pro cliente ───
       if (cleanReply) {
-        // Se Claude pediu pra gerar link de autorização, gerar + incluir na mensagem
         let mensagemFinal = cleanReply;
         if (acoesResultado.GERAR_AUTORIZACAO_C6?.link) {
           mensagemFinal = mensagemFinal.replace(/\[link.*?\]/gi, acoesResultado.GERAR_AUTORIZACAO_C6.link);
         }
 
-        // Quebra mensagem se muito longa (Evolution tem limite prático ~500)
         if (mensagemFinal.length > 500) {
           const partes = mensagemFinal.split('\n\n').filter(p => p.trim());
           for (let i = 0; i < partes.length; i++) {
@@ -601,15 +756,15 @@ export default async function handler(req) {
         } else {
           await sendMsg(instance, telefone, mensagemFinal);
         }
-        await logEvento(conversa.id, telefone, 'msg_enviada', { texto: mensagemFinal.substring(0, 200), actions });
+        await logEvento(conversa.id, telefone, 'msg_enviada', {
+          texto: mensagemFinal.substring(0, 200), actions
+        });
       }
 
       return jsonResp({
-        ok: true,
-        telefone,
+        ok: true, telefone,
         etapa: patchConversa.etapa || conversa.etapa,
-        actions,
-        fase,
+        actions, fase,
         dados_coletados: dados,
         acoes_executadas: Object.keys(acoesResultado)
       }, 200, req);
@@ -620,11 +775,10 @@ export default async function handler(req) {
     if (user instanceof Response) return user;
     const action = body.action || '';
 
-    // ─── test: valida que Claude + Evolution + Supabase estão OK ───
     if (action === 'test') {
       let claudeOk = false;
       try {
-        const r = await callClaude([{ role: 'user', content: 'Responda apenas: OK' }]);
+        const r = await callClaude([{ role: 'user', content: 'Responda apenas: OK' }], 'Você é um assistente. Responda curto.');
         claudeOk = !!r;
       } catch {}
       let supaOk = false;
@@ -632,35 +786,37 @@ export default async function handler(req) {
         const { data } = await dbQuery('clt_conversas', 'select=count&limit=1');
         supaOk = Array.isArray(data) || typeof data === 'object';
       } catch {}
+      let configOk = false, configData = null;
+      try {
+        configData = await getConfig();
+        configOk = !!configData;
+      } catch {}
       let evoOk = false;
       try {
-        const r = await fetch(EVO_URL() + '/instance/fetchInstances', {
-          headers: { 'apikey': EVO_KEY() }
-        });
+        const r = await fetch(EVO_URL() + '/instance/fetchInstances', { headers: { 'apikey': EVO_KEY() } });
         evoOk = r.ok;
       } catch {}
 
       return jsonResp({
-        success: claudeOk && supaOk && evoOk,
+        success: claudeOk && supaOk && configOk && evoOk,
         claude: claudeOk ? 'ok' : 'erro',
-        supabase: supaOk ? 'ok' : 'erro (tabela clt_conversas existe?)',
+        supabase: supaOk ? 'ok' : 'erro (aplicar supabase_migration_clt.sql?)',
+        clt_config: configOk ? configData : 'erro (tabela clt_config existe?)',
         evolution: evoOk ? 'ok' : 'erro',
         model: CLAUDE_MODEL,
-        instance: CLT_INSTANCE() || '(não configurada)',
+        instance: CLT_INSTANCE() || '(CLT_EVOLUTION_INSTANCE não configurada)',
         whitelist: WHITELIST().length > 0 ? WHITELIST() : 'aberto (produção)',
-        migration_needed: supaOk ? false : 'aplicar supabase_migration_clt.sql'
+        internal_token_set: !!INTERNAL_TOKEN()
       }, 200, req);
     }
 
-    // ─── status: lista conversas ativas ───
     if (action === 'conversasAtivas') {
       const { data } = await dbQuery('clt_conversas',
-        'select=id,telefone,nome,cpf,etapa,banco_escolhido,last_message_at&ativo=eq.true&order=last_message_at.desc&limit=50'
+        'select=id,telefone,nome,cpf,etapa,banco_escolhido,consentimento_lgpd,last_message_at&ativo=eq.true&order=last_message_at.desc&limit=50'
       );
       return jsonResp({ success: true, conversas: data || [], total: (data || []).length }, 200, req);
     }
 
-    // ─── getConversa: detalhes de uma ───
     if (action === 'getConversa') {
       const tel = String(body.telefone || '').replace(/\D/g, '');
       if (!tel) return jsonResp({ error: 'telefone obrigatório' }, 400, req);
@@ -668,7 +824,6 @@ export default async function handler(req) {
       return jsonResp({ success: true, conversa: data }, 200, req);
     }
 
-    // ─── resumirConversa: retomar manual ───
     if (action === 'retomarConversa') {
       const tel = String(body.telefone || '').replace(/\D/g, '');
       const { data: conv } = await dbSelect('clt_conversas', { filters: { telefone: tel }, single: true });
@@ -677,20 +832,17 @@ export default async function handler(req) {
       return jsonResp({ success: true, retomada: true }, 200, req);
     }
 
-    // ─── configureWebhook: configura Evolution pra apontar pra cá ───
     if (action === 'configureWebhook') {
       const inst = body.instance || CLT_INSTANCE();
-      if (!inst) return jsonResp({ error: 'instance obrigatória (ou env CLT_EVOLUTION_INSTANCE)' }, 400, req);
+      if (!inst) return jsonResp({ error: 'instance obrigatória' }, 400, req);
       const webhookUrl = APP_URL() + '/api/agente-clt';
       const r = await fetch(EVO_URL() + '/webhook/set/' + inst, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY() },
         body: JSON.stringify({
           webhook: {
-            enabled: true,
-            url: webhookUrl,
-            webhookByEvents: false,
-            webhookBase64: false,
+            enabled: true, url: webhookUrl,
+            webhookByEvents: false, webhookBase64: true, // base64 pra pegar imagens
             events: ['MESSAGES_UPSERT']
           }
         })
@@ -699,9 +851,67 @@ export default async function handler(req) {
       return jsonResp({ success: r.ok, instance: inst, webhookUrl, data: d }, 200, req);
     }
 
+    // Dispatch pra lead novo (inicia conversa com dados pré-preenchidos)
+    if (action === 'dispatch') {
+      const { instance, number, cliente = {}, vendedor, parceiro } = body;
+      if (!instance || !number) return jsonResp({ error: 'instance e number obrigatórios' }, 400, req);
+      let phone = String(number).replace(/\D/g, '');
+      if (!phone.startsWith('55') && phone.length <= 11) phone = '55' + phone;
+
+      // Busca/cria conversa com persona do vendedor
+      const vendedorFinal = vendedor || user.nome_vendedor || 'LhamasCred';
+      const parceiroFinal = parceiro || user.nome_parceiro || 'LhamasCred';
+
+      const conv = await getOrCreateConversa(phone, instance, {
+        nome: cliente.nome || null,
+        cpf: cliente.cpf ? String(cliente.cpf).replace(/\D/g, '') : null,
+        data_nascimento: cliente.data_nascimento || null,
+        nome_vendedor: vendedorFinal,
+        nome_parceiro: parceiroFinal,
+        disparado_por_user_id: user.id,
+        dados: cliente,
+        origem: 'dispatch'
+      });
+
+      // Atualiza dados se conversa já existia
+      await updateConversa(conv.id, {
+        nome: cliente.nome || conv.nome,
+        nome_vendedor: vendedorFinal,
+        nome_parceiro: parceiroFinal,
+        etapa: 'inicio'
+      });
+
+      // Primeira mensagem: abre com LGPD
+      const config = await getConfig();
+      const systemPrompt = buildSystemPrompt(vendedorFinal, parceiroFinal, config.ordem_bancos, config.modo_insistencia);
+      const contextMsg = `[CONTEXTO — DISPARO INICIAL]
+Você vai ABRIR uma conversa agora com um cliente que NÃO perguntou nada ainda.
+Dados conhecidos do cliente:
+- Nome: ${cliente.nome || 'desconhecido'}
+- CPF: ${cliente.cpf || 'desconhecido'}
+${cliente.empregador_nome ? `- Empresa: ${cliente.empregador_nome}` : ''}
+
+Escreva a PRIMEIRA MENSAGEM:
+- Cumprimento + apresentação (${vendedorFinal} da ${parceiroFinal})
+- Razão do contato (identifiquei oportunidade de crédito CLT pra você)
+- Pedido de consentimento LGPD
+- Curta, 4-6 linhas no máximo
+Termine com [FASE:aguardando_consentimento_lgpd]`;
+
+      const reply = await callClaude([{ role: 'user', content: contextMsg }], systemPrompt);
+      if (!reply) return jsonResp({ error: 'claude_no_response' }, 500, req);
+      const { clean, fase } = parseResponse(reply);
+
+      await sendMsg(instance, phone, clean);
+      await logEvento(conv.id, phone, 'msg_enviada', { texto: clean.substring(0, 200), origem: 'dispatch' });
+      if (fase) await updateConversa(conv.id, { etapa: fase });
+
+      return jsonResp({ success: true, telefone: phone, mensagem: clean, etapa: fase }, 200, req);
+    }
+
     return jsonResp({
       error: 'action inválida',
-      validActions: ['test', 'conversasAtivas', 'getConversa', 'retomarConversa', 'configureWebhook']
+      validActions: ['test', 'conversasAtivas', 'getConversa', 'retomarConversa', 'configureWebhook', 'dispatch']
     }, 400, req);
 
   } catch (err) {

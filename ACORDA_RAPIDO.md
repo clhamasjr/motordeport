@@ -1,154 +1,188 @@
-# ☀️ Acorda Rápido — 15 min pra deixar a F3 no ar
+# ☀️ Acorda Rápido — F3 pronta pra subir
 
-Seguinte, dono. Enquanto você dormia eu entreguei a F3 **completa e local**. Nada foi pushado, nada foi deployado, nada foi aplicado no Supabase. Quando você confirmar, em **15 minutos** tá no ar.
+**Última revisão:** 24/abr madrugada — incorporei suas orientações: persona dinâmica (sem "Volt"), LGPD conversacional, ordem C6→PresençaBank→JoinBank configurável, enriquecimento via PresençaBank, suporte a imagem nativo do Claude, áudio via Evolution.
 
 ## 📦 O que foi entregue (local, commit pendente)
 
-| Arquivo | O que é | Status |
-|---|---|---|
-| `supabase_migration_clt.sql` | Migration: tabela `clt_conversas` + `clt_conversas_eventos` | Arquivo pronto, não aplicado |
-| `api/agente-clt.js` | Cérebro do agente — recebe webhook Evolution, chama Claude 4.5, chama os 3 bancos, responde cliente | Arquivo pronto, não pushado |
-| `ENV_VARS.md` | Atualizado com 4 env vars novas da F3 | Pronto, não commitado |
-| `HISTORICO_PROJETO.md` | F3 documentada | Pronto, não commitado |
-| `ACORDA_RAPIDO.md` | Este arquivo | Pronto |
+| Arquivo | O que é |
+|---|---|
+| `supabase_migration_clt.sql` | Migration: `clt_conversas` + `clt_conversas_eventos` + `clt_config` (global) + colunas `nome_vendedor`/`nome_parceiro` em `users` e `clt_conversas` |
+| `api/agente-clt.js` | Agente vendedor CLT — persona dinâmica, LGPD inline, consolida 3 bancos, suporta texto/imagem/áudio transcrito |
+| `ENV_VARS.md` | +4 vars novas, APP_URL atualizada pra `flowforce.vercel.app` |
+| `HISTORICO_PROJETO.md` | F3 documentada |
+| `ACORDA_RAPIDO.md` | Este arquivo |
 
-## ✅ Passo 1 — Revisar o commit local (1 min)
+## ✅ Passo 1 — Autorizar o push (1 min)
 
 ```bash
 cd C:\Users\clham\Documents\motordeport
-git status
-git diff --stat
+git log --oneline -3
 ```
 
-Se tudo parecer OK, me autoriza **"pode pushar f3"** e eu subo.
+Se tiver 2 commits F3, me autoriza "pode pushar f3" e eu subo.
 
 ## ✅ Passo 2 — Aplicar migration no Supabase (2 min)
 
-1. Abre https://supabase.com/dashboard/project/rirsmtyuyqxsoxqbgtpu/sql
+1. https://supabase.com/dashboard/project/rirsmtyuyqxsoxqbgtpu/sql
 2. Cola o conteúdo de `supabase_migration_clt.sql`
-3. Clica **Run**
-4. Deve criar 2 tabelas (`clt_conversas` + `clt_conversas_eventos`), 5 indexes e 1 trigger
-5. Verifica: `select count(*) from clt_conversas;` → deve retornar `0`
+3. **Run**
+4. Deve criar: 3 tabelas (`clt_conversas`, `clt_conversas_eventos`, `clt_config`), inserir 1 linha em `clt_config`, adicionar colunas em `users`
+5. Verifica: `select * from clt_config;` → deve retornar 1 linha com `ordem_bancos = {c6,presencabank,joinbank}`
 
-## ✅ Passo 3 — Criar instance Evolution dedicada CLT (3 min)
+## ✅ Passo 3 — Configurar persona dos usuários vendedores (2 min)
+
+Pra cada usuário que vai atender via agente, preenche os 2 campos novos em `users`:
+
+```sql
+-- Exemplo: usuário da JVR
+update users set
+  nome_vendedor = 'João',
+  nome_parceiro = 'JVR Financeira'
+where username = 'joao@jvr.com';
+
+-- Exemplo: usuário da Lhamas
+update users set
+  nome_vendedor = 'Carol',
+  nome_parceiro = 'LhamasCred'
+where username = 'carol@lhamascred.com.br';
+```
+
+**IMPORTANTE**: no primeiro teste, popule pelo menos 1 usuário. Se não preencher, o agente usa default "LhamasCred da LhamasCred".
+
+## ✅ Passo 4 — Criar instance Evolution dedicada (3 min)
 
 No FlowForce logado:
 1. Aba WhatsApp → **Nova Instance**
-2. Nome: `lhamas-clt` (ou outro, mas anote)
-3. Escaneia o QR com o chip/número que vai atender os leads CLT
+2. Nome: `lhamas-clt` (ou outro — anota)
+3. Escaneia QR com o chip que vai atender CLT
 4. Aguarda status "connected"
 
-## ✅ Passo 4 — Configurar 4 env vars novas na Vercel (5 min)
+## ✅ Passo 5 — Configurar 4 env vars na Vercel (4 min)
 
-Abre https://vercel.com → `flowforce` → Settings → Environment Variables → **Import .env** (atalho):
+https://vercel.com → projeto `flowforce` → Settings → Environment Variables → **Import .env**:
 
 ```env
 APP_URL=https://flowforce.vercel.app
 CLT_EVOLUTION_INSTANCE=lhamas-clt
-CLT_WHATSAPP_WHITELIST=<SEU_NUMERO_PRA_TESTAR,ex:5515999111111>
-INTERNAL_SERVICE_TOKEN=<GERAR_PASSO_5>
+CLT_WHATSAPP_WHITELIST=5515SEUNUMERO
+INTERNAL_SERVICE_TOKEN=<GERAR_PASSO_6>
 ```
 
-### ⚠️ Sobre o `INTERNAL_SERVICE_TOKEN` (passo 5)
+### Sobre `INTERNAL_SERVICE_TOKEN`:
+1. Login no FlowForce com usuário admin (ou cria `agente-clt@lhamascred.com.br`)
+2. F12 → Application → Local Storage → `flowforce.vercel.app` → copia o valor de `ff_token`
+3. Cola em `INTERNAL_SERVICE_TOKEN`
 
-O agente precisa chamar `/api/c6`, `/api/presencabank`, `/api/joinbank` internamente, e esses endpoints exigem sessão autenticada. A solução mais segura:
+**Atenção**: sessão expira. Quando acontecer, renova ou me pede pra fazer um bypass com `WEBHOOK_SECRET` (F3.1).
 
-1. **Faz login normal no FlowForce** (com um usuário admin ou cria um usuário dedicado `agente-clt@lhamascred.com.br`)
-2. **F12 → Application → Local Storage → seleciona `flowforce.vercel.app` → copia o valor de `ff_token`**
-3. Cola em `INTERNAL_SERVICE_TOKEN` na Vercel
-4. **Atenção**: se esse token expirar (sessão tem TTL), o agente para de funcionar. Renova quando acontecer, ou me pede pra fazer um refresh automático.
+## ✅ Passo 6 — Redeploy (1 min)
 
-**Alternativa mais robusta (pra depois)**: crio uma rota `/api/agente-clt?action=healthcheck` que autentica via `WEBHOOK_SECRET` (header) em vez de `Bearer`. Aí não depende de sessão. Anoto como F3.1 e faço quando você pedir.
+Deployments → último → ⋯ → Redeploy.
 
-## ✅ Passo 5 — Redeploy (1 min)
+## ✅ Passo 7 — Configurar webhook no Evolution (1 min)
 
-Deployments → último deploy → ⋯ → Redeploy.
-
-## ✅ Passo 6 — Configurar o webhook no Evolution (1 min)
-
-No FlowForce (ainda logado), F12 → Console, cola:
+No FlowForce F12 → Console:
 
 ```javascript
 (async () => {
   const r = await fetch('/api/agente-clt', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + localStorage.getItem('ff_token')
-    },
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('ff_token') },
     body: JSON.stringify({ action: 'configureWebhook', instance: 'lhamas-clt' })
   });
   console.log(await r.json());
 })();
 ```
 
-Deve retornar `success: true` com o webhookUrl apontando pra `https://flowforce.vercel.app/api/agente-clt`.
+Deve retornar `success: true`.
 
-## ✅ Passo 7 — Teste end-to-end (2 min)
+## ✅ Passo 8 — Healthcheck (1 min)
 
-### 7.a — Healthcheck:
 ```javascript
 (async () => {
   const r = await fetch('/api/agente-clt', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + localStorage.getItem('ff_token')
-    },
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('ff_token') },
     body: JSON.stringify({ action: 'test' })
   });
   console.log(await r.json());
 })();
 ```
 
-Esperado: `claude: ok`, `supabase: ok`, `evolution: ok`.
+Esperado: `claude: ok`, `supabase: ok`, `clt_config: {ordem_bancos: [...]}`, `evolution: ok`, `internal_token_set: true`.
 
-### 7.b — Primeira conversa real:
-1. Pega o seu celular (ou o número que você colocou em `CLT_WHATSAPP_WHITELIST`)
-2. Manda "oi" pro número do WhatsApp CLT (o que você conectou no passo 3)
-3. Aguarda ~3s
-4. O agente deve responder se apresentando como **Volt** e pedindo seu CPF
+## ✅ Passo 9 — Primeira conversa real (2 min)
 
-### 7.c — Simular fluxo completo:
-- Você manda: CPF → agente chama C6/PresençaBank/JoinBank → se algum tem oferta, apresenta
-- Se for C6, agente manda link de autorização LGPD antes de simular detalhes
-- Depois da sua autorização, agente mostra a melhor oferta ordenada por valor líquido
-- Você aceita, ele pede dados faltantes (endereço, conta etc.)
-- Quando tiver tudo, cria proposta e manda o link de formalização
+Do **seu celular** (que está em `CLT_WHATSAPP_WHITELIST`), manda **"oi"** pro número do WhatsApp CLT.
 
-### 7.d — Acompanhar no dashboard:
-```javascript
-(async () => {
-  const r = await fetch('/api/agente-clt', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + localStorage.getItem('ff_token')
-    },
-    body: JSON.stringify({ action: 'conversasAtivas' })
-  });
-  console.table((await r.json()).conversas);
-})();
+Esperado:
+1. Agente responde se apresentando como `[nome_vendedor] da [nome_parceiro]`
+2. Pede consentimento LGPD
+3. Você responde "SIM AUTORIZO"
+4. Agente pede CPF
+5. Você manda CPF
+6. Agente roda simulações (C6 + PresençaBank em paralelo)
+7. Se C6 tem oferta, te pede selfie de autorização
+8. Depois te apresenta a oferta do **C6 PRIMEIRO** (ordem definida em `clt_config`)
+
+## 🎯 Pontos pra você decidir/ajustar quando quiser
+
+### Ordem dos bancos do dia
+```sql
+update clt_config set
+  ordem_bancos = array['presencabank','c6','joinbank']
+where id = 1;
+```
+Muda o default a qualquer hora. Agente passa a apresentar nessa ordem na próxima conversa (conversas em andamento não são afetadas).
+
+### Tom do agente
+```sql
+update clt_config set modo_insistencia = 'conciso' where id = 1;
+-- valores: 'conciso' (default) | 'moderado' | 'insistente'
 ```
 
-## 🚨 Pontos que eu quero que você valide comigo antes de abrir pra leads reais
+### Plano de seguro C6 preferido
+```sql
+update clt_config set seguro_c6_default = 4 where id = 1;
+-- 0 = sem seguro, 2 = 2 parcelas, 4 = 4p (8.40%), 6 = 6p (11.35%), 9 = 9p (14.10%)
+```
 
-1. **Tom do Volt** — leia o SYSTEM_PROMPT em `api/agente-clt.js` (linha ~30-130). Se quiser mudar tom, nome, argumentos, me fala.
-2. **Priorização de ofertas** — hoje tá "maior valor líquido pro cliente". Quer trocar pra "maior comissão Lhamas"? Me fala.
-3. **Número WhatsApp CLT** — confirma qual número vai atender
-4. **Whitelist de teste** — quais 2-3 números podem conversar com o agente antes de abrir geral?
+### Override total do prompt (se quiser trocar tudo)
+```sql
+update clt_config set prompt_override = '...seu prompt customizado aqui...' where id = 1;
+-- deixa NULL pra voltar ao padrão
+```
 
-## 🛑 Limitações conhecidas da F3 (pra F3.1)
+## 🔍 Acompanhar conversas no dia-a-dia
 
-1. **INTERNAL_SERVICE_TOKEN é frágil** — token de sessão expira. Idealmente migrar pra header `x-webhook-secret` nos handlers bancários quando chamados internamente. Fácil de fazer, mas preferi deixar a F3 mais segura e compatível primeiro.
-2. **Sem dashboard visual ainda** — a aba "CLT" no frontend é a **F5**. Por enquanto você acompanha via Console (snippets acima) ou Supabase direto.
-3. **JoinBank CLT precisa de mais dados pra simular** — a higienização não é separada. O Volt vai pedir empregador + matrícula + salário antes de incluir o JoinBank na comparação. É esperado.
-4. **Prata Digital ainda não está** — é F6 (RPA, precisa Playwright na VPS). Só quando você decidir atacar.
+```javascript
+// Conversas ativas
+fetch('/api/agente-clt', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('ff_token') },
+  body: JSON.stringify({ action: 'conversasAtivas' })
+}).then(r=>r.json()).then(d => console.table(d.conversas));
 
-## 📞 O que fazer agora
+// Detalhes de uma conversa
+fetch('/api/agente-clt', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('ff_token') },
+  body: JSON.stringify({ action: 'getConversa', telefone: '5515999111111' })
+}).then(r=>r.json()).then(console.log);
+```
 
-**Opção A — "Pode pushar f3"** → eu subo o commit na main.
-**Opção B — "Revisar primeiro o prompt"** → eu te mostro o SYSTEM_PROMPT em bloco e você ajusta.
-**Opção C — "Muda X"** → me fala o que mudar, eu ajusto antes do push.
+## 🚨 Limitações conhecidas (pra F3.1, F4, F5)
 
-Bom dia. 🌅
+1. **Follow-up automático de status** — ainda não implementado. Quando cliente assina e proposta entra em análise, não há cron checando status nos bancos pra avisar cliente. Próxima iteração: criar `api/cron-clt-followup.js` rodando a cada hora.
+2. **Áudio do Evolution** — se Evolution não estiver com transcrição nativa ligada, agente vai responder "não consegui ouvir". Me avisa se cair nesse caso que eu plugo Whisper.
+3. **Multicorban PF** — não disponível. Enriquecimento roda só via PresençaBank (já é bem rico).
+4. **Dashboard CLT no frontend** — F5. Por enquanto você acompanha via Console ou Supabase direto.
+5. **Prata Digital + V8** — F6/F7.
+
+## 📞 Pra próxima conversa comigo
+
+**Opção A — "pode pushar f3"** → eu subo.
+**Opção B — "leia o SYSTEM_PROMPT"** → te colo aqui as ~150 linhas pra você revisar palavra por palavra.
+**Opção C — "muda X"** → me fala o ajuste antes do push.
+
+Bom dia! 🌅

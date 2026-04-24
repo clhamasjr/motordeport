@@ -101,6 +101,56 @@ create index if not exists idx_clt_eventos_created on clt_conversas_eventos(crea
 
 -- Comentários (documentação no Supabase)
 comment on table clt_conversas is 'Estado persistente das conversas do Agente Vendedor CLT (F3). Uma linha por telefone do cliente.';
-comment on column clt_conversas.etapa is 'Fase atual da jornada do cliente: inicio → coletando_cpf → simulando → apresentando_ofertas → coletando_dados → proposta_criada → link_enviado → fechada_*';
-comment on column clt_conversas.ofertas is 'Array JSONB com o resultado das simulações nos 3 bancos (C6, PresençaBank, JoinBank CLT), ordenadas por valor líquido desc.';
+comment on column clt_conversas.etapa is 'Fase atual da jornada do cliente: inicio → aguardando_consentimento_lgpd → coletando_cpf → simulando → apresentando_ofertas → coletando_dados → proposta_criada → link_enviado → fechada_*';
+comment on column clt_conversas.ofertas is 'Array JSONB com o resultado das simulações nos 3 bancos (C6, PresençaBank, JoinBank CLT), na ordem definida em clt_config.ordem_bancos.';
 comment on column clt_conversas.historico is 'Histórico compacto de mensagens recentes (role + content + ts). Usado como contexto do Claude.';
+
+-- ════════════════════════════════════════════════════════════════
+-- clt_conversas: campos adicionais pra persona e LGPD
+-- ════════════════════════════════════════════════════════════════
+alter table clt_conversas
+  add column if not exists nome_vendedor text,
+  add column if not exists nome_parceiro text,
+  add column if not exists disparado_por_user_id uuid,
+  add column if not exists consentimento_lgpd boolean default false,
+  add column if not exists consentimento_lgpd_at timestamptz,
+  add column if not exists consentimento_lgpd_texto text;
+
+-- ════════════════════════════════════════════════════════════════
+-- users: campos de persona pra cada atendente
+-- ════════════════════════════════════════════════════════════════
+alter table users
+  add column if not exists nome_vendedor text,
+  add column if not exists nome_parceiro text;
+
+comment on column users.nome_vendedor is 'Nome do vendedor que o agente assume ao atender. Ex: "João". Usado como "João da JVR".';
+comment on column users.nome_parceiro is 'Nome da empresa/parceiro. Ex: "JVR Financeira". Usado como "João da JVR".';
+
+-- ════════════════════════════════════════════════════════════════
+-- clt_config: configurações globais do agente (singleton, id=1)
+-- ════════════════════════════════════════════════════════════════
+create table if not exists clt_config (
+  id integer primary key check (id = 1),
+  ordem_bancos text[] not null default array['c6','presencabank','joinbank']::text[],
+  -- ordem em que o agente apresenta ofertas ao cliente. Dono edita no dia-a-dia.
+  prompt_override text,
+  -- se preenchido, substitui totalmente o SYSTEM_PROMPT default do agente. Usa com cuidado.
+  modo_insistencia text default 'conciso' check (modo_insistencia in ('conciso','moderado','insistente')),
+  -- tom do agente. Default: conciso, não pressiona.
+  seguro_c6_default integer default 4 check (seguro_c6_default in (0,2,4,6,9)),
+  -- qual plano de seguro do C6 o agente oferta primeiro. 0 = sem seguro.
+  max_mensagens_sem_resposta integer default 3,
+  -- se o cliente para de responder, quantas msgs de follow-up o agente envia antes de pausar
+  horario_atendimento_inicio time default '08:00',
+  horario_atendimento_fim time default '22:00',
+  timezone text default 'America/Sao_Paulo',
+  updated_at timestamptz default now(),
+  updated_by text
+);
+
+insert into clt_config (id, ordem_bancos)
+  values (1, array['c6','presencabank','joinbank']::text[])
+  on conflict (id) do nothing;
+
+comment on table clt_config is 'Configuração global do Agente Vendedor CLT (linha única id=1). Dono edita no dashboard.';
+comment on column clt_config.ordem_bancos is 'Array com ordem de prioridade de apresentação das ofertas. Ex: [c6, presencabank, joinbank].';
