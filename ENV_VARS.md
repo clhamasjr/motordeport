@@ -51,6 +51,25 @@ Configure todas no Vercel Dashboard:
 |----------|-------------|-----------|
 | `DATACONSULTA_KEY` | `dak_8a4b38fd181b6784a6718bc2bf5fbb62_4d066b97` | API Key DataConsulta |
 
+### C6 Bank Marketplace (Consignado Trabalhador CLT) — novo abr/2026
+| Variavel | Valor | Descricao |
+|----------|-------|-----------|
+| `C6_BASE_URL` | `https://marketplace-proposal-service-api-p.c6bank.info` | URL base produção |
+| `C6_USERNAME` | `33117876847_004684` | Username (CPF_certificado + codigo_promotora) |
+| `C6_PASSWORD` | *(passar via Vercel, nao commitar)* | Senha do usuario marketplace |
+| `C6_PROMOTER_CODE` | `004684` | Código da promotora LhamasCred no C6 |
+| `C6_CODIGO_ORIGEM` | `004684` | codigo_origem_6 (código do digitador) |
+| `C6_CPF_CERTIFICADO` | `33117876847` | CPF de quem tem o certificado digital da corban |
+
+**Validado em produção em 2026-04-24**: auth HTTP 200, subject `C6BankMarketplaceProd`. Token vive ~20min (cacheado no handler).
+
+### Claude API — Agente Vendedor CLT (novo abr/2026)
+Pode reutilizar a `CLAUDE_API_KEY` existente OU criar uma separada:
+
+| Variavel | Valor | Descricao |
+|----------|-------|-----------|
+| `CLAUDE_API_KEY_AGENTE_CLT` | *(passar via Vercel, nao commitar)* | (Opcional) Chave dedicada ao agente CLT. Se nao setada, `api/agente-clt.js` usa `CLAUDE_API_KEY` |
+
 ## OPCIONAIS
 
 | Variavel | Default | Descricao |

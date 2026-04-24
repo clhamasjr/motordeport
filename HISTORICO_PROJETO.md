@@ -9,6 +9,41 @@ Consolidado em 2026-04-21 a partir do claude-mem. Compilação de 80+ observatio
 
 ---
 
+## 24/ABR/2026 — Novo produto: Agente Vendedor CLT (multi-banco)
+
+### Decisão arquitetural
+Motordeport passa a ser plataforma **multi-produto** (INSS já existente + novo módulo CLT). Frontend já tem `sidebar-product` preparado pra isso. CLT opera em modelo B2C (agente IA conversa direto com cliente final via WhatsApp) em paralelo ao modelo B2B INSS (parceiros digitam).
+
+### Bancos CLT mapeados
+| # | Banco | Integração | Status 24/abr |
+|---|-------|-----------|--------|
+| 1 | **C6 Bank** (Consignado Trabalhador) | API REST marketplace | ✅ `api/c6.js` criado, auth validada em prod (HTTP 200, subject `C6BankMarketplaceProd`) |
+| 2 | **PresençaBank** (Consignado Privado) | API REST Azure | 📋 docs + Postman collection lidos, a codar (`api/presencabank.js`) |
+| 3 | **JoinBank/QualiBanking CLT** | API REST ajin.io (mesmo apikey do INSS já config) | 📋 docs ukam mapeadas, adicionar action CLT em `api/joinbank.js` |
+| 4 | **Prata Digital** | ❌ sem API | `admin.bancoprata.com.br` — RPA Playwright na VPS CBDW |
+| 5 | **V8 Sistema** | ✅ API libera 25/abr | `app.v8sistema.com` |
+
+### F1 — C6 Bank (entregue 24/abr)
+- **Arquivo**: `api/c6.js` (edge runtime, padrão igual `joinbank.js`)
+- **Actions**: `test`, `oferta`, `gerarLinkAutorizacao`, `statusAutorizacao`, `simular` (V2 com 5 planos de seguro), `incluir`, `linkFormalizacao`, `consultarProposta`
+- **Autenticação**: `POST /auth/token` → token cacheado em memória (TTL 20min -30s margem)
+- **Seguros suportados**: sem seguro, 2 parcelas (manual antigo), 4 parcelas (8.40%), 6 parcelas (11.35%), 9 parcelas (14.10%)
+- **Env vars novas**: `C6_BASE_URL`, `C6_USERNAME`, `C6_PASSWORD`, `C6_PROMOTER_CODE`, `C6_CODIGO_ORIGEM`, `C6_CPF_CERTIFICADO` — documentadas em ENV_VARS.md
+- **Promoter code LhamasCred no C6**: `004684`
+
+### Fases seguintes
+- **F2**: `api/presencabank.js` + action CLT em `api/joinbank.js`
+- **F3**: Supabase schema novo — tabela `clt_conversas` (máquina de estado) + `api/agente-clt.js` (cérebro Claude 4.6 com tool use)
+- **F4**: Webhook Evolution CLT + loop conversacional (cliente → agente → cliente)
+- **F5**: Aba "CLT" no frontend (seletor de produto) — dashboard conversas ativas + intervenção manual
+- **F6**: RPA Prata Digital via Playwright na VPS CBDW
+- **F7**: V8 Sistema (via API quando liberar)
+
+### Decisões pendentes
+- **Ordem de priorização das ofertas** ao cliente — dono vai definir critério (melhor valor líquido pro cliente / maior comissão pra Lhamas / cascata fixa)
+
+---
+
 ## ARQUITETURA (snapshot 2026-04-21)
 
 - **Frontend**: single-file `index.html` (~3.952 linhas com CSS/JS inline)
