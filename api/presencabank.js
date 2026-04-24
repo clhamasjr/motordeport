@@ -118,6 +118,166 @@ export default async function handler(req) {
       }, 200, req);
     }
 
+    // ─── 1.5) ASSINAR TERMO PRÓPRIO ───────────────────────────
+    // PUT /consultas/termo-inss/{id}
+    // Usado quando o corban ACEITA o termo no lugar do cliente (termo próprio).
+    // Permitido porque é modelo de consentimento por representação autorizada.
+    if (action === 'assinarTermo') {
+      if (!body.termoId) return jsonError('termoId obrigatorio (retornado do gerarTermo)', 400, req);
+      const cfg = getConfig();
+      const token = await getToken();
+      const payload = {
+        userAgent: body.userAgent || 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36',
+        OperationalSystem: body.operationalSystem || 'Android',
+        DeviceModel: body.deviceModel || 'Server',
+        DeviceName: body.deviceName || 'LhamasCred Backend',
+        DeviceType: body.deviceType || 'Backend',
+        GeoLocation: body.geoLocation || { Latitude: '-23.5016', Longitude: '-47.4592' } // Sorocaba
+      };
+      const r = await fetch(cfg.BASE + `/consultas/termo-inss/${encodeURIComponent(body.termoId)}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Content-Type': 'application/json',
+          'tenant-id': 'superuser'
+        },
+        body: JSON.stringify(payload)
+      });
+      const t = await r.text();
+      let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 2000) }; }
+      return j({ success: r.ok, httpStatus: r.status, data: d }, 200, req);
+    }
+
+    // ─── FLUXO COMPLETO (termo proprio + vinculos + margem + tabelas) ─
+    // Orquestra tudo num endpoint: gera termo, assina (termo proprio),
+    // consulta vinculos, pega margem e traz tabelas disponiveis.
+    // Input: cpf, nome, telefone (obrigatorios)
+    if (action === 'fluxoCompleto') {
+      const cpf = (body.cpf || '').replace(/\D/g, '');
+      const telefone = (body.telefone || '').replace(/\D/g, '');
+      if (!cpf || !body.nome || !telefone) {
+        return jsonError('cpf, nome e telefone obrigatorios', 400, req);
+      }
+
+      // 1) Gera termo
+      const termoR = await pbCall('/consultas/termo-inss', 'POST', {
+        cpf, nome: body.nome, telefone, produtoId: getConfig().PRODUTO_ID
+      });
+      const termoId = termoR.data?.id || termoR.data?.termoId;
+      if (!termoR.ok || !termoId) {
+        return j({ success: false, etapa: 'gerarTermo', erro: termoR.data }, 200, req);
+      }
+
+      // 2) Assina termo proprio
+      const cfg = getConfig();
+      const token = await getToken();
+      const assinaR = await fetch(cfg.BASE + `/consultas/termo-inss/${encodeURIComponent(termoId)}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Content-Type': 'application/json',
+          'tenant-id': 'superuser'
+        },
+        body: JSON.stringify({
+          userAgent: 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36',
+          OperationalSystem: 'Android',
+          DeviceModel: 'Server',
+          DeviceName: 'LhamasCred Backend',
+          DeviceType: 'Backend',
+          GeoLocation: { Latitude: '-23.5016', Longitude: '-47.4592' }
+        })
+      });
+      if (!assinaR.ok) {
+        const at = await assinaR.text();
+        return j({ success: false, etapa: 'assinarTermo', httpStatus: assinaR.status, erro: at.substring(0, 500) }, 200, req);
+      }
+
+      // 3) Consulta vínculos
+      const vincR = await pbCall('/v3/operacoes/consignado-privado/consultar-vinculos', 'POST', { cpf });
+      const vinculos = Array.isArray(vincR.data) ? vincR.data : (vincR.data?.vinculos || vincR.data?.data || []);
+      if (!vincR.ok || !vinculos.length) {
+        return j({
+          success: false, etapa: 'consultarVinculos',
+          temVinculo: false,
+          mensagem: 'Cliente sem vinculo CLT ativo no PresencaBank',
+          _raw: vincR.data
+        }, 200, req);
+      }
+
+      const v = vinculos[0];
+      const matricula = v.matricula || v.registroEmpregaticio;
+      const cnpj = v.cnpj || v.numeroInscricaoEmpregador || v.cnpjEmpregador;
+      const empregador = v.empregador || v.nomeEmpregador || v.razaoSocial;
+
+      // 4) Consulta margem
+      const margR = await pbCall('/v3/operacoes/consignado-privado/consultar-margem', 'POST', {
+        cpf, matricula, cnpj
+      });
+      const m = margR.data || {};
+      const margemDisponivel = parseFloat(m.valorMargemDisponivel || m.margemDisponivel || 0);
+
+      if (!margR.ok || !margemDisponivel) {
+        return j({
+          success: false, etapa: 'consultarMargem',
+          temVinculo: true,
+          vinculo: { matricula, cnpj, empregador },
+          mensagem: 'Vinculo encontrado mas sem margem disponivel',
+          _raw: margR.data
+        }, 200, req);
+      }
+
+      // 5) Consulta tabelas
+      const tabR = await pbCall('/v5/operacoes/simulacao/disponiveis', 'POST', {
+        tomador: {
+          telefone: { ddd: telefone.substring(0, 2), numero: telefone.substring(2) },
+          cpf, nome: body.nome,
+          dataNascimento: m.dataNascimento || body.dataNascimento || '1980-01-01',
+          nomeMae: m.nomeMae || '',
+          email: body.email || '',
+          sexo: m.sexo || null,
+          vinculoEmpregaticio: { cnpjEmpregador: cnpj, registroEmpregaticio: matricula },
+          dadosBancarios: { codigoBanco: null, agencia: null, conta: null, digitoConta: null, formaCredito: null },
+          endereco: { cep: '', rua: '', numero: '', complemento: '', cidade: '', estado: '', bairro: '' }
+        },
+        proposta: {
+          valorSolicitado: 0, quantidadeParcelas: 0,
+          produtoId: getConfig().PRODUTO_ID,
+          valorParcela: margemDisponivel
+        },
+        documentos: []
+      });
+
+      const tabelas = Array.isArray(tabR.data) ? tabR.data : (tabR.data?.tabelas || tabR.data?.data || []);
+      const tabelasNormalizadas = tabelas.map(t => ({
+        tabelaId: t.tabelaId || t.id,
+        type: t.type || null,
+        nome: t.nome || t.descricao,
+        quantidadeParcelas: t.quantidadeParcelas,
+        valorParcela: t.valorParcela,
+        valorSolicitado: t.valorSolicitado || t.valorPrincipal,
+        valorLiquido: t.valorLiquido || t.valorCliente,
+        taxa: t.taxa || t.taxaMensal,
+        cet: t.cet || t.custoTotalEfetivoMensal
+      }));
+
+      return j({
+        success: true,
+        etapa: 'completo',
+        temVinculo: true,
+        vinculo: { matricula, cnpj, empregador },
+        margemDisponivel,
+        dadosCliente: {
+          nome: m.nome || null,
+          dataNascimento: m.dataNascimento || null,
+          nomeMae: m.nomeMae || null,
+          sexo: m.sexo || null,
+          valorRenda: m.valorRenda || m.salario || null
+        },
+        tabelas: tabelasNormalizadas,
+        melhorTabela: tabelasNormalizadas.sort((a,b) => (b.valorLiquido||0)-(a.valorLiquido||0))[0] || null
+      }, 200, req);
+    }
+
     // ─── 2) CONSULTAR VÍNCULOS EMPREGATÍCIOS ──────────────────
     // POST /v3/operacoes/consignado-privado/consultar-vinculos
     // Só funciona APÓS o cliente aceitar o termo
