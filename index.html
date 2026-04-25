@@ -4464,8 +4464,6 @@ function normalizeCPF(raw) {
 
 async function rodarConsultaCLT() {
   const cpf = normalizeCPF(document.getElementById('cltCpf').value);
-  const nome = (document.getElementById('cltNome')?.value || '').trim();
-  const telefone = (document.getElementById('cltTelefone')?.value || '').replace(/\D/g, '');
   if (!cpf) { alert('CPF inválido. Digite um CPF com 9-11 dígitos.'); return; }
 
   cltConsultaState.loading = true;
@@ -4473,103 +4471,62 @@ async function rodarConsultaCLT() {
   cltConsultaState.error = null;
   renderApp();
 
-  const h = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() };
+  try {
+    const r = await fetch('/api/clt-oportunidades', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ cpf })
+    });
+    cltConsultaState.result = await r.json();
+  } catch (e) {
+    cltConsultaState.error = e.message;
+  }
 
-  // Roda os 3 bancos em paralelo. Pra PresençaBank e JoinBank é necessário nome+telefone.
-  const promiseC6 = fetch('/api/c6', { method: 'POST', headers: h, body: JSON.stringify({ action: 'oferta', cpf }) })
-    .then(r => r.json())
-    .catch(e => ({ success: false, error: e.message }));
-
-  const promisePB = (nome && telefone)
-    ? fetch('/api/presencabank', { method: 'POST', headers: h, body: JSON.stringify({ action: 'fluxoCompleto', cpf, nome, telefone }) })
-        .then(r => r.json())
-        .catch(e => ({ success: false, error: e.message }))
-    : Promise.resolve({ success: false, missing: 'Preencha nome e telefone pra PresençaBank' });
-
-  const promiseJB = (nome && telefone)
-    ? fetch('/api/joinbank', {
-        method: 'POST', headers: h,
-        body: JSON.stringify({
-          action: 'cltCreateSimulation',
-          providerCode: '950002',
-          borrower: {
-            identity: cpf,
-            name: nome,
-            phone: telefone
-          }
-        })
-      }).then(r => r.json()).catch(e => ({ success: false, error: e.message }))
-    : Promise.resolve({ success: false, missing: 'Preencha nome e telefone pra JoinBank' });
-
-  const [c6, pb, jb] = await Promise.all([promiseC6, promisePB, promiseJB]);
-  cltConsultaState.result = { c6, presencabank: pb, joinbank: jb };
   cltConsultaState.loading = false;
   renderApp();
 }
 
-function _cltCardC6(r) {
-  let h = '<div style="padding:20px;background:var(--card);border:1px solid var(--brd);border-radius:14px;border-left:4px solid var(--cyan)">';
+function _cltOfertaCard(o) {
+  const cores = { c6: 'var(--cyan)', presencabank: 'var(--grn)', joinbank: 'var(--pur)' };
+  const cor = cores[o.banco] || 'var(--t1)';
+  let h = `<div style="padding:20px;background:var(--card);border:1px solid var(--brd);border-radius:14px;border-left:4px solid ${cor}">`;
   h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
-  h += '<div style="font-size:16px;font-weight:800;color:var(--cyan)">🏦 C6 Bank</div>';
-  if (r?.success && r.temOferta) h += '<span class="pill pill-grn">DISPONÍVEL</span>';
-  else if (r?.success === false) h += '<span class="pill pill-red">ERRO</span>';
-  else h += '<span class="pill pill-default">SEM OFERTA</span>';
+  h += `<div style="font-size:16px;font-weight:800;color:${cor}">🏦 ${o.label}</div>`;
+  h += o.disponivel
+    ? '<span class="pill pill-grn">DISPONÍVEL</span>'
+    : '<span class="pill pill-default">INDISPONÍVEL</span>';
   h += '</div>';
-  if (r?.temOferta && r.oferta) {
-    const o = r.oferta;
-    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
-    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Valor</div><div style="font-size:22px;font-weight:900;color:var(--grn)">R$ ${(o.valorCliente||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>`;
-    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Parcelas</div><div style="font-size:18px;font-weight:800">${o.qtdParcelas}x <span style="color:var(--t2);font-size:13px">de R$ ${(o.valorParcela||0).toFixed(2)}</span></div></div>`;
-    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Seguro sug.</div><div style="font-size:13px;color:var(--ylw);font-weight:700">R$ ${(o.valorSeguroSugerido||0).toFixed(2)}</div></div>`;
-    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Taxa ref.</div><div style="font-size:13px;font-weight:700">R$ ${(o.valorTaxa||0).toFixed(2)}</div></div>`;
-    h += '</div>';
-  } else {
-    h += `<div style="color:var(--t3);font-size:13px">${r?.mensagem || r?.error || 'Sem oferta pré-aprovada'}</div>`;
-  }
-  h += '</div>';
-  return h;
-}
 
-function _cltCardPB(r) {
-  let h = '<div style="padding:20px;background:var(--card);border:1px solid var(--brd);border-radius:14px;border-left:4px solid var(--grn)">';
-  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
-  h += '<div style="font-size:16px;font-weight:800;color:var(--grn)">🏦 PresençaBank</div>';
-  if (r?.success && r.temVinculo && r.melhorTabela) h += '<span class="pill pill-grn">DISPONÍVEL</span>';
-  else if (r?.missing) h += '<span class="pill pill-ylw">FALTA DADOS</span>';
-  else if (r?.success === false && r.etapa) h += `<span class="pill pill-red">ERRO: ${r.etapa}</span>`;
-  else h += '<span class="pill pill-default">INDISPONÍVEL</span>';
-  h += '</div>';
-  if (r?.success && r.melhorTabela) {
-    const t = r.melhorTabela;
+  if (o.disponivel && o.detalhes) {
+    const d = o.detalhes;
     h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
-    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Valor</div><div style="font-size:22px;font-weight:900;color:var(--grn)">R$ ${(t.valorLiquido||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>`;
-    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Parcelas</div><div style="font-size:18px;font-weight:800">${t.quantidadeParcelas}x <span style="color:var(--t2);font-size:13px">de R$ ${(t.valorParcela||0).toFixed(2)}</span></div></div>`;
-    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Empregador</div><div style="font-size:12px;color:var(--t1)">${(r.vinculo?.empregador||'').substring(0,30)}</div></div>`;
-    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Margem</div><div style="font-size:13px;color:var(--ylw);font-weight:700">R$ ${(r.margemDisponivel||0).toFixed(2)}</div></div>`;
+    if (d.valorLiquido != null) {
+      h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Valor</div><div style="font-size:22px;font-weight:900;color:var(--grn)">R$ ${(d.valorLiquido||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>`;
+    }
+    if (d.parcelas != null) {
+      h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Parcelas</div><div style="font-size:18px;font-weight:800">${d.parcelas}x <span style="color:var(--t2);font-size:13px">de R$ ${(d.valorParcela||0).toFixed(2)}</span></div></div>`;
+    }
+    if (d.seguroSugerido != null) {
+      h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Seguro sug.</div><div style="font-size:13px;color:var(--ylw);font-weight:700">R$ ${(d.seguroSugerido||0).toFixed(2)}</div></div>`;
+    }
+    if (d.taxaMensal != null) {
+      h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Taxa</div><div style="font-size:13px;font-weight:700">${d.taxaMensal}% a.m.</div></div>`;
+    }
+    if (d.margemDisponivel != null) {
+      h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Margem</div><div style="font-size:13px;color:var(--ylw);font-weight:700">R$ ${(d.margemDisponivel||0).toFixed(2)}</div></div>`;
+    }
+    if (d.empregador) {
+      h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Empregador</div><div style="font-size:11px">${(d.empregador||'').substring(0,30)}</div></div>`;
+    }
     h += '</div>';
-    h += `<div style="font-size:11px;color:var(--t3);margin-top:8px">+${(r.tabelas||[]).length-1} outras tabelas disponíveis</div>`;
+    if (d.totalTabelas > 1) h += `<div style="font-size:11px;color:var(--t3);margin-top:8px">+${d.totalTabelas-1} outras tabelas disponíveis</div>`;
+  } else if (o.disponivel && o.elegibilidade) {
+    h += '<div style="color:var(--ylw);font-size:13px;margin-bottom:8px">📊 Cliente elegível</div>';
+    h += `<div style="font-size:13px"><b>Margem:</b> R$ ${(o.elegibilidade.margemDisponivel||0).toFixed(2)}</div>`;
+    if (o.elegibilidade.empregador) h += `<div style="font-size:12px;color:var(--t2)">${o.elegibilidade.empregador}</div>`;
+    if (o.mensagem) h += `<div style="font-size:11px;color:var(--t3);margin-top:6px">${o.mensagem}</div>`;
   } else {
-    h += `<div style="color:var(--t3);font-size:13px">${r?.missing || r?.mensagem || r?.error || 'Sem vínculo CLT ou margem'}</div>`;
-  }
-  h += '</div>';
-  return h;
-}
-
-function _cltCardJB(r) {
-  let h = '<div style="padding:20px;background:var(--card);border:1px solid var(--brd);border-radius:14px;border-left:4px solid var(--pur)">';
-  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
-  h += '<div style="font-size:16px;font-weight:800;color:var(--pur)">🏦 JoinBank CLT (QITech)</div>';
-  if (r?.success && r.temVinculo) h += '<span class="pill pill-grn">DISPONÍVEL</span>';
-  else if (r?.missing) h += '<span class="pill pill-ylw">FALTA DADOS</span>';
-  else h += '<span class="pill pill-default">INDISPONÍVEL</span>';
-  h += '</div>';
-  if (r?.success && r.employmentRelationships?.length) {
-    const emp = r.employmentRelationships[0];
-    h += `<div style="font-size:13px;margin-bottom:8px"><b>Empregador:</b> ${emp.employerName || '-'}</div>`;
-    h += `<div style="font-size:13px"><b>Margem:</b> R$ ${(emp.availableMarginValue || 0).toFixed(2)}</div>`;
-    h += `<div style="font-size:11px;color:var(--t3);margin-top:8px">simulationId: ${r.simulationId || '-'}</div>`;
-  } else {
-    h += `<div style="color:var(--t3);font-size:13px">${r?.missing || r?.error?.substring?.(0,200) || 'JoinBank precisa do borrower completo (endereço, mãe, RG). Use o agente WhatsApp.'}</div>`;
+    h += `<div style="color:var(--t3);font-size:13px">${o.mensagem || 'Sem oferta'}</div>`;
   }
   h += '</div>';
   return h;
@@ -4578,42 +4535,73 @@ function _cltCardJB(r) {
 function renderCltConsulta() {
   let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
   h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">💼 CLT — Consulta de Oportunidades</div>';
-  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:24px">Digite os dados básicos e veja em quais bancos o cliente tem oferta CLT disponível.</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:24px">Digite só o CPF — o sistema enriquece via PresençaBank + Multicorban e consulta os 3 bancos automaticamente.</div>';
 
-  h += '<div style="display:grid;grid-template-columns:1fr 2fr 1fr auto;gap:10px;margin-bottom:8px">';
-  h += '<input class="form-input" id="cltCpf" placeholder="CPF" maxlength="14" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
-  h += '<input class="form-input" id="cltNome" placeholder="Nome completo (p/ Presença + JoinBank)" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
-  h += '<input class="form-input" id="cltTelefone" placeholder="DDD + celular" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
-  h += '<button class="btn-acc" style="padding:12px 24px;white-space:nowrap" onclick="rodarConsultaCLT()">🔍 Consultar</button>';
+  h += '<div style="display:flex;gap:10px;margin-bottom:24px">';
+  h += '<input class="form-input" id="cltCpf" placeholder="CPF (só números)" maxlength="14" style="flex:1;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
+  h += '<button class="btn-acc" style="padding:14px 28px;font-size:14px;white-space:nowrap" onclick="rodarConsultaCLT()">🔍 Consultar</button>';
   h += '</div>';
-  h += '<div style="font-size:11px;color:var(--t3);margin-bottom:24px">Só CPF: consulta apenas C6. Com nome+telefone: consulta os 3 bancos.</div>';
 
   if (cltConsultaState.loading) {
-    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Consultando bancos em paralelo...</div>';
+    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Consultando 3 bancos + enriquecendo dados (pode levar 5-10s)...</div>';
   } else if (cltConsultaState.error) {
     h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">Erro: ${cltConsultaState.error}</div>`;
   } else if (cltConsultaState.result) {
     const r = cltConsultaState.result;
-    h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">';
-    h += _cltCardC6(r.c6);
-    h += _cltCardPB(r.presencabank);
-    h += _cltCardJB(r.joinbank);
-    h += '</div>';
+    if (r.error) {
+      h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">Erro: ${r.error} — ${r.message || ''}</div>`;
+    } else {
+      // Card cliente (dados enriquecidos)
+      const c = r.cliente || {};
+      const v = r.vinculo;
+      h += '<div style="padding:18px;background:linear-gradient(135deg,rgba(59,130,246,.08),rgba(34,211,238,.04));border:1px solid var(--brd);border-radius:14px;margin-bottom:18px">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:start;gap:14px;flex-wrap:wrap">';
+      h += '<div>';
+      h += `<div style="font-size:18px;font-weight:800">${c.nome || '(nome não obtido)'}</div>`;
+      h += `<div style="font-size:11px;color:var(--t2);margin-top:2px">CPF ${c.cpf}${c.idade?` · ${c.idade} anos`:''}${c.sexo?` · ${c.sexo==='M'?'Masc':'Fem'}`:''}</div>`;
+      if (c.nomeMae) h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">Mãe: ${c.nomeMae}</div>`;
+      h += '</div>';
+      if (v) {
+        h += '<div style="text-align:right">';
+        h += `<div style="font-size:12px;font-weight:700;color:var(--cyan)">${v.empregador || ''}</div>`;
+        h += `<div style="font-size:10px;color:var(--t3)">CNPJ ${v.cnpj || '-'}${v.matricula?` · Mat ${v.matricula}`:''}</div>`;
+        if (v.renda) h += `<div style="font-size:11px;color:var(--grn);margin-top:2px">Renda: R$ ${v.renda.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>`;
+        h += '</div>';
+      }
+      h += '</div>';
+      // Telefones (se tiver)
+      if (c.telefones && c.telefones.length) {
+        h += '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--brd)">';
+        h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Telefones</div>';
+        h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+        for (const t of c.telefones.slice(0, 5)) {
+          h += `<a href="https://wa.me/55${t.completo}" target="_blank" class="pill pill-grn" style="text-decoration:none">📱 ${t.ddd} ${t.numero}</a>`;
+        }
+        h += '</div></div>';
+      }
+      h += '</div>';
 
-    // Resumo: quantos disponíveis
-    const c6Ok = r.c6?.temOferta;
-    const pbOk = r.presencabank?.success && r.presencabank.melhorTabela;
-    const jbOk = r.joinbank?.success && r.joinbank.temVinculo;
-    const total = (c6Ok?1:0) + (pbOk?1:0) + (jbOk?1:0);
-    h += `<div style="margin-top:20px;padding:14px;background:${total>0?'rgba(34,197,94,.08)':'rgba(156,163,175,.08)'};border-radius:10px;text-align:center;font-size:14px">`;
-    h += total > 0
-      ? `✅ <b>${total} de 3 bancos</b> com oferta disponível`
-      : '⚠️ Nenhum banco retornou oferta pra esse cliente';
-    h += '</div>';
+      // Cards das ofertas
+      h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">';
+      for (const o of (r.ofertas || [])) {
+        h += _cltOfertaCard(o);
+      }
+      h += '</div>';
 
-    h += '<details style="margin-top:16px"><summary style="cursor:pointer;color:var(--t3);font-size:11px">🔧 JSON cru (debug)</summary>';
-    h += '<pre style="background:var(--sf);padding:10px;border-radius:6px;overflow:auto;font-size:10px;max-height:300px">' + JSON.stringify(r, null, 2).replace(/</g, '&lt;') + '</pre>';
-    h += '</details>';
+      // Resumo
+      const total = r.totalBancosDisponiveis || 0;
+      h += `<div style="margin-top:20px;padding:14px;background:${total>0?'rgba(34,197,94,.08)':'rgba(156,163,175,.08)'};border-radius:10px;text-align:center;font-size:14px">`;
+      h += total > 0 ? `✅ <b>${r.mensagem}</b>` : `⚠️ ${r.mensagem}`;
+      h += '</div>';
+
+      // Diagnóstico de enriquecimento
+      const enr = r.enriquecimento || {};
+      h += `<div style="margin-top:8px;font-size:11px;color:var(--t3);text-align:center">PresençaBank: ${enr.presencaBankOk?'✅':'❌'} · Multicorban: ${enr.multicorbanOk?'✅':'❌'}</div>`;
+
+      h += '<details style="margin-top:16px"><summary style="cursor:pointer;color:var(--t3);font-size:11px">🔧 JSON cru (debug)</summary>';
+      h += '<pre style="background:var(--sf);padding:10px;border-radius:6px;overflow:auto;font-size:10px;max-height:400px">' + JSON.stringify(r, null, 2).replace(/</g, '&lt;') + '</pre>';
+      h += '</details>';
+    }
   }
 
   h += '</div>';

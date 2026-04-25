@@ -67,6 +67,134 @@ function parseListHTML(html) {
   return lista;
 }
 
+// Parser do HTML da consulta CLT/FGTS (Multicorban)
+function parseCltHTML(html) {
+  const result = { nome: null, cpf: null, dataNascimento: null, idade: null, sexo: null,
+    nomeMae: null, nomePai: null, rg: null, tituloEleitor: null,
+    empresa: { razaoSocial: null, cnpj: null, totalRegistros: null },
+    trabalhista: { dataAdmissao: null, dataDesligamento: null, tempoContribuicaoMeses: null,
+      situacao: null, renda: null, saldoAproximado: null },
+    telefones: []
+  };
+  if (!html) return result;
+
+  // Nome (id nome_beneficiario)
+  let m = html.match(/id="nome_beneficiario"[^>]*>\s*([^<]+?)\s*<\/small>/i);
+  if (m) result.nome = m[1].trim();
+
+  // CPF (id cpf_beneficiario)
+  m = html.match(/id="cpf_beneficiario"[^>]*>\s*([\d\s]+?)\s*<\/small>/i);
+  if (m) result.cpf = m[1].replace(/\s/g, '');
+
+  // Data nascimento (vem em <small class="text-warning">DD/MM/AAAA</small> próximo ao label)
+  m = html.match(/Data de Nascimento\s*<\/p>[\s\S]{0,200}?<small[^>]*>\s*(\d{2}\/\d{2}\/\d{4})\s*<\/small>/i);
+  if (m) result.dataNascimento = m[1];
+
+  // Idade
+  m = html.match(/Idade\s*<\/p>[\s\S]{0,200}?<small[^>]*>\s*(\d+)\s*Anos?\s*<\/small>/i);
+  if (m) result.idade = parseInt(m[1]);
+
+  // Sexo
+  m = html.match(/SEXO\s*<\/p>[\s\S]{0,200}?<small[^>]*>\s*(Masculino|Feminino|M|F)\s*<\/small>/i);
+  if (m) result.sexo = m[1].toUpperCase().startsWith('M') ? 'M' : 'F';
+
+  // Nome da Mãe
+  m = html.match(/Nome da M[ãa]e\s*<\/p>[\s\S]{0,200}?<small[^>]*>\s*([^<]+?)\s*<\/small>/i);
+  if (m) result.nomeMae = m[1].trim();
+
+  // Nome do Pai
+  m = html.match(/Nome do Pai\s*<\/p>[\s\S]{0,200}?<small[^>]*>\s*([^<]+?)\s*<\/small>/i);
+  if (m && m[1].trim()) result.nomePai = m[1].trim();
+
+  // Empresa: Razão Social
+  m = html.match(/Razao Social\s*<\/p>[\s\S]{0,200}?<small[^>]*>\s*([^<]+?)\s*<\/small>/i);
+  if (m) result.empresa.razaoSocial = m[1].trim();
+
+  // Empresa: CNPJ (text-info próximo ao label)
+  m = html.match(/CNPJ\s*<\/p>[\s\S]{0,200}?<small[^>]*class="text-info"[^>]*>\s*([\d\s]+?)\s*<\/small>/i);
+  if (m) result.empresa.cnpj = m[1].replace(/\s/g, '');
+
+  // Total de Registros (id contador)
+  m = html.match(/id="contador"[^>]*>\s*(\d+)\s*<\/small>/i);
+  if (m) result.empresa.totalRegistros = parseInt(m[1]);
+
+  // Data Admissão
+  m = html.match(/Data da Admiss[ãa]o\s*<\/p>[\s\S]{0,200}?<small[^>]*>\s*(\d{2}\/\d{2}\/\d{4})\s*<\/small>/i);
+  if (m) result.trabalhista.dataAdmissao = m[1];
+
+  // Data Desligamento (pode estar vazio)
+  m = html.match(/Data do Desligamento\s*<\/p>[\s\S]{0,200}?<small[^>]*>\s*(\d{2}\/\d{2}\/\d{4})\s*<\/small>/i);
+  if (m) result.trabalhista.dataDesligamento = m[1];
+
+  // Tempo Contribuição (vem em "small class=mb-0 text-success fw-bold")
+  m = html.match(/Tempo de Contribui[çc][ãa]o[\s\S]{0,300}?<small[^>]*text-success[^>]*>\s*(\d+)\s*<\/small>/i);
+  if (m) result.trabalhista.tempoContribuicaoMeses = parseInt(m[1]);
+
+  // Renda (id renda)
+  m = html.match(/id="renda"[^>]*>[\s\S]{0,300}?R\$\s*([\d.,]+)/i);
+  if (m) result.trabalhista.renda = parseFloat(m[1].replace(/\./g, '').replace(',', '.'));
+
+  // Saldo Aproximado
+  m = html.match(/Saldo Aproximado\s*<\/p>[\s\S]{0,300}?R\$\s*([\d.,]+)/i);
+  if (m) result.trabalhista.saldoAproximado = parseFloat(m[1].replace(/\./g, '').replace(',', '.'));
+
+  // Telefones — pega de href="...phone=55XXXXXXXXX..." (whatsapp) ou de class phone_with_ddd / phone_fixo
+  const telSet = new Set();
+  // Padrão whatsapp link
+  const reWpp = /href="https:\/\/api\.whatsapp\.com\/send[^"]*phone=55(\d+)"/gi;
+  let mt;
+  while ((mt = reWpp.exec(html)) !== null) telSet.add(mt[1]);
+  // Padrão phone_with_ddd inline
+  const rePhone = /class="phone_with_ddd[^"]*"[^>]*>\s*([\d]+)\s*<\/a>/gi;
+  while ((mt = rePhone.exec(html)) !== null) telSet.add(mt[1].trim());
+
+  for (const t of telSet) {
+    const clean = t.replace(/\D/g, '');
+    if (clean.length >= 10) {
+      result.telefones.push({
+        ddd: clean.substring(0, 2),
+        numero: clean.substring(2),
+        completo: clean,
+        whatsapp: true
+      });
+    }
+  }
+
+  return result;
+}
+
+async function consultCltFgts(cookie, cpf) {
+  const cpfClean = cpf.replace(/\D/g, '').padStart(11, '0');
+  const body = new URLSearchParams({
+    methodOperation: 'dataBaseFgts',
+    methodConsult: 'cpf',
+    dataConsult: cpfClean,
+    dataOrgao: '',
+    CPF: '',
+    CPFRepresentante: '',
+    ddd: '',
+    telefone: ''
+  });
+  const res = await fetch(`${BASE}/search/consult`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Cookie': cookie,
+      'Referer': `${BASE}/search/form/geral`,
+      'Origin': BASE
+    },
+    body: body.toString()
+  });
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch { return { ok: false, error: 'Non-JSON response', raw: text.substring(0, 500) }; }
+  if (data.code !== undefined && data.code !== 0) return { ok: false, error: data.mensagem || 'Consulta CLT error', data };
+  const html = data.hash || '';
+  const parsed = parseCltHTML(html);
+  return { ok: true, cpf: cpfClean, parsed, raw_code: data.code };
+}
+
 async function consultCPF(cookie, cpf) {
   const cpfClean = cpf.replace(/\D/g, '').padStart(11, '0');
   const body = new URLSearchParams({ methodOperation: 'dataBase', methodConsult: 'cpf', versaoTela: 'v2', dataConsult: cpfClean, dataOrgao: '', CPF: '', CPFRepresentante: '', ddd: '', telefone: '' });
@@ -123,10 +251,19 @@ function parseConsultHTML(html) {
   m = html.match(/valor_parcela_rcc[^>]*>\s*R\$\s*([\d.,]+)/i); if (m) result.margem.rcc = m[1].trim();
 
   // ═══ CONTRATOS — Bootstrap card extraction (Multicorban v2) ═══
+  // Aumentamos a janela e tentamos varios delimitadores de card para pegar TODOS os contratos.
+  // Multicorban as vezes usa "card mb-4", "card mt-4", "card shadow", "card p-3", etc.
   const contratoSection = html.indexOf('id="navs-tab-contrato"');
+  result._debug = { contratoSection, cardsFound: 0, cardsPushed: 0, cardsSkipped: 0, skippedReasons: [] };
   if (contratoSection >= 0) {
-    const cBlock = html.substring(contratoSection, contratoSection + 80000);
-    const cards = cBlock.split(/card\s+mb-4/);
+    // Pega tudo a partir da secao de contratos ate o proximo <div id="navs-tab-..."> ou ate 300k
+    let endIdx = html.indexOf('id="navs-tab-', contratoSection + 30);
+    if (endIdx < 0 || endIdx - contratoSection > 300000) endIdx = contratoSection + 300000;
+    const cBlock = html.substring(contratoSection, endIdx);
+    result._debug.blockSize = cBlock.length;
+    // Split mais agressivo: qualquer "card" seguido de espaco e outra classe Bootstrap tipica
+    const cards = cBlock.split(/\bcard\s+(?:mb-\d+|mt-\d+|shadow|p-\d+|border\b)/);
+    result._debug.cardsFound = cards.length - 1;
     for (let i = 1; i < cards.length; i++) {
       const card = cards[i];
 
@@ -157,18 +294,53 @@ function parseConsultHTML(html) {
         return '';
       };
 
-      const contrato = getField('Contrato');
+      let contrato = getField('Contrato');
+      // Fallbacks extras para pegar numero do contrato:
+      if (!contrato) {
+        // name="numero_contrato_..." ou similar
+        let fm = card.match(/name="[^"]*(?:numero|num)_contrato[^"]*"[^>]*value="([^"]+)"/i);
+        if (fm) contrato = fm[1].trim();
+      }
+      if (!contrato) {
+        // id="contrato_XXXXX"
+        let fm = card.match(/id="contrato_(\d+)"/i);
+        if (fm) contrato = fm[1];
+      }
+      if (!contrato) {
+        // Qualquer input com name contendo "contrato" (exceto saldoquitacao_contratoXXX)
+        let fm = card.match(/name="(?!.*saldo)(?!.*valor)[^"]*contrato[^"]*"[^>]*value="([^"]+)"/i);
+        if (fm && /\d{5,}/.test(fm[1])) contrato = fm[1].trim();
+      }
       const taxa = getField('Taxa');
       const valor = getField('Valor');
       const parcela = getField('Parcela');
       const prazos = getField('Prazos');
       const dataAverb = getField('Data Averba');
 
-      // Bank code from icon
+      // Bank code from icon OR alt attribute (<img alt="935 - Facta"> etc) OR texto
       let banco_codigo = '';
       const iconM = card.match(/icones\/(\d{3})\.png/);
       if (iconM) banco_codigo = iconM[1];
+      if (!banco_codigo) { const altM = card.match(/alt="\s*(\d{3})\s*[-–]/i); if (altM) banco_codigo = altM[1]; }
       if (!banco_codigo) { const btm = card.match(/(\d{3})\s*-\s*[A-Z]/); if (btm) banco_codigo = btm[1]; }
+      // Fallback: 2 digitos seguidos de "-BANCO"
+      if (!banco_codigo) { const btm2 = card.match(/>\s*(\d{2,3})\s*[-–]\s*[A-Za-z]{2,}/); if (btm2) banco_codigo = String(btm2[1]).padStart(3,'0'); }
+
+      // ── Nome do banco (pra normalizacao de codigos aglutinados) ──
+      let banco_nome = '';
+      const nm1 = card.match(/icones\/\d{3}\.png[^>]*alt="([^"]+)"/i);
+      if (nm1) banco_nome = nm1[1];
+      if (!banco_nome) { const nm2 = card.match(/alt="\s*\d{2,3}\s*[-–]\s*([^"]+)"/i); if (nm2) banco_nome = nm2[1]; }
+      if (!banco_nome) { const nm3 = card.match(/\b\d{2,3}\s*[-–]\s*([A-Za-zÀ-ú][A-Za-zÀ-ú .]{1,30})/); if (nm3) banco_nome = nm3[1].trim(); }
+
+      // ── Normalizacao de codigos aglutinados ──
+      // 029 = Itau BMG = Itau Consignado (mesma coisa).
+      // 341 = Itau Unibanco (banco de varejo, NAO e consignado) — NAO normaliza.
+      // Caso conhecido de inconsistencia: Multicorban as vezes reporta "041-Itau BMG"
+      // mas 041 oficial e Banrisul. So normalizamos quando cod=041 E nome tem "itau".
+      if (banco_codigo === '041' && banco_nome && /itau/i.test(banco_nome)) {
+        banco_codigo = '029';
+      }
 
       // Parse prazo: "90 / 96"
       let prazo_rest = '', prazo_total = '';
@@ -238,11 +410,36 @@ function parseConsultHTML(html) {
       let parcelaClean = ''; if (parcela) { const pm2 = parcela.match(/R\$\s*([\d.,]+)/); if (pm2) parcelaClean = pm2[1]; }
 
       if (contrato) {
-        result.contratos.push({ contrato: contrato.replace(/[^0-9A-Za-z]/g, ''), banco_codigo, parcela: parcelaClean, saldo, valor_averbado: valorAverb, taxa: taxa.trim(), prazo: prazo_rest, prazo_original: prazo_total, data_averbacao: dataAverb });
+        result.contratos.push({ contrato: contrato.replace(/[^0-9A-Za-z]/g, ''), banco_codigo, banco_nome, parcela: parcelaClean, saldo, valor_averbado: valorAverb, taxa: taxa.trim(), prazo: prazo_rest, prazo_original: prazo_total, data_averbacao: dataAverb });
+        result._debug.cardsPushed++;
+      } else {
+        result._debug.cardsSkipped++;
+        // Registra motivo pra diagnostico
+        if (result._debug.skippedReasons.length < 5) {
+          const snippet = card.substring(0, 300).replace(/\s+/g, ' ').trim();
+          result._debug.skippedReasons.push({ idx: i, cardSnippet: snippet, hasBanco: !!banco_codigo, hasParcela: !!parcelaClean, hasSaldo: !!saldo });
+        }
       }
     }
   }
-  // Fallback: simple contrato number extraction
+  // Fallback ADITIVO: tenta pegar contratos que o split nao capturou
+  // Busca TODO <input name="numero_contrato_X" value="..."> no HTML como fonte autoritaria
+  {
+    const seen = new Set(result.contratos.map(c => c.contrato));
+    const globalContratos = new Set();
+    const cre = /name="[^"]*(?:numero|num)_contrato[^"]*"[^>]*value="([^"]+)"/gi;
+    let gm;
+    while ((gm = cre.exec(html)) !== null) {
+      const cNum = String(gm[1]).replace(/[^0-9A-Za-z]/g, '');
+      if (cNum && !seen.has(cNum)) globalContratos.add(cNum);
+    }
+    result._debug.globalContratosEncontrados = globalContratos.size;
+    // Se o HTML tem contratos que o parser de cards nao pegou, adiciona como "dados parciais"
+    for (const cNum of globalContratos) {
+      result.contratos.push({ contrato: cNum, banco_codigo: '', parcela: '', saldo: '', valor_averbado: '', taxa: '', prazo: '', prazo_original: '', data_averbacao: '', _parcial: true });
+    }
+  }
+  // Fallback legado: se ainda nao achou nada
   if (!result.contratos.length) {
     const cnRe = /Contrato<\/small>\s*<p[^>]*>\s*([\d\w]+)/gi; let cn;
     while ((cn = cnRe.exec(html)) !== null) result.contratos.push({ contrato: cn[1].trim() });
@@ -330,6 +527,28 @@ export default async function handler(req) {
       // Salvar no historico
       if (result.ok) {
         dbInsert('consultas', { user_id: user.id, tipo: 'cpf', cpf: cpf.replace(/\D/g, ''), nome: result.parsed?.beneficiario?.nome, resultado: result.parsed, fonte: 'multicorban' }).catch(() => {});
+      }
+      return json(result, result.ok ? 200 : 400, req);
+    }
+
+    // ── CLT/FGTS — consulta dados pessoais + empresa + telefones por CPF ──
+    if (action === 'consult_clt') {
+      if (!cpf) return jsonError('CPF obrigatorio', 400, req);
+      const session = await ensureSession();
+      if (!session.ok) return json({ ok: false, error: 'Login failed: ' + session.error }, 401, req);
+      let result = await consultCltFgts(session.cookie, cpf);
+      if (!result.ok && (result.error || '').includes('session')) {
+        sessionCache = { cookie: null, ts: 0 };
+        const retry = await ensureSession();
+        if (retry.ok) result = await consultCltFgts(retry.cookie, cpf);
+      }
+      if (result.ok) {
+        dbInsert('consultas', {
+          user_id: user.id, tipo: 'clt_fgts',
+          cpf: cpf.replace(/\D/g, ''),
+          nome: result.parsed?.nome,
+          resultado: result.parsed, fonte: 'multicorban_clt'
+        }).catch(() => {});
       }
       return json(result, result.ok ? 200 : 400, req);
     }
