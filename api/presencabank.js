@@ -280,30 +280,97 @@ export default async function handler(req) {
 
     // ─── 2) CONSULTAR VÍNCULOS EMPREGATÍCIOS ──────────────────
     // POST /v3/operacoes/consignado-privado/consultar-vinculos
-    // Só funciona APÓS o cliente aceitar o termo
+    // Funciona com termo proprio (corban). Resposta vem em r.data.id (nao "vinculos"!)
+    // Estrutura real: { id: [{ matricula, numeroInscricaoEmpregador, elegivel, cpf }] }
     if (action === 'consultarVinculos') {
-      const cpf = (body.cpf || '').replace(/\D/g, '');
+      const digits = (body.cpf || '').replace(/\D/g, '');
+      const cpf = (digits.length >= 9 && digits.length <= 11) ? digits.padStart(11, '0') : '';
       if (!cpf) return jsonError('cpf obrigatorio', 400, req);
       const r = await pbCall('/v3/operacoes/consignado-privado/consultar-vinculos', 'POST', { cpf });
 
-      const vinculos = Array.isArray(r.data) ? r.data : (r.data?.vinculos || r.data?.data || []);
-      const normalizados = vinculos.map(v => ({
+      // PB retorna em r.data.id (nao "vinculos")
+      const lista = Array.isArray(r.data?.id) ? r.data.id
+                  : Array.isArray(r.data) ? r.data
+                  : (r.data?.vinculos || r.data?.data || []);
+      const normalizados = lista.map(v => ({
         matricula: v.matricula || v.registroEmpregaticio,
-        cnpj: v.cnpj || v.numeroInscricaoEmpregador || v.cnpjEmpregador,
-        empregador: v.empregador || v.nomeEmpregador || v.razaoSocial,
-        ativo: v.ativo !== false,
+        cnpj: v.numeroInscricaoEmpregador || v.cnpj || v.cnpjEmpregador,
+        empregador: v.empregador || v.nomeEmpregador || v.razaoSocial || null,
+        elegivel: v.elegivel !== false,
         _raw: v,
       }));
+      const elegiveis = normalizados.filter(v => v.elegivel);
 
       return j({
         success: r.ok, httpStatus: r.status, cpf,
-        temVinculo: normalizados.length > 0,
+        temVinculo: elegiveis.length > 0,
         totalVinculos: normalizados.length,
+        totalElegiveis: elegiveis.length,
         vinculos: normalizados,
         mensagem: !r.ok && r.status === 403
-          ? 'Termo LGPD ainda nao aceito pelo cliente'
-          : (normalizados.length === 0 ? 'Nenhum vinculo CLT ativo encontrado' : null),
+          ? 'Termo LGPD ainda nao aceito (ou perfil sem permissao de termo proprio)'
+          : (elegiveis.length === 0 ? 'Nenhum vinculo CLT ativo elegivel' : null),
         _raw: r.data,
+      }, 200, req);
+    }
+
+    // ─── OPORTUNIDADES POR CPF (so CPF, sem nome/tel) ─────────
+    // Faz consultarVinculos + consultarMargem.
+    // Retorna elegibilidade + margem + dados pessoais (sem simular tabelas).
+    // Pra simular tabelas precisa de nome+telefone (use action fluxoCompleto).
+    if (action === 'oportunidadesPorCPF') {
+      const digits = (body.cpf || '').replace(/\D/g, '');
+      const cpf = (digits.length >= 9 && digits.length <= 11) ? digits.padStart(11, '0') : '';
+      if (!cpf) return jsonError('cpf obrigatorio', 400, req);
+
+      // 1) Vinculos
+      const vincR = await pbCall('/v3/operacoes/consignado-privado/consultar-vinculos', 'POST', { cpf });
+      const lista = Array.isArray(vincR.data?.id) ? vincR.data.id : [];
+      const elegiveis = lista.filter(v => v.elegivel !== false);
+
+      if (!elegiveis.length) {
+        return j({
+          success: true, etapa: 'vinculos',
+          temVinculo: false,
+          mensagem: 'Cliente sem vinculo CLT elegivel no PresencaBank',
+          totalVinculosBrutos: lista.length
+        }, 200, req);
+      }
+
+      // Usa o primeiro elegivel
+      const v = elegiveis[0];
+      const matricula = v.matricula || v.registroEmpregaticio;
+      const cnpj = v.numeroInscricaoEmpregador;
+
+      // 2) Margem
+      const margR = await pbCall('/v3/operacoes/consignado-privado/consultar-margem', 'POST', {
+        cpf, matricula, cnpj
+      });
+      const m = margR.data || {};
+
+      return j({
+        success: true, etapa: 'completo',
+        temVinculo: true,
+        cpf,
+        vinculo: {
+          matricula,
+          cnpj,
+          empregador: v.empregador || null,
+          dataAdmissao: m.dataAdmissao || null
+        },
+        margem: {
+          disponivel: m.valorMargemDisponivel || 0,
+          base: m.valorMargemBase || 0,
+          totalDevido: m.valorTotalDevido || 0
+        },
+        dadosCliente: {
+          dataNascimento: m.dataNascimento || null,
+          nomeMae: m.nomeMae || null,
+          sexo: m.sexo || null
+        },
+        outrosVinculos: elegiveis.length - 1,
+        observacao: 'Pra simular tabela exata de credito, ainda eh necessario nome e telefone do cliente.',
+        _raw: { vinculos: vincR.data, margem: m }
       }, 200, req);
     }
 
@@ -497,8 +564,29 @@ export default async function handler(req) {
       }, 200, req);
     }
 
+    // ─── RAW CALL (debug — testar endpoints arbitrarios) ─────
+    // Body: { action: 'rawCall', path: '/v3/clientes/...', method: 'GET'|'POST', body: {...} }
+    if (action === 'rawCall') {
+      if (!body.path) return jsonError('path obrigatorio', 400, req);
+      const token = await getToken();
+      const cfg = getConfig();
+      const opts = {
+        method: body.method || 'GET',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Content-Type': 'application/json',
+          'tenant-id': 'superuser'
+        }
+      };
+      if (body.body && opts.method !== 'GET') opts.body = JSON.stringify(body.body);
+      const r = await fetch(cfg.BASE + body.path, opts);
+      const t = await r.text();
+      let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 2000) }; }
+      return j({ httpStatus: r.status, ok: r.ok, path: body.path, method: opts.method, response: d }, 200, req);
+    }
+
     return jsonError(
-      'action invalida. Disponiveis: test, gerarTermo, consultarVinculos, consultarMargem, consultarTabelas, criarProposta, linkFormalizacao, consultarProposta',
+      'action invalida. Disponiveis: test, gerarTermo, assinarTermo, fluxoCompleto, consultarVinculos, consultarMargem, oportunidadesPorCPF, consultarTabelas, criarProposta, linkFormalizacao, consultarProposta, rawCall',
       400, req
     );
   } catch (err) {
