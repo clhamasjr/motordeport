@@ -4464,97 +4464,216 @@ function normalizeCPF(raw) {
 
 async function rodarConsultaCLT() {
   const cpf = normalizeCPF(document.getElementById('cltCpf').value);
-  if (!cpf) { alert('CPF inválido. Digite um CPF com 11 dígitos (zeros à esquerda são adicionados automaticamente se precisar)'); return; }
+  const nome = (document.getElementById('cltNome')?.value || '').trim();
+  const telefone = (document.getElementById('cltTelefone')?.value || '').replace(/\D/g, '');
+  if (!cpf) { alert('CPF inválido. Digite um CPF com 9-11 dígitos.'); return; }
 
   cltConsultaState.loading = true;
   cltConsultaState.result = null;
   cltConsultaState.error = null;
   renderApp();
 
-  try {
-    const h = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() };
-    const r = await fetch('/api/c6', { method: 'POST', headers: h, body: JSON.stringify({ action: 'oferta', cpf }) }).then(r => r.json());
-    cltConsultaState.result = { c6: r };
-  } catch (e) {
-    cltConsultaState.error = e.message;
-  }
+  const h = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() };
 
+  // Roda os 3 bancos em paralelo. Pra PresençaBank e JoinBank é necessário nome+telefone.
+  const promiseC6 = fetch('/api/c6', { method: 'POST', headers: h, body: JSON.stringify({ action: 'oferta', cpf }) })
+    .then(r => r.json())
+    .catch(e => ({ success: false, error: e.message }));
+
+  const promisePB = (nome && telefone)
+    ? fetch('/api/presencabank', { method: 'POST', headers: h, body: JSON.stringify({ action: 'fluxoCompleto', cpf, nome, telefone }) })
+        .then(r => r.json())
+        .catch(e => ({ success: false, error: e.message }))
+    : Promise.resolve({ success: false, missing: 'Preencha nome e telefone pra PresençaBank' });
+
+  const promiseJB = (nome && telefone)
+    ? fetch('/api/joinbank', {
+        method: 'POST', headers: h,
+        body: JSON.stringify({
+          action: 'cltCreateSimulation',
+          providerCode: '950002',
+          borrower: {
+            identity: cpf,
+            name: nome,
+            phone: telefone
+          }
+        })
+      }).then(r => r.json()).catch(e => ({ success: false, error: e.message }))
+    : Promise.resolve({ success: false, missing: 'Preencha nome e telefone pra JoinBank' });
+
+  const [c6, pb, jb] = await Promise.all([promiseC6, promisePB, promiseJB]);
+  cltConsultaState.result = { c6, presencabank: pb, joinbank: jb };
   cltConsultaState.loading = false;
   renderApp();
 }
 
-function renderCltConsulta() {
-  let h = '<div style="max-width:720px;margin:0 auto;padding:24px">';
-  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">💼 CLT — Consulta de Oportunidades</div>';
-  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:24px">Digite o CPF e veja se o cliente tem oferta CLT pré-aprovada.</div>';
-
-  h += '<div style="display:flex;gap:10px;margin-bottom:24px">';
-  h += '<input class="form-input" id="cltCpf" placeholder="CPF (só números)" maxlength="14" style="flex:1;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
-  h += '<button class="btn-acc" style="padding:14px 28px;font-size:14px;white-space:nowrap" onclick="rodarConsultaCLT()">🔍 Consultar</button>';
+function _cltCardC6(r) {
+  let h = '<div style="padding:20px;background:var(--card);border:1px solid var(--brd);border-radius:14px;border-left:4px solid var(--cyan)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
+  h += '<div style="font-size:16px;font-weight:800;color:var(--cyan)">🏦 C6 Bank</div>';
+  if (r?.success && r.temOferta) h += '<span class="pill pill-grn">DISPONÍVEL</span>';
+  else if (r?.success === false) h += '<span class="pill pill-red">ERRO</span>';
+  else h += '<span class="pill pill-default">SEM OFERTA</span>';
   h += '</div>';
+  if (r?.temOferta && r.oferta) {
+    const o = r.oferta;
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
+    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Valor</div><div style="font-size:22px;font-weight:900;color:var(--grn)">R$ ${(o.valorCliente||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>`;
+    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Parcelas</div><div style="font-size:18px;font-weight:800">${o.qtdParcelas}x <span style="color:var(--t2);font-size:13px">de R$ ${(o.valorParcela||0).toFixed(2)}</span></div></div>`;
+    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Seguro sug.</div><div style="font-size:13px;color:var(--ylw);font-weight:700">R$ ${(o.valorSeguroSugerido||0).toFixed(2)}</div></div>`;
+    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Taxa ref.</div><div style="font-size:13px;font-weight:700">R$ ${(o.valorTaxa||0).toFixed(2)}</div></div>`;
+    h += '</div>';
+  } else {
+    h += `<div style="color:var(--t3);font-size:13px">${r?.mensagem || r?.error || 'Sem oferta pré-aprovada'}</div>`;
+  }
+  h += '</div>';
+  return h;
+}
+
+function _cltCardPB(r) {
+  let h = '<div style="padding:20px;background:var(--card);border:1px solid var(--brd);border-radius:14px;border-left:4px solid var(--grn)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
+  h += '<div style="font-size:16px;font-weight:800;color:var(--grn)">🏦 PresençaBank</div>';
+  if (r?.success && r.temVinculo && r.melhorTabela) h += '<span class="pill pill-grn">DISPONÍVEL</span>';
+  else if (r?.missing) h += '<span class="pill pill-ylw">FALTA DADOS</span>';
+  else if (r?.success === false && r.etapa) h += `<span class="pill pill-red">ERRO: ${r.etapa}</span>`;
+  else h += '<span class="pill pill-default">INDISPONÍVEL</span>';
+  h += '</div>';
+  if (r?.success && r.melhorTabela) {
+    const t = r.melhorTabela;
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
+    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Valor</div><div style="font-size:22px;font-weight:900;color:var(--grn)">R$ ${(t.valorLiquido||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>`;
+    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Parcelas</div><div style="font-size:18px;font-weight:800">${t.quantidadeParcelas}x <span style="color:var(--t2);font-size:13px">de R$ ${(t.valorParcela||0).toFixed(2)}</span></div></div>`;
+    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Empregador</div><div style="font-size:12px;color:var(--t1)">${(r.vinculo?.empregador||'').substring(0,30)}</div></div>`;
+    h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Margem</div><div style="font-size:13px;color:var(--ylw);font-weight:700">R$ ${(r.margemDisponivel||0).toFixed(2)}</div></div>`;
+    h += '</div>';
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:8px">+${(r.tabelas||[]).length-1} outras tabelas disponíveis</div>`;
+  } else {
+    h += `<div style="color:var(--t3);font-size:13px">${r?.missing || r?.mensagem || r?.error || 'Sem vínculo CLT ou margem'}</div>`;
+  }
+  h += '</div>';
+  return h;
+}
+
+function _cltCardJB(r) {
+  let h = '<div style="padding:20px;background:var(--card);border:1px solid var(--brd);border-radius:14px;border-left:4px solid var(--pur)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
+  h += '<div style="font-size:16px;font-weight:800;color:var(--pur)">🏦 JoinBank CLT (QITech)</div>';
+  if (r?.success && r.temVinculo) h += '<span class="pill pill-grn">DISPONÍVEL</span>';
+  else if (r?.missing) h += '<span class="pill pill-ylw">FALTA DADOS</span>';
+  else h += '<span class="pill pill-default">INDISPONÍVEL</span>';
+  h += '</div>';
+  if (r?.success && r.employmentRelationships?.length) {
+    const emp = r.employmentRelationships[0];
+    h += `<div style="font-size:13px;margin-bottom:8px"><b>Empregador:</b> ${emp.employerName || '-'}</div>`;
+    h += `<div style="font-size:13px"><b>Margem:</b> R$ ${(emp.availableMarginValue || 0).toFixed(2)}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:8px">simulationId: ${r.simulationId || '-'}</div>`;
+  } else {
+    h += `<div style="color:var(--t3);font-size:13px">${r?.missing || r?.error?.substring?.(0,200) || 'JoinBank precisa do borrower completo (endereço, mãe, RG). Use o agente WhatsApp.'}</div>`;
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderCltConsulta() {
+  let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
+  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">💼 CLT — Consulta de Oportunidades</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:24px">Digite os dados básicos e veja em quais bancos o cliente tem oferta CLT disponível.</div>';
+
+  h += '<div style="display:grid;grid-template-columns:1fr 2fr 1fr auto;gap:10px;margin-bottom:8px">';
+  h += '<input class="form-input" id="cltCpf" placeholder="CPF" maxlength="14" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
+  h += '<input class="form-input" id="cltNome" placeholder="Nome completo (p/ Presença + JoinBank)" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
+  h += '<input class="form-input" id="cltTelefone" placeholder="DDD + celular" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
+  h += '<button class="btn-acc" style="padding:12px 24px;white-space:nowrap" onclick="rodarConsultaCLT()">🔍 Consultar</button>';
+  h += '</div>';
+  h += '<div style="font-size:11px;color:var(--t3);margin-bottom:24px">Só CPF: consulta apenas C6. Com nome+telefone: consulta os 3 bancos.</div>';
 
   if (cltConsultaState.loading) {
-    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Consultando...</div>';
+    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Consultando bancos em paralelo...</div>';
   } else if (cltConsultaState.error) {
     h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">Erro: ${cltConsultaState.error}</div>`;
   } else if (cltConsultaState.result) {
     const r = cltConsultaState.result;
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">';
+    h += _cltCardC6(r.c6);
+    h += _cltCardPB(r.presencabank);
+    h += _cltCardJB(r.joinbank);
+    h += '</div>';
 
-    if (r.c6?.success && r.c6.temOferta && r.c6.oferta) {
-      const o = r.c6.oferta;
-      h += '<div style="padding:24px;background:linear-gradient(135deg,rgba(6,182,212,.12),rgba(59,130,246,.06));border:2px solid rgba(6,182,212,.3);border-radius:14px">';
-      h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">';
-      h += '<div style="font-size:18px;font-weight:800;color:var(--cyan)">🏦 C6 Bank</div>';
-      h += '<span class="pill pill-grn">OFERTA APROVADA</span>';
-      h += '</div>';
-      h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
-      h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em">Valor Disponível</div><div style="font-size:26px;font-weight:900;color:var(--grn)">R$ ${(o.valorCliente||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>`;
-      h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em">Parcelas</div><div style="font-size:20px;font-weight:800">${o.qtdParcelas}x <span style="color:var(--t2);font-weight:600;font-size:15px">de R$ ${(o.valorParcela||0).toFixed(2)}</span></div></div>`;
-      h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em">Seguro sugerido</div><div style="font-size:15px;color:var(--ylw);font-weight:700">R$ ${(o.valorSeguroSugerido||0).toFixed(2)}</div></div>`;
-      h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em">Taxa ref.</div><div style="font-size:15px;color:var(--t1);font-weight:700">R$ ${(o.valorTaxa||0).toFixed(2)}</div></div>`;
-      h += '</div>';
-      h += '</div>';
-    } else {
-      h += '<div style="padding:20px;background:var(--card);border:1px solid var(--brd);border-radius:12px;text-align:center">';
-      h += '<div style="font-size:16px;font-weight:800;color:var(--t2);margin-bottom:6px">Sem oferta CLT no momento</div>';
-      h += `<div style="color:var(--t3);font-size:13px">${r.c6?.mensagem || 'O C6 não tem oferta pré-aprovada pra esse CPF agora.'}</div>`;
-      h += '</div>';
-    }
+    // Resumo: quantos disponíveis
+    const c6Ok = r.c6?.temOferta;
+    const pbOk = r.presencabank?.success && r.presencabank.melhorTabela;
+    const jbOk = r.joinbank?.success && r.joinbank.temVinculo;
+    const total = (c6Ok?1:0) + (pbOk?1:0) + (jbOk?1:0);
+    h += `<div style="margin-top:20px;padding:14px;background:${total>0?'rgba(34,197,94,.08)':'rgba(156,163,175,.08)'};border-radius:10px;text-align:center;font-size:14px">`;
+    h += total > 0
+      ? `✅ <b>${total} de 3 bancos</b> com oferta disponível`
+      : '⚠️ Nenhum banco retornou oferta pra esse cliente';
+    h += '</div>';
+
+    h += '<details style="margin-top:16px"><summary style="cursor:pointer;color:var(--t3);font-size:11px">🔧 JSON cru (debug)</summary>';
+    h += '<pre style="background:var(--sf);padding:10px;border-radius:6px;overflow:auto;font-size:10px;max-height:300px">' + JSON.stringify(r, null, 2).replace(/</g, '&lt;') + '</pre>';
+    h += '</details>';
   }
 
   h += '</div>';
   return h;
 }
 
-// ─── Higienização em Lote CLT ─────────────────────────────────
+// ─── Higienização em Lote CLT (por banco) ────────────────────
 let cltBatchState = {
+  banco: 'c6',          // 'c6' | 'presencabank' | 'joinbank'
   running: false,
-  items: [],   // [{cpf, status:'pending|done|error', oferta, error}]
+  items: [],            // [{cpf, nome?, telefone?, status, result}]
   done: 0,
   total: 0,
   aborted: false
 };
 
+function cltBatchSetBanco(b) { cltBatchState.banco = b; cltBatchState.items = []; cltBatchState.done = 0; cltBatchState.total = 0; renderApp(); }
+
+function _parseBatchInput(raw, banco) {
+  const lines = raw.split(/\n/).map(l => l.trim()).filter(Boolean);
+  const out = [];
+  for (const line of lines) {
+    // C6 só precisa CPF. PB e JB precisam CPF + Nome + Telefone (CSV: cpf;nome;telefone OU cpf,nome,telefone)
+    const parts = line.split(/[;,\t]/).map(s => s.trim()).filter(Boolean);
+    if (banco === 'c6') {
+      const cpf = normalizeCPF(parts[0] || line);
+      if (cpf) out.push({ cpf });
+    } else {
+      // Pra PB/JB precisa de 3 campos
+      if (parts.length < 3) continue; // pula linhas inválidas
+      const cpf = normalizeCPF(parts[0]);
+      const nome = parts[1];
+      const telefone = (parts[2] || '').replace(/\D/g, '');
+      if (cpf && nome && telefone.length >= 10) out.push({ cpf, nome, telefone });
+    }
+  }
+  // Dedupe por CPF
+  const seen = new Set();
+  return out.filter(x => { if (seen.has(x.cpf)) return false; seen.add(x.cpf); return true; });
+}
+
 async function rodarBatchCLT() {
   const raw = document.getElementById('cltBatchInput').value || '';
-  const cpfs = raw.split(/[\n,;\s]+/)
-    .map(s => normalizeCPF(s))
-    .filter(s => s !== null);
-  const unique = Array.from(new Set(cpfs));
+  const items = _parseBatchInput(raw, cltBatchState.banco);
 
-  if (unique.length === 0) {
-    alert('Cole pelo menos 1 CPF válido (11 dígitos)');
+  if (items.length === 0) {
+    alert(cltBatchState.banco === 'c6'
+      ? 'Cole pelo menos 1 CPF válido (1 por linha)'
+      : 'Cole pelo menos 1 linha com CPF;Nome;Telefone (separados por ; ou ,)');
     return;
   }
-  if (unique.length > 500) {
-    if (!confirm(`Você colou ${unique.length} CPFs. Vai demorar ~${Math.ceil(unique.length * 1.2 / 60)} minutos. Continuar?`)) return;
+  if (items.length > 500) {
+    if (!confirm(`Você colou ${items.length} linhas. Vai demorar ~${Math.ceil(items.length * 2 / 60)} minutos. Continuar?`)) return;
   }
 
   cltBatchState.running = true;
   cltBatchState.aborted = false;
-  cltBatchState.items = unique.map(cpf => ({ cpf, status: 'pending', oferta: null, error: null }));
+  cltBatchState.items = items.map(it => ({ ...it, status: 'pending', result: null }));
   cltBatchState.done = 0;
-  cltBatchState.total = unique.length;
+  cltBatchState.total = items.length;
   renderApp();
 
   const h = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() };
@@ -4563,27 +4682,31 @@ async function rodarBatchCLT() {
     if (cltBatchState.aborted) break;
     const it = cltBatchState.items[i];
     try {
-      const r = await fetch('/api/c6', {
-        method: 'POST', headers: h,
-        body: JSON.stringify({ action: 'oferta', cpf: it.cpf })
-      }).then(r => r.json());
-      if (r.temOferta && r.oferta) {
-        it.status = 'done';
-        it.oferta = r.oferta;
-      } else {
-        it.status = 'done';
-        it.oferta = null;
+      let payload, endpoint;
+      if (cltBatchState.banco === 'c6') {
+        endpoint = '/api/c6';
+        payload = { action: 'oferta', cpf: it.cpf };
+      } else if (cltBatchState.banco === 'presencabank') {
+        endpoint = '/api/presencabank';
+        payload = { action: 'fluxoCompleto', cpf: it.cpf, nome: it.nome, telefone: it.telefone };
+      } else if (cltBatchState.banco === 'joinbank') {
+        endpoint = '/api/joinbank';
+        payload = { action: 'cltCreateSimulation', providerCode: '950002',
+          borrower: { identity: it.cpf, name: it.nome, phone: it.telefone } };
       }
+      const r = await fetch(endpoint, { method: 'POST', headers: h, body: JSON.stringify(payload) }).then(r => r.json());
+      it.status = 'done';
+      it.result = r;
     } catch (e) {
       it.status = 'error';
-      it.error = e.message;
+      it.result = { error: e.message };
     }
     cltBatchState.done = i + 1;
-    // Atualiza UI a cada 3 ou no final
     if ((i + 1) % 3 === 0 || i + 1 === cltBatchState.items.length) renderApp();
-    // Rate limit suave: 1.2s entre chamadas pra não sobrecarregar C6
+    // Rate limit por banco
+    const delay = cltBatchState.banco === 'presencabank' ? 2200 : 1200; // PB tem rate limit 30 req/min
     if (i + 1 < cltBatchState.items.length && !cltBatchState.aborted) {
-      await new Promise(r => setTimeout(r, 1200));
+      await new Promise(r => setTimeout(r, delay));
     }
   }
 
@@ -4595,55 +4718,99 @@ function abortarBatchCLT() {
   cltBatchState.aborted = true;
 }
 
+function _batchTemOferta(it, banco) {
+  if (it.status !== 'done' || !it.result) return false;
+  if (banco === 'c6') return !!(it.result.temOferta && it.result.oferta);
+  if (banco === 'presencabank') return !!(it.result.success && it.result.melhorTabela);
+  if (banco === 'joinbank') return !!(it.result.success && it.result.temVinculo);
+  return false;
+}
+
 function exportBatchCLT() {
+  const banco = cltBatchState.banco;
   const items = cltBatchState.items.filter(x => x.status === 'done');
   if (!items.length) return alert('Nada pra exportar');
-  const rows = [['CPF', 'Tem Oferta', 'Valor Disponível', 'Parcelas', 'Valor Parcela', 'Seguro Sugerido']];
-  for (const it of items) {
-    const o = it.oferta;
-    rows.push([
-      it.cpf,
-      o ? 'SIM' : 'NÃO',
-      o ? (o.valorCliente || 0).toFixed(2) : '',
-      o ? o.qtdParcelas : '',
-      o ? (o.valorParcela || 0).toFixed(2) : '',
-      o ? (o.valorSeguroSugerido || 0).toFixed(2) : ''
-    ]);
+
+  let rows;
+  if (banco === 'c6') {
+    rows = [['CPF', 'Tem Oferta', 'Valor', 'Parcelas', 'Valor Parcela', 'Seguro Sug.']];
+    for (const it of items) {
+      const o = it.result?.oferta;
+      rows.push([it.cpf, o?'SIM':'NÃO', o?(o.valorCliente||0).toFixed(2):'', o?o.qtdParcelas:'', o?(o.valorParcela||0).toFixed(2):'', o?(o.valorSeguroSugerido||0).toFixed(2):'']);
+    }
+  } else if (banco === 'presencabank') {
+    rows = [['CPF','Nome','Telefone','Tem Oferta','Empregador','Margem','Melhor Valor','Parcelas','Valor Parcela']];
+    for (const it of items) {
+      const r = it.result;
+      const t = r?.melhorTabela;
+      rows.push([it.cpf, it.nome, it.telefone, t?'SIM':'NÃO', r?.vinculo?.empregador||'', (r?.margemDisponivel||'').toString(), t?(t.valorLiquido||0).toFixed(2):'', t?t.quantidadeParcelas:'', t?(t.valorParcela||0).toFixed(2):'']);
+    }
+  } else {
+    rows = [['CPF','Nome','Telefone','Tem Vinculo','Empregador','Margem','SimulationId']];
+    for (const it of items) {
+      const r = it.result;
+      const emp = r?.employmentRelationships?.[0];
+      rows.push([it.cpf, it.nome, it.telefone, emp?'SIM':'NÃO', emp?.employerName||'', (emp?.availableMarginValue||'').toString(), r?.simulationId||'']);
+    }
   }
-  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'higienizacao-clt-' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.download = `higienizacao-clt-${banco}-${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
 }
 
 function renderCltBatch() {
   let h = '<div style="max-width:1200px;margin:0 auto;padding:24px">';
   h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">📥 CLT — Higienização em Lote</div>';
-  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Cole CPFs (um por linha) e o sistema consulta o C6 em lote, identificando quem tem oferta CLT pré-aprovada.</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Escolha o banco e cole os dados pra higienizar em lote.</div>';
 
   const st = cltBatchState;
 
+  // Seletor de banco
+  h += '<div style="display:flex;gap:8px;margin-bottom:16px">';
+  const bancos = [
+    { k: 'c6', label: '🏦 C6 Bank', desc: 'só CPF', cor: 'var(--cyan)' },
+    { k: 'presencabank', label: '🏦 PresençaBank', desc: 'CPF + Nome + Telefone', cor: 'var(--grn)' },
+    { k: 'joinbank', label: '🏦 JoinBank', desc: 'CPF + Nome + Telefone', cor: 'var(--pur)' }
+  ];
+  for (const b of bancos) {
+    const active = st.banco === b.k;
+    h += `<button onclick="cltBatchSetBanco('${b.k}')" style="flex:1;padding:14px;border-radius:10px;border:2px solid ${active?b.cor:'var(--brd)'};background:${active?'rgba(255,255,255,.03)':'var(--card)'};cursor:pointer;color:var(--t1);text-align:left">`;
+    h += `<div style="font-size:14px;font-weight:800;color:${active?b.cor:'var(--t1)'}">${b.label}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">Input: ${b.desc}</div>`;
+    h += `</button>`;
+  }
+  h += '</div>';
+
   if (!st.running && st.items.length === 0) {
-    // Tela inicial: textarea
+    // Tela inicial: textarea (placeholder muda por banco)
+    const placeholder = st.banco === 'c6'
+      ? '12345678900\n98765432100\n11122233344'
+      : '12345678900;João da Silva;15999111111\n98765432100;Maria Santos;11988887777';
+    const labelTxt = st.banco === 'c6'
+      ? 'Lista de CPFs (um por linha, máx 500)'
+      : 'Lista CPF;Nome;Telefone (uma linha por cliente, separadores: ; ou ,)';
+
     h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:20px">';
-    h += '<label style="font-size:12px;color:var(--t2);font-weight:700;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:8px">Lista de CPFs (um por linha, máx 500)</label>';
-    h += '<textarea id="cltBatchInput" class="form-input" style="width:100%;min-height:200px;font-family:monospace;font-size:13px" placeholder="12345678900&#10;98765432100&#10;11122233344"></textarea>';
+    h += `<label style="font-size:12px;color:var(--t2);font-weight:700;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:8px">${labelTxt}</label>`;
+    h += `<textarea id="cltBatchInput" class="form-input" style="width:100%;min-height:200px;font-family:monospace;font-size:13px" placeholder="${placeholder}"></textarea>`;
     h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">';
-    h += '<div style="font-size:11px;color:var(--t3)">⏱️ ~1 segundo por CPF (respeita rate limit C6)</div>';
+    const ratemsg = st.banco === 'presencabank' ? '~2.2s por CPF (rate limit 30 req/min)' : '~1.2s por CPF';
+    h += `<div style="font-size:11px;color:var(--t3)">⏱️ ${ratemsg}</div>`;
     h += '<button class="btn-acc" onclick="rodarBatchCLT()" style="padding:10px 24px">🚀 Rodar Higienização</button>';
     h += '</div></div>';
   } else {
-    // Progresso + resultado
-    const temOferta = st.items.filter(i => i.status === 'done' && i.oferta).length;
-    const semOferta = st.items.filter(i => i.status === 'done' && !i.oferta).length;
+    const temOferta = st.items.filter(i => _batchTemOferta(i, st.banco)).length;
+    const semOferta = st.items.filter(i => i.status === 'done' && !_batchTemOferta(i, st.banco)).length;
     const erros = st.items.filter(i => i.status === 'error').length;
     const pct = st.total ? Math.round((st.done / st.total) * 100) : 0;
 
     h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:20px;margin-bottom:16px">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
-    h += `<div style="font-size:15px;font-weight:800">${st.running ? '⏳ Processando' : '✅ Concluído'}: ${st.done} / ${st.total}</div>`;
+    h += `<div style="font-size:15px;font-weight:800">${st.running ? '⏳ Processando' : '✅ Concluído'}: ${st.done} / ${st.total} <span style="color:var(--t3);font-weight:600">— ${st.banco.toUpperCase()}</span></div>`;
     h += '<div style="display:flex;gap:8px">';
     if (st.running) {
       h += '<button class="btn btn-sm btn-red" onclick="abortarBatchCLT()">⏹ Parar</button>';
@@ -4653,10 +4820,8 @@ function renderCltBatch() {
     }
     h += '</div></div>';
 
-    // Barra de progresso
     h += `<div style="background:var(--sf);height:8px;border-radius:4px;overflow:hidden;margin-bottom:14px"><div style="background:linear-gradient(90deg,var(--acc),var(--cyan));height:100%;width:${pct}%;transition:width .3s"></div></div>`;
 
-    // KPIs
     h += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">';
     h += `<div style="padding:12px;background:var(--sf);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">TOTAL</div><div style="font-size:20px;font-weight:800">${st.total}</div></div>`;
     h += `<div style="padding:12px;background:rgba(34,197,94,.08);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">COM OFERTA</div><div style="font-size:20px;font-weight:800;color:var(--grn)">${temOferta}</div></div>`;
@@ -4665,26 +4830,53 @@ function renderCltBatch() {
     h += '</div>';
     h += '</div>';
 
-    // Tabela de resultado
+    // Tabela
     h += '<div class="table-wrap"><div class="table-scroll"><table>';
-    h += '<thead><tr><th>CPF</th><th>Status</th><th class="right">Valor</th><th class="right">Parcelas</th><th class="right">Parcela R$</th><th class="right">Seguro Sug.</th></tr></thead><tbody>';
-    for (const it of st.items) {
-      let badge, valor = '-', parcs = '-', par = '-', seg = '-';
-      if (it.status === 'pending') {
-        badge = '<span class="pill pill-default">aguardando</span>';
-      } else if (it.status === 'error') {
-        badge = '<span class="pill pill-red">erro</span>';
-      } else if (it.oferta) {
-        badge = '<span class="pill pill-grn">TEM OFERTA</span>';
-        const o = it.oferta;
-        valor = 'R$ ' + (o.valorCliente || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
-        parcs = o.qtdParcelas + 'x';
-        par = 'R$ ' + (o.valorParcela || 0).toFixed(2);
-        seg = 'R$ ' + (o.valorSeguroSugerido || 0).toFixed(2);
-      } else {
-        badge = '<span class="pill pill-default">sem oferta</span>';
+    if (st.banco === 'c6') {
+      h += '<thead><tr><th>CPF</th><th>Status</th><th class="right">Valor</th><th class="right">Parcelas</th><th class="right">Seguro Sug.</th></tr></thead><tbody>';
+      for (const it of st.items) {
+        let badge, valor = '-', parcs = '-', seg = '-';
+        if (it.status === 'pending') badge = '<span class="pill pill-default">aguardando</span>';
+        else if (it.status === 'error') badge = '<span class="pill pill-red">erro</span>';
+        else if (_batchTemOferta(it, 'c6')) {
+          badge = '<span class="pill pill-grn">TEM OFERTA</span>';
+          const o = it.result.oferta;
+          valor = 'R$ ' + (o.valorCliente || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+          parcs = o.qtdParcelas + 'x R$ ' + (o.valorParcela || 0).toFixed(2);
+          seg = 'R$ ' + (o.valorSeguroSugerido || 0).toFixed(2);
+        } else badge = '<span class="pill pill-default">sem oferta</span>';
+        h += `<tr><td class="mono">${it.cpf}</td><td>${badge}</td><td class="right mono">${valor}</td><td class="right mono">${parcs}</td><td class="right mono">${seg}</td></tr>`;
       }
-      h += `<tr><td class="mono">${it.cpf}</td><td>${badge}</td><td class="right mono">${valor}</td><td class="right mono">${parcs}</td><td class="right mono">${par}</td><td class="right mono">${seg}</td></tr>`;
+    } else if (st.banco === 'presencabank') {
+      h += '<thead><tr><th>CPF</th><th>Nome</th><th>Status</th><th>Empregador</th><th class="right">Margem</th><th class="right">Melhor Valor</th></tr></thead><tbody>';
+      for (const it of st.items) {
+        let badge, emp = '-', marg = '-', val = '-';
+        if (it.status === 'pending') badge = '<span class="pill pill-default">aguardando</span>';
+        else if (it.status === 'error') badge = '<span class="pill pill-red">erro</span>';
+        else if (_batchTemOferta(it, 'presencabank')) {
+          badge = '<span class="pill pill-grn">DISPONÍVEL</span>';
+          emp = (it.result.vinculo?.empregador || '').substring(0, 30);
+          marg = 'R$ ' + (it.result.margemDisponivel || 0).toFixed(2);
+          val = 'R$ ' + (it.result.melhorTabela?.valorLiquido || 0).toFixed(2);
+        } else {
+          badge = `<span class="pill pill-default">${it.result?.etapa || 'sem oferta'}</span>`;
+        }
+        h += `<tr><td class="mono">${it.cpf}</td><td>${(it.nome||'').substring(0,20)}</td><td>${badge}</td><td>${emp}</td><td class="right mono">${marg}</td><td class="right mono">${val}</td></tr>`;
+      }
+    } else {
+      h += '<thead><tr><th>CPF</th><th>Nome</th><th>Status</th><th>Empregador</th><th class="right">Margem</th></tr></thead><tbody>';
+      for (const it of st.items) {
+        let badge, emp = '-', marg = '-';
+        if (it.status === 'pending') badge = '<span class="pill pill-default">aguardando</span>';
+        else if (it.status === 'error') badge = '<span class="pill pill-red">erro</span>';
+        else if (_batchTemOferta(it, 'joinbank')) {
+          badge = '<span class="pill pill-grn">DISPONÍVEL</span>';
+          const e = it.result.employmentRelationships?.[0];
+          emp = (e?.employerName || '').substring(0, 30);
+          marg = 'R$ ' + (e?.availableMarginValue || 0).toFixed(2);
+        } else badge = '<span class="pill pill-default">sem vínculo</span>';
+        h += `<tr><td class="mono">${it.cpf}</td><td>${(it.nome||'').substring(0,20)}</td><td>${badge}</td><td>${emp}</td><td class="right mono">${marg}</td></tr>`;
+      }
     }
     h += '</tbody></table></div></div>';
   }
