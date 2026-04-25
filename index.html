@@ -4486,16 +4486,65 @@ async function rodarConsultaCLT() {
   renderApp();
 }
 
-function _cltOfertaCard(o) {
-  const cores = { c6: 'var(--cyan)', presencabank: 'var(--grn)', joinbank: 'var(--pur)' };
+async function cltGerarSelfieC6(cpf, nome, dataNascimento, telefone) {
+  if (!nome || !dataNascimento) {
+    alert('Pra gerar link de selfie C6, preciso de nome e data de nascimento. Esses dados precisam vir do enriquecimento (PresençaBank/Multicorban).');
+    return;
+  }
+  try {
+    const r = await fetch('/api/clt-autorizacoes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({
+        action: 'gerar', banco: 'c6',
+        cpf, nome, dataNascimento, telefone: telefone || ''
+      })
+    });
+    const d = await r.json();
+    if (d.success && d.link) {
+      // Copia link pro clipboard + mostra modal
+      try { await navigator.clipboard.writeText(d.link); } catch {}
+      const enviar = confirm(
+        `✅ Link gerado e copiado!\n\n${d.link}\n\nValidade: ${d.dataExpiracao || '30 dias'}\n\n` +
+        `Mande pro cliente fazer a selfie. Quando ele autorizar, o C6 mostra a oferta na próxima consulta.\n\n` +
+        `Quer abrir o WhatsApp pra enviar agora?`
+      );
+      if (enviar && telefone) {
+        const msg = encodeURIComponent(d.mensagemParaCliente || `Pra prosseguir com sua oferta de crédito CLT, faça uma selfie rápida aqui: ${d.link}`);
+        window.open(`https://wa.me/55${telefone.replace(/\D/g,'')}?text=${msg}`, '_blank');
+      }
+    } else {
+      alert('Erro ao gerar link: ' + (d.erro || 'desconhecido'));
+    }
+  } catch (e) { alert('Erro: ' + e.message); }
+}
+
+function _cltOfertaCard(o, ctx) {
+  const cores = { c6: 'var(--cyan)', presencabank: 'var(--grn)', joinbank: 'var(--pur)', v8: 'var(--ylw)' };
   const cor = cores[o.banco] || 'var(--t1)';
   let h = `<div style="padding:20px;background:var(--card);border:1px solid var(--brd);border-radius:14px;border-left:4px solid ${cor}">`;
   h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
   h += `<div style="font-size:16px;font-weight:800;color:${cor}">🏦 ${o.label}</div>`;
-  h += o.disponivel
-    ? '<span class="pill pill-grn">DISPONÍVEL</span>'
-    : '<span class="pill pill-default">INDISPONÍVEL</span>';
+  if (o.detalhes?._raw?.requiresLiveness || o.requiresLiveness) {
+    h += '<span class="pill" style="background:rgba(245,194,66,.15);color:var(--ylw)">📸 AGUARDA SELFIE</span>';
+  } else {
+    h += o.disponivel
+      ? '<span class="pill pill-grn">DISPONÍVEL</span>'
+      : '<span class="pill pill-default">INDISPONÍVEL</span>';
+  }
   h += '</div>';
+
+  // Card especial pra C6 quando requer selfie
+  if (o.banco === 'c6' && (o.requiresLiveness || o.detalhes?._raw?.requiresLiveness)) {
+    const cpf = ctx?.cliente?.cpf || '';
+    const nome = (ctx?.cliente?.nome || '').replace(/'/g, "\\'");
+    const dataNasc = ctx?.cliente?.dataNascimento || '';
+    const tel = ctx?.cliente?.telefones?.[0]?.completo || '';
+    h += `<div style="font-size:13px;color:var(--ylw);margin-bottom:10px">${o.mensagem || 'Cliente precisa autorizar consulta C6 (selfie DataPrev)'}</div>`;
+    h += `<button class="btn-acc" style="width:100%" onclick="cltGerarSelfieC6('${cpf}','${nome}','${dataNasc}','${tel}')">📸 Gerar Link de Selfie + Enviar WhatsApp</button>`;
+    h += '</div>';
+    return h;
+  }
 
   if (o.disponivel && o.detalhes) {
     const d = o.detalhes;
@@ -4582,9 +4631,9 @@ function renderCltConsulta() {
       h += '</div>';
 
       // Cards das ofertas
-      h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">';
+      h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">';
       for (const o of (r.ofertas || [])) {
-        h += _cltOfertaCard(o);
+        h += _cltOfertaCard(o, r);
       }
       h += '</div>';
 

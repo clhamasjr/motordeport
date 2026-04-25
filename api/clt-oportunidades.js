@@ -179,6 +179,8 @@ export default async function handler(req) {
       banco: 'c6',
       label: 'C6 Bank',
       disponivel: !!(c6.success && c6.temOferta),
+      requiresLiveness: !!c6.requiresLiveness,
+      statusAutorizacao: c6.statusAutorizacao || null,
       detalhes: c6.temOferta ? {
         valorLiquido: c6.oferta?.valorCliente,
         parcelas: c6.oferta?.qtdParcelas,

@@ -114,6 +114,42 @@ export default async function handler(req) {
       const digits = (body.cpf || '').replace(/\D/g, '');
       const cpf = (digits.length >= 9 && digits.length <= 11) ? digits.padStart(11, '0') : '';
       if (!cpf) return jsonError('CPF invalido (precisa ser 9-11 digitos numericos)', 400, req);
+
+      // ── PRÉ-CHECK: cliente autorizou consulta na DataPrev? ──
+      // Se NÃO, qualquer chamada vai retornar 404/422. Devolve estado claro pro frontend.
+      // Skip se body.skipAuthCheck=true (uso interno após autorização confirmada)
+      if (!body.skipAuthCheck) {
+        try {
+          const auth = await c6Call(
+            '/marketplace/authorization/status',
+            'POST',
+            'application/vnd.c6bank_authorization_status_v1+json',
+            { cpf }
+          );
+          const st = auth.data?.status || '';
+          if (st !== 'AUTORIZADO') {
+            return j({
+              success: true,
+              httpStatus: 200,
+              cpf,
+              temOferta: false,
+              oferta: null,
+              requiresLiveness: true,
+              statusAutorizacao: st || 'NAO_ENCONTRADO',
+              mensagem: st === 'AGUARDANDO_AUTORIZACAO'
+                ? 'Cliente recebeu link de selfie mas ainda não autorizou'
+                : st === 'NAO_AUTORIZADO'
+                  ? 'Cliente recusou ou link expirou — gerar novo link de selfie'
+                  : 'Cliente nunca autorizou consulta C6/DataPrev — gerar link de selfie',
+              _autz: auth.data
+            }, 200, req);
+          }
+        } catch (e) {
+          // Se status falhar, segue tentativa normal (vai retornar 404 ou 422 se for caso)
+        }
+      }
+
+      // Cliente AUTORIZADO — tenta endpoint de oferta pré-aprovada primeiro
       const r = await c6Call(
         '/marketplace/worker-payroll-loan-offers',
         'POST',
@@ -121,7 +157,45 @@ export default async function handler(req) {
         { cpf_cliente: cpf }
       );
       const t = r.data?.trabalhador || {};
-      const temOferta = !!(t.valor_cliente && parseFloat(t.valor_cliente) > 0);
+      let temOferta = !!(t.valor_cliente && parseFloat(t.valor_cliente) > 0);
+      let ofertaFinal = temOferta ? {
+        valorCliente: parseFloat(t.valor_cliente || 0),
+        qtdParcelas: parseInt(t.quantidade_parcelas || 0),
+        valorParcela: parseFloat(t.valor_parcela || 0),
+        valorTaxa: parseFloat(t.valor_taxa || 0),
+        valorSeguroSugerido: parseFloat(t.seguro?.valor_seguro || 0)
+      } : null;
+      let fonte = 'pre_aprovada';
+
+      // Se 404 no endpoint de pré-aprovada, tenta /simulation POR_VALOR_MAXIMO (oferta geral)
+      if (r.status === 404 && !temOferta) {
+        try {
+          const sim = await c6Call(
+            '/marketplace/worker-payroll-loan-offers/simulation',
+            'POST',
+            'application/vnd.c6bank_simulate_proposal_v2+json',
+            { cpf, tipo_simulacao: 'POR_VALOR_MAXIMO' }
+          );
+          const planos = (sim.data?.condicoes_credito || [])
+            .map(c => c.condicao || {})
+            .filter(c => !(c.convenio?.observacao && /invalido/i.test(c.convenio.observacao)))
+            .filter(c => c.valor_cliente > 0)
+            .sort((a, b) => (b.valor_cliente || 0) - (a.valor_cliente || 0));
+          if (planos.length > 0) {
+            const m = planos[0];
+            temOferta = true;
+            ofertaFinal = {
+              valorCliente: m.valor_cliente,
+              qtdParcelas: m.quantidade_parcelas,
+              valorParcela: m.valor_parcela,
+              valorTaxa: m.valor_iof,
+              valorSeguroSugerido: (m.despesas?.[0]?.valor || 0)
+            };
+            fonte = 'simulacao_max';
+          }
+        } catch {}
+      }
+
       // 404 do C6 = "cliente sem oferta" = resposta negativa legitima, nao erro
       const isSemOferta404 = r.status === 404;
       const chamadaOk = r.ok || isSemOferta404;
@@ -130,17 +204,12 @@ export default async function handler(req) {
         httpStatus: r.status,
         cpf,
         temOferta,
-        oferta: temOferta ? {
-          valorCliente: parseFloat(t.valor_cliente || 0),
-          qtdParcelas: parseInt(t.quantidade_parcelas || 0),
-          valorParcela: parseFloat(t.valor_parcela || 0),
-          valorTaxa: parseFloat(t.valor_taxa || 0),
-          valorSeguroSugerido: parseFloat(t.seguro?.valor_seguro || 0),
-        } : null,
+        oferta: ofertaFinal,
+        fonte, // 'pre_aprovada' | 'simulacao_max'
         mensagem: temOferta
-          ? `Cliente tem oferta pré-aprovada: R$ ${parseFloat(t.valor_cliente).toFixed(2)} em ${t.quantidade_parcelas}x de R$ ${parseFloat(t.valor_parcela).toFixed(2)}`
-          : 'Cliente não possui oferta CLT disponível no C6 neste momento.',
-        _raw: r.data,
+          ? `Oferta CLT (${fonte}): R$ ${ofertaFinal.valorCliente.toFixed(2)} em ${ofertaFinal.qtdParcelas}x de R$ ${ofertaFinal.valorParcela.toFixed(2)}`
+          : 'Cliente autorizado mas sem oferta CLT disponível no C6 (sem vínculo elegível ou margem insuficiente).',
+        _raw: r.data
       }, 200, req);
     }
 

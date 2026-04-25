@@ -27,6 +27,7 @@ const AUDIENCE = () => process.env.V8_AUDIENCE; // fornecido por email pela V8 �
 const USERNAME = () => process.env.V8_USERNAME;
 const PASSWORD = () => process.env.V8_PASSWORD;
 const PROVIDER_DEFAULT = 'QI';
+const PROVIDERS_DISPONIVEIS = ['QI', 'CELCOIN']; // V8 trabalha com 2 bancarizadoras
 
 // ── Token cache (em memória edge) ────────────────────────────
 let TOKEN_CACHE = { token: null, expiresAt: 0 };
