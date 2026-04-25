@@ -4594,13 +4594,9 @@ function renderCltConsulta() {
       h += total > 0 ? `✅ <b>${r.mensagem}</b>` : `⚠️ ${r.mensagem}`;
       h += '</div>';
 
-      // Diagnóstico de enriquecimento
+      // Diagnóstico de enriquecimento (rodapé discreto)
       const enr = r.enriquecimento || {};
       h += `<div style="margin-top:8px;font-size:11px;color:var(--t3);text-align:center">PresençaBank: ${enr.presencaBankOk?'✅':'❌'} · Multicorban: ${enr.multicorbanOk?'✅':'❌'}</div>`;
-
-      h += '<details style="margin-top:16px"><summary style="cursor:pointer;color:var(--t3);font-size:11px">🔧 JSON cru (debug)</summary>';
-      h += '<pre style="background:var(--sf);padding:10px;border-radius:6px;overflow:auto;font-size:10px;max-height:400px">' + JSON.stringify(r, null, 2).replace(/</g, '&lt;') + '</pre>';
-      h += '</details>';
     }
   }
 
@@ -4681,6 +4677,14 @@ async function rodarBatchCLT() {
         endpoint = '/api/joinbank';
         payload = { action: 'cltCreateSimulation', providerCode: '950002',
           borrower: { identity: it.cpf, name: it.nome, phone: it.telefone } };
+      } else if (cltBatchState.banco === 'v8') {
+        endpoint = '/api/v8';
+        payload = {
+          action: 'consultarPorCPF',
+          cpf: it.cpf
+        };
+        // V8 batch usa só consultarPorCPF (verifica se já tem termo + status)
+        // Pra criar termo novo, usar Consulta Unitária
       }
       const r = await fetch(endpoint, { method: 'POST', headers: h, body: JSON.stringify(payload) }).then(r => r.json());
       it.status = 'done';
@@ -4711,7 +4715,135 @@ function _batchTemOferta(it, banco) {
   if (banco === 'c6') return !!(it.result.temOferta && it.result.oferta);
   if (banco === 'presencabank') return !!(it.result.success && it.result.melhorTabela);
   if (banco === 'joinbank') return !!(it.result.success && it.result.temVinculo);
+  if (banco === 'v8') return !!(it.result.encontrado && it.result.status === 'SUCCESS');
   return false;
+}
+
+// ─── ESTEIRA CLT (todos os 4 bancos) ──────────────────────────
+let cltEsteiraState = {
+  loading: false,
+  propostas: [],
+  filtros: { banco: '', status: '', cpf: '' },
+  _loaded: false
+};
+
+async function cltCarregarEsteira() {
+  cltEsteiraState.loading = true; renderApp();
+  try {
+    // Lê direto da clt_propostas via Supabase (proxy: /api/agente-clt action=listarPropostas? ou criar endpoint)
+    // Por enquanto, usa fetch genérico via /api/agente-clt — mas como ainda não tem essa action,
+    // criamos um endpoint dedicado /api/clt-esteira (TODO). Por agora, usa raw query no Supabase via dbQuery.
+    // Workaround: usa o endpoint de conversas que já tem listagem
+    // Solução temporária: chamamos a mesma view consolidada via SQL helper genérico
+    // (na prática, vou adicionar action 'listarPropostas' no agente-clt depois)
+    const r = await fetch('/api/agente-clt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'listarPropostas',
+        banco: cltEsteiraState.filtros.banco || undefined,
+        status: cltEsteiraState.filtros.status || undefined,
+        cpf: cltEsteiraState.filtros.cpf || undefined
+      })
+    });
+    const d = await r.json();
+    cltEsteiraState.propostas = d.propostas || [];
+  } catch (e) { console.error(e); }
+  cltEsteiraState.loading = false;
+  renderApp();
+}
+
+function renderCltEsteira() {
+  if (!cltEsteiraState.loading && cltEsteiraState.propostas.length === 0 && !cltEsteiraState._loaded) {
+    cltEsteiraState._loaded = true;
+    setTimeout(cltCarregarEsteira, 0);
+  }
+
+  let h = '<div style="max-width:1400px;margin:0 auto;padding:20px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">';
+  h += '<div><div style="font-size:22px;font-weight:800">🛒 Esteira CLT — Propostas</div>';
+  h += '<div style="font-size:12px;color:var(--t2)">Todas as propostas criadas nos 4 bancos (C6, PresençaBank, JoinBank, V8)</div></div>';
+  h += '<button class="btn btn-sm" onclick="cltCarregarEsteira()">🔄 Atualizar</button>';
+  h += '</div>';
+
+  // Filtros
+  h += '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
+  h += `<select class="form-input" style="width:160px" onchange="cltEsteiraState.filtros.banco=this.value;cltCarregarEsteira()">`;
+  h += `<option value="">Todos os bancos</option>`;
+  for (const b of ['c6','presencabank','joinbank','v8']) {
+    const sel = cltEsteiraState.filtros.banco === b ? 'selected' : '';
+    h += `<option value="${b}" ${sel}>${b.toUpperCase()}</option>`;
+  }
+  h += `</select>`;
+  h += `<select class="form-input" style="width:200px" onchange="cltEsteiraState.filtros.status=this.value;cltCarregarEsteira()">`;
+  h += `<option value="">Todos os status</option>`;
+  for (const st of ['criada','aguardando_assinatura','em_analise','aprovada','paga','pendente','rejeitada','cancelada']) {
+    const sel = cltEsteiraState.filtros.status === st ? 'selected' : '';
+    h += `<option value="${st}" ${sel}>${st}</option>`;
+  }
+  h += `</select>`;
+  h += `<input class="form-input" placeholder="CPF (filtrar)" style="width:160px" id="cltEsteiraCpf" onkeydown="if(event.key==='Enter'){cltEsteiraState.filtros.cpf=this.value.replace(/\\D/g,'');cltCarregarEsteira()}">`;
+  h += '</div>';
+
+  // KPIs por status
+  if (cltEsteiraState.propostas.length > 0) {
+    const counts = {};
+    let totalValor = 0;
+    for (const p of cltEsteiraState.propostas) {
+      counts[p.status_interno] = (counts[p.status_interno] || 0) + 1;
+      totalValor += parseFloat(p.valor_liquido || 0);
+    }
+    h += '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">';
+    h += `<div style="padding:12px;background:var(--card);border:1px solid var(--brd);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">TOTAL</div><div style="font-size:22px;font-weight:800">${cltEsteiraState.propostas.length}</div></div>`;
+    h += `<div style="padding:12px;background:rgba(34,197,94,.08);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">PAGAS</div><div style="font-size:22px;font-weight:800;color:var(--grn)">${counts.paga||0}</div></div>`;
+    h += `<div style="padding:12px;background:rgba(59,130,246,.08);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">EM ANÁLISE</div><div style="font-size:22px;font-weight:800;color:var(--acc)">${counts.em_analise||0}</div></div>`;
+    h += `<div style="padding:12px;background:rgba(234,179,8,.08);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">PENDENTES</div><div style="font-size:22px;font-weight:800;color:var(--ylw)">${counts.pendente||0}</div></div>`;
+    h += `<div style="padding:12px;background:rgba(34,211,238,.08);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">VOLUME</div><div style="font-size:18px;font-weight:800;color:var(--cyan)">R$ ${totalValor.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>`;
+    h += '</div>';
+  }
+
+  if (cltEsteiraState.loading) {
+    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando esteira...</div>';
+  } else if (!cltEsteiraState.propostas.length) {
+    h += '<div style="padding:60px;text-align:center;background:var(--card);border:1px solid var(--brd);border-radius:12px">';
+    h += '<div style="font-size:48px;margin-bottom:12px">📋</div>';
+    h += '<div style="color:var(--t2);font-size:14px">Nenhuma proposta na esteira ainda.</div>';
+    h += '<div style="color:var(--t3);font-size:12px;margin-top:8px">Propostas criadas (Consulta Unitária / Lote / Agente WhatsApp) aparecem aqui.</div>';
+    h += '</div>';
+  } else {
+    h += '<div class="table-wrap"><div class="table-scroll"><table>';
+    h += '<thead><tr><th>Banco</th><th>CPF / Nome</th><th>Status</th><th class="right">Valor Líquido</th><th class="right">Parcelas</th><th>Origem</th><th>Criada</th><th>Ações</th></tr></thead><tbody>';
+    for (const p of cltEsteiraState.propostas) {
+      const corBanco = { c6:'var(--cyan)', presencabank:'var(--grn)', joinbank:'var(--pur)', v8:'var(--ylw)' }[p.banco] || 'var(--t1)';
+      const corStatus = p.status_interno === 'paga' ? 'pill-grn'
+                      : p.status_interno === 'cancelada' || p.status_interno === 'rejeitada' ? 'pill-red'
+                      : p.status_interno === 'pendente' ? 'pill-ylw'
+                      : 'pill-acc';
+      h += '<tr>';
+      h += `<td><span style="color:${corBanco};font-weight:700">${p.banco.toUpperCase()}</span></td>`;
+      h += `<td><div class="mono" style="font-size:11px">${p.cpf}</div><div style="font-size:11px;color:var(--t3)">${(p.nome||'').substring(0,28)}</div></td>`;
+      h += `<td><span class="pill ${corStatus}">${p.status_interno}</span>${p.status_externo?`<div style="font-size:9px;color:var(--t3)">${p.status_externo}</div>`:''}</td>`;
+      h += `<td class="right mono">R$ ${parseFloat(p.valor_liquido||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>`;
+      h += `<td class="right mono">${p.qtd_parcelas||'-'}x</td>`;
+      h += `<td style="font-size:11px;color:var(--t3)">${p.origem||'-'}</td>`;
+      h += `<td style="font-size:11px;color:var(--t3)">${p.created_at?new Date(p.created_at).toLocaleString('pt-BR'):'-'}</td>`;
+      h += `<td>`;
+      if (p.link_formalizacao) h += `<a href="${p.link_formalizacao}" target="_blank" class="btn btn-sm" style="margin-right:4px">🔗</a>`;
+      h += `<button class="btn btn-sm" onclick="cltVerProposta('${p.id}')">👁️</button>`;
+      h += `</td>`;
+      h += '</tr>';
+    }
+    h += '</tbody></table></div></div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+async function cltVerProposta(id) {
+  // TODO: modal de detalhe (próxima iteração — por enquanto só JSON)
+  const p = cltEsteiraState.propostas.find(x => x.id === id);
+  if (p) {
+    alert(JSON.stringify(p, null, 2).substring(0, 2000));
+  }
 }
 
 function exportBatchCLT() {
@@ -4758,11 +4890,12 @@ function renderCltBatch() {
   const st = cltBatchState;
 
   // Seletor de banco
-  h += '<div style="display:flex;gap:8px;margin-bottom:16px">';
+  h += '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
   const bancos = [
     { k: 'c6', label: '🏦 C6 Bank', desc: 'só CPF', cor: 'var(--cyan)' },
     { k: 'presencabank', label: '🏦 PresençaBank', desc: 'CPF + Nome + Telefone', cor: 'var(--grn)' },
-    { k: 'joinbank', label: '🏦 JoinBank', desc: 'CPF + Nome + Telefone', cor: 'var(--pur)' }
+    { k: 'joinbank', label: '🏦 JoinBank', desc: 'CPF + Nome + Telefone', cor: 'var(--pur)' },
+    { k: 'v8', label: '🏦 V8 Sistema', desc: 'CPF + Nome + Tel + Sexo + DataNasc + Email', cor: 'var(--ylw)' }
   ];
   for (const b of bancos) {
     const active = st.banco === b.k;
@@ -4865,6 +4998,123 @@ function renderCltBatch() {
         } else badge = '<span class="pill pill-default">sem vínculo</span>';
         h += `<tr><td class="mono">${it.cpf}</td><td>${(it.nome||'').substring(0,20)}</td><td>${badge}</td><td>${emp}</td><td class="right mono">${marg}</td></tr>`;
       }
+    }
+    h += '</tbody></table></div></div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+// ─── Esteira CLT (propostas dos 4 bancos) ────────────────────
+let cltEsteiraState = {
+  loading: false, propostas: [], total: 0,
+  filtros: { banco: '', status: '', cpf: '' },
+  _loaded: false
+};
+
+async function cltCarregarEsteira() {
+  cltEsteiraState.loading = true; renderApp();
+  try {
+    const filters = {};
+    if (cltEsteiraState.filtros.banco) filters.banco = cltEsteiraState.filtros.banco;
+    if (cltEsteiraState.filtros.status) filters.status_interno = cltEsteiraState.filtros.status;
+    if (cltEsteiraState.filtros.cpf) filters.cpf = cltEsteiraState.filtros.cpf;
+    const r = await fetch('/api/clt-esteira', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'list', filters, limit: 200 })
+    });
+    const d = await r.json();
+    cltEsteiraState.propostas = d.propostas || [];
+    cltEsteiraState.total = d.total || 0;
+    cltEsteiraState.error = d.error || null;
+  } catch (e) { console.error(e); cltEsteiraState.propostas = []; cltEsteiraState.error = e.message; }
+  cltEsteiraState.loading = false;
+  renderApp();
+}
+
+function renderCltEsteira() {
+  if (!cltEsteiraState.loading && cltEsteiraState.propostas.length === 0 && !cltEsteiraState._loaded) {
+    cltEsteiraState._loaded = true;
+    setTimeout(cltCarregarEsteira, 0);
+  }
+
+  let h = '<div style="max-width:1500px;margin:0 auto;padding:20px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">';
+  h += '<div><div style="font-size:22px;font-weight:800">🛒 CLT — Esteira de Propostas</div><div style="font-size:12px;color:var(--t2)">Todas as propostas dos 4 bancos (C6, PresençaBank, JoinBank, V8) num só lugar</div></div>';
+  h += '<button class="btn btn-sm" onclick="cltCarregarEsteira()">🔄 Atualizar</button>';
+  h += '</div>';
+
+  // Filtros
+  h += '<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">';
+  h += '<select class="form-input" style="width:auto" onchange="cltEsteiraState.filtros.banco=this.value;cltCarregarEsteira()">';
+  h += '<option value="">Todos os bancos</option>';
+  for (const b of ['c6','presencabank','joinbank','v8']) {
+    const sel = cltEsteiraState.filtros.banco === b ? 'selected' : '';
+    h += `<option value="${b}" ${sel}>${b.toUpperCase()}</option>`;
+  }
+  h += '</select>';
+  h += '<select class="form-input" style="width:auto" onchange="cltEsteiraState.filtros.status=this.value;cltCarregarEsteira()">';
+  h += '<option value="">Todos os status</option>';
+  for (const s of ['criada','aguardando_assinatura','em_analise','aprovada','paga','pendente','rejeitada','cancelada']) {
+    const sel = cltEsteiraState.filtros.status === s ? 'selected' : '';
+    h += `<option value="${s}" ${sel}>${s}</option>`;
+  }
+  h += '</select>';
+  h += `<input class="form-input" style="width:200px" placeholder="CPF" value="${cltEsteiraState.filtros.cpf||''}" onchange="cltEsteiraState.filtros.cpf=this.value;cltCarregarEsteira()">`;
+  h += '<button class="btn btn-sm" onclick="cltEsteiraState.filtros={banco:\'\',status:\'\',cpf:\'\'};cltCarregarEsteira()">Limpar</button>';
+  h += '</div>';
+
+  if (cltEsteiraState.loading) {
+    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando esteira...</div>';
+  } else if (!cltEsteiraState.propostas.length) {
+    h += '<div style="padding:60px;text-align:center;background:var(--card);border:1px solid var(--brd);border-radius:12px">';
+    h += '<div style="font-size:48px;margin-bottom:12px">📭</div>';
+    h += '<div style="color:var(--t2);font-size:14px">Nenhuma proposta na esteira ainda.</div>';
+    h += '<div style="color:var(--t3);font-size:12px;margin-top:8px">Quando você criar uma proposta (manual, agente WhatsApp ou lote), aparece aqui.</div>';
+    h += '<div style="color:var(--t3);font-size:11px;margin-top:6px">Tip: aplique a migration <code>supabase_migration_clt_propostas.sql</code> no Supabase se ainda não fez.</div>';
+    h += '</div>';
+  } else {
+    // KPIs
+    const porBanco = {};
+    const porStatus = {};
+    let somaLiquido = 0, somaPaga = 0;
+    for (const p of cltEsteiraState.propostas) {
+      porBanco[p.banco] = (porBanco[p.banco] || 0) + 1;
+      porStatus[p.status_interno] = (porStatus[p.status_interno] || 0) + 1;
+      somaLiquido += parseFloat(p.valor_liquido || 0);
+      if (p.status_interno === 'paga') somaPaga += parseFloat(p.valor_liquido || 0);
+    }
+    h += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">';
+    h += `<div style="padding:14px;background:var(--card);border:1px solid var(--brd);border-radius:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Total propostas</div><div style="font-size:22px;font-weight:800">${cltEsteiraState.total}</div></div>`;
+    h += `<div style="padding:14px;background:rgba(34,197,94,.08);border:1px solid var(--brd);border-radius:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Pagas</div><div style="font-size:22px;font-weight:800;color:var(--grn)">${porStatus.paga||0}</div></div>`;
+    h += `<div style="padding:14px;background:var(--card);border:1px solid var(--brd);border-radius:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase">R$ Líquido total</div><div style="font-size:18px;font-weight:800">R$ ${somaLiquido.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>`;
+    h += `<div style="padding:14px;background:rgba(34,197,94,.08);border:1px solid var(--brd);border-radius:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase">R$ Pago efetivo</div><div style="font-size:18px;font-weight:800;color:var(--grn)">R$ ${somaPaga.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>`;
+    h += '</div>';
+
+    // Tabela
+    h += '<div class="table-wrap"><div class="table-scroll"><table>';
+    h += '<thead><tr><th>Criada</th><th>Banco</th><th>CPF</th><th>Nome</th><th class="right">Valor</th><th class="right">Parcelas</th><th>Status</th><th>Origem</th><th>Vendedor</th><th>Ações</th></tr></thead><tbody>';
+    for (const p of cltEsteiraState.propostas) {
+      const cor = { c6: 'pill-cyan', presencabank: 'pill-grn', joinbank: 'pill-pur', v8: 'pill-ylw' }[p.banco] || 'pill-default';
+      const corSt = p.status_interno === 'paga' ? 'pill-grn' : (p.status_interno === 'rejeitada' || p.status_interno === 'cancelada' ? 'pill-red' : 'pill-default');
+      const dt = p.created_at ? new Date(p.created_at).toLocaleString('pt-BR') : '-';
+      const valor = p.valor_liquido ? 'R$ ' + parseFloat(p.valor_liquido).toLocaleString('pt-BR',{minimumFractionDigits:2}) : '-';
+      h += `<tr>`;
+      h += `<td style="font-size:11px;color:var(--t3)">${dt}</td>`;
+      h += `<td><span class="pill ${cor}">${p.banco}</span></td>`;
+      h += `<td class="mono">${p.cpf||'-'}</td>`;
+      h += `<td>${p.nome||'-'}</td>`;
+      h += `<td class="right mono">${valor}</td>`;
+      h += `<td class="right mono">${p.qtd_parcelas||'-'}x</td>`;
+      h += `<td><span class="pill ${corSt}">${p.status_interno||'-'}</span><div style="font-size:9px;color:var(--t3)">${p.status_externo||''}</div></td>`;
+      h += `<td style="font-size:11px">${p.origem||'-'}</td>`;
+      h += `<td style="font-size:11px">${p.vendedor_nome||'-'}${p.parceiro_nome?'<br><span style="color:var(--t3)">'+p.parceiro_nome+'</span>':''}</td>`;
+      h += `<td>`;
+      if (p.link_formalizacao) h += `<a href="${p.link_formalizacao}" target="_blank" class="btn btn-sm">📝 Link</a>`;
+      h += `</td>`;
+      h += `</tr>`;
     }
     h += '</tbody></table></div></div>';
   }
@@ -5508,6 +5758,9 @@ const MENU=[
       {group:'Análise em Lote',icon:'📊',items:[
         {k:'cltBatch',icon:'📥',label:'Higienização em Lote',needsRole:['gestor','admin']}
       ]},
+      {group:'Esteira',icon:'📝',items:[
+        {k:'cltEsteira',icon:'🛒',label:'Propostas'}
+      ]},
       {group:'Agente IA',icon:'🤖',items:[
         {k:'cltChats',icon:'💬',label:'Conversas'}
       ]},
@@ -5817,7 +6070,7 @@ try{renderJobsFloat()}catch{}
 if(!D){
   document.getElementById("headerActions").style.display="none";
   // Aba padrao = home se invalida
-  if(!["home","bases","consulta","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch"].includes(S.tab))S.tab="home";
+  if(!["home","bases","consulta","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch","cltEsteira"].includes(S.tab))S.tab="home";
   let content='';
   if(S.tab==="consulta")content=renderConsulta();
   else if(S.tab==="est")content=renderEsteira();
@@ -5831,6 +6084,7 @@ if(!D){
   else if(S.tab==="cltConsulta")content=renderCltConsulta();
   else if(S.tab==="cltChats")content=renderCltChats();
   else if(S.tab==="cltBatch")content=renderCltBatch();
+  else if(S.tab==="cltEsteira")content=renderCltEsteira();
   if(content){tabContent.innerHTML=content;return}
   // Sem data: tab 'bases' = tela de upload; tab 'home' (padrao) = home
   if(S.tab==="bases"){renderLanding(tabContent);return}
@@ -5863,6 +6117,7 @@ if(!D){
   else if(S.tab==="cltConsulta")tcontent=renderCltConsulta();
   else if(S.tab==="cltChats")tcontent=renderCltChats();
   else if(S.tab==="cltBatch")tcontent=renderCltBatch();
+  else if(S.tab==="cltEsteira")tcontent=renderCltEsteira();
   if(tcontent){tabContent.innerHTML=tcontent;return}
 
   // ═══ DASHBOARD ═══

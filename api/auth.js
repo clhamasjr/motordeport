@@ -92,27 +92,132 @@ export default async function handler(req) {
   if (!currentUser) return jsonError('Sessao invalida', 401, req);
 
   // ── LIST USERS (admin/gestor) ──────────────────────────────
+  // Admin ve todos. Gestor ve apenas o proprio + vendedores do seu time (parceiro_id = seu id)
   if (action === 'list') {
     const roleErr = requireRole(currentUser, ['admin', 'gestor']);
     if (roleErr) return roleErr;
 
-    // bank_codes e um JSON por banco: { facta: 'codigo_vendedor', qitech: 'id', daycoval: 'codigo', ... }
     const { data, error } = await dbSelect('users', {
-      select: 'id,username,name,role,active,created_at,bank_codes',
+      select: 'id,username,name,role,active,created_at,bank_codes,parceiro_id',
       order: 'created_at.asc'
     });
     if (error) return jsonError('Erro ao buscar usuarios', 500, req);
-    return json({ ok: true, users: data }, 200, req);
+
+    // Gestor so ve users do MESMO parceiro (time da agencia dele)
+    let filtered = data;
+    if (currentUser.role === 'gestor' && currentUser.parceiro_id) {
+      filtered = data.filter(u => u.parceiro_id === currentUser.parceiro_id);
+    } else if (currentUser.role === 'gestor') {
+      // gestor sem parceiro_id: so ve si mesmo
+      filtered = data.filter(u => u.id === currentUser.id);
+    }
+    return json({ ok: true, users: filtered }, 200, req);
   }
 
-  // ── GET CURRENT USER (inclui codigos por banco) ──────────
+  // ── GET CURRENT USER (inclui codigos por banco + parceiro_id) ──
   if (action === 'me') {
     const { data } = await dbSelect('users', {
       filters: { id: currentUser.id },
-      select: 'id,username,name,role,bank_codes',
+      select: 'id,username,name,role,bank_codes,parceiro_id',
       single: true
     });
     return json({ ok: true, user: data }, 200, req);
+  }
+
+  // ── MY TEAM — Lista users do parceiro do gestor atual ───
+  // Util pra aplicar filtro "ver so meu time" em consultas/esteira/CRM
+  if (action === 'my_team') {
+    let teamIds = [currentUser.id];
+    if (currentUser.role === 'admin') {
+      const { data } = await dbSelect('users', { select: 'id' });
+      teamIds = (data || []).map(u => u.id);
+      return json({ ok: true, team: [], teamIds }, 200, req);
+    }
+    if (currentUser.role === 'gestor' && currentUser.parceiro_id) {
+      // Gestor ve todos users do mesmo parceiro (incluindo si mesmo)
+      const { data } = await dbSelect('users', { filters: { parceiro_id: currentUser.parceiro_id }, select: 'id,username,name,role' });
+      teamIds = (data || []).map(u => u.id);
+      return json({ ok: true, team: data || [], teamIds }, 200, req);
+    }
+    return json({ ok: true, team: [], teamIds }, 200, req);
+  }
+
+  // ── LIST PARCEIROS ──────────────────────────────────────
+  if (action === 'list_parceiros') {
+    const roleErr = requireRole(currentUser, ['admin', 'gestor']);
+    if (roleErr) return roleErr;
+    const { data, error } = await dbSelect('parceiros', { select: 'id,nome,cnpj,active,created_at', order: 'nome.asc' });
+    if (error) return jsonError('Erro ao buscar parceiros', 500, req);
+    return json({ ok: true, parceiros: data || [] }, 200, req);
+  }
+
+  // ── CREATE PARCEIRO (admin only) ────────────────────────
+  if (action === 'create_parceiro') {
+    const roleErr = requireRole(currentUser, ['admin']);
+    if (roleErr) return roleErr;
+    const { nome, cnpj } = body;
+    if (!nome || !nome.trim()) return json({ ok: false, error: 'Nome obrigatorio' }, 400, req);
+    const { data, error } = await dbInsert('parceiros', { nome: nome.trim(), cnpj: cnpj || null, active: true, created_by: currentUser.id });
+    if (error) return jsonError('Erro ao criar parceiro', 500, req);
+    await dbInsert('audit_log', { user_id: currentUser.id, action: 'create_parceiro', details: { nome: nome.trim() } });
+    return json({ ok: true, parceiro: data }, 200, req);
+  }
+
+  // ── UPDATE PARCEIRO (admin only) ────────────────────────
+  if (action === 'update_parceiro') {
+    const roleErr = requireRole(currentUser, ['admin']);
+    if (roleErr) return roleErr;
+    const { parceiroId, nome, cnpj, active } = body;
+    if (!parceiroId) return json({ ok: false, error: 'parceiroId obrigatorio' }, 400, req);
+    const patch = {};
+    if (nome !== undefined) patch.nome = String(nome).trim();
+    if (cnpj !== undefined) patch.cnpj = cnpj || null;
+    if (active !== undefined) patch.active = !!active;
+    await dbUpdate('parceiros', { id: parceiroId }, patch);
+    await dbInsert('audit_log', { user_id: currentUser.id, action: 'update_parceiro', details: { parceiroId, patch } });
+    return json({ ok: true, mensagem: 'Parceiro atualizado' }, 200, req);
+  }
+
+  // ── DELETE PARCEIRO (admin only — soft via active=false) ──
+  if (action === 'delete_parceiro') {
+    const roleErr = requireRole(currentUser, ['admin']);
+    if (roleErr) return roleErr;
+    const { parceiroId } = body;
+    if (!parceiroId) return json({ ok: false, error: 'parceiroId obrigatorio' }, 400, req);
+    // Conta users vinculados
+    const { data: users } = await dbSelect('users', { filters: { parceiro_id: parceiroId }, select: 'id' });
+    if (users && users.length) {
+      return json({ ok: false, error: `Parceiro tem ${users.length} user(s) vinculado(s). Desvincule antes de excluir.` }, 400, req);
+    }
+    await dbUpdate('parceiros', { id: parceiroId }, { active: false });
+    await dbInsert('audit_log', { user_id: currentUser.id, action: 'delete_parceiro', details: { parceiroId } });
+    return json({ ok: true, mensagem: 'Parceiro desativado' }, 200, req);
+  }
+
+  // ── ASSIGN PARCEIRO (vincula gestor ou vendedor a um parceiro) ──
+  // body: { targetUser: username, parceiroId: number|null }
+  if (action === 'assign_parceiro') {
+    const roleErr = requireRole(currentUser, ['admin', 'gestor']);
+    if (roleErr) return roleErr;
+    const { targetUser, parceiroId } = body;
+    if (!targetUser) return json({ ok: false, error: 'targetUser obrigatorio' }, 400, req);
+    const { data: target } = await dbSelect('users', { filters: { username: targetUser }, select: 'id,username,role', single: true });
+    if (!target) return json({ ok: false, error: 'Usuario nao encontrado' }, 400, req);
+    if (target.role === 'admin') return json({ ok: false, error: 'Admin nao tem parceiro' }, 400, req);
+    // Gestor so pode vincular ao proprio parceiro
+    if (currentUser.role === 'gestor') {
+      if (parceiroId !== null && parceiroId !== currentUser.parceiro_id) {
+        return json({ ok: false, error: 'Gestor so pode vincular ao proprio parceiro' }, 403, req);
+      }
+    }
+    // Valida parceiroId existe se fornecido
+    if (parceiroId !== null && parceiroId !== undefined) {
+      const { data: parceiro } = await dbSelect('parceiros', { filters: { id: parceiroId }, select: 'id,nome', single: true });
+      if (!parceiro) return json({ ok: false, error: 'Parceiro nao encontrado' }, 400, req);
+    }
+    await dbUpdate('users', { id: target.id }, { parceiro_id: parceiroId || null });
+    await dbInsert('audit_log', { user_id: currentUser.id, action: 'assign_parceiro', details: { target: targetUser, parceiroId: parceiroId || null } });
+    return json({ ok: true, mensagem: parceiroId ? 'Vinculado ao parceiro' : 'Desvinculado' }, 200, req);
   }
 
   // ── UPDATE BANK CODES (admin only) ─────────────────────

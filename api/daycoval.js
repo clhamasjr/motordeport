@@ -24,7 +24,11 @@ async function dayFetch(loginUsuario, method, path, body) {
   const headers = {
     'apikey': cfg.API_KEY,
     'Login-Usuario': loginUsuario,
-    'Accept': 'application/json'
+    'Accept': 'application/json',
+    // User-Agent browser-like: alguns WAFs (ex: Cloudflare/BotFight) bloqueiam clientes
+    // sem UA padrao. Mesma mitigacao que aplicamos no facta-proxy.
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
   };
   const init = { method, headers };
   if (body !== undefined && body !== null && method !== 'GET') {
@@ -38,7 +42,15 @@ async function dayFetch(loginUsuario, method, path, body) {
   const text = await r.text();
   let data;
   try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text.substring(0, 3000) }; }
-  return { ok: r.ok, status: r.status, data };
+  // Captura alguns headers uteis para diagnostico (CDN/WAF)
+  const respHeaders = {
+    server: r.headers.get('server'),
+    contentType: r.headers.get('content-type'),
+    cfRay: r.headers.get('cf-ray'),
+    xAmznTraceId: r.headers.get('x-amzn-trace-id'),
+    xRequestId: r.headers.get('x-request-id')
+  };
+  return { ok: r.ok, status: r.status, data, respHeaders };
 }
 
 const j = (data, status = 200, req = null) => jsonResp(data, status, req);
@@ -76,6 +88,7 @@ export default async function handler(req) {
           d.pingStatus = r.status;
           d.pingOk = r.ok;
           d.pingSample = Array.isArray(r.data) ? r.data.slice(0, 2) : r.data;
+          d.pingHeaders = r.respHeaders;
         } catch (e) {
           d.pingError = e.message;
         }

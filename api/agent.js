@@ -73,13 +73,31 @@ QUANDO USAR CADA BANCO:
    Saque do limite disponível em cartão consignado já existente
    Argumento: "Seu cartão [banco] tem [valor] de saque disponível, é seu, só precisa solicitar"
 
+═══ REGRA CRÍTICA — DADOS DO CLIENTE ═══
+⚠️ SE você JÁ TEM dados do cliente no contexto (nome, CPF, benefício, valores de oportunidade, margens) —
+NUNCA PEÇA CPF ou dados que JÁ ESTÃO no contexto. USE OS DADOS DIRETO.
+Só peça CPF se o contexto explicitamente disser "SEM CONTEXTO — peça CPF".
+
 ═══ FASES DA CONVERSA ═══
 
-FASE 1 — ABORDAGEM
-→ Apresente-se, mencione o benefício com VALORES reais, pergunte se pode explicar
+FASE 1 — ABORDAGEM (PRIMEIRO CONTATO)
 
-FASE 2 — QUALIFICAÇÃO
-→ Explique o produto de forma simples, responda dúvidas
+CASO A — Conversa veio de CAMPANHA (você já tem dados):
+  → NUNCA PEÇA CPF. Você já tem.
+  → Mencione o cliente pelo NOME (que já está no contexto)
+  → Vá direto ao benefício com VALORES reais do contexto
+  → Pergunte se pode explicar melhor
+
+CASO B — Cliente chegou SEM contexto (iniciou conversa do nada):
+  → Só use este caso se o contexto disser "SEM CONTEXTO".
+  → Cumprimente, apresente-se, PEÇA O CPF educadamente:
+    Ex: "Oi! Aqui é a Sofia da LhamasCred 😊 Pra eu ver as melhores oportunidades pra você, pode me passar seu CPF?"
+  → Assim que cliente mandar CPF, o sistema consulta o motor e traz dados REAIS no próximo turno.
+
+FASE 2 — QUALIFICAÇÃO (apresentar oportunidades)
+→ Apresente a MAIS ATRATIVA primeiro (maior valor), de forma natural
+→ Ex: "Ótimo, [Nome]! Encontrei uma oportunidade boa: [descrição]. Posso te explicar como funciona?"
+→ Responda dúvidas, quebre objeções
 
 FASE 3 — QUEBRA DE OBJEÇÕES
 - "Taxa alta" → Compare: banco dele cobra [taxa atual], aqui a partir de 1.66%
@@ -254,6 +272,133 @@ function buildContext(campaignType, clientData) {
   }
 }
 
+// ═══ CPF DETECTION + CONSULTA AUTOMATICA DO MOTOR ═══
+
+// Extrai CPF (11 digitos) de qualquer texto. Aceita 123.456.789-00 ou 12345678900.
+function extractCPF(text) {
+  if (!text) return null;
+  const clean = String(text).replace(/\D/g, '');
+  // Busca por 11 digitos consecutivos
+  const m = clean.match(/\d{11}/);
+  return m ? m[0] : null;
+}
+
+// Valida CPF com digitos verificadores
+function isValidCPF(cpf) {
+  if (!cpf || cpf.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(cpf)) return false;
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += parseInt(cpf[i]) * (10 - i);
+  let d1 = 11 - (sum % 11); if (d1 >= 10) d1 = 0;
+  if (d1 !== parseInt(cpf[9])) return false;
+  sum = 0;
+  for (let i = 0; i < 10; i++) sum += parseInt(cpf[i]) * (11 - i);
+  let d2 = 11 - (sum % 11); if (d2 >= 10) d2 = 0;
+  return d2 === parseInt(cpf[10]);
+}
+
+// Consulta Multicorban + monta oportunidades (mesma logica da Consulta Unitaria do frontend)
+async function consultarMotorSofia(cpf, appUrl) {
+  try {
+    const r = await fetch(appUrl + '/api/multicorban', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'consult_cpf', cpf })
+    });
+    const data = await r.json();
+    if (!data.ok) return { success: false, error: data.error || data.mensagem || 'CPF nao encontrado' };
+    // Se retornou lista (multiplos beneficios), usa o primeiro ativo
+    if (data.lista && data.lista.length && !data.parsed) {
+      const ativo = data.lista.find(b => b.situacao === 'ATIVO') || data.lista[0];
+      if (ativo && ativo.nb) {
+        const r2 = await fetch(appUrl + '/api/multicorban', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'consult_beneficio', beneficio: ativo.nb })
+        });
+        const d2 = await r2.json();
+        if (d2.ok && d2.parsed) return extractOportunidades(d2.parsed);
+      }
+      return { success: false, error: 'Multiplos beneficios, nao conseguiu detalhar' };
+    }
+    if (data.parsed) return extractOportunidades(data.parsed);
+    return { success: false, error: 'Estrutura de resposta inesperada' };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
+// Extrai oportunidades do resultado parsed do Multicorban
+function extractOportunidades(parsed) {
+  const b = parsed.beneficiario || {};
+  const ben = parsed.beneficio || {};
+  const mrg = parsed.margem || {};
+  const carts = parsed.cartoes || [];
+  const tels = parsed.telefones || [];
+  const contratos = parsed.contratos || [];
+
+  const mrgDisp = parseFloat(String(mrg.disponivel || '0').replace(/\./g, '').replace(',', '.')) || 0;
+  const mrgRmc = parseFloat(String(mrg.rmc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+  const mrgRcc = parseFloat(String(mrg.rcc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+
+  const oport = [];
+  // Emprestimo Novo (so se margem util)
+  if (mrgDisp >= 50) {
+    const pot = Math.round((mrgDisp / 0.02299) * 100) / 100;
+    oport.push({ tipo: 'emprestimo_novo', label: 'Empréstimo Novo', valor: pot, desc: `Margem livre R$ ${mrg.disponivel}`, banco: 'FACTA' });
+  }
+  // Cartao Beneficio / RMC
+  const hasRmc = carts.some(c => String(c.tipo || '').toUpperCase().includes('RMC'));
+  if (mrgRmc >= 10 && !hasRmc) {
+    const pot = Math.round((mrgRmc / 0.029214) * 100) / 100;
+    oport.push({ tipo: 'cartao_beneficio', label: 'Cartão Benefício (RMC)', valor: pot, desc: `Margem RMC R$ ${mrg.rmc}`, banco: 'FACTA' });
+  }
+  // Saque em cartao ativo
+  for (const cd of carts) {
+    const mrgC = parseFloat(String(cd.margem || '0').replace(/\./g, '').replace(',', '.')) || 0;
+    if (mrgC >= 10) {
+      oport.push({ tipo: 'saque_complementar', label: `Saque ${cd.tipo || ''} ${cd.banco || ''}`.trim(), valor: mrgC, desc: 'Cartão ativo com margem', banco: cd.banco || '' });
+    }
+  }
+  // Portabilidade (so contratos com prazo_original)
+  let portTotal = 0;
+  let portCount = 0;
+  for (const ct of contratos) {
+    const par = parseFloat(String(ct.parcela || '0').replace(/\./g, '').replace(',', '.')) || 0;
+    const sal = parseFloat(String(ct.saldo || ct.saldo_quitacao || '0').replace(/\./g, '').replace(',', '.')) || 0;
+    const total = parseInt(ct.prazo_original || '0') || 0;
+    if (par > 0 && sal > 0 && total > 0) portCount++;
+  }
+  if (portCount > 0) {
+    oport.push({ tipo: 'portabilidade', label: 'Portabilidade CIP', valor: 0, desc: `${portCount} contrato(s) elegível(is) para análise`, banco: 'FACTA' });
+  }
+
+  // Primeiro telefone
+  const tel = tels && tels.length ? tels[0] : '';
+
+  return {
+    success: true,
+    beneficiario: {
+      cpf: b.cpf || '',
+      nome: b.nome || '',
+      nb: b.nb || ben.nb || '',
+      data_nascimento: b.data_nascimento || '',
+      especie: ben.especie || '',
+      idade: b.idade || ''
+    },
+    margem: {
+      disponivel: mrg.disponivel || '0,00',
+      rmc: mrg.rmc || '0,00',
+      rcc: mrg.rcc || '0,00',
+      parcelas: mrg.parcelas || '0,00',
+      base_calculo: ben.base_calculo || '',
+      valor_beneficio: ben.valor || ''
+    },
+    oportunidades: oport,
+    telefone: tel
+  };
+}
+
 // ═══ HELPERS ═══
 
 async function evoCall(method, path, body) {
@@ -354,6 +499,52 @@ export default async function handler(req) {
 
       const conv = getConv(number);
       conv.data = autoFillFromPipeline(conv.data || {});
+
+      // ═══ AUTO-CONSULTA DO MOTOR ═══
+      // Regra: se a conversa JA TEM dados de cliente (veio de campanha via action=dispatch),
+      // NAO precisa pedir CPF nem consultar motor — Sofia ja tem tudo que precisa.
+      const jaTemDadosCliente = !!(conv.data && (conv.data.cpf || conv.data.beneficio || conv.data.troco || conv.data.margem_disponivel || conv.data._oportunidades));
+      // So consulta motor se: cliente mandou CPF + valido + motor ainda nao foi consultado + NAO tem dados previos
+      const cpfDetectado = extractCPF(text);
+      if (cpfDetectado && isValidCPF(cpfDetectado) && !conv.motorConsultado && !jaTemDadosCliente) {
+        const appUrl = process.env.APP_URL || 'https://motordeport.vercel.app';
+        // Consulta assincrona — envia mensagem "deixa eu consultar" enquanto processa
+        await sendMsg(instance, number, '🔍 Consultando aqui na base... só 1 minutinho...');
+        const motor = await consultarMotorSofia(cpfDetectado, appUrl);
+        conv.motorConsultado = true;
+        if (motor.success) {
+          // Injeta dados do motor na conv
+          conv.data = {
+            ...conv.data,
+            cpf: motor.beneficiario.cpf,
+            nome: conv.data.nome || motor.beneficiario.nome,
+            nome_completo: motor.beneficiario.nome,
+            beneficio: motor.beneficiario.nb,
+            data_nascimento: motor.beneficiario.data_nascimento,
+            especie: motor.beneficiario.especie,
+            margem_disponivel: motor.margem.disponivel,
+            margem_rmc: motor.margem.rmc,
+            margem_rcc: motor.margem.rcc,
+            valor_beneficio: motor.margem.valor_beneficio,
+            _oportunidades: motor.oportunidades,
+          };
+          // Define campaignType baseado na melhor oportunidade
+          const melhor = motor.oportunidades.sort((a, b) => (b.valor || 0) - (a.valor || 0))[0];
+          if (melhor) {
+            conv.campaignType = melhor.tipo === 'portabilidade' ? 'portabilidade'
+              : melhor.tipo === 'emprestimo_novo' ? 'novo'
+              : melhor.tipo === 'cartao_beneficio' ? 'cartao'
+              : melhor.tipo === 'saque_complementar' ? 'saque'
+              : 'completa';
+          }
+          conv.phase = 'qualificacao';
+        } else {
+          // Motor falhou — avisa no contexto pra Sofia lidar
+          conv.motorErro = motor.error;
+        }
+        setConv(number, conv);
+      }
+
       const history = await getHistory(instance, jid, 20);
       const { known, missing } = buildDataSummary(conv.data);
 
@@ -364,8 +555,40 @@ export default async function handler(req) {
         `Fase atual: ${conv.phase}`,
         `Campanha: ${conv.campaignType}`,
       ];
-      if (conv.data && Object.keys(conv.data).length > 0) {
+      // Se o motor foi consultado com sucesso AGORA (neste turno), destacar no contexto
+      if (conv.motorConsultado && conv._oportunidadesApresentadas !== true && Array.isArray(conv.data?._oportunidades)) {
+        const oport = conv.data._oportunidades;
+        contextParts.push(`\n═══ 🔥 MOTOR ACABOU DE CONSULTAR — OPORTUNIDADES REAIS ENCONTRADAS ═══`);
+        contextParts.push(`Cliente: ${conv.data.nome_completo || conv.data.nome}`);
+        contextParts.push(`CPF: ${conv.data.cpf}`);
+        contextParts.push(`Benefício: ${conv.data.beneficio} (${conv.data.especie})`);
+        contextParts.push(`Valor do benefício: R$ ${conv.data.valor_beneficio}`);
+        contextParts.push(`Margem livre: R$ ${conv.data.margem_disponivel} | RMC: R$ ${conv.data.margem_rmc} | RCC: R$ ${conv.data.margem_rcc}`);
+        contextParts.push(`\nOPORTUNIDADES IDENTIFICADAS (ordenadas por valor):`);
+        const sorted = [...oport].sort((a,b) => (b.valor||0) - (a.valor||0));
+        for (const o of sorted) {
+          const v = o.valor > 0 ? `R$ ${Number(o.valor).toLocaleString('pt-BR',{minimumFractionDigits:2})}` : 'disponível';
+          contextParts.push(`• ${o.label}: ${v} — ${o.desc} — Banco: ${o.banco}`);
+        }
+        contextParts.push(`\n⚡ AÇÃO OBRIGATÓRIA agora:
+1. Apresente a PRIMEIRA (maior valor) de forma natural e animada (use o nome do cliente)
+2. Foque no benefício prático (dinheiro na conta / economia / cartão)
+3. Pergunte se o cliente quer seguir em frente
+4. NÃO liste todas de uma vez — mantenha conversa natural
+5. Atualize para [FASE:qualificacao]`);
+        conv._oportunidadesApresentadas = true;
+        setConv(number, conv);
+      } else if (conv.motorErro) {
+        contextParts.push(`\n⚠️ Motor retornou erro na consulta do CPF: ${conv.motorErro}`);
+        contextParts.push(`Peça pro cliente confirmar o CPF (talvez digitou errado) ou diga que vai verificar com o consultor humano.`);
+        conv.motorErro = null; // limpa pra não repetir
+        setConv(number, conv);
+      } else if (conv.data && Object.keys(conv.data).length > 0) {
         contextParts.push(buildContext(conv.campaignType, conv.data));
+      } else {
+        // Sem dados nenhum — cliente chegou sem campanha previa. Sofia precisa pedir CPF.
+        contextParts.push(`\n⚠️ SEM CONTEXTO — Cliente chegou sem campanha prévia. Você AINDA não tem CPF dele.`);
+        contextParts.push(`➤ Aja como CASO B da FASE 1: peça o CPF educadamente. Não invente valores.`);
       }
       if (conv.phase === 'coleta' || conv.collectedFields?.length > 0) {
         contextParts.push(`\n═══ STATUS DA COLETA DE DADOS ═══`);

@@ -67,10 +67,12 @@ export default async function handler(req) {
     const auth = req.headers.get('Authorization') || '';
 
     // ─── Etapa 1: chamadas em paralelo (info básica de cada fonte) ───
-    const [pbOpor, mcClt, c6Of] = await Promise.all([
+    // V8: tenta achar consulta existente nos últimos 30 dias (pra não duplicar termo)
+    const [pbOpor, mcClt, c6Of, v8Existing] = await Promise.all([
       callApi('/api/presencabank', { action: 'oportunidadesPorCPF', cpf }, auth),
       callApi('/api/multicorban',   { action: 'consult_clt', cpf },         auth),
-      callApi('/api/c6',            { action: 'oferta', cpf },              auth)
+      callApi('/api/c6',            { action: 'oferta', cpf },              auth),
+      callApi('/api/v8',            { action: 'consultarPorCPF', cpf },     auth).catch(() => ({ ok: false }))
     ]);
 
     // ─── Etapa 2: mescla dados do cliente ───
@@ -110,19 +112,62 @@ export default async function handler(req) {
     const temNomeETel = !!(cliente.nome && telefonePrincipal);
 
     // ─── Etapa 4: ofertas detalhadas (precisa nome+tel) — só se conseguiu enriquecer ───
-    let pbTabelas = null, jbSim = null;
+    let pbTabelas = null, jbSim = null, v8Sim = null;
     if (temNomeETel) {
-      const [pbFull, jbRes] = await Promise.all([
+      // V8: se ainda não tem consulta SUCCESS, gera termo + auto-autoriza
+      let v8ConsultId = null;
+      const v8Found = v8Existing?.data;
+      if (v8Found?.encontrado && v8Found.status === 'SUCCESS') {
+        v8ConsultId = v8Found.consultId;
+      } else if (cliente.dataNascimento && cliente.sexo) {
+        // Tenta gerar termo no V8
+        const v8Term = await callApi('/api/v8', {
+          action: 'gerarTermo',
+          cpf, nome: cliente.nome,
+          dataNascimento: cliente.dataNascimento,
+          email: 'cliente@lhamascred.com.br', // placeholder — V8 exige email
+          telefone: telefonePrincipal,
+          sexo: cliente.sexo
+        }, auth);
+        if (v8Term.ok && v8Term.data?.consultId) {
+          v8ConsultId = v8Term.data.consultId;
+          // Auto-autoriza
+          await callApi('/api/v8', { action: 'autorizarTermo', consultId: v8ConsultId }, auth).catch(() => {});
+          // Aguarda 2s pra processar status
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+
+      const [pbFull, jbRes, v8Configs] = await Promise.all([
         callApi('/api/presencabank', {
           action: 'fluxoCompleto', cpf, nome: cliente.nome, telefone: telefonePrincipal
         }, auth),
         callApi('/api/joinbank', {
           action: 'cltCreateSimulation', providerCode: '950002',
           borrower: { identity: cpf, name: cliente.nome, phone: telefonePrincipal }
-        }, auth)
+        }, auth),
+        v8ConsultId
+          ? callApi('/api/v8', { action: 'simularConfigs' }, auth)
+          : Promise.resolve({ ok: false, data: { configs: [] } })
       ]);
+
       pbTabelas = pbFull.data;
       jbSim = jbRes.data;
+
+      // V8: se tem configs disponíveis, simula com a primeira (taxa default)
+      if (v8ConsultId && v8Configs.ok && v8Configs.data?.configs?.length > 0) {
+        const cfg = v8Configs.data.configs[0];
+        const numInst = parseInt((cfg.number_of_installments || ['24'])[0]) || 24;
+        const v8SimRes = await callApi('/api/v8', {
+          action: 'simular',
+          consultId: v8ConsultId,
+          configId: cfg.id,
+          numberOfInstallments: numInst,
+          installmentFaceValue: 0,
+          disbursedAmount: 1000 // valor exemplo — pode ser ajustado depois
+        }, auth);
+        v8Sim = { ...v8SimRes.data, _consultId: v8ConsultId, _configUsada: cfg };
+      }
     }
 
     // ─── Etapa 5: monta array de ofertas ───
@@ -209,6 +254,45 @@ export default async function handler(req) {
       });
     }
 
+    // V8 Sistema (provedor QI)
+    if (v8Sim?.idSimulation) {
+      ofertas.push({
+        banco: 'v8',
+        label: 'V8 Sistema',
+        disponivel: true,
+        detalhes: {
+          valorLiquido: v8Sim.valorDesembolso,
+          parcelas: v8Sim.qtdParcelas,
+          valorParcela: v8Sim.valorParcela,
+          taxaMensal: v8Sim._configUsada?.monthly_interest_rate,
+          cetMensal: v8Sim.cet
+        },
+        consultId: v8Sim._consultId,
+        idSimulation: v8Sim.idSimulation
+      });
+    } else if (v8Existing?.data?.encontrado) {
+      const ve = v8Existing.data;
+      ofertas.push({
+        banco: 'v8',
+        label: 'V8 Sistema',
+        disponivel: ve.status === 'SUCCESS' || ve.status === 'CONSENT_APPROVED',
+        elegibilidade: ve.availableMarginValue ? {
+          margemDisponivel: parseFloat(ve.availableMarginValue),
+          empregador: null
+        } : null,
+        mensagem: `Status V8: ${ve.status}${ve.descricao ? ' — ' + ve.descricao : ''}`
+      });
+    } else {
+      ofertas.push({
+        banco: 'v8',
+        label: 'V8 Sistema',
+        disponivel: false,
+        mensagem: temNomeETel
+          ? 'V8 nao retornou simulacao (verificar V8_AUDIENCE configurado ou aguardar status)'
+          : 'Faltou nome+telefone'
+      });
+    }
+
     // ─── Etapa 6: resumo ───
     const totalDisponivel = ofertas.filter(o => o.disponivel).length;
 
@@ -234,7 +318,9 @@ export default async function handler(req) {
         multicorban: mc,
         c6,
         presencabankTabelas: pbTabelas,
-        joinbank: jbSim
+        joinbank: jbSim,
+        v8Existing: v8Existing?.data,
+        v8Sim
       }
     }, 200, req);
 

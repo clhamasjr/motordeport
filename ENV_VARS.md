@@ -63,6 +63,20 @@ Configure todas no Vercel Dashboard:
 
 **Validado em produção em 2026-04-24**: auth HTTP 200, subject `C6BankMarketplaceProd`. Token vive ~20min (cacheado no handler).
 
+### V8 Sistema (Crédito Privado CLT - provedor QI) — novo abr/2026
+| Variavel | Valor | Descricao |
+|----------|-------|-----------|
+| `V8_AUTH_URL` | `https://auth.v8sistema.com/oauth/token` | OAuth endpoint (default no codigo) |
+| `V8_BFF_URL` | `https://bff.v8sistema.com` | API base (default no codigo) |
+| `V8_CLIENT_ID` | `DHWogdaYmEI8n5bwwxPDzulMlSK7dwIn` | Client ID OAuth |
+| `V8_AUDIENCE` | *(SOLICITAR a gerente comercial V8 por email)* | OBRIGATORIO. Sem isso auth da 401 |
+| `V8_USERNAME` | `financeiro@lhamascred.com.br` | Email do usuario V8 |
+| `V8_PASSWORD` | *(passar via Vercel)* | Senha V8 |
+
+**IMPORTANTE**: o `V8_AUDIENCE` precisa ser solicitado por email a sua gerente comercial V8 ou ti@v8sistema.online. Sem ele, o `getToken()` lanca erro `V8_AUDIENCE nao configurado`.
+
+Webhooks: registrar via action `registrarWebhooks` (registra automaticamente em `/user/webhook/private-consignment/consult` e `/operation` apontando pra `/api/v8`).
+
 ### PresençaBank (Consignado Privado CLT) — novo abr/2026
 | Variavel | Valor | Descricao |
 |----------|-------|-----------|
