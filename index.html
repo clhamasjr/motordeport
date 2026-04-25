@@ -4486,6 +4486,220 @@ async function rodarConsultaCLT() {
   renderApp();
 }
 
+// ── Digitação de proposta CLT (modal) ────────────────────────
+let cltDigitState = { open: false, banco: null, oferta: null, ctx: null, dados: {}, loading: false, result: null };
+
+function cltAbrirDigitacao(banco, ofertaIndex) {
+  const r = cltConsultaState.result;
+  if (!r) return;
+  const oferta = r.ofertas?.find(o => o.banco === banco) || null;
+  cltDigitState = {
+    open: true, banco, oferta, ctx: r,
+    dados: {
+      cliente: {
+        cpf: r.cliente?.cpf || '',
+        nome: r.cliente?.nome || '',
+        telefone: r.cliente?.telefones?.[0]?.completo || '',
+        ddd: r.cliente?.telefones?.[0]?.ddd || '',
+        dataNascimento: r.cliente?.dataNascimento || '',
+        sexo: r.cliente?.sexo || 'M',
+        nomeMae: r.cliente?.nomeMae || '',
+        email: ''
+      },
+      endereco: {},
+      bancario: { tipoConta: 'ContaCorrenteIndividual', formaCredito: '2', pixKeyType: 'cpf' },
+      empregador: {
+        cnpj: r.vinculo?.cnpj || '',
+        nome: r.vinculo?.empregador || '',
+        matricula: r.vinculo?.matricula || '',
+        valorRenda: r.vinculo?.renda || ''
+      },
+      proposta: oferta?.detalhes || {}
+    },
+    loading: false, result: null
+  };
+  renderApp();
+}
+
+function cltFecharDigitacao() {
+  cltDigitState = { open: false, banco: null, oferta: null, ctx: null, dados: {}, loading: false, result: null };
+  renderApp();
+}
+
+function cltDigitSet(secao, campo, valor) {
+  if (!cltDigitState.dados[secao]) cltDigitState.dados[secao] = {};
+  cltDigitState.dados[secao][campo] = valor;
+}
+
+async function cltSubmeterDigitacao() {
+  cltDigitState.loading = true; renderApp();
+  try {
+    const payload = {
+      action: 'digitar',
+      banco: cltDigitState.banco,
+      ...cltDigitState.dados,
+      origem: 'consulta_unitaria'
+    };
+    // Usa idSimulacao da oferta
+    if (cltDigitState.oferta?.idSimulacao) {
+      payload.proposta = { ...payload.proposta, idSimulacao: cltDigitState.oferta.idSimulacao, simulationId: cltDigitState.oferta.idSimulacao };
+    }
+    const r = await fetch('/api/clt-digitacao', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify(payload)
+    });
+    cltDigitState.result = await r.json();
+  } catch (e) {
+    cltDigitState.result = { success: false, error: e.message };
+  }
+  cltDigitState.loading = false;
+  renderApp();
+}
+
+function cltEnviarLinkWpp() {
+  const r = cltDigitState.result;
+  const tel = cltDigitState.dados.cliente.telefone;
+  if (!r?.linkFormalizacao || !tel) return;
+  const msg = encodeURIComponent(
+    `Olá! Pra finalizar seu empréstimo CLT no ${cltDigitState.banco.toUpperCase()}, acesse o link e assine pelo celular:\n\n${r.linkFormalizacao}\n\nQualquer dúvida, me chama!`
+  );
+  window.open(`https://wa.me/55${String(tel).replace(/\D/g,'')}?text=${msg}`, '_blank');
+}
+
+function renderModalDigitacao() {
+  if (!cltDigitState.open) return '';
+  const banco = cltDigitState.banco;
+  const d = cltDigitState.dados;
+  const r = cltDigitState.result;
+  const cores = { c6: 'var(--cyan)', presencabank: 'var(--grn)', joinbank: 'var(--pur)', v8: 'var(--ylw)' };
+  const cor = cores[banco] || 'var(--t1)';
+
+  let h = '<div class="modal-overlay" onclick="if(event.target===this)cltFecharDigitacao()" style="z-index:9999">';
+  h += '<div class="modal-box" style="max-width:780px;max-height:90vh;overflow-y:auto">';
+  h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid ${cor}">`;
+  h += `<div><div style="font-size:20px;font-weight:800;color:${cor}">📝 Digitar Proposta — ${banco.toUpperCase()}</div>`;
+  if (cltDigitState.oferta?.detalhes) {
+    const o = cltDigitState.oferta.detalhes;
+    h += `<div style="font-size:12px;color:var(--t2);margin-top:4px">R$ ${(o.valorLiquido||0).toFixed(2)} · ${o.parcelas||'?'}x R$ ${(o.valorParcela||0).toFixed(2)}</div>`;
+  }
+  h += '</div>';
+  h += '<button class="btn btn-sm" onclick="cltFecharDigitacao()">✕</button>';
+  h += '</div>';
+
+  if (r) {
+    if (r.success) {
+      h += '<div style="padding:24px;background:rgba(34,197,94,.08);border:2px solid var(--grn);border-radius:12px;text-align:center;margin-bottom:16px">';
+      h += '<div style="font-size:32px;margin-bottom:8px">✅</div>';
+      h += `<div style="font-size:18px;font-weight:800;color:var(--grn);margin-bottom:6px">Proposta criada com sucesso!</div>`;
+      h += `<div style="font-size:13px;color:var(--t2)">Banco: ${banco.toUpperCase()} · ID: ${r.propostaIdExterno || '-'}</div>`;
+      h += '</div>';
+      if (r.linkFormalizacao) {
+        h += '<div style="padding:14px;background:var(--card);border:1px solid var(--brd);border-radius:10px;margin-bottom:14px">';
+        h += '<div style="font-size:11px;color:var(--t3);text-transform:uppercase;margin-bottom:6px">Link de formalização</div>';
+        h += `<a href="${r.linkFormalizacao}" target="_blank" style="color:var(--acc);word-break:break-all;font-size:12px">${r.linkFormalizacao}</a>`;
+        h += '</div>';
+        h += '<div style="display:flex;gap:10px">';
+        h += `<button class="btn-acc" style="flex:1" onclick="cltEnviarLinkWpp()">📱 Enviar via WhatsApp</button>`;
+        h += `<button class="btn" onclick="navigator.clipboard.writeText('${r.linkFormalizacao}');alert('Link copiado!')">📋 Copiar</button>`;
+        h += '</div>';
+      }
+      h += `<div style="margin-top:16px;text-align:center"><button class="btn" onclick="cltFecharDigitacao()">Fechar</button></div>`;
+      h += '</div></div>'; return h;
+    } else {
+      h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:14px">`;
+      h += `<b>Erro ao criar proposta</b><br>${r.mensagem || r.error || 'desconhecido'}`;
+      h += `</div>`;
+      h += `<details><summary style="cursor:pointer;color:var(--t3);font-size:11px">Detalhes</summary>`;
+      h += `<pre style="background:var(--sf);padding:10px;border-radius:6px;font-size:10px;max-height:200px;overflow:auto">${JSON.stringify(r._raw||r,null,2).replace(/</g,'&lt;')}</pre>`;
+      h += `</details>`;
+      h += `<div style="margin-top:16px;display:flex;gap:8px"><button class="btn" onclick="cltFecharDigitacao()">Fechar</button><button class="btn-acc" onclick="cltDigitState.result=null;renderApp()">Tentar novamente</button></div>`;
+      h += '</div></div>'; return h;
+    }
+  }
+
+  // Formulário
+  const inp = (sec, k, lbl, type='text', placeholder='') =>
+    `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em">${lbl}</label><input class="form-input" type="${type}" placeholder="${placeholder}" value="${(d[sec]?.[k]||'').toString().replace(/"/g,'&quot;')}" oninput="cltDigitSet('${sec}','${k}',this.value)"></div>`;
+  const sel = (sec, k, lbl, options) => {
+    let h2 = `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase">${lbl}</label><select class="form-input" onchange="cltDigitSet('${sec}','${k}',this.value);renderApp()">`;
+    for (const o of options) h2 += `<option value="${o.v}" ${d[sec]?.[k]===o.v?'selected':''}>${o.l}</option>`;
+    h2 += '</select></div>';
+    return h2;
+  };
+
+  // Cliente
+  h += `<div style="margin-bottom:16px"><div style="font-size:13px;font-weight:800;color:var(--t2);margin-bottom:8px">👤 Cliente</div>`;
+  h += '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px">';
+  h += inp('cliente', 'nome', 'Nome completo');
+  h += inp('cliente', 'cpf', 'CPF');
+  h += inp('cliente', 'dataNascimento', 'Data Nasc (YYYY-MM-DD)', 'date');
+  h += '</div>';
+  h += '<div style="display:grid;grid-template-columns:1fr 2fr 1fr 2fr;gap:10px;margin-top:8px">';
+  h += inp('cliente', 'ddd', 'DDD');
+  h += inp('cliente', 'telefone', 'Telefone');
+  h += sel('cliente', 'sexo', 'Sexo', [{v:'M',l:'Masculino'},{v:'F',l:'Feminino'}]);
+  h += inp('cliente', 'email', 'E-mail (V8/PB)');
+  h += '</div>';
+  h += '<div style="display:grid;grid-template-columns:1fr;gap:10px;margin-top:8px">';
+  h += inp('cliente', 'nomeMae', 'Nome da Mãe');
+  h += '</div></div>';
+
+  // Endereço
+  h += `<div style="margin-bottom:16px"><div style="font-size:13px;font-weight:800;color:var(--t2);margin-bottom:8px">📍 Endereço</div>`;
+  h += '<div style="display:grid;grid-template-columns:1fr 3fr 1fr;gap:10px">';
+  h += inp('endereco', 'cep', 'CEP');
+  h += inp('endereco', 'logradouro', 'Logradouro');
+  h += inp('endereco', 'numero', 'Número');
+  h += '</div>';
+  h += '<div style="display:grid;grid-template-columns:2fr 2fr 1fr;gap:10px;margin-top:8px">';
+  h += inp('endereco', 'bairro', 'Bairro');
+  h += inp('endereco', 'cidade', 'Cidade');
+  h += inp('endereco', 'uf', 'UF');
+  h += '</div></div>';
+
+  // Empregador (PB precisa)
+  if (banco === 'presencabank') {
+    h += `<div style="margin-bottom:16px"><div style="font-size:13px;font-weight:800;color:var(--t2);margin-bottom:8px">🏢 Empregador (PresençaBank)</div>`;
+    h += '<div style="display:grid;grid-template-columns:1fr 2fr 1fr;gap:10px">';
+    h += inp('empregador', 'cnpj', 'CNPJ');
+    h += inp('empregador', 'nome', 'Razão Social');
+    h += inp('empregador', 'matricula', 'Matrícula');
+    h += '</div>';
+    h += '<div style="display:grid;grid-template-columns:1fr;gap:10px;margin-top:8px">';
+    h += inp('empregador', 'valorRenda', 'Valor da Renda', 'number');
+    h += '</div></div>';
+  }
+
+  // Bancário
+  h += `<div style="margin-bottom:16px"><div style="font-size:13px;font-weight:800;color:var(--t2);margin-bottom:8px">🏦 Dados Bancários</div>`;
+  if (banco === 'v8') {
+    h += '<div style="display:grid;grid-template-columns:1fr 2fr;gap:10px">';
+    h += sel('bancario', 'pixKeyType', 'Tipo Chave PIX', [
+      {v:'cpf',l:'CPF'},{v:'email',l:'E-mail'},{v:'phone',l:'Telefone'},{v:'random',l:'Aleatória'}
+    ]);
+    h += inp('bancario', 'pixKey', 'Chave PIX');
+    h += '</div>';
+  } else {
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px">';
+    h += inp('bancario', 'numeroBanco', 'Banco (cód)');
+    h += inp('bancario', 'numeroAgencia', 'Agência');
+    h += inp('bancario', 'numeroConta', 'Conta');
+    h += inp('bancario', 'digitoConta', 'Dígito');
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // Botões
+  h += '<div style="display:flex;gap:10px;margin-top:20px;padding-top:14px;border-top:1px solid var(--brd)">';
+  h += `<button class="btn" onclick="cltFecharDigitacao()" style="flex:0">Cancelar</button>`;
+  h += `<button class="btn-acc" onclick="cltSubmeterDigitacao()" style="flex:1" ${cltDigitState.loading?'disabled':''}>${cltDigitState.loading?'⏳ Criando...':'✅ Criar Proposta'}</button>`;
+  h += '</div>';
+
+  h += '</div></div>';
+  return h;
+}
+
 async function cltGerarSelfieC6(cpf, nome, dataNascimento, telefone) {
   if (!nome || !dataNascimento) {
     alert('Pra gerar link de selfie C6, preciso de nome e data de nascimento. Esses dados precisam vir do enriquecimento (PresençaBank/Multicorban).');
@@ -4577,6 +4791,12 @@ function _cltOfertaCard(o, ctx) {
   } else {
     h += `<div style="color:var(--t3);font-size:13px">${o.mensagem || 'Sem oferta'}</div>`;
   }
+
+  // Botão "Digitar" só aparece se a oferta está disponível
+  if (o.disponivel && o.detalhes) {
+    h += `<button class="btn-acc btn-sm" style="width:100%;margin-top:14px" onclick="cltAbrirDigitacao('${o.banco}')">📝 Digitar Proposta</button>`;
+  }
+
   h += '</div>';
   return h;
 }
@@ -4649,10 +4869,12 @@ function renderCltConsulta() {
     }
   }
 
+  // Modal de digitação (renderiza por cima)
+  h += renderModalDigitacao();
+
   h += '</div>';
   return h;
 }
-
 // ─── Higienização em Lote CLT (por banco) ────────────────────
 let cltBatchState = {
   banco: 'c6',          // 'c6' | 'presencabank' | 'joinbank'
