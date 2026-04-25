@@ -4741,12 +4741,23 @@ function _cltOfertaCard(o, ctx) {
   h += `<div style="font-size:16px;font-weight:800;color:${cor}">🏦 ${o.label}</div>`;
   if (o.detalhes?._raw?.requiresLiveness || o.requiresLiveness) {
     h += '<span class="pill" style="background:rgba(245,194,66,.15);color:var(--ylw)">📸 AGUARDA SELFIE</span>';
+  } else if (o.processando) {
+    h += '<span class="pill" style="background:rgba(59,130,246,.15);color:var(--acc)">⏳ PROCESSANDO</span>';
   } else {
     h += o.disponivel
       ? '<span class="pill pill-grn">DISPONÍVEL</span>'
       : '<span class="pill pill-default">INDISPONÍVEL</span>';
   }
   h += '</div>';
+
+  // Card "processando" (V8 aguardando webhook)
+  if (o.processando) {
+    h += `<div style="font-size:13px;color:var(--acc);margin-bottom:10px">⏳ ${o.mensagem || 'Processando...'}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-bottom:10px">O V8 demora 30s a 5min pra processar consulta DataPrev. Quando ficar pronto, atualize esta tela.</div>`;
+    h += `<button class="btn-acc btn-sm" style="width:100%" onclick="rodarConsultaCLT()">🔄 Verificar status agora</button>`;
+    h += '</div>';
+    return h;
+  }
 
   // Card especial pra C6 quando requer selfie
   if (o.banco === 'c6' && (o.requiresLiveness || o.detalhes?._raw?.requiresLiveness)) {

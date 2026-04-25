@@ -184,6 +184,7 @@ async function handleAction(body, req) {
     }
 
     // ─── 1) GERAR TERMO ───────────────────────────────────────
+    // Suporta provider QI ou CELCOIN (V8 trabalha com ambas bancarizadoras)
     if (action === 'gerarTermo') {
       const cpf = normalizeCPF(body.cpf);
       if (!cpf || !body.nome || !body.dataNascimento || !body.email || !body.telefone || !body.sexo) {
@@ -193,6 +194,10 @@ async function handleAction(body, req) {
       if (!phone) return jsonError('Telefone invalido', 400, req);
 
       const sexo = String(body.sexo).toUpperCase().startsWith('M') ? 'male' : 'female';
+      const provider = body.provider || PROVIDER_DEFAULT;
+      if (!PROVIDERS_DISPONIVEIS.includes(provider)) {
+        return jsonError(`provider invalido. Validos: ${PROVIDERS_DISPONIVEIS.join(',')}`, 400, req);
+      }
       const payload = {
         borrowerDocumentNumber: cpf,
         gender: sexo,
@@ -200,12 +205,13 @@ async function handleAction(body, req) {
         signerName: body.nome,
         signerEmail: body.email,
         signerPhone: { phoneNumber: phone.number, countryCode: phone.countryCode, areaCode: phone.areaCode },
-        provider: body.provider || PROVIDER_DEFAULT
+        provider
       };
       const r = await v8Call('/private-consignment/consult', 'POST', payload);
       return j({
         success: r.ok, httpStatus: r.status,
         consultId: r.data?.id || null,
+        provider,
         _raw: r.data
       }, 200, req);
     }
