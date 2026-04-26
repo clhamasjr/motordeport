@@ -115,16 +115,28 @@ O sistema vai rodar em paralelo. Pra C6 é necessário autorização LGPD adicio
 FASE 4 — APRESENTAR OFERTA (ordem definida pelo gestor)
 Depois que as simulações rodaram, você recebe as ofertas no contexto.
 
-PRIMEIRO MOMENTO — apresente APENAS a PRIMEIRA oferta da ordem (${ordemBancos[0]} hoje):
+⚠️ REGRA CRÍTICA — NÃO MENCIONE O NOME DO BANCO na primeira oferta.
+O cliente quer saber VALOR e CONDIÇÕES, não com qual banco. Só fale o nome
+do banco se cliente perguntar explicitamente.
+
+PRIMEIRO MOMENTO — apresente APENAS A PRIMEIRA oferta da ordem (${ordemBancos[0]} hoje):
   "[Nome], consegui uma proposta boa pra você:
   💰 Libera R$ [valor_liquido] na sua conta
   📅 [parcelas]x de R$ [valor_parcela]
-  Banco: [banco oficial]
-  Topa seguir com essa ou quer que eu veja outras opções?"
+  Topa seguir com essa proposta?"
 
-NÃO entregue todas de uma vez. Só mostre as outras se cliente pedir.
-NÃO aprofunde em taxa, CET, seguro, CCB, convênio — só se cliente perguntar.
-[DADO:banco_escolhido=c6|presencabank|joinbank]
+REGRAS:
+- 1 oferta por vez. Não cite outras opções a menos que cliente pergunte.
+- NÃO mencione nome do banco (V8, PresençaBank, C6 etc.) — só se cliente perguntar.
+- NÃO aprofunde em taxa, CET, seguro, CCB, convênio — só se cliente perguntar.
+- Se cliente perguntar "tem outras opções?" / "tem mais?" / "essa é a única?":
+  → Mostre A PRÓXIMA oferta da ordem (sem repetir a primeira).
+- Se cliente perguntar de qual banco é:
+  → Aí sim mencione o nome.
+- Se TODAS as ofertas foram apresentadas e cliente quer mais:
+  → Diga "essa foi a melhor que consegui no momento" e tente fechar nessa.
+
+[DADO:banco_escolhido=c6|presencabank|v8]
 [DADO:id_simulacao_escolhida=valor]
 [ACAO:COLETAR_DADOS] quando cliente aceitar uma oferta.
 
@@ -731,28 +743,64 @@ export default async function handler(req) {
           // ─── FOLLOW-UP AUTOMÁTICO: chama Claude DE NOVO pra apresentar ofertas ──
           // Sem isso, agente fica em silêncio depois de "vou consultar"
           try {
-            const ofertasDisp = (r.ofertas || []).filter(o => o.disponivel);
-            const contextoOfertas = `[CONTEXTO INTERNO — APRESENTAR OFERTAS AGORA AO CLIENTE]
+            // Ordena ofertas pela prioridade do gestor (clt_config.ordem_bancos)
+            const ordemPrioridade = config.ordem_bancos || ['v8', 'presencabank', 'c6'];
+            const ofertasOrdenadas = [...(r.ofertas || [])].sort((a, b) => {
+              const ia = ordemPrioridade.indexOf(a.banco);
+              const ib = ordemPrioridade.indexOf(b.banco);
+              return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+            });
+            const ofertasDisp = ofertasOrdenadas.filter(o => o.disponivel);
+            const ofertasBloqueadas = ofertasOrdenadas.filter(o => o.bloqueado);
+            const primeira = ofertasDisp[0] || null;
+
+            const formatOferta = (o, idx) => {
+              const d = o.detalhes || {};
+              const e = o.elegibilidade || {};
+              const ord = idx + 1;
+              if (d.valorLiquido) {
+                return `${ord}. [${o.banco.toUpperCase()}${o.provider?'/'+o.provider:''}] ${o.label}: R$ ${Number(d.valorLiquido).toFixed(2)} liquido em ${d.parcelas}x R$ ${Number(d.valorParcela).toFixed(2)}`;
+              } else if (e.margemDisponivel) {
+                return `${ord}. [${o.banco.toUpperCase()}${o.provider?'/'+o.provider:''}] ${o.label}: ELEGIVEL — margem R$ ${Number(e.margemDisponivel).toFixed(2)} (simular tabela exata se cliente aceitar)`;
+              } else {
+                return `${ord}. [${o.banco.toUpperCase()}${o.provider?'/'+o.provider:''}] ${o.label}: ${o.mensagem || 'disponivel'}`;
+              }
+            };
+
+            const contextoOfertas = `[CONTEXTO INTERNO — APRESENTAR APENAS A 1ª OFERTA AGORA]
+
 Acabei de consultar os bancos pra ${cliente.nome || 'cliente'} (CPF ${cpf}).
-Total: ${r.totalDisponivel || 0} de ${(r.ofertas || []).length} bancos com oferta.
 
-OFERTAS DISPONÍVEIS:
-${ofertasDisp.length === 0 ? 'Nenhum banco retornou oferta nesse momento.' : ofertasDisp.map(o => {
-  const d = o.detalhes || {};
-  const e = o.elegibilidade || {};
-  if (d.valorLiquido) {
-    return `• ${o.label}: R$ ${Number(d.valorLiquido).toFixed(2)} líquido em ${d.parcelas}x R$ ${Number(d.valorParcela).toFixed(2)} (taxa ~${d.taxaMensal || '?'}%/mês)`;
-  } else if (e.margemDisponivel) {
-    return `• ${o.label}: ELEGÍVEL — margem R$ ${Number(e.margemDisponivel).toFixed(2)} (simular tabela detalhada se cliente aceitar)`;
-  } else {
-    return `• ${o.label}: ${o.mensagem || 'disponível'}`;
-  }
-}).join('\n')}
+ORDEM DE PRIORIDADE DEFINIDA PELO GESTOR: ${ordemPrioridade.join(' → ')}
 
-OFERTAS BLOQUEADAS/INDISPONÍVEIS: ${(r.ofertas || []).filter(o => !o.disponivel).length}
-${(r.ofertas || []).filter(o => o.bloqueado).length > 0 ? '⚠️ C6 bloqueado: cliente precisa fazer selfie LGPD pra liberar — só ofereça se cliente quiser explorar mais opções.' : ''}
+OFERTAS DISPONIVEIS (ordenadas por prioridade):
+${ofertasDisp.length === 0 ? 'NENHUMA. Veja bloqueadas abaixo.' : ofertasDisp.map(formatOferta).join('\n')}
 
-⚡ AÇÃO: Apresente APENAS A MELHOR oferta primeiro (maior valor líquido, ou primeira da ordem ${(config.ordem_bancos || []).join(' → ')}). Pergunte se cliente topa ou quer ver outras opções. Mensagem natural, 4-6 linhas.`;
+OFERTAS QUE EXIGEM AUTORIZACAO/SELFIE (NAO MENCIONE AGORA):
+${ofertasBloqueadas.length === 0 ? 'Nenhuma' : ofertasBloqueadas.map(o => `- ${o.label}: ${o.mensagem}`).join('\n')}
+
+⚡ INSTRUCOES OBRIGATORIAS:
+
+1. ${primeira ? `Apresente APENAS A 1ª oferta (${primeira.banco.toUpperCase()}${primeira.provider?'/'+primeira.provider:''}) — VALOR + PARCELAS.` : 'Sem ofertas disponiveis ainda. Avise cliente que esta consultando mais bancos.'}
+
+2. **NAO MENCIONE O NOME DO BANCO** na sua mensagem. Cliente quer saber valor e condicoes, nao instituicao.
+   Errado: "O V8 te liberou R$ 2.000"
+   Certo:  "Consegui R$ 2.000 liberados pra voce"
+
+3. NAO mencione que ha outras opcoes a menos que cliente pergunte. Apresente como SE FOSSE A UNICA.
+
+4. NAO aprofunde em taxa, CET, seguro, CCB, convenio — so se cliente perguntar.
+
+5. Pergunte se cliente topa seguir.
+
+6. SE cliente perguntar depois 'tem outras opcoes?': mostre a 2ª oferta (mesmo formato, sem banco).
+   SE perguntar de novo: 3ª oferta. E por ai vai.
+
+7. SE TODAS apresentadas e cliente ainda quer mais: diga "Essa foi a melhor que consegui — vamos fechar nessa?"
+
+${ofertasDisp.length === 0 && ofertasBloqueadas.length > 0 ? '\n8. Como nao tem oferta disponivel agora, sugira liberar consulta C6: "Posso tentar mais um banco que precisa de uma selfie rapida sua. Vou te mandar o link?"' : ''}
+
+Mensagem natural, 3-5 linhas. Use o nome ${cliente.nome || 'do cliente'} se souber.`;
 
             const sysPromptFollowup = config.prompt_override
               || buildSystemPrompt(nomeVendedor, nomeParceiro, config.ordem_bancos, config.modo_insistencia);
