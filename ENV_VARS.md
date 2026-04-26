@@ -107,8 +107,9 @@ Pode reutilizar a `CLAUDE_API_KEY` existente OU criar uma separada:
 |----------|---------------|-----------|
 | `CLT_EVOLUTION_INSTANCE` | `lhamas-clt` | Nome da instance Evolution dedicada ao agente CLT (WhatsApp B2C) |
 | `CLT_WHATSAPP_WHITELIST` | `5515999111111,5515999222222` | CSV de numeros autorizados a conversar com o agente em modo simulacao. Vazio ou `*` = aberto pra todo mundo (producao) |
-| `INTERNAL_SERVICE_TOKEN` | *(gerar token de sessao valido)* | Token que o `api/agente-clt.js` usa pra chamar `/api/c6`, `/api/presencabank`, `/api/joinbank` internamente (essas APIs exigem auth). Crie via login normal e copie o `ff_token` de um usuario de servico dedicado |
-| `APP_URL` | `https://flowforce.vercel.app` | URL publica do app. Usada pra webhooks Evolution apontarem de volta pra ca. **Atualizar pro novo dominio flowforce.vercel.app** |
+| `WEBHOOK_SECRET` | *(gerar via `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`)* | **RECOMENDADO**. Token fixo nunca expira. Usado por agente-clt e workers internos no header `x-internal-secret` pra autenticar chamadas a `/api/c6`, `/api/presencabank`, `/api/v8`, `/api/multicorban`. Tambem valida webhooks externos (Evolution, V8) |
+| `INTERNAL_SERVICE_TOKEN` | *(opcional, fallback)* | Alternativa ao WEBHOOK_SECRET. Token de sessao do FlowForce. Se WEBHOOK_SECRET nao tiver setado, agente usa esse Bearer token. **Expira** — preferir WEBHOOK_SECRET |
+| `APP_URL` | `https://flowforce.vercel.app` | URL publica do app. Usada pra webhooks Evolution apontarem de volta pra ca |
 
 ## OPCIONAIS
 

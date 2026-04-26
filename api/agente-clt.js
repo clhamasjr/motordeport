@@ -342,13 +342,18 @@ function parseResponse(reply) {
 // HELPERS — Chamar handlers internos dos bancos
 // ══════════════════════════════════════════════════════════════
 async function callBankApi(bank, payload) {
-  const token = INTERNAL_TOKEN();
+  // Usa x-internal-secret (WEBHOOK_SECRET) — nao expira, mais robusto
+  // Fallback pra INTERNAL_SERVICE_TOKEN se WEBHOOK_SECRET nao tiver setado
+  const secret = WEBHOOK_SECRET();
+  const headers = { 'Content-Type': 'application/json' };
+  if (secret) {
+    headers['x-internal-secret'] = secret;
+  } else {
+    headers['Authorization'] = 'Bearer ' + INTERNAL_TOKEN();
+  }
   const r = await fetch(APP_URL() + '/api/' + bank, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + token
-    },
+    headers,
     body: JSON.stringify(payload)
   });
   const t = await r.text();

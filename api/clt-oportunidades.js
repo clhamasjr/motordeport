@@ -18,12 +18,11 @@ import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
 
-async function callApi(path, payload, authHeader) {
-  const opts = {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': authHeader },
-    body: JSON.stringify(payload)
-  };
+async function callApi(path, payload, authHeader, internalSecret) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (internalSecret) headers['x-internal-secret'] = internalSecret;
+  if (authHeader) headers['Authorization'] = authHeader;
+  const opts = { method: 'POST', headers, body: JSON.stringify(payload) };
   try {
     const r = await fetch(APP_URL() + path, opts);
     const t = await r.text();
@@ -58,14 +57,16 @@ export default async function handler(req) {
     if (!cpf) return jsonError('CPF invalido (digite 9-11 numeros)', 400, req);
 
     const auth = req.headers.get('Authorization') || '';
+    // Se temos WEBHOOK_SECRET, usa ele nas chamadas internas (mais robusto)
+    const secret = process.env.WEBHOOK_SECRET || '';
 
     // ─── ETAPA ÚNICA: chamadas básicas em paralelo (todas leves) ─
     const [pbOpor, mcClt, c6Of, v8QI, v8Celcoin] = await Promise.all([
-      callApi('/api/presencabank', { action: 'oportunidadesPorCPF', cpf }, auth),
-      callApi('/api/multicorban',   { action: 'consult_clt', cpf },         auth),
-      callApi('/api/c6',            { action: 'oferta', cpf },              auth),
-      callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'QI' },     auth).catch(() => ({ ok: false })),
-      callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'CELCOIN' }, auth).catch(() => ({ ok: false }))
+      callApi('/api/presencabank', { action: 'oportunidadesPorCPF', cpf }, auth, secret),
+      callApi('/api/multicorban',   { action: 'consult_clt', cpf },         auth, secret),
+      callApi('/api/c6',            { action: 'oferta', cpf },              auth, secret),
+      callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'QI' },     auth, secret).catch(() => ({ ok: false })),
+      callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'CELCOIN' }, auth, secret).catch(() => ({ ok: false }))
     ]);
 
     // ─── Mescla dados do cliente (PresençaBank prioritário) ─────

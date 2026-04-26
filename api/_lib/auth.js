@@ -93,7 +93,22 @@ export async function verifySession(req) {
 }
 
 // ── Auth middleware — retorna user ou Response de erro ─────────
+// Aceita 2 formas de auth:
+//  1) Authorization: Bearer <ff_token>  → sessao normal de usuario
+//  2) x-internal-secret: <WEBHOOK_SECRET> → chamadas internas (agente CLT,
+//     workers, cron jobs). Retorna usuario virtual com role admin.
 export async function requireAuth(req) {
+  // Tenta primeiro x-internal-secret (chamadas internas)
+  const secret = process.env.WEBHOOK_SECRET;
+  const provided = req.headers.get('x-internal-secret') || '';
+  if (secret && provided && provided === secret) {
+    return {
+      id: 0, username: 'system', name: 'Internal Service',
+      role: 'admin', _internal: true,
+      nome_vendedor: 'LhamasCred', nome_parceiro: 'LhamasCred'
+    };
+  }
+  // Senao, tenta sessao normal
   const user = await verifySession(req);
   if (!user) return jsonError('Sessao invalida ou expirada. Faca login novamente.', 401, req);
   return user;
