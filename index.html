@@ -4471,7 +4471,6 @@ async function rodarConsultaCLT(opts) {
   const cpf = opts.cpf || normalizeCPF(document.getElementById('cltCpf').value);
   if (!cpf) { alert('CPF inválido. Digite um CPF com 9-11 dígitos.'); return; }
 
-  // Mantém estado de "incluir C6" se foi liberado anteriormente nessa sessão
   const incluirC6 = opts.incluirC6 || cltConsultaState.incluirC6 || false;
 
   cltConsultaState.loading = true;
@@ -4488,12 +4487,64 @@ async function rodarConsultaCLT(opts) {
       body: JSON.stringify({ cpf, incluirC6 })
     });
     cltConsultaState.result = await r.json();
+    cltConsultaState.loading = false;
+    renderApp();
+
+    // ─── ETAPA B: dispara simulação DETALHADA em paralelo (não-bloqueante) ───
+    // Cards aparecem rápido com "calculando...", atualizam quando vier o detalhe
+    const r1 = cltConsultaState.result;
+    if (r1?.success && r1.ofertas?.length) {
+      const cli = r1.cliente || {};
+      const tel = cli.telefones?.[0]?.completo || '';
+
+      for (const o of r1.ofertas) {
+        if (!o.disponivel) continue;
+        if (o.detalhes && o.detalhes.valorLiquido) continue; // ja tem detalhe
+        o._calculando = true;
+        // Dispara em paralelo (sem await — não bloqueia UI)
+        let payload = null;
+        if (o.banco === 'presencabank' && cli.nome && tel) {
+          payload = { banco: 'presencabank', cpf, nome: cli.nome, telefone: tel };
+        } else if (o.banco === 'v8' && o.consultId) {
+          payload = {
+            banco: 'v8', cpf, provider: o.provider, consultId: o.consultId,
+            margem: o.elegibilidade?.margemDisponivel || 0
+          };
+        } else if (o.banco === 'c6') {
+          payload = { banco: 'c6', cpf };
+        }
+        if (!payload) { o._calculando = false; continue; }
+
+        fetch('/api/clt-simular-detalhe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+          body: JSON.stringify(payload)
+        })
+        .then(r => r.json())
+        .then(d => {
+          o._calculando = false;
+          if (d.success && d.detalhes) {
+            o.detalhes = d.detalhes;
+            if (d.idSimulacao) o.idSimulacao = d.idSimulacao;
+            if (d.type) o.type = d.type;
+          } else {
+            o._erroDetalhe = d.mensagem || 'Falha ao simular';
+          }
+          renderApp();
+        })
+        .catch(e => {
+          o._calculando = false;
+          o._erroDetalhe = e.message;
+          renderApp();
+        });
+      }
+      renderApp(); // re-render pra mostrar "calculando"
+    }
   } catch (e) {
     cltConsultaState.error = e.message;
+    cltConsultaState.loading = false;
+    renderApp();
   }
-
-  cltConsultaState.loading = false;
-  renderApp();
 }
 
 async function liberarC6Consulta() {
@@ -4854,7 +4905,13 @@ function _cltOfertaCard(o, ctx) {
     h += '<div style="color:var(--ylw);font-size:13px;margin-bottom:8px">📊 Cliente elegível</div>';
     h += `<div style="font-size:13px"><b>Margem:</b> R$ ${(o.elegibilidade.margemDisponivel||0).toFixed(2)}</div>`;
     if (o.elegibilidade.empregador) h += `<div style="font-size:12px;color:var(--t2)">${o.elegibilidade.empregador}</div>`;
-    if (o.mensagem) h += `<div style="font-size:11px;color:var(--t3);margin-top:6px">${o.mensagem}</div>`;
+    if (o._calculando) {
+      h += `<div style="margin-top:10px;padding:8px;background:rgba(59,130,246,.08);border-radius:6px;font-size:11px;color:var(--acc)">⏳ Calculando simulação detalhada...</div>`;
+    } else if (o._erroDetalhe) {
+      h += `<div style="margin-top:10px;font-size:11px;color:var(--red)">⚠️ ${o._erroDetalhe}</div>`;
+    } else if (o.mensagem) {
+      h += `<div style="font-size:11px;color:var(--t3);margin-top:6px">${o.mensagem}</div>`;
+    }
   } else {
     h += `<div style="color:var(--t3);font-size:13px">${o.mensagem || 'Sem oferta'}</div>`;
   }

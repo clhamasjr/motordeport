@@ -419,19 +419,62 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
   if (acao === 'INICIAR_SIMULACAO') {
     if (!cpf || cpf.length !== 11) return { ok: false, erro: 'CPF inválido' };
 
-    // Usa o orquestrador unificado /api/clt-oportunidades
-    // Por padrão: V8 (QI + CELCOIN) + PresençaBank + Multicorban (enriquece)
-    // C6 fora (exige selfie LGPD — vai opt-in depois)
+    // ETAPA A: Consulta basica em paralelo (rapida, ~5-8s)
     const r = await callBankApi('clt-oportunidades', { cpf, incluirC6: false });
     if (!r.ok || !r.data?.success) {
       return { ok: false, erro: 'Falha ao consultar bancos', _raw: r.data };
     }
+
+    const cliente = r.data.cliente || {};
+    const ofertasBasicas = r.data.ofertas || [];
+    const telPrincipal = cliente.telefones?.[0]?.completo;
+
+    // ETAPA B: Pra cada oferta DISPONIVEL, dispara simulacao detalhada em paralelo
+    // (rola em background nao bloqueando — limite 12s no agente)
+    const tarefasDetalhe = [];
+    for (const o of ofertasBasicas) {
+      if (!o.disponivel) continue;
+      if (o.banco === 'presencabank' && cliente.nome && telPrincipal) {
+        tarefasDetalhe.push(
+          callBankApi('clt-simular-detalhe', {
+            banco: 'presencabank', cpf, nome: cliente.nome, telefone: telPrincipal
+          }).then(res => ({ ...res.data, _ofertaIdx: ofertasBasicas.indexOf(o) }))
+            .catch(() => null)
+        );
+      }
+      if (o.banco === 'v8' && o.consultId) {
+        tarefasDetalhe.push(
+          callBankApi('clt-simular-detalhe', {
+            banco: 'v8', cpf,
+            provider: o.provider,
+            consultId: o.consultId,
+            margem: o.elegibilidade?.margemDisponivel || 0
+          }).then(res => ({ ...res.data, _ofertaIdx: ofertasBasicas.indexOf(o) }))
+            .catch(() => null)
+        );
+      }
+    }
+
+    // Aguarda detalhes (max ~15s — algumas podem falhar/timeout, ok)
+    const detalhes = await Promise.all(tarefasDetalhe);
+
+    // Mescla detalhes nas ofertas basicas
+    for (const det of detalhes) {
+      if (!det || !det.success || det._ofertaIdx === undefined) continue;
+      const o = ofertasBasicas[det._ofertaIdx];
+      if (o && det.detalhes) {
+        o.detalhes = det.detalhes;
+        if (det.idSimulacao) o.idSimulacao = det.idSimulacao;
+        if (det.type) o.type = det.type;
+      }
+    }
+
     return {
       ok: true,
-      cliente: r.data.cliente,
+      cliente,
       vinculo: r.data.vinculo,
-      ofertas: r.data.ofertas || [],
-      totalDisponivel: r.data.totalBancosDisponiveis || 0,
+      ofertas: ofertasBasicas,
+      totalDisponivel: ofertasBasicas.filter(o => o.disponivel).length,
       mensagem: r.data.mensagem
     };
   }
