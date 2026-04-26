@@ -86,6 +86,10 @@ export default async function handler(req) {
       const provider = body.provider || 'QI';
       const consultId = body.consultId;
       const margem = parseFloat(body.margem || 0);
+      // Parâmetros opcionais pra re-simulação customizada:
+      const valorDesejado = parseFloat(body.valorDesejado || 0);     // disbursed_amount
+      const valorParcelaDesejado = parseFloat(body.valorParcelaDesejado || 0); // installment_face_value
+      const numParcelasCustom = parseInt(body.numeroParcelasDesejado || 0);
 
       if (!consultId) {
         return jsonResp({
@@ -100,19 +104,28 @@ export default async function handler(req) {
         return jsonResp({ success: false, banco, provider, mensagem: 'Sem tabelas V8 disponiveis' }, 200, req);
       }
       const cfg = lista[0];
-      const numInst = parseInt((cfg.number_of_installments || ['24'])[0]) || 24;
+      const parcelasOpts = (cfg.number_of_installments || ['24']).map(n => parseInt(n)).filter(n => !isNaN(n));
+      // Se cliente pediu N parcelas e está disponível, usa. Senão pega o maior.
+      const numInst = (numParcelasCustom > 0 && parcelasOpts.includes(numParcelasCustom))
+        ? numParcelasCustom
+        : Math.max(...parcelasOpts) || 24;
+
       // V8 EXIGE installment_face_value XOR disbursed_amount (nao pode mandar ambos!)
-      // Pra higienizacao: usa installment_face_value=margem (parcela maxima possivel)
+      // Prioridade: valorDesejado > valorParcelaDesejado > margem (default)
       const payloadV8 = {
         action: 'simular',
         provider, consultId,
         configId: cfg.id,
         numberOfInstallments: numInst
       };
-      if (margem > 0) {
+      if (valorDesejado > 0) {
+        payloadV8.disbursedAmount = valorDesejado;
+      } else if (valorParcelaDesejado > 0) {
+        payloadV8.installmentFaceValue = valorParcelaDesejado;
+      } else if (margem > 0) {
         payloadV8.installmentFaceValue = margem;
       } else {
-        payloadV8.disbursedAmount = 1000; // fallback se nao temos margem
+        payloadV8.disbursedAmount = 1000;
       }
       const sim = await callApi('/api/v8', payloadV8, auth, secret);
       const d = sim.data;

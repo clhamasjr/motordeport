@@ -136,6 +136,19 @@ REGRAS:
 - Se TODAS as ofertas foram apresentadas e cliente quer mais:
   → Diga "essa foi a melhor que consegui no momento" e tente fechar nessa.
 
+═══ RE-SIMULAÇÃO (cliente quer ajustar valor/parcela/prazo) ═══
+Se cliente disser uma dessas coisas:
+- "Quero R$ 2.000" / "Posso pegar R$ 1.500?" / "Aceita R$ 5 mil?"
+  → [DADO:valor_solicitado=2000] + [ACAO:RESIMULAR]
+- "Quero parcela de R$ 300" / "Parcela menor"
+  → [DADO:valor_parcela_desejado=300] + [ACAO:RESIMULAR]
+- "Em 12x" / "Quero em 24 parcelas"
+  → [DADO:prazo=12] + [ACAO:RESIMULAR]
+- Combinações: "R$ 3 mil em 12x" → ambos os DADOs + 1 RESIMULAR
+
+Ao pedir RESIMULAR, responda algo curto tipo "Já calculo aqui pra você, 1 segundinho..."
+NÃO apresente nada — o sistema vai disparar a nova oferta automaticamente.
+
 [DADO:banco_escolhido=c6|presencabank|v8]
 [DADO:id_simulacao_escolhida=valor]
 [ACAO:COLETAR_DADOS] quando cliente aceitar uma oferta.
@@ -503,18 +516,47 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
   }
 
   if (acao === 'RESIMULAR' || acao === 'SIMULAR_C6_COMPLETO') {
-    const tipoSim = (dadosNovos.valor_solicitado || conversa.dados?.valor_solicitado)
-      ? 'POR_VALOR_SOLICITADO' : 'POR_VALOR_MAXIMO';
-    const payload = { action: 'simular', cpf, tipoSimulacao: tipoSim };
-    if (tipoSim === 'POR_VALOR_SOLICITADO') {
-      payload.prazo = parseInt(dadosNovos.prazo || conversa.dados?.prazo || 48);
-      payload.valorSolicitado = parseFloat(dadosNovos.valor_solicitado || conversa.dados?.valor_solicitado);
+    // Re-simula nos bancos onde cliente já tem oferta, com novos parâmetros
+    // Suporta: valor_solicitado, valor_parcela, prazo (qualquer um)
+    const valorSolicitado = parseFloat(dadosNovos.valor_solicitado || conversa.dados?.valor_solicitado || 0);
+    const valorParcela = parseFloat(dadosNovos.valor_parcela_desejado || dadosNovos.valor_parcela || 0);
+    const prazo = parseInt(dadosNovos.prazo || conversa.dados?.prazo || 0);
+
+    const ofertasAtuais = conversa.ofertas || [];
+    const tarefas = [];
+    for (const o of ofertasAtuais) {
+      if (!o.disponivel) continue;
+      if (o.banco === 'v8' && o.consultId) {
+        tarefas.push(
+          callBankApi('clt-simular-detalhe', {
+            banco: 'v8', cpf,
+            provider: o.provider, consultId: o.consultId,
+            margem: o.elegibilidade?.margemDisponivel || 0,
+            valorDesejado: valorSolicitado,
+            valorParcelaDesejado: valorParcela,
+            numeroParcelasDesejado: prazo
+          }).then(res => ({ ...res.data, _ofertaIdx: ofertasAtuais.indexOf(o) }))
+            .catch(() => null)
+        );
+      }
+      // PB e C6: por enquanto não re-simulam (PB precisa fluxo grande, C6 precisa selfie)
+      // Se quiser resimular C6: cliente já autorizou, valoria $valorSolicitado
     }
-    const r = await callBankApi('c6', payload);
+
+    const detalhes = await Promise.all(tarefas);
+    const ofertasNovas = [...ofertasAtuais];
+    for (const det of detalhes) {
+      if (!det || !det.success || det._ofertaIdx === undefined) continue;
+      const o = { ...ofertasNovas[det._ofertaIdx] };
+      if (det.detalhes) o.detalhes = det.detalhes;
+      if (det.idSimulacao) o.idSimulacao = det.idSimulacao;
+      ofertasNovas[det._ofertaIdx] = o;
+    }
     return {
-      ok: r.ok,
-      planos: r.data?.planos || [],
-      dadosBancariosC6: r.data?.dadosBancariosC6
+      ok: true,
+      ofertas: ofertasNovas,
+      parametros: { valorSolicitado, valorParcela, prazo },
+      mensagem: `Re-simulado com ${valorSolicitado?'valor R$'+valorSolicitado:''} ${valorParcela?'parcela R$'+valorParcela:''} ${prazo?prazo+'x':''}`.trim()
     };
   }
 
@@ -761,6 +803,63 @@ export default async function handler(req) {
         const r = await executarAcao(acao, merged, dados, config);
         acoesResultado[acao] = r;
         await logEvento(conversa.id, telefone, 'acao_' + acao.toLowerCase(), r);
+
+        if (acao === 'RESIMULAR' && r.ok && r.ofertas) {
+          // Salva ofertas atualizadas e dispara follow-up apresentando nova proposta
+          await updateConversa(conversa.id, { ofertas: r.ofertas });
+          await logEvento(conversa.id, telefone, 'resimulacao_ok', { parametros: r.parametros });
+
+          // Follow-up apresenta nova oferta
+          try {
+            const ordemPrioridade = config.ordem_bancos || ['v8', 'presencabank', 'c6'];
+            const ofertasOrdenadas = [...r.ofertas].sort((a, b) => {
+              const ia = ordemPrioridade.indexOf(a.banco);
+              const ib = ordemPrioridade.indexOf(b.banco);
+              return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+            });
+            const primeira = ofertasOrdenadas.find(o => o.disponivel && o.detalhes?.valorLiquido);
+            if (primeira) {
+              const d = primeira.detalhes;
+              const contextoResim = `[CONTEXTO INTERNO — RE-SIMULACAO PRONTA]
+Cliente pediu nova simulacao com parametros: ${JSON.stringify(r.parametros)}.
+Nova proposta:
+💰 R$ ${Number(d.valorLiquido).toFixed(2)} liberado
+📅 ${d.parcelas}x de R$ ${Number(d.valorParcela).toFixed(2)}
+Apresente APENAS essa oferta ao cliente em tom natural, SEM mencionar nome do banco.
+Pergunte se topa essa ou se quer ajustar valor/parcela. 3-4 linhas.`;
+
+              const histAtu = (await dbSelect('clt_conversas', { filters: { id: conversa.id }, single: true }))?.data?.historico || [];
+              const msgsResim = [];
+              for (const h of histAtu.slice(-12)) msgsResim.push({ role: h.role, content: h.content });
+              msgsResim.push({ role: 'user', content: contextoResim });
+
+              const cleanMsgsR = [];
+              let lr = null;
+              for (const m of msgsResim) {
+                if (m.role === lr && typeof m.content === 'string' && typeof cleanMsgsR[cleanMsgsR.length-1]?.content === 'string') {
+                  cleanMsgsR[cleanMsgsR.length - 1].content += '\n' + m.content;
+                } else { cleanMsgsR.push({ ...m }); lr = m.role; }
+              }
+
+              const sysPromptR = config.prompt_override
+                || buildSystemPrompt(nomeVendedor, nomeParceiro, config.ordem_bancos, config.modo_insistencia);
+              const replyR = await callClaude(cleanMsgsR, sysPromptR);
+              if (replyR) {
+                const parsedR = parseResponse(replyR);
+                if (parsedR.clean) {
+                  await sendMsg(instance, telefone, parsedR.clean);
+                  await logEvento(conversa.id, telefone, 'msg_enviada', {
+                    texto: parsedR.clean.substring(0, 200), origem: 'followup_resimulacao'
+                  });
+                }
+              }
+            } else {
+              await sendMsg(instance, telefone, 'Não consegui encontrar oferta com esses parâmetros. Quer tentar outros valores?');
+            }
+          } catch (e) {
+            await logEvento(conversa.id, telefone, 'followup_resim_erro', { erro: e.message });
+          }
+        }
 
         if (acao === 'INICIAR_SIMULACAO' && r.ok) {
           // Salva ofertas + dados do cliente vindos do orquestrador
