@@ -784,7 +784,7 @@ export default async function handler(req) {
           await updateConversa(conversa.id, patchCli);
 
           // ─── FOLLOW-UP AUTOMÁTICO: chama Claude DE NOVO pra apresentar ofertas ──
-          // Sem isso, agente fica em silêncio depois de "vou consultar"
+          await logEvento(conversa.id, telefone, 'followup_iniciado', { ofertas_count: (r.ofertas || []).length });
           try {
             // Ordena ofertas pela prioridade do gestor (clt_config.ordem_bancos)
             const ordemPrioridade = config.ordem_bancos || ['v8', 'presencabank', 'c6'];
@@ -863,12 +863,14 @@ Mensagem natural, 3-5 linhas. Use o nome ${cliente.nome || 'do cliente'} se soub
               } else { cleanFu.push({ ...m }); lr = m.role; }
             }
 
+            await logEvento(conversa.id, telefone, 'followup_calling_claude', { msgs_count: cleanFu.length });
             const replyOfertas = await callClaude(cleanFu, sysPromptFollowup);
+            await logEvento(conversa.id, telefone, 'followup_claude_returned', { has_reply: !!replyOfertas, len: (replyOfertas||'').length });
             if (replyOfertas) {
               const parsedFu = parseResponse(replyOfertas);
               if (parsedFu.clean) {
-                await sendMsg(instance, telefone, parsedFu.clean);
-                // Adiciona ao histórico
+                const sent = await sendMsg(instance, telefone, parsedFu.clean);
+                await logEvento(conversa.id, telefone, 'followup_sent', { sent, len: parsedFu.clean.length });
                 const histFinal = [...histAtualizado,
                   { role: 'assistant', content: parsedFu.clean, ts: new Date().toISOString() }
                 ].slice(-40);
@@ -876,9 +878,14 @@ Mensagem natural, 3-5 linhas. Use o nome ${cliente.nome || 'do cliente'} se soub
                 await logEvento(conversa.id, telefone, 'msg_enviada', {
                   texto: parsedFu.clean.substring(0, 200), origem: 'followup_ofertas'
                 });
+              } else {
+                await logEvento(conversa.id, telefone, 'followup_clean_empty', { raw: replyOfertas.substring(0, 200) });
               }
+            } else {
+              await logEvento(conversa.id, telefone, 'followup_no_reply', {});
             }
           } catch (e) {
+            await logEvento(conversa.id, telefone, 'followup_erro', { erro: e.message, stack: (e.stack||'').substring(0,500) });
             console.error('Erro no follow-up de ofertas:', e);
           }
         }
