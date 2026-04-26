@@ -782,10 +782,21 @@ export default async function handler(req) {
 
     if (action === 'test') {
       let claudeOk = false;
+      let claudeErro = null;
+      let claudeKeyConfigured = !!CLAUDE_KEY();
       try {
-        const r = await callClaude([{ role: 'user', content: 'Responda apenas: OK' }], 'Você é um assistente. Responda curto.');
-        claudeOk = !!r;
-      } catch {}
+        const r = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': CLAUDE_KEY(), 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 10, messages: [{ role: 'user', content: 'OK' }] })
+        });
+        const t = await r.text();
+        if (r.ok) { claudeOk = true; }
+        else {
+          let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 300) }; }
+          claudeErro = { httpStatus: r.status, ...d };
+        }
+      } catch (e) { claudeErro = { exception: e.message }; }
       let supaOk = false;
       try {
         const { data } = await dbQuery('clt_conversas', 'select=count&limit=1');
@@ -805,13 +816,17 @@ export default async function handler(req) {
       return jsonResp({
         success: claudeOk && supaOk && configOk && evoOk,
         claude: claudeOk ? 'ok' : 'erro',
+        claude_key_configured: claudeKeyConfigured,
+        claude_erro_detalhes: claudeErro,
         supabase: supaOk ? 'ok' : 'erro (aplicar supabase_migration_clt.sql?)',
         clt_config: configOk ? configData : 'erro (tabela clt_config existe?)',
         evolution: evoOk ? 'ok' : 'erro',
         model: CLAUDE_MODEL,
         instance: CLT_INSTANCE() || '(CLT_EVOLUTION_INSTANCE não configurada)',
         whitelist: WHITELIST().length > 0 ? WHITELIST() : 'aberto (produção)',
-        internal_token_set: !!INTERNAL_TOKEN()
+        webhook_secret_set: !!WEBHOOK_SECRET(),
+        internal_token_set: !!INTERNAL_TOKEN(),
+        app_url: APP_URL()
       }, 200, req);
     }
 
