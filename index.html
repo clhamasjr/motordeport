@@ -4462,20 +4462,26 @@ function normalizeCPF(raw) {
   return digits.padStart(11, '0');
 }
 
-async function rodarConsultaCLT() {
-  const cpf = normalizeCPF(document.getElementById('cltCpf').value);
+async function rodarConsultaCLT(opts) {
+  opts = opts || {};
+  const cpf = opts.cpf || normalizeCPF(document.getElementById('cltCpf').value);
   if (!cpf) { alert('CPF inválido. Digite um CPF com 9-11 dígitos.'); return; }
+
+  // Mantém estado de "incluir C6" se foi liberado anteriormente nessa sessão
+  const incluirC6 = opts.incluirC6 || cltConsultaState.incluirC6 || false;
 
   cltConsultaState.loading = true;
   cltConsultaState.result = null;
   cltConsultaState.error = null;
+  cltConsultaState.cpfAtual = cpf;
+  cltConsultaState.incluirC6 = incluirC6;
   renderApp();
 
   try {
     const r = await fetch('/api/clt-oportunidades', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
-      body: JSON.stringify({ cpf })
+      body: JSON.stringify({ cpf, incluirC6 })
     });
     cltConsultaState.result = await r.json();
   } catch (e) {
@@ -4484,6 +4490,34 @@ async function rodarConsultaCLT() {
 
   cltConsultaState.loading = false;
   renderApp();
+}
+
+async function liberarC6Consulta() {
+  const r = cltConsultaState.result;
+  if (!r) return;
+  const cpf = r.cliente?.cpf;
+  const nome = (r.cliente?.nome || '').replace(/'/g, "\\'");
+  const dataNasc = r.cliente?.dataNascimento || '';
+  const tel = r.cliente?.telefones?.[0]?.completo || '';
+
+  if (!cpf || !nome || !dataNasc) {
+    alert('Faltam dados (nome ou data de nascimento) pra gerar link C6. Os dados precisam vir do enriquecimento do PresençaBank/Multicorban.');
+    return;
+  }
+  if (!tel) {
+    alert('Cliente sem telefone — não é possível enviar link via WhatsApp');
+    return;
+  }
+
+  // 1. Gera link de selfie
+  await cltGerarSelfieC6(cpf, nome, dataNasc, tel);
+  // 2. Marca pra incluir C6 nas próximas consultas dessa sessão
+  cltConsultaState.incluirC6 = true;
+  // 3. Quando cliente autorizar, operador clica "🔄 Verificar C6" e a consulta inclui C6
+}
+
+async function reconsultarComC6() {
+  await rodarConsultaCLT({ cpf: cltConsultaState.cpfAtual, incluirC6: true });
 }
 
 // ── Digitação de proposta CLT (modal) ────────────────────────
@@ -4767,14 +4801,24 @@ function _cltOfertaCard(o, ctx) {
     return h;
   }
 
-  // Card especial pra C6 quando requer selfie
+  // Card C6 BLOQUEADO (default — cliente não optou por consultar C6 ainda)
+  if (o.banco === 'c6' && o.bloqueado) {
+    h += `<div style="font-size:13px;color:var(--t2);margin-bottom:10px">${o.mensagem}</div>`;
+    h += `<button class="btn-acc" style="width:100%;margin-bottom:6px" onclick="liberarC6Consulta()">📸 Liberar C6 — Enviar selfie ao cliente</button>`;
+    h += `<button class="btn btn-sm" style="width:100%;font-size:11px" onclick="reconsultarComC6()">🔄 Já autorizou? Consultar C6 agora</button>`;
+    h += '</div>';
+    return h;
+  }
+
+  // Card C6 quando precisa de selfie (já tentou consultar, recebeu requiresLiveness)
   if (o.banco === 'c6' && (o.requiresLiveness || o.detalhes?._raw?.requiresLiveness)) {
     const cpf = ctx?.cliente?.cpf || '';
     const nome = (ctx?.cliente?.nome || '').replace(/'/g, "\\'");
     const dataNasc = ctx?.cliente?.dataNascimento || '';
     const tel = ctx?.cliente?.telefones?.[0]?.completo || '';
     h += `<div style="font-size:13px;color:var(--ylw);margin-bottom:10px">${o.mensagem || 'Cliente precisa autorizar consulta C6 (selfie DataPrev)'}</div>`;
-    h += `<button class="btn-acc" style="width:100%" onclick="cltGerarSelfieC6('${cpf}','${nome}','${dataNasc}','${tel}')">📸 Gerar Link de Selfie + Enviar WhatsApp</button>`;
+    h += `<button class="btn-acc" style="width:100%;margin-bottom:6px" onclick="cltGerarSelfieC6('${cpf}','${nome}','${dataNasc}','${tel}')">📸 Gerar Link de Selfie + Enviar WhatsApp</button>`;
+    h += `<button class="btn btn-sm" style="width:100%;font-size:11px" onclick="reconsultarComC6()">🔄 Já autorizou? Recarregar</button>`;
     h += '</div>';
     return h;
   }
@@ -5395,6 +5439,126 @@ function renderCltAutz() {
       h += `</tr>`;
     }
     h += '</tbody></table></div></div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+// ─── WhatsApp CLT — instances filtradas (separado do INSS) ────
+let cltWppState = { loading: false, instances: [], qrCode: null, qrInstance: null, _loaded: false };
+
+async function cltCarregarInstancesWpp() {
+  cltWppState.loading = true; renderApp();
+  try {
+    const r = await fetch('/api/evolution', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'fetchInstances' })
+    });
+    const d = await r.json();
+    const all = Array.isArray(d) ? d : (d.instances || d.data || []);
+    // Filtra: só instances CLT (nome contém "clt" ou começa com "lhamas-clt")
+    cltWppState.instances = all.filter(i => {
+      const name = (i.instance?.instanceName || i.instanceName || i.name || '').toLowerCase();
+      return name.includes('clt') || name.includes('lhamas-clt');
+    });
+  } catch (e) { console.error(e); cltWppState.instances = []; }
+  cltWppState.loading = false;
+  renderApp();
+}
+
+async function cltConectarInstance(name) {
+  cltWppState.loading = true; renderApp();
+  try {
+    const r = await fetch('/api/evolution', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'connect', instance: name })
+    });
+    const d = await r.json();
+    cltWppState.qrCode = d.base64 || d.qr || d.code || null;
+    cltWppState.qrInstance = name;
+  } catch (e) { alert('Erro: ' + e.message); }
+  cltWppState.loading = false;
+  renderApp();
+}
+
+async function cltCriarInstanceCLT() {
+  const nome = prompt('Nome da nova instance CLT (ex: lhamas-clt-2):', 'lhamas-clt-2');
+  if (!nome || !nome.toLowerCase().includes('clt')) {
+    alert('Nome precisa conter "clt" pra ficar nessa tela');
+    return;
+  }
+  cltWppState.loading = true; renderApp();
+  try {
+    const r = await fetch('/api/evolution', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'createInstance', instance: nome })
+    });
+    const d = await r.json();
+    if (d.qrcode || d.base64) cltWppState.qrCode = d.base64 || d.qrcode;
+    cltWppState.qrInstance = nome;
+    cltCarregarInstancesWpp();
+  } catch (e) { alert('Erro: ' + e.message); }
+  cltWppState.loading = false;
+  renderApp();
+}
+
+function renderCltWpp() {
+  if (!cltWppState.loading && cltWppState.instances.length === 0 && !cltWppState._loaded) {
+    cltWppState._loaded = true;
+    setTimeout(cltCarregarInstancesWpp, 0);
+  }
+
+  let h = '<div style="max-width:1100px;margin:0 auto;padding:20px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">';
+  h += '<div><div style="font-size:22px;font-weight:800">📱 WhatsApp CLT</div><div style="font-size:12px;color:var(--t2)">Instances WhatsApp dedicadas ao produto CLT (separadas do INSS)</div></div>';
+  h += '<div style="display:flex;gap:8px">';
+  h += '<button class="btn btn-sm" onclick="cltCarregarInstancesWpp()">🔄 Atualizar</button>';
+  h += '<button class="btn-acc btn-sm" onclick="cltCriarInstanceCLT()">+ Nova Instance CLT</button>';
+  h += '</div></div>';
+
+  if (cltWppState.loading) {
+    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando...</div>';
+  } else if (!cltWppState.instances.length) {
+    h += '<div style="padding:60px;text-align:center;background:var(--card);border:1px solid var(--brd);border-radius:12px">';
+    h += '<div style="font-size:48px;margin-bottom:12px">📭</div>';
+    h += '<div style="color:var(--t2);font-size:14px">Nenhuma instance CLT criada ainda.</div>';
+    h += '<div style="color:var(--t3);font-size:12px;margin-top:8px">Clique em <b>+ Nova Instance CLT</b> e dê um nome (precisa conter "clt").</div>';
+    h += '</div>';
+  } else {
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px">';
+    for (const i of cltWppState.instances) {
+      const name = i.instance?.instanceName || i.instanceName || i.name || '?';
+      const status = i.instance?.status || i.connectionStatus || i.status || 'desconhecido';
+      const isOn = String(status).toLowerCase() === 'open' || String(status).toLowerCase() === 'connected';
+      const numero = i.instance?.owner || i.owner || i.number || '-';
+      const cor = isOn ? 'var(--grn)' : 'var(--ylw)';
+      h += `<div style="padding:18px;background:var(--card);border:1px solid var(--brd);border-radius:12px;border-left:4px solid ${cor}">`;
+      h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">`;
+      h += `<div style="font-size:15px;font-weight:800">${name}</div>`;
+      h += `<span class="pill ${isOn?'pill-grn':'pill-ylw'}">${status}</span>`;
+      h += `</div>`;
+      h += `<div style="font-size:12px;color:var(--t2);margin-bottom:10px">📞 ${numero}</div>`;
+      if (!isOn) {
+        h += `<button class="btn-acc btn-sm" style="width:100%" onclick="cltConectarInstance('${name}')">📱 Conectar (mostrar QR)</button>`;
+      }
+      h += `</div>`;
+    }
+    h += '</div>';
+
+    // Modal QR (se tiver)
+    if (cltWppState.qrCode) {
+      h += '<div class="modal-overlay" onclick="if(event.target===this){cltWppState.qrCode=null;renderApp()}" style="z-index:9999">';
+      h += '<div class="modal-box" style="max-width:400px;text-align:center">';
+      h += `<div style="font-size:18px;font-weight:800;margin-bottom:14px">📱 Conectar ${cltWppState.qrInstance}</div>`;
+      h += `<img src="${cltWppState.qrCode.startsWith('data:')?cltWppState.qrCode:'data:image/png;base64,'+cltWppState.qrCode}" style="width:280px;height:280px;background:#fff;padding:8px;border-radius:8px">`;
+      h += `<div style="font-size:12px;color:var(--t2);margin-top:12px">Abra o WhatsApp do chip CLT → Configurações → Aparelhos Conectados → Conectar um aparelho → escaneie</div>`;
+      h += `<button class="btn" style="margin-top:14px" onclick="cltWppState.qrCode=null;renderApp()">Fechar</button>`;
+      h += '</div></div>';
+    }
   }
 
   h += '</div>';
@@ -6096,7 +6260,7 @@ const MENU=[
         {k:'cltChats',icon:'💬',label:'Conversas'}
       ]},
       {group:'Admin',icon:'⚙️',needsRole:['gestor','admin'],items:[
-        {k:'wpp',icon:'📱',label:'Conexões WhatsApp'},
+        {k:'cltWpp',icon:'📱',label:'WhatsApp CLT'},
         {k:'cltWebhooks',icon:'🪝',label:'Webhooks (V8)'}
       ]}
     ]},
@@ -6402,7 +6566,7 @@ try{renderJobsFloat()}catch{}
 if(!D){
   document.getElementById("headerActions").style.display="none";
   // Aba padrao = home se invalida
-  if(!["home","bases","consulta","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks"].includes(S.tab))S.tab="home";
+  if(!["home","bases","consulta","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp"].includes(S.tab))S.tab="home";
   let content='';
   if(S.tab==="consulta")content=renderConsulta();
   else if(S.tab==="est")content=renderEsteira();
@@ -6419,6 +6583,7 @@ if(!D){
   else if(S.tab==="cltEsteira")content=renderCltEsteira();
   else if(S.tab==="cltAutz")content=renderCltAutz();
   else if(S.tab==="cltWebhooks")content=renderCltWebhooks();
+  else if(S.tab==="cltWpp")content=renderCltWpp();
   if(content){tabContent.innerHTML=content;return}
   // Sem data: tab 'bases' = tela de upload; tab 'home' (padrao) = home
   if(S.tab==="bases"){renderLanding(tabContent);return}
@@ -6454,6 +6619,7 @@ if(!D){
   else if(S.tab==="cltEsteira")tcontent=renderCltEsteira();
   else if(S.tab==="cltAutz")tcontent=renderCltAutz();
   else if(S.tab==="cltWebhooks")tcontent=renderCltWebhooks();
+  else if(S.tab==="cltWpp")tcontent=renderCltWpp();
   if(tcontent){tabContent.innerHTML=tcontent;return}
 
   // ═══ DASHBOARD ═══

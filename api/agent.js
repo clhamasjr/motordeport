@@ -4,7 +4,7 @@ export const config = { runtime: 'edge' };
 const CLAUDE_KEY = () => process.env.CLAUDE_API_KEY;
 const EVO_URL = () => process.env.EVOLUTION_URL;
 const EVO_KEY = () => process.env.EVOLUTION_KEY;
-const CLAUDE_MODEL = 'claude-sonnet-4-5-20241022';
+const CLAUDE_MODEL = 'claude-sonnet-4-5-20250929';
 
 import { json as jsonResp, handleOptions } from './_lib/auth.js';
 

@@ -56,18 +56,27 @@ export default async function handler(req) {
     const cpf = normalizeCPF(body.cpf);
     if (!cpf) return jsonError('CPF invalido (digite 9-11 numeros)', 400, req);
 
+    // C6 só consulta se opt-in (default false) — exige autorização LGPD via selfie,
+    // que cliente precisa fazer primeiro. Frontend libera o C6 explicitamente.
+    const incluirC6 = body.incluirC6 === true;
+
     const auth = req.headers.get('Authorization') || '';
     // Se temos WEBHOOK_SECRET, usa ele nas chamadas internas (mais robusto)
     const secret = process.env.WEBHOOK_SECRET || '';
 
-    // ─── ETAPA ÚNICA: chamadas básicas em paralelo (todas leves) ─
-    const [pbOpor, mcClt, c6Of, v8QI, v8Celcoin] = await Promise.all([
+    // ─── ETAPA ÚNICA: chamadas básicas em paralelo ─
+    // Padrão: V8 (QI + CELCOIN) + PresençaBank + Multicorban (enriquece)
+    // C6 só entra se incluirC6=true (cliente autorizou)
+    const tarefas = [
       callApi('/api/presencabank', { action: 'oportunidadesPorCPF', cpf }, auth, secret),
       callApi('/api/multicorban',   { action: 'consult_clt', cpf },         auth, secret),
-      callApi('/api/c6',            { action: 'oferta', cpf },              auth, secret),
       callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'QI' },     auth, secret).catch(() => ({ ok: false })),
-      callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'CELCOIN' }, auth, secret).catch(() => ({ ok: false }))
-    ]);
+      callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'CELCOIN' }, auth, secret).catch(() => ({ ok: false })),
+      incluirC6
+        ? callApi('/api/c6', { action: 'oferta', cpf }, auth, secret)
+        : Promise.resolve({ ok: false, data: { _bloqueado: true } })
+    ];
+    const [pbOpor, mcClt, v8QI, v8Celcoin, c6Of] = await Promise.all(tarefas);
 
     // ─── Mescla dados do cliente (PresençaBank prioritário) ─────
     const pb = pbOpor.data || {};
@@ -99,24 +108,8 @@ export default async function handler(req) {
     const margem = pb.margem || null;
 
     // ─── Monta cards de ofertas ────────────────────────────────
+    // Ordem: PresençaBank, V8 QI, V8 CELCOIN, C6 (último, só se incluído)
     const ofertas = [];
-
-    // C6
-    const c6 = c6Of.data || {};
-    ofertas.push({
-      banco: 'c6',
-      label: 'C6 Bank',
-      disponivel: !!(c6.success && c6.temOferta),
-      requiresLiveness: !!c6.requiresLiveness,
-      statusAutorizacao: c6.statusAutorizacao || null,
-      detalhes: c6.temOferta ? {
-        valorLiquido: c6.oferta?.valorCliente,
-        parcelas: c6.oferta?.qtdParcelas,
-        valorParcela: c6.oferta?.valorParcela,
-        seguroSugerido: c6.oferta?.valorSeguroSugerido
-      } : null,
-      mensagem: c6.mensagem || null
-    });
 
     // PresençaBank — só elegibilidade (tabela detalhada vem na digitação)
     if (pb.temVinculo) {
@@ -185,6 +178,34 @@ export default async function handler(req) {
     }
     montarCardV8('QI', 'V8 (QI Tech)', v8QI?.data);
     montarCardV8('CELCOIN', 'V8 (CELCOIN)', v8Celcoin?.data);
+
+    // C6 — só se incluirC6=true OU se já foi consultado por estar autorizado
+    const c6 = c6Of.data || {};
+    if (incluirC6) {
+      ofertas.push({
+        banco: 'c6',
+        label: 'C6 Bank',
+        disponivel: !!(c6.success && c6.temOferta),
+        requiresLiveness: !!c6.requiresLiveness,
+        statusAutorizacao: c6.statusAutorizacao || null,
+        detalhes: c6.temOferta ? {
+          valorLiquido: c6.oferta?.valorCliente,
+          parcelas: c6.oferta?.qtdParcelas,
+          valorParcela: c6.oferta?.valorParcela,
+          seguroSugerido: c6.oferta?.valorSeguroSugerido
+        } : null,
+        mensagem: c6.mensagem || null
+      });
+    } else {
+      // Card "bloqueado" — cliente precisa autorizar primeiro
+      ofertas.push({
+        banco: 'c6',
+        label: 'C6 Bank',
+        disponivel: false,
+        bloqueado: true,
+        mensagem: 'C6 exige selfie de autorização DataPrev. Clique pra liberar e enviar link ao cliente via WhatsApp.'
+      });
+    }
 
     const totalDisponivel = ofertas.filter(o => o.disponivel).length;
     const telefonePrincipal = cliente.telefones?.[0]?.completo || null;
