@@ -180,6 +180,7 @@ export default async function handler(req) {
         const tel = String(cliente.telefone || '').replace(/\D/g, '');
         const payload = {
           action: 'criarOperacao',
+          provider: proposta.provider || 'QI', // QI ou CELCOIN
           simulationId: proposta.simulationId,
           cpf, nome: cliente.nome,
           email: cliente.email,

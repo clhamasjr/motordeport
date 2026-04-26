@@ -304,8 +304,10 @@ async function handleAction(body, req) {
       const sexo = String(body.sexo || 'M').toUpperCase().startsWith('M') ? 'male' : 'female';
       const ms = body.maritalStatus || 'single'; // single, married, divorced, widowed
       const docType = body.documentType || 'rg'; // rg ou cnh
+      const provider = body.provider || PROVIDER_DEFAULT;
       const payload = {
         simulation_id: body.simulationId,
+        provider, // QI ou CELCOIN
         borrower: {
           name: body.nome,
           email: body.email,

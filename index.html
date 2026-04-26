@@ -4489,12 +4489,16 @@ async function rodarConsultaCLT() {
 // ── Digitação de proposta CLT (modal) ────────────────────────
 let cltDigitState = { open: false, banco: null, oferta: null, ctx: null, dados: {}, loading: false, result: null };
 
-function cltAbrirDigitacao(banco, ofertaIndex) {
+function cltAbrirDigitacao(banco, provider) {
   const r = cltConsultaState.result;
   if (!r) return;
-  const oferta = r.ofertas?.find(o => o.banco === banco) || null;
+  // Pra V8 multi-provider, escolhe oferta com banco+provider especifico
+  const oferta = banco === 'v8' && provider
+    ? r.ofertas?.find(o => o.banco === banco && o.provider === provider)
+    : r.ofertas?.find(o => o.banco === banco);
+  if (!oferta) return;
   cltDigitState = {
-    open: true, banco, oferta, ctx: r,
+    open: true, banco, provider: provider || null, oferta, ctx: r,
     dados: {
       cliente: {
         cpf: r.cliente?.cpf || '',
@@ -4540,6 +4544,10 @@ async function cltSubmeterDigitacao() {
       ...cltDigitState.dados,
       origem: 'consulta_unitaria'
     };
+    // Pra V8, passa o provider escolhido (QI ou CELCOIN)
+    if (cltDigitState.banco === 'v8' && cltDigitState.provider) {
+      payload.proposta = { ...payload.proposta, provider: cltDigitState.provider };
+    }
     // Usa idSimulacao da oferta
     if (cltDigitState.oferta?.idSimulacao) {
       payload.proposta = { ...payload.proposta, idSimulacao: cltDigitState.oferta.idSimulacao, simulationId: cltDigitState.oferta.idSimulacao };
@@ -4805,7 +4813,8 @@ function _cltOfertaCard(o, ctx) {
 
   // Botão "Digitar" só aparece se a oferta está disponível
   if (o.disponivel && o.detalhes) {
-    h += `<button class="btn-acc btn-sm" style="width:100%;margin-top:14px" onclick="cltAbrirDigitacao('${o.banco}')">📝 Digitar Proposta</button>`;
+    const provArg = o.provider ? `,'${o.provider}'` : '';
+    h += `<button class="btn-acc btn-sm" style="width:100%;margin-top:14px" onclick="cltAbrirDigitacao('${o.banco}'${provArg})">📝 Digitar Proposta</button>`;
   }
 
   h += '</div>';
@@ -5283,6 +5292,166 @@ function renderCltBatch() {
     }
     h += '</tbody></table></div></div>';
   }
+
+  h += '</div>';
+  return h;
+}
+
+// ─── Autorizações LGPD (C6 + futuro FACTA/PAN) ────────────────
+let cltAutzState = { loading: false, lista: [], filtros: { banco: '', status: '' }, _loaded: false };
+
+async function cltCarregarAutz() {
+  cltAutzState.loading = true; renderApp();
+  try {
+    const r = await fetch('/api/clt-autorizacoes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'listar', ...cltAutzState.filtros })
+    });
+    const d = await r.json();
+    cltAutzState.lista = d.autorizacoes || [];
+  } catch (e) { console.error(e); cltAutzState.lista = []; }
+  cltAutzState.loading = false;
+  renderApp();
+}
+
+async function cltReenviarAutz(id, link, telefone, banco) {
+  if (!link || !telefone) return alert('Link ou telefone faltando');
+  const msg = encodeURIComponent(`Pra prosseguir com sua oferta de crédito CLT (${banco.toUpperCase()}), faça uma selfie rápida aqui: ${link}`);
+  window.open(`https://wa.me/55${String(telefone).replace(/\D/g,'')}?text=${msg}`, '_blank');
+  await fetch('/api/clt-autorizacoes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+    body: JSON.stringify({ action: 'marcarEnvioWpp', id })
+  });
+}
+
+async function cltSyncAutz(cpf, banco) {
+  await fetch('/api/clt-autorizacoes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+    body: JSON.stringify({ action: 'verificar', cpf, banco, sync: true })
+  });
+  cltCarregarAutz();
+}
+
+function renderCltAutz() {
+  if (!cltAutzState.loading && cltAutzState.lista.length === 0 && !cltAutzState._loaded) {
+    cltAutzState._loaded = true;
+    setTimeout(cltCarregarAutz, 0);
+  }
+
+  let h = '<div style="max-width:1400px;margin:0 auto;padding:20px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">';
+  h += '<div><div style="font-size:22px;font-weight:800">📸 CLT — Autorizações LGPD</div><div style="font-size:12px;color:var(--t2)">Selfies pendentes/aprovadas dos clientes (C6 ativo, FACTA/PAN aguardando docs)</div></div>';
+  h += '<button class="btn btn-sm" onclick="cltCarregarAutz()">🔄 Atualizar</button>';
+  h += '</div>';
+
+  // Filtros
+  h += '<div style="display:flex;gap:8px;margin-bottom:14px">';
+  h += '<select class="form-input" style="width:auto" onchange="cltAutzState.filtros.banco=this.value;cltCarregarAutz()">';
+  h += '<option value="">Todos os bancos</option>';
+  for (const b of ['c6','facta','pan']) h += `<option value="${b}" ${cltAutzState.filtros.banco===b?'selected':''}>${b.toUpperCase()}</option>`;
+  h += '</select>';
+  h += '<select class="form-input" style="width:auto" onchange="cltAutzState.filtros.status=this.value;cltCarregarAutz()">';
+  h += '<option value="">Todos os status</option>';
+  for (const s of ['pending','authorized','denied','expired']) h += `<option value="${s}" ${cltAutzState.filtros.status===s?'selected':''}>${s}</option>`;
+  h += '</select>';
+  h += '</div>';
+
+  if (cltAutzState.loading) {
+    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando...</div>';
+  } else if (!cltAutzState.lista.length) {
+    h += '<div style="padding:60px;text-align:center;background:var(--card);border:1px solid var(--brd);border-radius:12px">';
+    h += '<div style="font-size:48px;margin-bottom:12px">📭</div>';
+    h += '<div style="color:var(--t2);font-size:14px">Nenhuma autorização registrada ainda.</div>';
+    h += '<div style="color:var(--t3);font-size:12px;margin-top:8px">Quando você gerar um link de selfie pro cliente, vai aparecer aqui.</div>';
+    h += '</div>';
+  } else {
+    // KPIs
+    const porStatus = {};
+    for (const a of cltAutzState.lista) porStatus[a.status] = (porStatus[a.status]||0)+1;
+    h += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">';
+    h += `<div style="padding:12px;background:var(--card);border:1px solid var(--brd);border-radius:10px"><div style="font-size:10px;color:var(--t3)">TOTAL</div><div style="font-size:22px;font-weight:800">${cltAutzState.lista.length}</div></div>`;
+    h += `<div style="padding:12px;background:rgba(245,194,66,.08);border-radius:10px"><div style="font-size:10px;color:var(--t3)">PENDENTES</div><div style="font-size:22px;font-weight:800;color:var(--ylw)">${porStatus.pending||0}</div></div>`;
+    h += `<div style="padding:12px;background:rgba(34,197,94,.08);border-radius:10px"><div style="font-size:10px;color:var(--t3)">AUTORIZADAS</div><div style="font-size:22px;font-weight:800;color:var(--grn)">${porStatus.authorized||0}</div></div>`;
+    h += `<div style="padding:12px;background:rgba(239,68,68,.08);border-radius:10px"><div style="font-size:10px;color:var(--t3)">RECUSADAS/EXPIRADAS</div><div style="font-size:22px;font-weight:800;color:var(--red)">${(porStatus.denied||0)+(porStatus.expired||0)}</div></div>`;
+    h += '</div>';
+
+    h += '<div class="table-wrap"><div class="table-scroll"><table>';
+    h += '<thead><tr><th>Gerado</th><th>Banco</th><th>CPF</th><th>Nome</th><th>Status</th><th>Telefone</th><th>Ações</th></tr></thead><tbody>';
+    for (const a of cltAutzState.lista) {
+      const corSt = a.status === 'authorized' ? 'pill-grn' : a.status === 'pending' ? 'pill-ylw' : 'pill-red';
+      const dt = a.gerado_em ? new Date(a.gerado_em).toLocaleString('pt-BR') : '-';
+      h += `<tr>`;
+      h += `<td style="font-size:11px;color:var(--t3)">${dt}</td>`;
+      h += `<td><span class="pill pill-cyan">${a.banco}</span></td>`;
+      h += `<td class="mono">${a.cpf}</td>`;
+      h += `<td>${a.nome||'-'}</td>`;
+      h += `<td><span class="pill ${corSt}">${a.status}</span></td>`;
+      h += `<td class="mono" style="font-size:11px">${a.telefone||'-'}</td>`;
+      h += `<td style="display:flex;gap:4px;flex-wrap:wrap">`;
+      if (a.status === 'pending' && a.link_selfie) {
+        h += `<button class="btn btn-sm" onclick="cltReenviarAutz('${a.id}','${a.link_selfie}','${a.telefone||''}','${a.banco}')">📱 Enviar WA</button>`;
+      }
+      h += `<button class="btn btn-sm" onclick="cltSyncAutz('${a.cpf}','${a.banco}')">🔄 Sync</button>`;
+      h += `</td>`;
+      h += `</tr>`;
+    }
+    h += '</tbody></table></div></div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+// ─── Webhooks Admin (V8 e futuros) ───────────────────────────
+let cltWhState = { loading: false, last: null };
+
+async function cltRegistrarWebhooksV8() {
+  if (!confirm('Registrar webhooks V8 apontando pra este projeto? V8 vai mandar atualizações de status pra cá.')) return;
+  cltWhState.loading = true; renderApp();
+  try {
+    const r = await fetch('/api/v8', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'registrarWebhooks' })
+    });
+    cltWhState.last = await r.json();
+  } catch (e) { cltWhState.last = { error: e.message }; }
+  cltWhState.loading = false;
+  renderApp();
+}
+
+function renderCltWebhooks() {
+  let h = '<div style="max-width:900px;margin:0 auto;padding:24px">';
+  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">🪝 Webhooks dos Bancos CLT</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:24px">Registra os webhooks pros bancos mandarem atualizações de status (esteira atualiza sozinha).</div>';
+
+  // V8
+  h += '<div style="padding:18px;background:var(--card);border:1px solid var(--brd);border-radius:12px;margin-bottom:14px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+  h += '<div><div style="font-size:16px;font-weight:800;color:var(--ylw)">🏦 V8 Sistema</div><div style="font-size:11px;color:var(--t2)">Eventos: consult.updated + operation.created/updated</div></div>';
+  h += `<button class="btn-acc" onclick="cltRegistrarWebhooksV8()" ${cltWhState.loading?'disabled':''}>${cltWhState.loading?'⏳':'🪝 Registrar Webhooks'}</button>`;
+  h += '</div>';
+  h += `<div style="font-size:12px;color:var(--t3)">URL destino: <code>https://flowforce.vercel.app/api/v8</code></div>`;
+  if (cltWhState.last) {
+    const ok = cltWhState.last.success;
+    h += `<div style="margin-top:12px;padding:10px;background:${ok?'rgba(34,197,94,.08)':'rgba(239,68,68,.08)'};border-radius:8px;font-size:12px">`;
+    h += ok ? '✅ Webhooks registrados!' : '❌ Erro: ' + JSON.stringify(cltWhState.last);
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // Outros bancos (placeholders)
+  h += '<div style="padding:18px;background:var(--card);border:1px solid var(--brd);border-radius:12px;margin-bottom:14px;opacity:.5">';
+  h += '<div style="font-size:16px;font-weight:800;color:var(--cyan)">🏦 C6 Bank</div>';
+  h += '<div style="font-size:12px;color:var(--t3);margin-top:6px">C6 não tem sistema de webhooks. Status atualiza via polling manual ou na próxima consulta.</div>';
+  h += '</div>';
+  h += '<div style="padding:18px;background:var(--card);border:1px solid var(--brd);border-radius:12px;opacity:.5">';
+  h += '<div style="font-size:16px;font-weight:800;color:var(--grn)">🏦 PresençaBank</div>';
+  h += '<div style="font-size:12px;color:var(--t3);margin-top:6px">PresençaBank não documenta webhooks. Status atualiza via polling.</div>';
+  h += '</div>';
 
   h += '</div>';
   return h;
@@ -6041,13 +6210,15 @@ const MENU=[
         {k:'cltBatch',icon:'📥',label:'Higienização em Lote',needsRole:['gestor','admin']}
       ]},
       {group:'Esteira',icon:'📝',items:[
-        {k:'cltEsteira',icon:'🛒',label:'Propostas'}
+        {k:'cltEsteira',icon:'🛒',label:'Propostas'},
+        {k:'cltAutz',icon:'📸',label:'Autorizações LGPD'}
       ]},
       {group:'Agente IA',icon:'🤖',items:[
         {k:'cltChats',icon:'💬',label:'Conversas'}
       ]},
       {group:'Admin',icon:'⚙️',needsRole:['gestor','admin'],items:[
-        {k:'wpp',icon:'📱',label:'Conexões WhatsApp'}
+        {k:'wpp',icon:'📱',label:'Conexões WhatsApp'},
+        {k:'cltWebhooks',icon:'🪝',label:'Webhooks (V8)'}
       ]}
     ]},
   {product:'fgts',icon:'🏦',label:'FGTS',soon:true},
@@ -6352,7 +6523,7 @@ try{renderJobsFloat()}catch{}
 if(!D){
   document.getElementById("headerActions").style.display="none";
   // Aba padrao = home se invalida
-  if(!["home","bases","consulta","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch","cltEsteira"].includes(S.tab))S.tab="home";
+  if(!["home","bases","consulta","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks"].includes(S.tab))S.tab="home";
   let content='';
   if(S.tab==="consulta")content=renderConsulta();
   else if(S.tab==="est")content=renderEsteira();
@@ -6367,6 +6538,8 @@ if(!D){
   else if(S.tab==="cltChats")content=renderCltChats();
   else if(S.tab==="cltBatch")content=renderCltBatch();
   else if(S.tab==="cltEsteira")content=renderCltEsteira();
+  else if(S.tab==="cltAutz")content=renderCltAutz();
+  else if(S.tab==="cltWebhooks")content=renderCltWebhooks();
   if(content){tabContent.innerHTML=content;return}
   // Sem data: tab 'bases' = tela de upload; tab 'home' (padrao) = home
   if(S.tab==="bases"){renderLanding(tabContent);return}
@@ -6400,6 +6573,8 @@ if(!D){
   else if(S.tab==="cltChats")tcontent=renderCltChats();
   else if(S.tab==="cltBatch")tcontent=renderCltBatch();
   else if(S.tab==="cltEsteira")tcontent=renderCltEsteira();
+  else if(S.tab==="cltAutz")tcontent=renderCltAutz();
+  else if(S.tab==="cltWebhooks")tcontent=renderCltWebhooks();
   if(tcontent){tabContent.innerHTML=tcontent;return}
 
   // ═══ DASHBOARD ═══
