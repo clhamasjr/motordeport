@@ -407,28 +407,20 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
   if (acao === 'INICIAR_SIMULACAO') {
     if (!cpf || cpf.length !== 11) return { ok: false, erro: 'CPF inválido' };
 
-    // C6: higienização (confere se tem oferta)
-    const tarefas = [];
-    if (ordem.includes('c6')) tarefas.push(callBankApi('c6', { action: 'oferta', cpf }));
-    else tarefas.push(Promise.resolve({ ok: false, data: { skipped: true } }));
-
-    // PresençaBank: gera termo + tenta enriquecer
-    if (ordem.includes('presencabank') && nome) {
-      tarefas.push(enriquecerComPresencaBank(cpf, nome, conversa.telefone.replace(/^55/, '')));
-    } else {
-      tarefas.push(Promise.resolve({ enriquecido: false }));
+    // Usa o orquestrador unificado /api/clt-oportunidades
+    // Por padrão: V8 (QI + CELCOIN) + PresençaBank + Multicorban (enriquece)
+    // C6 fora (exige selfie LGPD — vai opt-in depois)
+    const r = await callBankApi('clt-oportunidades', { cpf, incluirC6: false });
+    if (!r.ok || !r.data?.success) {
+      return { ok: false, erro: 'Falha ao consultar bancos', _raw: r.data };
     }
-
-    const [c6Res, pbEnrich] = await Promise.all(tarefas);
-
     return {
       ok: true,
-      ordem: ordem,
-      c6: {
-        temOferta: c6Res.data?.temOferta || false,
-        oferta: c6Res.data?.oferta || null
-      },
-      presencabank: pbEnrich
+      cliente: r.data.cliente,
+      vinculo: r.data.vinculo,
+      ofertas: r.data.ofertas || [],
+      totalDisponivel: r.data.totalBancosDisponiveis || 0,
+      mensagem: r.data.mensagem
     };
   }
 
@@ -716,24 +708,88 @@ export default async function handler(req) {
         await logEvento(conversa.id, telefone, 'acao_' + acao.toLowerCase(), r);
 
         if (acao === 'INICIAR_SIMULACAO' && r.ok) {
-          // Se enriquecimento PresençaBank trouxe dados, mescla em conversa.dados
-          const enrich = r.presencabank;
-          if (enrich?.enriquecido && enrich.dadosCliente) {
-            const dadosMesclados = { ...merged.dados };
-            if (enrich.dadosCliente.nome && !merged.nome) {
-              await updateConversa(conversa.id, { nome: enrich.dadosCliente.nome });
+          // Salva ofertas + dados do cliente vindos do orquestrador
+          const cliente = r.cliente || {};
+          const patchCli = {};
+          if (cliente.nome && !merged.nome) patchCli.nome = cliente.nome;
+          if (cliente.dataNascimento) patchCli.data_nascimento = cliente.dataNascimento;
+          if (cliente.sexo) patchCli.sexo = cliente.sexo;
+          patchCli.ofertas = r.ofertas || [];
+          patchCli.etapa = r.totalDisponivel > 0 ? 'apresentando_ofertas' : 'simulando';
+
+          // Mescla dados do enriquecimento (vínculo, mãe, etc)
+          const dadosNovos = { ...merged.dados };
+          if (cliente.nomeMae) dadosNovos.nome_mae = cliente.nomeMae;
+          if (r.vinculo?.cnpj) dadosNovos.empregador_cnpj = r.vinculo.cnpj;
+          if (r.vinculo?.matricula) dadosNovos.matricula = r.vinculo.matricula;
+          if (r.vinculo?.empregador) dadosNovos.empregador_nome = r.vinculo.empregador;
+          if (r.vinculo?.renda) dadosNovos.renda = r.vinculo.renda;
+          patchCli.dados = dadosNovos;
+
+          await updateConversa(conversa.id, patchCli);
+
+          // ─── FOLLOW-UP AUTOMÁTICO: chama Claude DE NOVO pra apresentar ofertas ──
+          // Sem isso, agente fica em silêncio depois de "vou consultar"
+          try {
+            const ofertasDisp = (r.ofertas || []).filter(o => o.disponivel);
+            const contextoOfertas = `[CONTEXTO INTERNO — APRESENTAR OFERTAS AGORA AO CLIENTE]
+Acabei de consultar os bancos pra ${cliente.nome || 'cliente'} (CPF ${cpf}).
+Total: ${r.totalDisponivel || 0} de ${(r.ofertas || []).length} bancos com oferta.
+
+OFERTAS DISPONÍVEIS:
+${ofertasDisp.length === 0 ? 'Nenhum banco retornou oferta nesse momento.' : ofertasDisp.map(o => {
+  const d = o.detalhes || {};
+  const e = o.elegibilidade || {};
+  if (d.valorLiquido) {
+    return `• ${o.label}: R$ ${Number(d.valorLiquido).toFixed(2)} líquido em ${d.parcelas}x R$ ${Number(d.valorParcela).toFixed(2)} (taxa ~${d.taxaMensal || '?'}%/mês)`;
+  } else if (e.margemDisponivel) {
+    return `• ${o.label}: ELEGÍVEL — margem R$ ${Number(e.margemDisponivel).toFixed(2)} (simular tabela detalhada se cliente aceitar)`;
+  } else {
+    return `• ${o.label}: ${o.mensagem || 'disponível'}`;
+  }
+}).join('\n')}
+
+OFERTAS BLOQUEADAS/INDISPONÍVEIS: ${(r.ofertas || []).filter(o => !o.disponivel).length}
+${(r.ofertas || []).filter(o => o.bloqueado).length > 0 ? '⚠️ C6 bloqueado: cliente precisa fazer selfie LGPD pra liberar — só ofereça se cliente quiser explorar mais opções.' : ''}
+
+⚡ AÇÃO: Apresente APENAS A MELHOR oferta primeiro (maior valor líquido, ou primeira da ordem ${(config.ordem_bancos || []).join(' → ')}). Pergunte se cliente topa ou quer ver outras opções. Mensagem natural, 4-6 linhas.`;
+
+            const sysPromptFollowup = config.prompt_override
+              || buildSystemPrompt(nomeVendedor, nomeParceiro, config.ordem_bancos, config.modo_insistencia);
+
+            // Histórico atualizado + nova mensagem de contexto
+            const histAtualizado = [...(novoHistorico || [])];
+            const messagesFollowup = [];
+            for (const h of histAtualizado.slice(-12)) messagesFollowup.push({ role: h.role, content: h.content });
+            messagesFollowup.push({ role: 'user', content: contextoOfertas });
+
+            // Dedupe roles consecutivos
+            const cleanFu = [];
+            let lr = null;
+            for (const m of messagesFollowup) {
+              if (m.role === lr && typeof m.content === 'string' && typeof cleanFu[cleanFu.length-1]?.content === 'string') {
+                cleanFu[cleanFu.length - 1].content += '\n' + m.content;
+              } else { cleanFu.push({ ...m }); lr = m.role; }
             }
-            if (enrich.dadosCliente.dataNascimento) dadosMesclados.data_nascimento_pb = enrich.dadosCliente.dataNascimento;
-            if (enrich.dadosCliente.nomeMae) dadosMesclados.nome_mae = enrich.dadosCliente.nomeMae;
-            if (enrich.dadosCliente.sexo) dadosMesclados.sexo_pb = enrich.dadosCliente.sexo;
-            if (enrich.vinculo?.cnpj) dadosMesclados.empregador_cnpj = enrich.vinculo.cnpj;
-            if (enrich.vinculo?.matricula) dadosMesclados.matricula = enrich.vinculo.matricula;
-            if (enrich.vinculo?.empregador) dadosMesclados.empregador_nome = enrich.vinculo.empregador;
-            await updateConversa(conversa.id, { dados: dadosMesclados });
+
+            const replyOfertas = await callClaude(cleanFu, sysPromptFollowup);
+            if (replyOfertas) {
+              const parsedFu = parseResponse(replyOfertas);
+              if (parsedFu.clean) {
+                await sendMsg(instance, telefone, parsedFu.clean);
+                // Adiciona ao histórico
+                const histFinal = [...histAtualizado,
+                  { role: 'assistant', content: parsedFu.clean, ts: new Date().toISOString() }
+                ].slice(-40);
+                await updateConversa(conversa.id, { historico: histFinal });
+                await logEvento(conversa.id, telefone, 'msg_enviada', {
+                  texto: parsedFu.clean.substring(0, 200), origem: 'followup_ofertas'
+                });
+              }
+            }
+          } catch (e) {
+            console.error('Erro no follow-up de ofertas:', e);
           }
-          await updateConversa(conversa.id, {
-            etapa: r.c6.temOferta ? 'aguardando_autorizacao_c6' : 'simulando'
-          });
         }
 
         if (acao === 'ESCALAR_HUMANO') {
