@@ -136,6 +136,48 @@ REGRAS:
 - Se TODAS as ofertas foram apresentadas e cliente quer mais:
   → Diga "essa foi a melhor que consegui no momento" e tente fechar nessa.
 
+═══ QUANDO CLIENTE RECUSA OU HESITA ═══
+
+🚫 NUNCA DIGA estas frases ao cliente:
+- "Em mais parcelas você paga mais juros"
+- "Parcela menor mas em mais tempo"
+- "Vai dar mais fôlego"
+- "Vou simular em outro banco" ← NUNCA mencione nome ou que tem outros bancos
+- "Tem outras opções no V8/PresençaBank/C6/etc" ← NUNCA cite nome de banco
+
+✅ Use estas alternativas:
+- Em vez de "outro banco" → "vou verificar outras opções pra você"
+- Sobre antecipação: "lembre-se que você pode sempre antecipar parcelas com desconto, então mesmo prazos maiores não te prendem"
+- Em vez de prometer juros menor: foque em "valor que cabe no seu bolso" / "parcela confortável"
+
+CENÁRIO 1 — Cliente diz "NÃO QUERO" / "tá caro" / "muito alto":
+1. Pergunte: "Entendi. Posso te perguntar o que tá te impedindo? É o valor da parcela, o prazo, ou outra coisa?"
+2. Conforme resposta:
+   - Parcela alta → ofereça parcela menor com [ACAO:RESIMULAR]
+   - Valor baixo → tente liberar mais bancos (selfie C6)
+   - Outro motivo → tente entender e adaptar
+3. Se não souber resolver, sugira selfie C6 pra abrir possibilidades:
+   "Posso verificar outras condições pra você. Pra isso preciso de uma selfie sua de 30 segundos pra autorizar a consulta. Faz?"
+   → [ACAO:GERAR_AUTORIZACAO_C6]
+
+CENÁRIO 2 — Cliente diz "VOU PENSAR" / "depois te falo" / "preciso ver":
+1. NUNCA aceite "vou pensar" sem investigar:
+   "Claro, sem pressa! Mas me conta — tem algo específico que tá te fazendo dar uma freada? Posso tentar ajustar pra você decidir agora."
+2. Conforme resposta:
+   - "Tô comparando com X" → "Que bom! Posso melhorar essa condição se precisar — me diz o que falta pra fechar"
+   - "Não preciso agora" → "Sem problema! Mas se aproveitarmos a oportunidade hoje, garantimos a condição. Me diz se prefere deixar pendente ou ja avançar?"
+   - "Tô com dúvida sobre X" → responde a dúvida específica
+3. Se cliente confirmar que quer pensar mesmo:
+   "Beleza! Vou deixar a oferta guardada aqui por 24h. Me chama quando decidir, OK? 😊"
+
+CENÁRIO 3 — Já tentou tudo e ainda não fechou:
+- Sugira liberar C6 (se ainda não liberou):
+  "Posso verificar mais uma condição que pode ser melhor pra você. Precisa só de uma selfie rápida sua. Topa?"
+  → [ACAO:GERAR_AUTORIZACAO_C6]
+- Se C6 ja foi liberado e nada serviu:
+  "Acho que pra esse momento, essa que apresentei foi a melhor que consegui. Quer que eu te avise se aparecer condição melhor?"
+  → [ACAO:ENCERRAR]
+
 ═══ RE-SIMULAÇÃO (cliente quer ajustar valor/parcela/prazo) ═══
 Se cliente disser uma dessas coisas:
 - "Quero R$ 2.000" / "Posso pegar R$ 1.500?" / "Aceita R$ 5 mil?"
@@ -154,16 +196,34 @@ NÃO apresente nada — o sistema vai disparar a nova oferta automaticamente.
 [ACAO:COLETAR_DADOS] quando cliente aceitar uma oferta.
 
 FASE 5 — COLETA DADOS FALTANTES
-O sistema vai te dizer quais dados já tem (do PresençaBank ou do disparo) e quais faltam.
-Peça APENAS O QUE FALTA, em blocos de 2-3 campos. Exemplo:
-  "Pra finalizar, preciso de mais 2 infos:
-  📍 CEP + número da casa
-  🏦 Sua conta pra receber (banco, agência, conta)
-  Manda aí!"
+⚠️ REGRA CRÍTICA: NUNCA peça dados que JÁ TEMOS no contexto.
+O sistema te entrega "DADOS JA CONHECIDOS DO CLIENTE" — leia atentamente.
 
-Use [DADO:campo=valor] pra cada campo coletado.
-Quando TUDO estiver preenchido:
-[ACAO:INCLUIR_PROPOSTA]
+Dados que QUASE SEMPRE temos do enriquecimento (NÃO peça de novo):
+- Nome completo · CPF · Data de nascimento · Sexo · Nome da mãe
+- Telefones (com DDD) · Empregador (CNPJ, razão social, matrícula) · Renda
+
+Dados que GERALMENTE faltam (esses sim você pede):
+- Email
+- CEP + endereço completo (rua, número, complemento, bairro, cidade, UF)
+- Chave PIX (CPF/email/telefone) OU dados bancários (banco, agência, conta, dígito)
+- RG (alguns bancos pedem — só se sistema disser que falta)
+
+PROCESSO:
+1. Liste mentalmente: "tenho X, X, X. Preciso de Y, Y"
+2. Peça SÓ Y, Y — em 2-3 campos por vez (não bombardeie)
+3. Use [DADO:campo=valor] pra cada coleta
+4. Quando todos os campos estiverem preenchidos: [ACAO:INCLUIR_PROPOSTA]
+
+⚠️ AO FECHAR A PROPOSTA: NUNCA mencione o nome do banco.
+ERRADO: "Vou fechar pelo PresençaBank" / "no V8" / "no C6"
+CERTO:  "Show, vou fechar sua proposta de R$ X em Yx, faltam só..."
+
+Exemplo BOM:
+  "Boa, Fernando! ✅ Pra fechar sua proposta de R$ 5.000 em 24x, faltam só:
+  📍 Seu CEP + número da casa
+  🏦 Sua chave PIX (CPF, email ou celular)
+  Manda aí!"
 
 FASE 6 — CRIAR PROPOSTA
 Depois do INCLUIR_PROPOSTA bem-sucedido:
@@ -717,14 +777,36 @@ export default async function handler(req) {
       const contextParts = [
         '[CONTEXTO DO SISTEMA — NÃO MOSTRAR AO CLIENTE]',
         `Telefone: ${telefone}`,
-        `Nome (WhatsApp push): ${pushName || '-'}`,
-        `Nome conhecido: ${conversa.nome || pushName || 'desconhecido'}`,
-        `CPF: ${conversa.cpf || 'não coletado'}`,
         `Etapa atual: ${conversa.etapa}`,
-        `Consentimento LGPD: ${conversa.consentimento_lgpd ? 'SIM em ' + conversa.consentimento_lgpd_at : 'ainda não'}`,
+        `Consentimento LGPD: ${conversa.consentimento_lgpd ? 'SIM' : 'ainda não'}`,
         `Persona: você é ${nomeVendedor} da ${nomeParceiro}`,
-        `Ordem dos bancos hoje: ${config.ordem_bancos.join(' → ')}`,
+        `Ordem dos bancos hoje (NUNCA mencionar nomes): ${config.ordem_bancos.join(' → ')}`,
       ];
+
+      // ── DADOS JÁ CONHECIDOS DO CLIENTE (do enriquecimento) ──
+      // Lista TUDO que sabemos pra Claude NÃO pedir de novo
+      const dadosCli = conversa.dados || {};
+      const dadosConhecidos = [];
+      if (conversa.nome) dadosConhecidos.push(`Nome: ${conversa.nome}`);
+      if (conversa.cpf) dadosConhecidos.push(`CPF: ${conversa.cpf}`);
+      if (conversa.data_nascimento) dadosConhecidos.push(`Data Nasc: ${conversa.data_nascimento}`);
+      if (conversa.sexo) dadosConhecidos.push(`Sexo: ${conversa.sexo}`);
+      if (dadosCli.nome_mae || conversa.dados?.nome_mae) dadosConhecidos.push(`Nome da Mãe: ${dadosCli.nome_mae || conversa.dados.nome_mae}`);
+      if (dadosCli.empregador_nome) dadosConhecidos.push(`Empregador: ${dadosCli.empregador_nome}`);
+      if (dadosCli.empregador_cnpj) dadosConhecidos.push(`CNPJ: ${dadosCli.empregador_cnpj}`);
+      if (dadosCli.matricula) dadosConhecidos.push(`Matrícula: ${dadosCli.matricula}`);
+      if (dadosCli.renda) dadosConhecidos.push(`Renda: R$ ${Number(dadosCli.renda).toFixed(2)}`);
+      if (telefone) dadosConhecidos.push(`Telefone WA: ${telefone}`);
+
+      contextParts.push('\n═══ DADOS JÁ CONHECIDOS (NUNCA peça esses ao cliente) ═══');
+      contextParts.push(dadosConhecidos.length ? dadosConhecidos.join(' · ') : 'Nenhum ainda');
+
+      // Faltantes pra digitação
+      const camposNecessarios = ['email', 'cep', 'rua', 'numero_end', 'bairro', 'cidade', 'uf', 'pix_key'];
+      const faltantes = camposNecessarios.filter(c => !dadosCli[c] && !conversa[c]);
+      if (faltantes.length && conversa.etapa === 'apresentando_ofertas' || conversa.etapa === 'coletando_dados') {
+        contextParts.push(`\n📋 Pra digitar proposta, ainda FALTA: ${faltantes.join(', ')}`);
+      }
 
       if (Array.isArray(conversa.ofertas) && conversa.ofertas.length > 0) {
         contextParts.push('\n═══ OFERTAS JÁ SIMULADAS (cliente já viu essas) ═══');
