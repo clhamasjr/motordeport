@@ -3665,7 +3665,11 @@ function renderWhatsApp(){
   }
 
   // Instance cards
-  let instList=wppState.instances;
+  // Filtra fora as instances CLT (essas aparecem na tela CLT > WhatsApp CLT)
+  let instList=(wppState.instances||[]).filter(i=>{
+    const name=(i.instance?.instanceName||i.instanceName||i.name||'').toLowerCase();
+    return !name.includes('clt');
+  });
   // For non-admin, show only their assigned + all from server
   let users=getU()||[];
 

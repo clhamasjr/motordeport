@@ -830,6 +830,41 @@ export default async function handler(req) {
       }, 200, req);
     }
 
+    // ─── DEBUG: ver eventos de uma conversa ──────────────────
+    if (action === 'debugConversa') {
+      const tel = String(body.telefone || '').replace(/\D/g, '');
+      if (!tel) return jsonResp({ error: 'telefone obrigatório' }, 400, req);
+      const { data: conv } = await dbSelect('clt_conversas', { filters: { telefone: tel }, single: true });
+      if (!conv) {
+        return jsonResp({
+          success: false,
+          encontrouConversa: false,
+          mensagem: 'Nenhuma conversa registrada com esse telefone. Webhook talvez não chegou.',
+          dicas: [
+            '1. Verificar webhook em Vercel logs',
+            '2. CLT_WHATSAPP_WHITELIST pode estar bloqueando esse número',
+            '3. Webhook pode estar apontando pra URL errada (rodar action configureWebhook de novo)'
+          ]
+        }, 200, req);
+      }
+      const { data: eventos } = await dbQuery('clt_conversas_eventos',
+        `select=*&conversa_id=eq.${conv.id}&order=created_at.desc&limit=20`);
+      return jsonResp({
+        success: true,
+        encontrouConversa: true,
+        conversa: {
+          id: conv.id, telefone: conv.telefone, etapa: conv.etapa,
+          ativo: conv.ativo, pausada: conv.pausada_por_humano,
+          consentimento_lgpd: conv.consentimento_lgpd,
+          last_message_at: conv.last_message_at,
+          historico_size: (conv.historico || []).length
+        },
+        eventos: eventos || [],
+        ultimaMensagemRecebida: (conv.historico || []).filter(h => h.role === 'user').slice(-1)[0],
+        ultimaResposta: (conv.historico || []).filter(h => h.role === 'assistant').slice(-1)[0]
+      }, 200, req);
+    }
+
     if (action === 'conversasAtivas') {
       const { data } = await dbQuery('clt_conversas',
         'select=id,telefone,nome,cpf,etapa,banco_escolhido,consentimento_lgpd,last_message_at&ativo=eq.true&order=last_message_at.desc&limit=50'
