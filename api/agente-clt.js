@@ -727,13 +727,24 @@ export default async function handler(req) {
       ];
 
       if (Array.isArray(conversa.ofertas) && conversa.ofertas.length > 0) {
-        contextParts.push('\n═══ OFERTAS JÁ SIMULADAS (apresente na ordem definida) ═══');
-        for (const o of conversa.ofertas.slice(0, 8)) {
-          const vl = Number(o.valor_liquido || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
-          const vp = Number(o.valor_parcela || 0).toFixed(2);
-          contextParts.push(`• ${o.banco.toUpperCase()}: libera R$ ${vl} | ${o.parcelas}x R$ ${vp} | taxa ${o.taxa_mensal}%/mês | id=${o.id_simulacao}`);
+        contextParts.push('\n═══ OFERTAS JÁ SIMULADAS (cliente já viu essas) ═══');
+        const ofertasComDetalhe = conversa.ofertas.filter(o => o.disponivel && o.detalhes?.valorLiquido);
+        for (const o of ofertasComDetalhe.slice(0, 5)) {
+          const d = o.detalhes;
+          const vl = Number(d.valorLiquido || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+          const vp = Number(d.valorParcela || 0).toFixed(2);
+          const idSim = o.idSimulacao || '?';
+          contextParts.push(`• ${o.banco.toUpperCase()}${o.provider?'/'+o.provider:''}: R$ ${vl} liquido | ${d.parcelas}x R$ ${vp} | taxa ${d.taxaMensal||'?'}%/mes | id_simulacao=${idSim}`);
         }
-        contextParts.push(`⚡ Apresente primeiro o banco: ${config.ordem_bancos[0].toUpperCase()}`);
+        const elegiveis = conversa.ofertas.filter(o => o.disponivel && !o.detalhes?.valorLiquido && o.elegibilidade);
+        for (const o of elegiveis) {
+          contextParts.push(`• ${o.banco.toUpperCase()}: ELEGIVEL — margem R$ ${(o.elegibilidade.margemDisponivel||0).toFixed(2)} (sem simulacao detalhada ainda)`);
+        }
+        const bloqueadas = conversa.ofertas.filter(o => o.bloqueado);
+        for (const o of bloqueadas) {
+          contextParts.push(`• ${o.banco.toUpperCase()}: BLOQUEADO — exige selfie do cliente (oferecer se cliente quiser explorar mais)`);
+        }
+        contextParts.push(`\n⚡ ATENCAO: Se cliente acabou de ACEITAR uma oferta (disse 'topo', 'pode ser', 'quero essa', 'fechado', 'bora', etc), responda com:\n   [DADO:banco_escolhido=<banco_da_oferta_aceita>]\n   [DADO:id_simulacao_escolhida=<id_simulacao>]\n   [ACAO:COLETAR_DADOS]\n   Mensagem: "Show, [Nome]! Pra fechar a proposta de R$ X em Yx, vou precisar de uns dados. Pode me passar..."\n\nNAO escale pra humano se a re-simulacao funcionou. Se cliente aceitou, parta pra coleta.`);
       }
 
       if (conversa.banco_escolhido) {
