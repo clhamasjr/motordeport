@@ -51,11 +51,38 @@ function buildSystemPrompt(nomeVendedor, nomeParceiro, ordemBancos, modoInsisten
 ═══ SUA PERSONALIDADE ═══
 - Humano, próximo, profissional
 - Linguagem informal mas respeitosa (use "você")
-- Mensagens CURTAS pra WhatsApp — máximo 3-5 linhas por mensagem
-- 1-2 emojis por mensagem (nada de exagero)
 - NUNCA invente valores — use APENAS o que o sistema entrega no contexto
 - NUNCA peça senhas, tokens, códigos de app bancário
 - ${tomInstrucao}
+
+═══ ESTILO WHATSAPP — REGRA DE OURO: MENOS PALAVRAS ═══
+Cliente abandona mensagem longa. Você responde como amigo no zap, NAO como email formal.
+
+✅ FAÇA:
+- 1 a 2 linhas curtas por mensagem (NUNCA passe de 3 linhas)
+- Frases diretas, sem rodeio. Vai ao ponto.
+- 1 emoji no maximo (zero se nao precisar)
+- Pergunta SIMPLES e UNICA por mensagem
+- Se cliente mandou varias msgs juntas, voce ja recebe TUDO concatenado e responde de UMA vez (nao quebre em varias)
+
+🚫 NAO FAÇA:
+- Saudacao + contexto + pergunta tudo junto ("Oi Joao, tudo bem? Espero que sim! Entao, vi aqui que voce...")
+- Repetir o nome do cliente toda mensagem
+- Frases de enchimento ("legal", "perfeito", "show", "que bom saber" — use 1, nao 3)
+- Re-explicar o que ja falou
+- Frases tipo "fico a disposicao", "qualquer duvida estou aqui" no meio do papo
+
+EXEMPLO RUIM (longo, formal):
+  "Olá João! Tudo bem com você? Espero que sim! Vi aqui que você se interessou
+  pelo crédito CLT, que ótima escolha! Antes de avançar, preciso confirmar alguns
+  dados pra te oferecer a melhor proposta possível. Você poderia me confirmar seu CPF?"
+
+EXEMPLO BOM (curto, direto):
+  "Oi Joao! Pra buscar suas ofertas, me confirma o CPF? 📋"
+
+EXEMPLO BOM 2 (resposta a oferta):
+  Cliente: "topa quanto liberaria?"
+  Voce: "Liberei R$ 4.500 em 24x de R$ 280. Topa? 💰"
 
 ═══ SEU PRODUTO ═══
 Você vende EMPRÉSTIMO CONSIGNADO PRIVADO pra trabalhadores CLT (carteira assinada).
@@ -763,6 +790,54 @@ export default async function handler(req) {
       await logEvento(conversa.id, telefone, 'msg_recebida', {
         tipo: msgContent.type, texto: textoDoCliente.substring(0, 200)
       });
+
+      // ─── DEBOUNCE: agrupa msgs em rajada (so pra texto, sem comandos) ───
+      // Cliente costuma mandar 3-4 msgs seguidas ("oi" "tudo bem?" "queria saber...").
+      // Em vez de responder cada uma, esperamos 5s. Se chegar msg nova nesse meio,
+      // o handler atual aborta e o handler MAIS NOVO eh quem processa o lote.
+      const ehTextoComum = msgContent.type === 'text' && !textoDoCliente.trim().startsWith('/');
+      if (ehTextoComum) {
+        const meuTs = Date.now();
+        const dadosAtuais = conversa.dados || {};
+        const bufferAtual = Array.isArray(dadosAtuais.__buffer?.msgs) ? dadosAtuais.__buffer.msgs : [];
+        bufferAtual.push({ texto: textoDoCliente, ts: meuTs });
+        await updateConversa(conversa.id, {
+          dados: { ...dadosAtuais, __buffer: { msgs: bufferAtual, ts: meuTs } }
+        });
+
+        // Aguarda 5s pra ver se chegam mais mensagens
+        await new Promise(r => setTimeout(r, 5000));
+
+        // Re-checa: se chegou msg nova (ts maior que o meu), eu aborto — o outro handler vai processar
+        const fresh = (await dbSelect('clt_conversas', { filters: { id: conversa.id }, single: true }))?.data;
+        const freshTs = fresh?.dados?.__buffer?.ts || 0;
+        if (freshTs > meuTs) {
+          await logEvento(conversa.id, telefone, 'msg_debounced', { meuTs, freshTs, texto: textoDoCliente.substring(0, 100) });
+          return jsonResp({ ok: true, debounced: true }, 200, req);
+        }
+
+        // Sou o "chosen one" — processo TODAS as msgs do buffer juntas
+        const msgsBuffer = Array.isArray(fresh?.dados?.__buffer?.msgs) ? fresh.dados.__buffer.msgs : bufferAtual;
+        if (msgsBuffer.length > 1) {
+          textoDoCliente = msgsBuffer.map(m => m.texto).join('\n');
+          await logEvento(conversa.id, telefone, 'msgs_agrupadas', {
+            count: msgsBuffer.length, texto_final: textoDoCliente.substring(0, 200)
+          });
+        }
+
+        // Limpa o buffer + atualiza conversa local
+        const dadosClean = { ...(fresh?.dados || {}) };
+        delete dadosClean.__buffer;
+        await updateConversa(conversa.id, { dados: dadosClean });
+        if (fresh) {
+          conversa.dados = dadosClean;
+          conversa.historico = fresh.historico;
+          conversa.etapa = fresh.etapa;
+          conversa.consentimento_lgpd = fresh.consentimento_lgpd;
+          conversa.ofertas = fresh.ofertas;
+          conversa.banco_escolhido = fresh.banco_escolhido;
+        }
+      }
 
       // ─── Comandos especiais ───
       if (textoDoCliente.trim().toLowerCase() === '/pausa') {
