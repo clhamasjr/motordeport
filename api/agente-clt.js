@@ -619,6 +619,7 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
         falhas.push({
           banco: ofertasNovas[det._ofertaIdx]?.banco,
           provider: ofertasNovas[det._ofertaIdx]?.provider,
+          ofertaIdx: det._ofertaIdx,
           excedeuMargem: det.excedeuMargem || false,
           margemMaxima: det.margemMaxima,
           valorMaximoEstimado: det.valorMaximoCalculadoLiquido,
@@ -627,7 +628,39 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
       }
     }
 
-    // Detecta se cliente pediu C6 mas C6 está bloqueado
+    // Se TUDO falhou por excedeu margem, REFAZ automaticamente com a margem máxima
+    // pra apresentar uma oferta CONCRETA (não estimativa)
+    let ofertaMaximaReal = null;
+    if (sucessos.length === 0 && falhas.some(f => f.excedeuMargem)) {
+      const tarefasMax = [];
+      for (const f of falhas) {
+        if (!f.excedeuMargem || !f.margemMaxima) continue;
+        const o = ofertasNovas[f.ofertaIdx];
+        if (o.banco === 'v8' && o.consultId) {
+          tarefasMax.push(
+            callBankApi('clt-simular-detalhe', {
+              banco: 'v8', cpf,
+              provider: o.provider, consultId: o.consultId,
+              margem: f.margemMaxima,
+              valorParcelaDesejado: f.margemMaxima,
+              numeroParcelasDesejado: prazo // mantém prazo do cliente se possível
+            }).then(res => ({ ...res.data, _ofertaIdx: f.ofertaIdx }))
+              .catch(() => null)
+          );
+        }
+      }
+      const detalhesMax = await Promise.all(tarefasMax);
+      for (const det of detalhesMax) {
+        if (!det || !det.success || det._ofertaIdx === undefined) continue;
+        const o = { ...ofertasNovas[det._ofertaIdx] };
+        if (det.detalhes) o.detalhes = det.detalhes;
+        if (det.idSimulacao) o.idSimulacao = det.idSimulacao;
+        ofertasNovas[det._ofertaIdx] = o;
+        ofertaMaximaReal = o;
+        break; // primeira que funcionar
+      }
+    }
+
     const c6Bloqueado = ofertasNovas.find(o => o.banco === 'c6' && o.bloqueado);
 
     return {
@@ -637,12 +670,13 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
       falhas,
       excedeuMargem: falhas.some(f => f.excedeuMargem),
       maiorMargemMaxima: Math.max(...falhas.filter(f => f.margemMaxima).map(f => f.margemMaxima), 0),
-      maiorValorEstimado: Math.max(...falhas.filter(f => f.valorMaximoEstimado).map(f => f.valorMaximoEstimado), 0),
+      ofertaMaximaReal, // simulação real com a margem máxima (quando cliente pediu mais que dá)
       c6Bloqueado: !!c6Bloqueado,
       parametros: { valorSolicitado, valorParcela, prazo },
       mensagem: sucessos.length > 0
         ? `${sucessos.length} oferta(s) re-simulada(s)`
-        : 'Nenhuma simulação retornou — provavelmente excedeu a margem do banco'
+        : (ofertaMaximaReal ? 'Excedeu margem — apresentando MAXIMO possivel'
+                            : 'Nenhuma simulação retornou')
     };
   }
 
@@ -973,24 +1007,47 @@ Nova proposta:
 Apresente APENAS essa oferta ao cliente em tom natural, SEM mencionar nome do banco.
 Pergunte se topa essa ou se quer ajustar valor/parcela. 3-4 linhas.`;
             } else if (r.excedeuMargem) {
-              // CENÁRIO 2: Excedeu margem — explicar limite + sugerir alternativas
+              // CENÁRIO 2: Excedeu margem — apresentar OFERTA MAXIMA REAL (não estimativa)
               const valor = r.parametros.valorSolicitado || r.parametros.valorParcela;
-              const valorEst = r.maiorValorEstimado || 0;
-              const sugestoes = [];
-              if (valorEst > 0) sugestoes.push(`Posso oferecer no maximo R$ ${valorEst.toFixed(2)} liberado dentro da margem deste banco`);
-              if (r.c6Bloqueado) sugestoes.push(`Posso liberar consulta em outro banco que pode ter MAIS margem — basta uma selfie sua (mando o link agora). Faria isso?`);
-              else sugestoes.push(`Quer tentar outro valor menor?`);
+              const om = r.ofertaMaximaReal?.detalhes;
 
-              contextoResim = `[CONTEXTO INTERNO — RE-SIMULACAO EXCEDEU MARGEM]
-Cliente pediu R$ ${valor || '?'} mas a margem disponivel no banco ja consultado eh limitada.
+              if (om && om.valorLiquido) {
+                // Temos uma simulação CONCRETA com a margem máxima — apresentar ela
+                contextoResim = `[CONTEXTO INTERNO — CLIENTE PEDIU MAIS DO QUE A MARGEM PERMITE]
+Cliente pediu R$ ${valor || '?'}, mas NAO ha margem suficiente pra esse valor.
+Ja simulei aqui o MAXIMO possivel dentro da margem disponivel:
+
+💰 R$ ${Number(om.valorLiquido).toFixed(2)} liberado
+📅 ${om.parcelas}x de R$ ${Number(om.valorParcela).toFixed(2)}
+
+⚡ INSTRUCOES OBRIGATORIAS:
+1. Diga ao cliente que NAO tem margem suficiente pro valor que ele pediu
+2. Apresente essa oferta acima como "a opcao possivel no momento" / "o maximo que consigo liberar agora"
+3. Pergunte se ele topa esse valor maximo${r.c6Bloqueado ? ', ou se prefere liberar outra consulta com selfie pra tentar mais margem' : ''}
+4. NUNCA mencione nome de banco
+5. Tom natural, direto, 4-5 linhas
+6. NAO fale "mais juros" / "parcelas menores" / "mais folego"
+7. Pode lembrar: "voce sempre pode antecipar parcelas com desconto"
+
+Se cliente aceitar essa oferta maxima, voce dispara [ACAO:COLETAR_DADOS] na proxima mensagem.${r.c6Bloqueado ? "\nSe cliente quiser liberar outro banco, dispare [ACAO:GERAR_AUTORIZACAO_C6]." : ''}`;
+              } else {
+                // Fallback: nem a simulação máxima funcionou — só explica e sugere alternativas
+                const sugestoes = [];
+                if (r.maiorMargemMaxima > 0) sugestoes.push(`A parcela maxima que cabe na margem do cliente eh R$ ${r.maiorMargemMaxima.toFixed(2)}/mes — sugira um valor menor`);
+                if (r.c6Bloqueado) sugestoes.push(`Posso liberar consulta em outro banco que pode ter MAIS margem — basta uma selfie sua. Faria isso?`);
+                else sugestoes.push(`Quer tentar outro valor menor?`);
+
+                contextoResim = `[CONTEXTO INTERNO — RE-SIMULACAO EXCEDEU MARGEM]
+Cliente pediu R$ ${valor || '?'} mas NAO ha margem suficiente pra esse valor.
 Margem maxima de parcela: R$ ${(r.maiorMargemMaxima||0).toFixed(2)}/mes.
-Valor maximo estimado liberado: R$ ${valorEst.toFixed(2)}.
 
-⚡ Explique pro cliente que NAO conseguiu o valor pedido, e ofereca:
+⚡ Explique pro cliente que NAO tem margem suficiente pro valor pedido e ofereca:
 ${sugestoes.map((s,i) => `${i+1}. ${s}`).join('\n')}
 
 Tom natural, claro, sem ser tecnico. SEM mencionar nome do banco. 4-6 linhas.
-Se cliente toparia liberar C6, ele vai dizer 'sim' e VOCE deve responder com [ACAO:GERAR_AUTORIZACAO_C6] na proxima mensagem.`;
+NAO fale "mais juros" / "parcelas menores" / "mais folego".
+Se cliente topar liberar C6, ele vai dizer 'sim' e VOCE responde com [ACAO:GERAR_AUTORIZACAO_C6].`;
+              }
             } else {
               // CENÁRIO 3: Falha geral
               contextoResim = `[CONTEXTO INTERNO — RE-SIMULACAO FALHOU]
