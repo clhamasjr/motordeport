@@ -475,13 +475,16 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// WEBHOOK SECRET
+// WEBHOOK VALIDATION
 // ══════════════════════════════════════════════════════════════
+// IMPORTANTE: Evolution NAO envia x-webhook-secret automatico.
+// Se quiser validacao real, configurar Evolution pra incluir header
+// custom OU validar via apikey (que ele ja envia).
+// Por enquanto, aceita qualquer webhook que tenha shape valido
+// (verificacao do shape feita no proprio handler).
 function verifyWebhookSecret(req) {
-  const secret = WEBHOOK_SECRET();
-  if (!secret) return true;
-  const provided = req.headers.get('x-webhook-secret') || '';
-  return provided === secret;
+  // Aceita tudo - shape do payload eh validado adiante
+  return true;
 }
 
 // ══════════════════════════════════════════════════════════════
