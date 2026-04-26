@@ -143,7 +143,21 @@ export default async function handler(req) {
           consultId
         }, 200, req);
       }
-      return jsonResp({ success: false, banco, provider, mensagem: 'V8 nao retornou simulacao', _raw: d }, 200, req);
+
+      // Detecta erros específicos pra dar info útil ao agente
+      const errMsg = String(d?._raw?.title || d?._raw?.detail || d?.mensagem || '').toLowerCase();
+      const excedeuMargem = errMsg.includes('margem') || errMsg.includes('valor') && errMsg.includes('superior');
+      const margemMaxima = margem > 0 ? margem : null;
+      return jsonResp({
+        success: false, banco, provider,
+        excedeuMargem,
+        margemMaxima,
+        valorMaximoCalculadoLiquido: margemMaxima ? Math.floor(margemMaxima * numInst * 0.6) : null, // estimativa: parcela max * num parcelas * fator desconto IOF
+        mensagem: excedeuMargem
+          ? `Valor solicitado excede a margem disponível (R$ ${margemMaxima?.toFixed(2) || '?'} de parcela máxima neste banco)`
+          : `V8 não retornou simulação: ${d?._raw?.title || d?.mensagem || 'erro desconhecido'}`,
+        _raw: d
+      }, 200, req);
     }
 
     // ─── C6: tenta /simulation POR_VALOR_MAXIMO (precisa cliente autorizado) ─

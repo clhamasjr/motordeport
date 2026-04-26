@@ -545,18 +545,44 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
 
     const detalhes = await Promise.all(tarefas);
     const ofertasNovas = [...ofertasAtuais];
+    const sucessos = [];
+    const falhas = [];
     for (const det of detalhes) {
-      if (!det || !det.success || det._ofertaIdx === undefined) continue;
-      const o = { ...ofertasNovas[det._ofertaIdx] };
-      if (det.detalhes) o.detalhes = det.detalhes;
-      if (det.idSimulacao) o.idSimulacao = det.idSimulacao;
-      ofertasNovas[det._ofertaIdx] = o;
+      if (!det || det._ofertaIdx === undefined) continue;
+      if (det.success) {
+        const o = { ...ofertasNovas[det._ofertaIdx] };
+        if (det.detalhes) o.detalhes = det.detalhes;
+        if (det.idSimulacao) o.idSimulacao = det.idSimulacao;
+        ofertasNovas[det._ofertaIdx] = o;
+        sucessos.push(o);
+      } else {
+        falhas.push({
+          banco: ofertasNovas[det._ofertaIdx]?.banco,
+          provider: ofertasNovas[det._ofertaIdx]?.provider,
+          excedeuMargem: det.excedeuMargem || false,
+          margemMaxima: det.margemMaxima,
+          valorMaximoEstimado: det.valorMaximoCalculadoLiquido,
+          mensagem: det.mensagem
+        });
+      }
     }
+
+    // Detecta se cliente pediu C6 mas C6 está bloqueado
+    const c6Bloqueado = ofertasNovas.find(o => o.banco === 'c6' && o.bloqueado);
+
     return {
       ok: true,
       ofertas: ofertasNovas,
+      sucessos: sucessos.length,
+      falhas,
+      excedeuMargem: falhas.some(f => f.excedeuMargem),
+      maiorMargemMaxima: Math.max(...falhas.filter(f => f.margemMaxima).map(f => f.margemMaxima), 0),
+      maiorValorEstimado: Math.max(...falhas.filter(f => f.valorMaximoEstimado).map(f => f.valorMaximoEstimado), 0),
+      c6Bloqueado: !!c6Bloqueado,
       parametros: { valorSolicitado, valorParcela, prazo },
-      mensagem: `Re-simulado com ${valorSolicitado?'valor R$'+valorSolicitado:''} ${valorParcela?'parcela R$'+valorParcela:''} ${prazo?prazo+'x':''}`.trim()
+      mensagem: sucessos.length > 0
+        ? `${sucessos.length} oferta(s) re-simulada(s)`
+        : 'Nenhuma simulação retornou — provavelmente excedeu a margem do banco'
     };
   }
 
@@ -796,7 +822,30 @@ export default async function handler(req) {
 
       await updateConversa(conversa.id, patchConversa);
 
-      // ─── Executa ações ───
+      // ─── ENVIA 1ª MENSAGEM PRIMEIRO (resposta imediata do Claude) ───
+      // ANTES de executar actions/follow-up, pra cliente receber na ordem certa.
+      // Sem isso, follow-up ('aqui está a oferta') chegava ANTES da resposta original
+      // ('vou consultar...') por causa do tempo de execução das actions.
+      let _mensagemEnviada = null;
+      if (cleanReply) {
+        let mensagemFinal = cleanReply;
+        // Reservamos a substituição de link C6 pra DEPOIS porque depende de action
+        if (mensagemFinal.length > 500) {
+          const partes = mensagemFinal.split('\n\n').filter(p => p.trim());
+          for (let i = 0; i < partes.length; i++) {
+            await sendMsg(instance, telefone, partes[i].trim());
+            if (i < partes.length - 1) await new Promise(r => setTimeout(r, 1200));
+          }
+        } else {
+          await sendMsg(instance, telefone, mensagemFinal);
+        }
+        _mensagemEnviada = mensagemFinal;
+        await logEvento(conversa.id, telefone, 'msg_enviada', {
+          texto: mensagemFinal.substring(0, 200), actions
+        });
+      }
+
+      // ─── Executa ações (DEPOIS da 1ª mensagem) ───
       const acoesResultado = {};
       for (const acao of actions) {
         const merged = { ...conversa, ...patchConversa };
@@ -805,11 +854,11 @@ export default async function handler(req) {
         await logEvento(conversa.id, telefone, 'acao_' + acao.toLowerCase(), r);
 
         if (acao === 'RESIMULAR' && r.ok && r.ofertas) {
-          // Salva ofertas atualizadas e dispara follow-up apresentando nova proposta
           await updateConversa(conversa.id, { ofertas: r.ofertas });
-          await logEvento(conversa.id, telefone, 'resimulacao_ok', { parametros: r.parametros });
+          await logEvento(conversa.id, telefone, 'resimulacao_ok', {
+            parametros: r.parametros, sucessos: r.sucessos, excedeuMargem: r.excedeuMargem
+          });
 
-          // Follow-up apresenta nova oferta
           try {
             const ordemPrioridade = config.ordem_bancos || ['v8', 'presencabank', 'c6'];
             const ofertasOrdenadas = [...r.ofertas].sort((a, b) => {
@@ -818,43 +867,71 @@ export default async function handler(req) {
               return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
             });
             const primeira = ofertasOrdenadas.find(o => o.disponivel && o.detalhes?.valorLiquido);
+
+            let contextoResim;
             if (primeira) {
+              // CENÁRIO 1: Re-simulação OK — apresenta nova oferta
               const d = primeira.detalhes;
-              const contextoResim = `[CONTEXTO INTERNO — RE-SIMULACAO PRONTA]
+              contextoResim = `[CONTEXTO INTERNO — RE-SIMULACAO PRONTA]
 Cliente pediu nova simulacao com parametros: ${JSON.stringify(r.parametros)}.
 Nova proposta:
 💰 R$ ${Number(d.valorLiquido).toFixed(2)} liberado
 📅 ${d.parcelas}x de R$ ${Number(d.valorParcela).toFixed(2)}
 Apresente APENAS essa oferta ao cliente em tom natural, SEM mencionar nome do banco.
 Pergunte se topa essa ou se quer ajustar valor/parcela. 3-4 linhas.`;
+            } else if (r.excedeuMargem) {
+              // CENÁRIO 2: Excedeu margem — explicar limite + sugerir alternativas
+              const valor = r.parametros.valorSolicitado || r.parametros.valorParcela;
+              const valorEst = r.maiorValorEstimado || 0;
+              const sugestoes = [];
+              if (valorEst > 0) sugestoes.push(`Posso oferecer no maximo R$ ${valorEst.toFixed(2)} liberado dentro da margem deste banco`);
+              if (r.c6Bloqueado) sugestoes.push(`Posso liberar consulta em outro banco que pode ter MAIS margem — basta uma selfie sua (mando o link agora). Faria isso?`);
+              else sugestoes.push(`Quer tentar outro valor menor?`);
 
-              const histAtu = (await dbSelect('clt_conversas', { filters: { id: conversa.id }, single: true }))?.data?.historico || [];
-              const msgsResim = [];
-              for (const h of histAtu.slice(-12)) msgsResim.push({ role: h.role, content: h.content });
-              msgsResim.push({ role: 'user', content: contextoResim });
+              contextoResim = `[CONTEXTO INTERNO — RE-SIMULACAO EXCEDEU MARGEM]
+Cliente pediu R$ ${valor || '?'} mas a margem disponivel no banco ja consultado eh limitada.
+Margem maxima de parcela: R$ ${(r.maiorMargemMaxima||0).toFixed(2)}/mes.
+Valor maximo estimado liberado: R$ ${valorEst.toFixed(2)}.
 
-              const cleanMsgsR = [];
-              let lr = null;
-              for (const m of msgsResim) {
-                if (m.role === lr && typeof m.content === 'string' && typeof cleanMsgsR[cleanMsgsR.length-1]?.content === 'string') {
-                  cleanMsgsR[cleanMsgsR.length - 1].content += '\n' + m.content;
-                } else { cleanMsgsR.push({ ...m }); lr = m.role; }
-              }
+⚡ Explique pro cliente que NAO conseguiu o valor pedido, e ofereca:
+${sugestoes.map((s,i) => `${i+1}. ${s}`).join('\n')}
 
-              const sysPromptR = config.prompt_override
-                || buildSystemPrompt(nomeVendedor, nomeParceiro, config.ordem_bancos, config.modo_insistencia);
-              const replyR = await callClaude(cleanMsgsR, sysPromptR);
-              if (replyR) {
-                const parsedR = parseResponse(replyR);
-                if (parsedR.clean) {
-                  await sendMsg(instance, telefone, parsedR.clean);
-                  await logEvento(conversa.id, telefone, 'msg_enviada', {
-                    texto: parsedR.clean.substring(0, 200), origem: 'followup_resimulacao'
-                  });
-                }
-              }
+Tom natural, claro, sem ser tecnico. SEM mencionar nome do banco. 4-6 linhas.
+Se cliente toparia liberar C6, ele vai dizer 'sim' e VOCE deve responder com [ACAO:GERAR_AUTORIZACAO_C6] na proxima mensagem.`;
             } else {
-              await sendMsg(instance, telefone, 'Não consegui encontrar oferta com esses parâmetros. Quer tentar outros valores?');
+              // CENÁRIO 3: Falha geral
+              contextoResim = `[CONTEXTO INTERNO — RE-SIMULACAO FALHOU]
+Tentei re-simular mas o sistema nao retornou oferta com esses parametros.
+${r.c6Bloqueado ? 'Cliente PODE liberar mais um banco com selfie (C6/DataPrev).' : ''}
+
+Avise o cliente em tom acolhedor, sugerindo:
+- Tentar outro valor (mais baixo)
+- ${r.c6Bloqueado ? 'Liberar consulta em outro banco com selfie rapida' : 'Manter a oferta original'}
+3-4 linhas.`;
+            }
+
+            const histAtu = (await dbSelect('clt_conversas', { filters: { id: conversa.id }, single: true }))?.data?.historico || [];
+            const msgsResim = [];
+            for (const h of histAtu.slice(-12)) msgsResim.push({ role: h.role, content: h.content });
+            msgsResim.push({ role: 'user', content: contextoResim });
+            const cleanMsgsR = [];
+            let lr = null;
+            for (const m of msgsResim) {
+              if (m.role === lr && typeof m.content === 'string' && typeof cleanMsgsR[cleanMsgsR.length-1]?.content === 'string') {
+                cleanMsgsR[cleanMsgsR.length - 1].content += '\n' + m.content;
+              } else { cleanMsgsR.push({ ...m }); lr = m.role; }
+            }
+            const sysPromptR = config.prompt_override
+              || buildSystemPrompt(nomeVendedor, nomeParceiro, config.ordem_bancos, config.modo_insistencia);
+            const replyR = await callClaude(cleanMsgsR, sysPromptR);
+            if (replyR) {
+              const parsedR = parseResponse(replyR);
+              if (parsedR.clean) {
+                await sendMsg(instance, telefone, parsedR.clean);
+                await logEvento(conversa.id, telefone, 'msg_enviada', {
+                  texto: parsedR.clean.substring(0, 200), origem: 'followup_resimulacao'
+                });
+              }
             }
           } catch (e) {
             await logEvento(conversa.id, telefone, 'followup_resim_erro', { erro: e.message });
@@ -1003,24 +1080,12 @@ Mensagem natural, 3-5 linhas. Use o nome ${cliente.nome || 'do cliente'} se soub
       }
 
       // ─── Envia resposta pro cliente ───
-      if (cleanReply) {
-        let mensagemFinal = cleanReply;
-        if (acoesResultado.GERAR_AUTORIZACAO_C6?.link) {
-          mensagemFinal = mensagemFinal.replace(/\[link.*?\]/gi, acoesResultado.GERAR_AUTORIZACAO_C6.link);
-        }
-
-        if (mensagemFinal.length > 500) {
-          const partes = mensagemFinal.split('\n\n').filter(p => p.trim());
-          for (let i = 0; i < partes.length; i++) {
-            await sendMsg(instance, telefone, partes[i].trim());
-            if (i < partes.length - 1) await new Promise(r => setTimeout(r, 1200));
-          }
-        } else {
-          await sendMsg(instance, telefone, mensagemFinal);
-        }
-        await logEvento(conversa.id, telefone, 'msg_enviada', {
-          texto: mensagemFinal.substring(0, 200), actions
-        });
+      // Caso especial: GERAR_AUTORIZACAO_C6 retornou link DEPOIS da msg ja ter sido enviada.
+      // Manda link como mensagem extra.
+      if (acoesResultado.GERAR_AUTORIZACAO_C6?.link && _mensagemEnviada && _mensagemEnviada.match(/\[link.*?\]/i)) {
+        const linkMsg = `Aqui está o link pra você fazer a selfie:\n\n${acoesResultado.GERAR_AUTORIZACAO_C6.link}\n\nLeva 30 segundos. Me avisa quando terminar!`;
+        await sendMsg(instance, telefone, linkMsg);
+        await logEvento(conversa.id, telefone, 'msg_enviada', { texto: linkMsg.substring(0, 200), origem: 'link_c6_pos_action' });
       }
 
       return jsonResp({

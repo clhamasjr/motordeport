@@ -632,13 +632,13 @@ async function higienizarCPF(cpf,nome,bt1,bt2,bt3){
   baseHtml+='<div style="border-top:1px solid var(--brd);padding-top:12px;margin-top:4px"><div style="font-size:11px;font-weight:700;color:var(--acc);margin-bottom:6px;text-transform:uppercase">📱 Telefones Higienizados</div></div>';
 
   if(phoneCache[cpf]){document.getElementById("pmContent").innerHTML=baseHtml;showPhones(phoneCache[cpf],true);return}
-  document.getElementById("pmContent").innerHTML=baseHtml+'<div style="text-align:center;padding:20px;color:var(--t2)"><div style="animation:pulse 1.2s ease infinite;font-size:24px;margin-bottom:8px">📡</div>Consultando API...</div>';
+  document.getElementById("pmContent").innerHTML=baseHtml+'<div style="text-align:center;padding:20px;color:var(--t2)"><div style="animation:pulse 1.2s ease infinite;font-size:24px;margin-bottom:8px">📡</div>Consultando NovaVida...</div>';
   document.getElementById("pmActions").innerHTML=`<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar (usar base)</button>`;
   try{
-    const res=await apiFetch('/api/cartao',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,''),creds:getBankCreds()})});
+    const res=await apiFetch('/api/novavida',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,'')})});
     const data=await res.json();
     if(data.success){phoneCache[cpf]=data;document.getElementById("pmContent").innerHTML=baseHtml;showPhones(data,true)}
-    else{document.getElementById("pmContent").innerHTML=baseHtml+`<div style="text-align:center;padding:12px;color:var(--red)">❌ ${esc(data.error||'Erro na API')}</div>`;document.getElementById("pmActions").innerHTML=`<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar (usar base)</button>`}
+    else{document.getElementById("pmContent").innerHTML=baseHtml+`<div style="text-align:center;padding:12px;color:var(--red)">❌ ${esc(data.error||'Sem telefones encontrados')}</div>`;document.getElementById("pmActions").innerHTML=`<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar (usar base)</button>`}
   }catch(e){document.getElementById("pmContent").innerHTML=baseHtml+`<div style="text-align:center;padding:12px;color:var(--red)">❌ Sem conexão — use os telefones da base</div>`;document.getElementById("pmActions").innerHTML=`<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar</button>`}
 }
 function showPhones(data,append){
@@ -672,7 +672,7 @@ async function batchHig(){
       if(job.stopped)break;
       job.stat=cpf;jobUpdate(jid,{});
       try{
-        const r=await apiFetch('/api/cartao',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,''),creds:getBankCreds()})});
+        const r=await apiFetch('/api/novavida',{method:'POST',body:JSON.stringify({cpf:cpf.replace(/\D/g,'')})});
         const d=await r.json();
         if(d.success){phoneCache[cpf]=d;job.success++;job.log.push({nome:'',cpf,ok:true})}
         else{job.fail++;job.log.push({nome:'',cpf,ok:false,error:d.error||'sem telefones'})}
