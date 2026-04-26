@@ -409,26 +409,50 @@ function extractMessageContent(data) {
 // HELPERS — Claude (suporta texto + imagem)
 // ══════════════════════════════════════════════════════════════
 async function callClaude(messages, systemPrompt) {
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': CLAUDE_KEY(),
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages
-    })
-  });
-  const d = await r.json();
-  if (d.content && d.content[0]) {
-    // Concatena todos os blocks de text (se houver)
-    return d.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': CLAUDE_KEY(),
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages
+      })
+    });
+    const txt = await r.text();
+    let d; try { d = JSON.parse(txt); } catch { d = { raw: txt.substring(0, 500) }; }
+
+    if (!r.ok) {
+      // Anthropic erro (401/400/429/500/etc) - propaga detalhes
+      return {
+        text: null,
+        error: {
+          status: r.status,
+          type: d.error?.type || 'http_error',
+          message: d.error?.message || txt.substring(0, 300)
+        }
+      };
+    }
+
+    if (d.content && d.content[0]) {
+      const text = d.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+      return { text, error: null };
+    }
+    return {
+      text: null,
+      error: { status: r.status, type: 'no_content', message: 'Resposta sem content[]' }
+    };
+  } catch (e) {
+    return {
+      text: null,
+      error: { status: 0, type: 'network', message: e.message || 'fetch falhou' }
+    };
   }
-  return null;
 }
 
 function parseResponse(reply) {
@@ -985,10 +1009,14 @@ export default async function handler(req) {
       const systemPrompt = config.prompt_override
         || buildSystemPrompt(nomeVendedor, nomeParceiro, config.ordem_bancos, config.modo_insistencia);
 
-      const reply = await callClaude(cleanMsgs, systemPrompt);
+      const cr = await callClaude(cleanMsgs, systemPrompt);
+      const reply = cr.text;
       if (!reply) {
-        await sendMsg(instance, telefone, 'Opa, tive um problema técnico. Pode repetir?');
-        return jsonResp({ error: 'claude_no_response' }, 500, req);
+        // Loga o erro REAL (status, type, message) pra debug no painel
+        await logEvento(conversa.id, telefone, 'claude_erro', cr.error || { status: 0, message: 'sem detalhes' });
+        // NAO envia fallback generico - evita loop "tive problema tecnico" repetido.
+        // Cliente fica sem resposta e voce ve o erro nos eventos pra corrigir.
+        return jsonResp({ error: 'claude_no_response', detail: cr.error }, 500, req);
       }
 
       const { clean: cleanReply, actions, fase, dados } = parseResponse(reply);
@@ -1148,7 +1176,11 @@ Avise o cliente em tom acolhedor, sugerindo:
             }
             const sysPromptR = config.prompt_override
               || buildSystemPrompt(nomeVendedor, nomeParceiro, config.ordem_bancos, config.modo_insistencia);
-            const replyR = await callClaude(cleanMsgsR, sysPromptR);
+            const crR = await callClaude(cleanMsgsR, sysPromptR);
+            const replyR = crR.text;
+            if (!replyR && crR.error) {
+              await logEvento(conversa.id, telefone, 'claude_erro_followup_resim', crR.error);
+            }
             if (replyR) {
               const parsedR = parseResponse(replyR);
               if (parsedR.clean) {
@@ -1266,8 +1298,11 @@ Mensagem natural, 3-5 linhas. Use o nome ${cliente.nome || 'do cliente'} se soub
             }
 
             await logEvento(conversa.id, telefone, 'followup_calling_claude', { msgs_count: cleanFu.length });
-            const replyOfertas = await callClaude(cleanFu, sysPromptFollowup);
-            await logEvento(conversa.id, telefone, 'followup_claude_returned', { has_reply: !!replyOfertas, len: (replyOfertas||'').length });
+            const crFu = await callClaude(cleanFu, sysPromptFollowup);
+            const replyOfertas = crFu.text;
+            await logEvento(conversa.id, telefone, 'followup_claude_returned', {
+              has_reply: !!replyOfertas, len: (replyOfertas||'').length, error: crFu.error
+            });
             if (replyOfertas) {
               const parsedFu = parseResponse(replyOfertas);
               if (parsedFu.clean) {
@@ -1500,8 +1535,9 @@ Escreva a PRIMEIRA MENSAGEM:
 - Curta, 4-6 linhas no máximo
 Termine com [FASE:aguardando_consentimento_lgpd]`;
 
-      const reply = await callClaude([{ role: 'user', content: contextMsg }], systemPrompt);
-      if (!reply) return jsonResp({ error: 'claude_no_response' }, 500, req);
+      const crD = await callClaude([{ role: 'user', content: contextMsg }], systemPrompt);
+      const reply = crD.text;
+      if (!reply) return jsonResp({ error: 'claude_no_response', detail: crD.error }, 500, req);
       const { clean, fase } = parseResponse(reply);
 
       await sendMsg(instance, phone, clean);
