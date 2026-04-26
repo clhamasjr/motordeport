@@ -5454,7 +5454,7 @@ async function cltCarregarInstancesWpp() {
     const r = await fetch('/api/evolution', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
-      body: JSON.stringify({ action: 'fetchInstances' })
+      body: JSON.stringify({ action: 'list' })
     });
     const d = await r.json();
     const all = Array.isArray(d) ? d : (d.instances || d.data || []);
@@ -5495,10 +5495,10 @@ async function cltCriarInstanceCLT() {
     const r = await fetch('/api/evolution', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
-      body: JSON.stringify({ action: 'createInstance', instance: nome })
+      body: JSON.stringify({ action: 'create', name: nome })
     });
     const d = await r.json();
-    if (d.qrcode || d.base64) cltWppState.qrCode = d.base64 || d.qrcode;
+    if (d.qrcode || d.base64) cltWppState.qrCode = d.qrcode || d.base64;
     cltWppState.qrInstance = nome;
     cltCarregarInstancesWpp();
   } catch (e) { alert('Erro: ' + e.message); }
