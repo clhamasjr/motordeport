@@ -188,7 +188,7 @@ async function consultCltFgts(cookie, cpf) {
   });
   const text = await res.text();
   let data;
-  try { data = JSON.parse(text); } catch { return { ok: false, error: 'Non-JSON response', raw: text.substring(0, 500) }; }
+  try { data = JSON.parse(text); } catch { return { ok: false, error: 'session expired (non-JSON response)', raw: text.substring(0, 500) }; }
   if (data.code !== undefined && data.code !== 0) return { ok: false, error: data.mensagem || 'Consulta CLT error', data };
   const html = data.hash || '';
   const parsed = parseCltHTML(html);
@@ -204,7 +204,7 @@ async function consultCPF(cookie, cpf) {
     body: body.toString()
   });
   const text = await res.text();
-  let data; try { data = JSON.parse(text); } catch { return { ok: false, error: 'Non-JSON response', raw: text.substring(0, 500) }; }
+  let data; try { data = JSON.parse(text); } catch { return { ok: false, error: 'session expired (non-JSON response)', raw: text.substring(0, 500) }; }
   if (data.code !== undefined && data.code !== 0) return { ok: false, error: data.mensagem || 'Consulta error', data };
   const html = data.hash || '';
   const hasDetail = /nome_beneficiario|nb_beneficiario|valor_beneficio/i.test(html);
@@ -488,7 +488,7 @@ async function consultBeneficio(cookie, beneficio) {
     body: body.toString()
   });
   const text = await res.text();
-  let data; try { data = JSON.parse(text); } catch { return { ok: false, error: 'Non-JSON response', raw: text.substring(0, 500) }; }
+  let data; try { data = JSON.parse(text); } catch { return { ok: false, error: 'session expired (non-JSON response)', raw: text.substring(0, 500) }; }
   if (data.code !== undefined && data.code !== 0) return { ok: false, error: data.mensagem || 'Consulta error', data };
   const html = data.hash || '';
   const parsed = parseConsultHTML(html);
@@ -556,7 +556,13 @@ export default async function handler(req) {
     if (action === 'consult_beneficio') {
       if (!beneficio) return jsonError('Beneficio obrigatorio', 400, req);
       const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Login failed: ' + session.error }, 401, req);
-      const result = await consultBeneficio(session.cookie, beneficio);
+      let result = await consultBeneficio(session.cookie, beneficio);
+      // Retry com novo login se a sessao expirou (resposta nao-JSON = pagina de login do Multicorban)
+      if (!result.ok && (result.error || '').includes('session')) {
+        sessionCache = { cookie: null, ts: 0 };
+        const retry = await ensureSession();
+        if (retry.ok) result = await consultBeneficio(retry.cookie, beneficio);
+      }
       if (result.ok) {
         dbInsert('consultas', { user_id: user.id, tipo: 'beneficio', beneficio: beneficio.replace(/\D/g, ''), nome: result.parsed?.beneficiario?.nome, resultado: result.parsed, fonte: 'multicorban' }).catch(() => {});
       }

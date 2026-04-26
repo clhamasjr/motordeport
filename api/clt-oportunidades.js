@@ -1,17 +1,15 @@
 // ══════════════════════════════════════════════════════════════════
 // api/clt-oportunidades.js
-// Orquestrador de Consulta CLT — só CPF, retorna ofertas dos 3 bancos
+// Orquestrador de Consulta CLT — só CPF, retorna ofertas dos bancos
 //
-// Fluxo:
-// 1. PresençaBank oportunidadesPorCPF (paralelo) — fonte primária:
-//    vínculo + margem + dados pessoais (data nasc, mãe, sexo)
-// 2. Multicorban consult_clt (paralelo) — completa: NOME + TELEFONES
-//    + empresa + dados trabalhistas
-// 3. C6 oferta (paralelo) — higienização (oferta pré-aprovada)
-// 4. Mescla os 3 (PresençaBank prioritário pra dados pessoais)
-// 5. Se conseguiu nome+telefone, roda PresençaBank fluxoCompleto
-//    (pra ter as TABELAS reais de crédito) + JoinBank cltCreateSimulation
-// 6. Retorna lista unificada de ofertas
+// VERSÃO ENXUTA (2026-04-26):
+//  - JoinBank temporariamente fora (operação parada)
+//  - Removidas chamadas pesadas (fluxoCompleto PB, gerarTermo V8 sync)
+//    pra evitar 504 timeout. Detalhes detalhados são feitos sob demanda
+//    no momento da digitação (modal).
+//  - Mantém: PresençaBank básico, Multicorban enriquece, C6, V8 status
+//
+// Tempo esperado: 5-8s (era 30-60s).
 // ══════════════════════════════════════════════════════════════════
 
 export const config = { runtime: 'edge' };
@@ -19,15 +17,11 @@ export const config = { runtime: 'edge' };
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
-const INTERNAL_TOKEN = () => process.env.INTERNAL_SERVICE_TOKEN || '';
 
 async function callApi(path, payload, authHeader) {
   const opts = {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': authHeader
-    },
+    headers: { 'Content-Type': 'application/json', 'Authorization': authHeader },
     body: JSON.stringify(payload)
   };
   try {
@@ -63,11 +57,9 @@ export default async function handler(req) {
     const cpf = normalizeCPF(body.cpf);
     if (!cpf) return jsonError('CPF invalido (digite 9-11 numeros)', 400, req);
 
-    // Pega o token da sessão atual do usuário pra repassar internamente
     const auth = req.headers.get('Authorization') || '';
 
-    // ─── Etapa 1: chamadas em paralelo (info básica de cada fonte) ───
-    // V8: consulta AMBAS bancarizadoras (QI e CELCOIN) em paralelo
+    // ─── ETAPA ÚNICA: chamadas básicas em paralelo (todas leves) ─
     const [pbOpor, mcClt, c6Of, v8QI, v8Celcoin] = await Promise.all([
       callApi('/api/presencabank', { action: 'oportunidadesPorCPF', cpf }, auth),
       callApi('/api/multicorban',   { action: 'consult_clt', cpf },         auth),
@@ -76,14 +68,12 @@ export default async function handler(req) {
       callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'CELCOIN' }, auth).catch(() => ({ ok: false }))
     ]);
 
-    // ─── Etapa 2: mescla dados do cliente ───
-    // PresençaBank é prioridade pra dados pessoais (mais confiável)
-    // Multicorban completa nome + telefones + empresa
+    // ─── Mescla dados do cliente (PresençaBank prioritário) ─────
     const pb = pbOpor.data || {};
     const mc = mcClt.data?.parsed || {};
 
     const cliente = {
-      nome: mc.nome || null,                                          // Multicorban
+      nome: mc.nome || null,
       cpf,
       dataNascimento: pb.dadosCliente?.dataNascimento || (mc.dataNascimento ? ddMmYyToIso(mc.dataNascimento) : null),
       sexo: pb.dadosCliente?.sexo || mc.sexo || null,
@@ -96,7 +86,6 @@ export default async function handler(req) {
     };
 
     const vinculo = pb.temVinculo ? {
-      // PresençaBank tem matricula + cnpj
       matricula: pb.vinculo?.matricula,
       cnpj: pb.vinculo?.cnpj,
       empregador: pb.vinculo?.empregador || mc.empresa?.razaoSocial || null,
@@ -108,93 +97,7 @@ export default async function handler(req) {
 
     const margem = pb.margem || null;
 
-    // ─── Etapa 3: pega telefone principal pra chamadas detalhadas ───
-    const telefonePrincipal = cliente.telefones[0]?.completo || null;
-    const temNomeETel = !!(cliente.nome && telefonePrincipal);
-
-    // ─── Etapa 4: ofertas detalhadas (precisa nome+tel) ───────────
-    // Helper: processa V8 pra UMA bancarizadora (QI ou CELCOIN)
-    async function processarV8(provider, existing) {
-      // Modo assíncrono: se já tem consulta WAITING, retorna "processando" sem timeout
-      if (existing?.encontrado) {
-        const st = existing.status;
-        if (st === 'SUCCESS') {
-          return { provider, consultId: existing.consultId, status: 'success', existing };
-        }
-        if (st === 'REJECTED' || st === 'FAILED') {
-          return { provider, status: 'rejected', existing, mensagem: existing.descricao };
-        }
-        if (st === 'WAITING_CONSENT' || st === 'CONSENT_APPROVED' || st === 'WAITING_CONSULT' || st === 'WAITING_CREDIT_ANALYSIS') {
-          return { provider, status: 'processing', existing, mensagem: `V8 ${provider}: ${st} — aguardando webhook` };
-        }
-      }
-      // Sem consulta — cria termo (só se temos nome+tel+dataNasc+sexo)
-      if (!cliente.dataNascimento || !cliente.sexo) {
-        return { provider, status: 'incompleto', mensagem: 'Faltam dados (dataNasc/sexo)' };
-      }
-      const term = await callApi('/api/v8', {
-        action: 'gerarTermo', provider,
-        cpf, nome: cliente.nome,
-        dataNascimento: cliente.dataNascimento,
-        email: cliente.email || 'cliente@lhamascred.com.br',
-        telefone: telefonePrincipal,
-        sexo: cliente.sexo
-      }, auth);
-      if (!term.ok || !term.data?.consultId) {
-        return { provider, status: 'erro_termo', erro: term.data?.error || term.data?.message || 'Falha ao gerar termo' };
-      }
-      const consultId = term.data.consultId;
-      // Auto-autoriza (não bloqueia, fire and forget)
-      await callApi('/api/v8', { action: 'autorizarTermo', consultId, provider }, auth).catch(() => {});
-      // Modo assíncrono: NÃO aguarda 2s. Retorna "processing" — webhook atualiza depois
-      return { provider, consultId, status: 'processing', mensagem: `Termo criado em ${provider}, aguardando processamento DataPrev (até 5min)` };
-    }
-
-    let pbTabelas = null, jbSim = null;
-    let v8QIResult = null, v8CelcoinResult = null;
-
-    if (temNomeETel) {
-      const [pbFull, jbRes, v8QIp, v8Cp] = await Promise.all([
-        callApi('/api/presencabank', {
-          action: 'fluxoCompleto', cpf, nome: cliente.nome, telefone: telefonePrincipal
-        }, auth),
-        callApi('/api/joinbank', {
-          action: 'cltCreateSimulation', providerCode: '950002',
-          borrower: { identity: cpf, name: cliente.nome, phone: telefonePrincipal }
-        }, auth),
-        processarV8('QI', v8QI?.data),
-        processarV8('CELCOIN', v8Celcoin?.data)
-      ]);
-
-      pbTabelas = pbFull.data;
-      jbSim = jbRes.data;
-      v8QIResult = v8QIp;
-      v8CelcoinResult = v8Cp;
-
-      // Se algum V8 está SUCCESS, tenta simular com a melhor config
-      for (const v8r of [v8QIResult, v8CelcoinResult]) {
-        if (v8r.status !== 'success' || !v8r.consultId) continue;
-        const cfgs = await callApi('/api/v8', { action: 'simularConfigs' }, auth);
-        const lista = cfgs.data?.configs || [];
-        if (lista.length === 0) continue;
-        const cfg = lista[0];
-        const numInst = parseInt((cfg.number_of_installments || ['24'])[0]) || 24;
-        const margem = parseFloat(v8r.existing?.availableMarginValue || 0);
-        const sim = await callApi('/api/v8', {
-          action: 'simular',
-          consultId: v8r.consultId,
-          configId: cfg.id,
-          numberOfInstallments: numInst,
-          installmentFaceValue: margem > 0 ? margem : 0,
-          disbursedAmount: 0,
-          provider: v8r.provider
-        }, auth);
-        v8r.simulacao = sim.data;
-        v8r._configUsada = cfg;
-      }
-    }
-
-    // ─── Etapa 5: monta array de ofertas ───
+    // ─── Monta cards de ofertas ────────────────────────────────
     const ofertas = [];
 
     // C6
@@ -214,38 +117,21 @@ export default async function handler(req) {
       mensagem: c6.mensagem || null
     });
 
-    // PresençaBank
-    if (pbTabelas?.success && pbTabelas.melhorTabela) {
-      const t = pbTabelas.melhorTabela;
+    // PresençaBank — só elegibilidade (tabela detalhada vem na digitação)
+    if (pb.temVinculo) {
       ofertas.push({
         banco: 'presencabank',
         label: 'PresençaBank',
         disponivel: true,
-        detalhes: {
-          valorLiquido: t.valorLiquido,
-          parcelas: t.quantidadeParcelas,
-          valorParcela: t.valorParcela,
-          taxaMensal: t.taxa,
-          totalTabelas: pbTabelas.tabelas?.length || 0
-        },
-        margemDisponivel: pbTabelas.margemDisponivel,
-        empregador: pbTabelas.vinculo?.empregador
-      });
-    } else if (pb.temVinculo) {
-      // Tem vínculo mas sem nome+tel pra simular tabelas → mostra elegibilidade
-      ofertas.push({
-        banco: 'presencabank',
-        label: 'PresençaBank',
-        disponivel: true,
-        detalhes: null,
+        detalhes: null, // tabela vem sob demanda no modal de digitação
         elegibilidade: {
           margemDisponivel: pb.margem?.disponivel,
           margemBase: pb.margem?.base,
           empregador: pb.vinculo?.empregador
         },
-        mensagem: temNomeETel
-          ? (pbTabelas?.mensagem || 'Vínculo elegível, mas erro ao simular tabelas')
-          : 'Elegível — pra simular tabela exata, faltou nome ou telefone do cliente'
+        mensagem: pb.margem?.disponivel
+          ? `Cliente elegível — margem R$ ${parseFloat(pb.margem.disponivel).toFixed(2)}. Clique Digitar pra simular tabela exata.`
+          : 'Cliente elegível mas sem margem disponível'
       });
     } else {
       ofertas.push({
@@ -256,77 +142,52 @@ export default async function handler(req) {
       });
     }
 
-    // JoinBank CLT
-    if (jbSim?.success && jbSim.temVinculo) {
-      const emp = jbSim.employmentRelationships?.[0];
-      ofertas.push({
-        banco: 'joinbank',
-        label: 'JoinBank CLT',
-        disponivel: true,
-        detalhes: {
-          empregador: emp?.employerName,
-          margemDisponivel: emp?.availableMarginValue,
-          simulationId: jbSim.simulationId
-        }
-      });
-    } else {
-      ofertas.push({
-        banco: 'joinbank',
-        label: 'JoinBank CLT',
-        disponivel: false,
-        mensagem: temNomeETel
-          ? 'JoinBank precisa de borrower completo (endereço, mãe, RG). Use o agente WhatsApp pra coletar.'
-          : 'Faltou nome+telefone do cliente'
-      });
-    }
-
-    // V8 Sistema — 2 cards (QI + CELCOIN)
-    function montarCardV8(v8r, label) {
-      if (!v8r) {
-        ofertas.push({ banco: 'v8', provider: label.toLowerCase().replace(/[^a-z]/g,''), label,
-          disponivel: false, mensagem: 'Faltou nome+telefone do cliente' });
+    // V8 QI Tech — só status (sem auto-criar termo)
+    function montarCardV8(provider, label, existing) {
+      if (!existing?.encontrado) {
+        ofertas.push({
+          banco: 'v8', provider, label,
+          disponivel: false,
+          podeGerarTermo: !!(cliente.nome && cliente.dataNascimento && cliente.sexo && cliente.telefones?.[0]),
+          mensagem: cliente.nome
+            ? 'Sem termo V8 ainda — clique Digitar pra criar termo + simular'
+            : 'Faltam dados básicos pra criar termo V8'
+        });
         return;
       }
-      const sim = v8r.simulacao;
-      if (sim?.idSimulation) {
+      const st = existing.status;
+      if (st === 'SUCCESS') {
         ofertas.push({
-          banco: 'v8', provider: v8r.provider, label,
+          banco: 'v8', provider, label,
           disponivel: true,
-          detalhes: {
-            valorLiquido: sim.valorDesembolso || sim.valorOperacao,
-            parcelas: sim.qtdParcelas,
-            valorParcela: sim.valorParcela,
-            taxaMensal: v8r._configUsada?.monthly_interest_rate,
-            cetMensal: sim.cet
+          consultId: existing.consultId,
+          elegibilidade: {
+            margemDisponivel: parseFloat(existing.availableMarginValue || 0)
           },
-          consultId: v8r.consultId,
-          idSimulation: sim.idSimulation
+          mensagem: `Cliente elegível — margem R$ ${parseFloat(existing.availableMarginValue || 0).toFixed(2)}. Clique Digitar pra simular.`
         });
-      } else if (v8r.status === 'processing') {
+      } else if (st === 'REJECTED' || st === 'FAILED') {
         ofertas.push({
-          banco: 'v8', provider: v8r.provider, label,
+          banco: 'v8', provider, label,
           disponivel: false,
-          processando: true,
-          mensagem: v8r.mensagem || 'V8 processando — aguarde alguns minutos e atualize'
-        });
-      } else if (v8r.status === 'rejected') {
-        ofertas.push({
-          banco: 'v8', provider: v8r.provider, label,
-          disponivel: false, mensagem: '❌ Rejeitado: ' + (v8r.mensagem || 'sem oferta')
+          mensagem: `❌ ${st}: ${existing.descricao || 'rejeitado'}`
         });
       } else {
         ofertas.push({
-          banco: 'v8', provider: v8r.provider, label,
-          disponivel: false, mensagem: v8r.erro || v8r.mensagem || 'Sem oferta'
+          banco: 'v8', provider, label,
+          disponivel: false,
+          processando: true,
+          consultId: existing.consultId,
+          mensagem: `V8 ${provider}: ${st} — aguardando webhook (pode levar até 5min)`
         });
       }
     }
+    montarCardV8('QI', 'V8 (QI Tech)', v8QI?.data);
+    montarCardV8('CELCOIN', 'V8 (CELCOIN)', v8Celcoin?.data);
 
-    montarCardV8(v8QIResult, 'V8 (QI Tech)');
-    montarCardV8(v8CelcoinResult, 'V8 (CELCOIN)');
-
-    // ─── Etapa 6: resumo ───
     const totalDisponivel = ofertas.filter(o => o.disponivel).length;
+    const telefonePrincipal = cliente.telefones?.[0]?.completo || null;
+    const temNomeETel = !!(cliente.nome && telefonePrincipal);
 
     return jsonResp({
       success: true,
@@ -343,16 +204,14 @@ export default async function handler(req) {
       ofertas,
       totalBancosDisponiveis: totalDisponivel,
       mensagem: totalDisponivel > 0
-        ? `${totalDisponivel} de 3 bancos com oferta disponível`
+        ? `${totalDisponivel} de 4 bancos com oferta disponível`
         : 'Nenhum banco retornou oferta disponível pra esse CPF',
       _raw: {
         presencabank: pb,
         multicorban: mc,
         c6,
-        presencabankTabelas: pbTabelas,
-        joinbank: jbSim,
-        v8QI: v8QIResult,
-        v8Celcoin: v8CelcoinResult
+        v8QI: v8QI?.data,
+        v8Celcoin: v8Celcoin?.data
       }
     }, 200, req);
 

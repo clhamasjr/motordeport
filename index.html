@@ -4883,9 +4883,6 @@ function renderCltConsulta() {
       h += total > 0 ? `✅ <b>${r.mensagem}</b>` : `⚠️ ${r.mensagem}`;
       h += '</div>';
 
-      // Diagnóstico de enriquecimento (rodapé discreto)
-      const enr = r.enriquecimento || {};
-      h += `<div style="margin-top:8px;font-size:11px;color:var(--t3);text-align:center">PresençaBank: ${enr.presencaBankOk?'✅':'❌'} · Multicorban: ${enr.multicorbanOk?'✅':'❌'}</div>`;
     }
   }
 
@@ -5185,7 +5182,6 @@ function renderCltBatch() {
   const bancos = [
     { k: 'c6', label: '🏦 C6 Bank', desc: 'só CPF', cor: 'var(--cyan)' },
     { k: 'presencabank', label: '🏦 PresençaBank', desc: 'CPF + Nome + Telefone', cor: 'var(--grn)' },
-    { k: 'joinbank', label: '🏦 JoinBank', desc: 'CPF + Nome + Telefone', cor: 'var(--pur)' },
     { k: 'v8', label: '🏦 V8 Sistema', desc: 'CPF + Nome + Tel + Sexo + DataNasc + Email', cor: 'var(--ylw)' }
   ];
   for (const b of bancos) {
