@@ -269,14 +269,18 @@ async function handleAction(body, req) {
       const obrig = ['consultId', 'configId'];
       const faltam = obrig.filter(k => !body[k]);
       if (faltam.length) return jsonError('Faltam: ' + faltam.join(', '), 400, req);
+      // V8 EXIGE installmentFaceValue XOR disbursedAmount (nao pode mandar ambos!)
       const payload = {
         consult_id: body.consultId,
         config_id: body.configId,
-        installment_face_value: parseFloat(body.installmentFaceValue || 0),
-        disbursed_amount: parseFloat(body.disbursedAmount || 0),
         number_of_installments: parseInt(body.numberOfInstallments || 0),
         provider: body.provider || PROVIDER_DEFAULT
       };
+      const ifv = parseFloat(body.installmentFaceValue || 0);
+      const da = parseFloat(body.disbursedAmount || 0);
+      if (ifv > 0) payload.installment_face_value = ifv;
+      else if (da > 0) payload.disbursed_amount = da;
+      else return jsonError('installmentFaceValue OU disbursedAmount obrigatorio (>0)', 400, req);
       const r = await v8Call('/private-consignment/simulation', 'POST', payload);
       const d = r.data || {};
       return j({

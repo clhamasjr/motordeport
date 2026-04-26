@@ -163,8 +163,9 @@ export default async function handler(req) {
       const termoR = await pbCall('/consultas/termo-inss', 'POST', {
         cpf, nome: body.nome, telefone, produtoId: getConfig().PRODUTO_ID
       });
-      const termoId = termoR.data?.id || termoR.data?.termoId;
-      if (!termoR.ok || !termoId) {
+      // PresençaBank retorna { autorizacaoId, shortUrl } na maior parte das chamadas
+      const termoId = termoR.data?.id || termoR.data?.termoId || termoR.data?.autorizacaoId;
+      if (!termoId) {
         return j({ success: false, etapa: 'gerarTermo', erro: termoR.data }, 200, req);
       }
 

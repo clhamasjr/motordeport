@@ -101,14 +101,20 @@ export default async function handler(req) {
       }
       const cfg = lista[0];
       const numInst = parseInt((cfg.number_of_installments || ['24'])[0]) || 24;
-      const sim = await callApi('/api/v8', {
+      // V8 EXIGE installment_face_value XOR disbursed_amount (nao pode mandar ambos!)
+      // Pra higienizacao: usa installment_face_value=margem (parcela maxima possivel)
+      const payloadV8 = {
         action: 'simular',
         provider, consultId,
         configId: cfg.id,
-        numberOfInstallments: numInst,
-        installmentFaceValue: margem > 0 ? margem : 0,
-        disbursedAmount: 0
-      }, auth, secret);
+        numberOfInstallments: numInst
+      };
+      if (margem > 0) {
+        payloadV8.installmentFaceValue = margem;
+      } else {
+        payloadV8.disbursedAmount = 1000; // fallback se nao temos margem
+      }
+      const sim = await callApi('/api/v8', payloadV8, auth, secret);
       const d = sim.data;
       if (d?.idSimulation) {
         return jsonResp({
