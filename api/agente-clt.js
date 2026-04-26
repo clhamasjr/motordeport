@@ -810,9 +810,10 @@ export default async function handler(req) {
               }
             };
 
+            const cpfCliente = cliente.cpf || conversa.cpf || patchCli.cpf || '';
             const contextoOfertas = `[CONTEXTO INTERNO — APRESENTAR APENAS A 1ª OFERTA AGORA]
 
-Acabei de consultar os bancos pra ${cliente.nome || 'cliente'} (CPF ${cpf}).
+Acabei de consultar os bancos pra ${cliente.nome || 'cliente'} (CPF ${cpfCliente}).
 
 ORDEM DE PRIORIDADE DEFINIDA PELO GESTOR: ${ordemPrioridade.join(' → ')}
 
