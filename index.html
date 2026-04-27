@@ -4819,17 +4819,28 @@ async function _pollingFila(filaId) {
           renderApp();
           _dispararDetalhesParcial(result);
 
-          // RE-DISPARA processadores travados em 'pending' (acontece se o disparo
-          // inicial falhou — rede, edge timeout). Aguarda 20s antes de re-disparar.
+          // RE-DISPARA processadores travados:
+          // - status='pending' apos 20s (disparo inicial falhou)
+          // - status='processando' com atualizado_em > 30s (Edge function morreu
+          //   por timeout — PB / V8 podem demorar mais que 25s do Edge limit)
           const elapsedMs = Date.now() - inicio;
           if (elapsedMs > 20000) {
             const bancos = d.fila.bancos || {};
             for (const bancoKey of ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6']) {
-              if (bancos[bancoKey]?.status === 'pending') {
+              const bk = bancos[bancoKey];
+              if (!bk) continue;
+              const isPending = bk.status === 'pending';
+              const isStuckProcessing = bk.status === 'processando'
+                && bk.atualizado_em
+                && (Date.now() - new Date(bk.atualizado_em).getTime() > 30000);
+              if (isPending || isStuckProcessing) {
                 fetch('/api/clt-fila', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
-                  body: JSON.stringify({ action: 'processar', id: filaId, banco: bancoKey })
+                  body: JSON.stringify({
+                    action: 'processar', id: filaId, banco: bancoKey,
+                    force: isStuckProcessing // forca re-execucao se morreu por timeout
+                  })
                 }).catch(() => {});
               }
             }

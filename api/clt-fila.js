@@ -19,17 +19,30 @@ import { dbSelect, dbInsert, dbUpdate, dbUpsert } from './_lib/supabase.js';
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
 
-async function callApi(path, payload, authHeader, internalSecret) {
+// Edge functions Vercel tem ~25s limit. Pra evitar morte abrupta da
+// funcao processar (que deixa status preso em 'processando'), abortamos
+// chamadas externas em 18s e tratamos como falha graciosa.
+async function callApi(path, payload, authHeader, internalSecret, timeoutMs = 18000) {
   const headers = { 'Content-Type': 'application/json' };
   if (internalSecret) headers['x-internal-secret'] = internalSecret;
   if (authHeader) headers['Authorization'] = authHeader;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const r = await fetch(APP_URL() + path, { method: 'POST', headers, body: JSON.stringify(payload) });
+    const r = await fetch(APP_URL() + path, {
+      method: 'POST', headers, body: JSON.stringify(payload),
+      signal: ctrl.signal
+    });
     const t = await r.text();
     let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 500) }; }
     return { ok: r.ok, status: r.status, data: d };
   } catch (e) {
+    if (e.name === 'AbortError') {
+      return { ok: false, status: 408, data: { error: 'Timeout (18s) — banco lento, marca como falha pra retry' } };
+    }
     return { ok: false, status: 0, data: { error: e.message } };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
