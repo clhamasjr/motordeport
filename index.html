@@ -6907,6 +6907,37 @@ function renderLanding(tabContent){
 let _lastTab='';
 function renderApp(){
 renderCartBadge();
+// Preserva valor + foco + posicao cursor de TODOS os inputs antes do re-render
+// e restaura depois do paint (evita perder o que esta sendo digitado e o foco
+// durante polling em tempo real, ex: digitar novo CPF enquanto outra consulta roda)
+const _preservedInputs = {};
+const _focusedId = document.activeElement?.id;
+const _cursorPos = document.activeElement?.selectionStart;
+document.querySelectorAll('input, textarea, select').forEach(el => {
+  if (el.id) _preservedInputs[el.id] = el.value;
+});
+// Restaura depois do paint — rAF dispara depois do innerHTML ser aplicado
+requestAnimationFrame(() => {
+  for (const id in _preservedInputs) {
+    const el = document.getElementById(id);
+    // So restaura se o novo valor estiver vazio (nao sobrescreve o que o codigo
+    // intencionalmente setou). Tipo: o usuario digitou no input vazio durante render.
+    if (el && (el.value === '' || el.value === undefined) && _preservedInputs[id]) {
+      el.value = _preservedInputs[id];
+    }
+  }
+  if (_focusedId) {
+    const f = document.getElementById(_focusedId);
+    if (f && document.activeElement !== f) {
+      try {
+        f.focus();
+        if (typeof _cursorPos === 'number' && f.setSelectionRange) {
+          f.setSelectionRange(_cursorPos, _cursorPos);
+        }
+      } catch {}
+    }
+  }
+});
 let D=S.data,c=document.getElementById("appContainer"),html="";
 let isAdm=CU&&CU.role==="admin",isGes=CU&&(CU.role==="gestor"||CU.role==="admin"),isOp=CU&&CU.role==="operador";
 let tabChanged=_lastTab!==S.tab;_lastTab=S.tab;
