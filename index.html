@@ -4471,6 +4471,10 @@ async function rodarConsultaCLT(opts) {
   const cpf = opts.cpf || normalizeCPF(document.getElementById('cltCpf').value);
   if (!cpf) { alert('CPF inválido. Digite um CPF com 9-11 dígitos.'); return; }
 
+  // Nome digitado manualmente (opcional) — vai pro backend que persiste em clt_clientes
+  const nomeManualEl = document.getElementById('cltNome');
+  const nomeManual = opts.nome || (nomeManualEl ? (nomeManualEl.value || '').trim() : '');
+
   const incluirC6 = opts.incluirC6 || cltConsultaState.incluirC6 || false;
 
   cltConsultaState.loading = true;
@@ -4481,10 +4485,12 @@ async function rodarConsultaCLT(opts) {
   renderApp();
 
   try {
+    const body = { cpf, incluirC6 };
+    if (nomeManual) body.nome = nomeManual;
     const r = await fetch('/api/clt-oportunidades', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
-      body: JSON.stringify({ cpf, incluirC6 })
+      body: JSON.stringify(body)
     });
     cltConsultaState.result = await r.json();
     cltConsultaState.loading = false;
@@ -4929,10 +4935,11 @@ function _cltOfertaCard(o, ctx) {
 function renderCltConsulta() {
   let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
   h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">💼 CLT — Consulta de Oportunidades</div>';
-  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:24px">Digite só o CPF — o sistema enriquece via PresençaBank + Multicorban e consulta os 3 bancos automaticamente.</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:24px">Digite CPF + Nome (opcional) — o sistema enriquece via PresençaBank + Multicorban e consulta os bancos. Se passar o nome, ele é gravado e usado no atendimento.</div>';
 
-  h += '<div style="display:flex;gap:10px;margin-bottom:24px">';
-  h += '<input class="form-input" id="cltCpf" placeholder="CPF (só números)" maxlength="14" style="flex:1;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
+  h += '<div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap">';
+  h += '<input class="form-input" id="cltCpf" placeholder="CPF (só números)" maxlength="14" style="flex:1;min-width:180px;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
+  h += '<input class="form-input" id="cltNome" placeholder="Nome completo (opcional)" style="flex:2;min-width:240px;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
   h += '<button class="btn-acc" style="padding:14px 28px;font-size:14px;white-space:nowrap" onclick="rodarConsultaCLT()">🔍 Consultar</button>';
   h += '</div>';
 

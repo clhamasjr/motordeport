@@ -83,6 +83,10 @@ export default async function handler(req) {
     const cpf = normalizeCPF(body.cpf);
     if (!cpf) return jsonError('CPF invalido (digite 9-11 numeros)', 400, req);
 
+    // Nome manual (opcional) — operador digitou na consulta unitaria.
+    // Se vier, sobrescreve o nome enriquecido (PB/MC nao trazem nome cadastral).
+    const nomeManual = (body.nome || '').toString().trim() || null;
+
     // C6 só consulta se opt-in (default false) — exige autorização LGPD via selfie,
     // que cliente precisa fazer primeiro. Frontend libera o C6 explicitamente.
     const incluirC6 = body.incluirC6 === true;
@@ -142,7 +146,8 @@ export default async function handler(req) {
     }
 
     const cliente = {
-      nome: mc.nome || pb.dadosCliente?.nome || nv.nome || null,
+      // Prioridade: manual (digitado pelo operador) > MC > PB > NV
+      nome: nomeManual || mc.nome || pb.dadosCliente?.nome || nv.nome || null,
       cpf,
       dataNascimento: pb.dadosCliente?.dataNascimento
                    || (mc.dataNascimento ? ddMmYyToIso(mc.dataNascimento) : null)
@@ -310,6 +315,7 @@ export default async function handler(req) {
       presencaBank: pbOpor.ok && pb.temVinculo,
       multicorban: mcClt.ok && !!mc.nome,
       novaVida: novaVidaUsada,
+      manual: !!nomeManual,
       atualizadoEm: new Date().toISOString()
     });
 
