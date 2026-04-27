@@ -4487,6 +4487,18 @@ function _filaToResult(fila) {
     pending: st === 'pending'
   });
 
+  // Helper: gera mensagem default segura baseada no status (nunca diz
+  // "consultando" pra status final como 'falha' / 'ok' / 'bloqueado')
+  const msgDefault = (banco, status) => {
+    if (banco?.mensagem) return banco.mensagem;
+    if (status === 'pending') return 'Aguardando início...';
+    if (status === 'processando') return 'Consultando...';
+    if (status === 'falha') return '⏱ Sem retorno do banco';
+    if (status === 'ok') return 'OK';
+    if (status === 'bloqueado') return 'Bloqueado';
+    return '—';
+  };
+
   // PresencaBank
   const pb = b.presencabank || { status: 'pending' };
   const pbF = _statusToFlags(pb.status);
@@ -4495,7 +4507,7 @@ function _filaToResult(fila) {
     disponivel: pb.status === 'ok' && pb.disponivel === true,
     processando: pbF.processando,
     elegibilidade: pb.dados || null,
-    mensagem: pb.mensagem || (pbF.pending ? 'Aguardando início...' : 'Consultando...')
+    mensagem: msgDefault(pb, pb.status)
   });
 
   // V8 QI
@@ -4507,7 +4519,7 @@ function _filaToResult(fila) {
     consultId: qi.consultId,
     processando: qiF.processando,
     elegibilidade: qi.dados ? { margemDisponivel: qi.dados.margemDisponivel } : null,
-    mensagem: qi.mensagem || (qiF.pending ? 'Aguardando início...' : 'Consultando + gerando termo...')
+    mensagem: msgDefault(qi, qi.status)
   });
 
   // V8 CELCOIN
@@ -4519,7 +4531,7 @@ function _filaToResult(fila) {
     consultId: cc.consultId,
     processando: ccF.processando,
     elegibilidade: cc.dados ? { margemDisponivel: cc.dados.margemDisponivel } : null,
-    mensagem: cc.mensagem || (ccF.pending ? 'Aguardando início...' : 'Consultando + gerando termo...')
+    mensagem: msgDefault(cc, cc.status)
   });
 
   // C6
@@ -4538,7 +4550,7 @@ function _filaToResult(fila) {
       valorParcela: c6.dados.valorParcela,
       seguroSugerido: c6.dados.seguroSugerido
     } : null,
-    mensagem: c6.mensagem || (c6F.pending ? 'Aguardando início...' : 'Consultando...')
+    mensagem: msgDefault(c6, c6.status)
   });
 
   return {
