@@ -47,6 +47,26 @@ export async function dbInsert(table, data) {
   return { error: null, data: Array.isArray(result) ? result[0] : result };
 }
 
+// UPSERT — insere ou atualiza por coluna unique (ex: cpf).
+// `conflictColumn` precisa ter constraint UNIQUE (ou ser PK).
+// Por padrao mescla — campos nao informados ficam intactos? NAO no Postgrest:
+// ele atualiza TODOS os campos enviados. Pra mesclar parcial, monte o data
+// so com os campos que quer atualizar.
+export async function dbUpsert(table, data, conflictColumn) {
+  const url = `${SUPABASE_URL()}/rest/v1/${table}?on_conflict=${conflictColumn}`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { ...headers(), 'Prefer': 'resolution=merge-duplicates,return=representation' },
+    body: JSON.stringify(data)
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    return { error: t, data: null };
+  }
+  const result = await r.json();
+  return { error: null, data: Array.isArray(result) ? result[0] : result };
+}
+
 export async function dbUpdate(table, filters, data) {
   let url = `${SUPABASE_URL()}/rest/v1/${table}?`;
   for (const [k, v] of Object.entries(filters)) {

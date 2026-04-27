@@ -14,7 +14,7 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, handleOptions, requireAuth } from './_lib/auth.js';
-import { dbSelect, dbInsert, dbUpdate, dbQuery } from './_lib/supabase.js';
+import { dbSelect, dbInsert, dbUpdate, dbUpsert, dbQuery } from './_lib/supabase.js';
 
 // ── Config ─────────────────────────────────────────────────────
 const CLAUDE_KEY  = () => process.env.CLAUDE_API_KEY_AGENTE_CLT || process.env.CLAUDE_API_KEY;
@@ -829,6 +829,87 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
         ? `${sucessos.length} oferta(s) re-simulada(s)`
         : (ofertaMaximaReal ? 'Excedeu margem — apresentando MAXIMO possivel'
                             : 'Nenhuma simulação retornou')
+    };
+  }
+
+  // ═══ COLETAR_DADOS — cliente aceitou oferta, hora de completar dados ═══
+  // Consulta NovaVida (que traz endereco+email+telefones) pra preencher
+  // automaticamente o que o cliente nao precisa digitar. Persiste tudo
+  // em clt_clientes E atualiza conversa.dados pro Claude saber.
+  if (acao === 'COLETAR_DADOS') {
+    const cpf = conversa.cpf || (conversa.dados?.cpf);
+    if (!cpf) return { ok: false, mensagem: 'Sem CPF na conversa pra consultar NovaVida' };
+
+    const nvRes = await callBankApi('novavida', { cpf });
+    const nv = nvRes?.data || {};
+    const dadosAtuais = conversa.dados || {};
+    const enriquecidos = {};
+
+    if (nv.success || nv.nome || (nv.telefones || []).length > 0) {
+      // Email — primeiro disponivel
+      const email = (nv.emails || []).find(e => e && e.includes('@'));
+      if (email && !dadosAtuais.email && !conversa.email) enriquecidos.email = email;
+
+      // Endereco — primeiro
+      const end = (nv.enderecos || [])[0];
+      if (end) {
+        if (end.cep && !dadosAtuais.cep && !conversa.cep) enriquecidos.cep = String(end.cep).replace(/\D/g, '');
+        if (end.logradouro && !dadosAtuais.rua && !conversa.rua) enriquecidos.rua = end.logradouro;
+        if (end.numero && !dadosAtuais.numero_end && !conversa.numero_end) enriquecidos.numero_end = end.numero;
+        if (end.complemento && !dadosAtuais.complemento) enriquecidos.complemento = end.complemento;
+        if (end.bairro && !dadosAtuais.bairro && !conversa.bairro) enriquecidos.bairro = end.bairro;
+        if (end.cidade && !dadosAtuais.cidade && !conversa.cidade) enriquecidos.cidade = end.cidade;
+        if (end.uf && !dadosAtuais.uf && !conversa.uf) enriquecidos.uf = end.uf;
+      }
+
+      // Atualiza conversa.dados se tem algo novo
+      if (Object.keys(enriquecidos).length > 0) {
+        await updateConversa(conversa.id, {
+          dados: { ...dadosAtuais, ...enriquecidos }
+        });
+      }
+
+      // Persiste em clt_clientes (UPSERT por cpf) — aproveita TUDO que NovaVida trouxe
+      try {
+        const limpo = {
+          cpf,
+          nome: nv.nome || conversa.nome || null,
+          email: email || null,
+          emails: nv.emails || [],
+          telefones: nv.telefones || [],
+          enderecos: nv.enderecos || [],
+          cep: enriquecidos.cep || null,
+          rua: enriquecidos.rua || null,
+          numero_end: enriquecidos.numero_end || null,
+          complemento: enriquecidos.complemento || null,
+          bairro: enriquecidos.bairro || null,
+          cidade: enriquecidos.cidade || null,
+          uf: enriquecidos.uf || null,
+          obito: !!nv.obito,
+          ultima_consulta_at: new Date().toISOString()
+        };
+        // Filtra null/empty/empty-array
+        for (const k of Object.keys(limpo)) {
+          const v = limpo[k];
+          if (v === null || v === undefined) delete limpo[k];
+          else if (typeof v === 'string' && v.trim() === '') delete limpo[k];
+          else if (Array.isArray(v) && v.length === 0) delete limpo[k];
+        }
+        limpo.cpf = cpf; // garante CPF
+        await dbUpsert('clt_clientes', limpo, 'cpf');
+      } catch { /* nao quebra fluxo */ }
+    }
+
+    return {
+      ok: true,
+      acao: 'COLETAR_DADOS',
+      novaVidaConsultada: true,
+      enriquecidos,
+      faltam: ['email','cep','rua','numero_end','bairro','cidade','uf','chave_pix']
+        .filter(c => !{ ...dadosAtuais, ...enriquecidos }[c] && !conversa[c]),
+      mensagem: Object.keys(enriquecidos).length > 0
+        ? `Preenchi automaticamente: ${Object.keys(enriquecidos).join(', ')}`
+        : 'NovaVida nao trouxe dados novos — agente vai pedir tudo pro cliente'
     };
   }
 

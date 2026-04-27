@@ -15,8 +15,35 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
+import { dbUpsert } from './_lib/supabase.js';
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
+
+// Persiste cliente em clt_clientes (UPSERT por cpf). Nunca quebra fluxo.
+// Chame com TODOS os dados que voce conhece — campos null/undefined nao
+// sobreescrevem os existentes (filtramos antes).
+async function persistirCliente(cpf, dados, fontes = {}) {
+  if (!cpf) return null;
+  try {
+    // Remove undefined/null/string vazia pra nao sobreescrever dados existentes com vazio
+    const limpo = {};
+    for (const [k, v] of Object.entries(dados)) {
+      if (v === null || v === undefined) continue;
+      if (typeof v === 'string' && v.trim() === '') continue;
+      if (Array.isArray(v) && v.length === 0) continue;
+      limpo[k] = v;
+    }
+    limpo.cpf = cpf;
+    limpo.fontes = fontes;
+    limpo.ultima_consulta_at = new Date().toISOString();
+    const { data, error } = await dbUpsert('clt_clientes', limpo, 'cpf');
+    if (error) return { error };
+    // Incrementa contador via UPDATE separado (Postgrest UPSERT nao suporta SQL inline)
+    return { ok: true, data };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
 
 async function callApi(path, payload, authHeader, internalSecret) {
   const headers = { 'Content-Type': 'application/json' };
@@ -65,8 +92,10 @@ export default async function handler(req) {
     const secret = process.env.WEBHOOK_SECRET || '';
 
     // ─── ETAPA ÚNICA: chamadas básicas em paralelo ─
-    // Padrão: V8 (QI + CELCOIN) + PresençaBank + Multicorban (enriquece)
+    // Padrão: V8 (QI + CELCOIN) + PresençaBank + Multicorban
     // C6 só entra se incluirC6=true (cliente autorizou)
+    // NovaVida fica como FALLBACK (so se PB+MC nao encontrarem) + on-demand
+    // depois (quando cliente aceita oferta, pra completar email/endereco/etc)
     const tarefas = [
       callApi('/api/presencabank', { action: 'oportunidadesPorCPF', cpf }, auth, secret),
       callApi('/api/multicorban',   { action: 'consult_clt', cpf },         auth, secret),
@@ -78,21 +107,58 @@ export default async function handler(req) {
     ];
     const [pbOpor, mcClt, v8QI, v8Celcoin, c6Of] = await Promise.all(tarefas);
 
-    // ─── Mescla dados do cliente (PresençaBank prioritário) ─────
+    // ─── Mescla dados do cliente (PresençaBank > Multicorban) ─────
     const pb = pbOpor.data || {};
     const mc = mcClt.data?.parsed || {};
 
+    // Telefones: vindos de Multicorban
+    const telefonesMap = new Map();
+    for (const t of (mc.telefones || [])) {
+      const key = `${(t.ddd||'').replace(/\D/g,'')}-${(t.numero||'').replace(/\D/g,'')}`;
+      if (key !== '-') telefonesMap.set(key, {
+        ddd: t.ddd, numero: t.numero, completo: t.completo, whatsapp: t.whatsapp, fonte: 'multicorban'
+      });
+    }
+
+    // ─── FALLBACK NovaVida: so chama se PB+MC nao trouxeram nome OU telefone ─
+    // (NovaVida eh paga por consulta, entao so usa quando realmente precisa)
+    let nv = {};
+    let novaVidaUsada = false;
+    const nomeBase = mc.nome || pb.dadosCliente?.nome;
+    const temTelefone = telefonesMap.size > 0;
+    if (!nomeBase || !temTelefone) {
+      try {
+        const nvRes = await callApi('/api/novavida', { cpf }, auth, secret);
+        nv = nvRes?.data || {};
+        novaVidaUsada = true;
+        // Adiciona telefones da NovaVida que nao tinham antes
+        for (const t of (nv.telefones || [])) {
+          const key = `${(t.ddd||'').replace(/\D/g,'')}-${(t.telefone||'').replace(/\D/g,'')}`;
+          if (key !== '-' && !telefonesMap.has(key)) telefonesMap.set(key, {
+            ddd: t.ddd, numero: t.telefone, completo: `${t.ddd}${t.telefone}`, whatsapp: t.whatsapp, fonte: 'novavida'
+          });
+        }
+      } catch { /* falhou - segue sem NovaVida */ }
+    }
+
     const cliente = {
-      nome: mc.nome || null,
+      nome: mc.nome || pb.dadosCliente?.nome || nv.nome || null,
       cpf,
-      dataNascimento: pb.dadosCliente?.dataNascimento || (mc.dataNascimento ? ddMmYyToIso(mc.dataNascimento) : null),
+      dataNascimento: pb.dadosCliente?.dataNascimento
+                   || (mc.dataNascimento ? ddMmYyToIso(mc.dataNascimento) : null)
+                   || (nv.nascimento ? ddMmYyToIso(nv.nascimento) : null),
       sexo: pb.dadosCliente?.sexo || mc.sexo || null,
       nomeMae: pb.dadosCliente?.nomeMae || mc.nomeMae || null,
       nomePai: mc.nomePai || null,
-      idade: mc.idade || null,
-      telefones: (mc.telefones || []).map(t => ({
-        ddd: t.ddd, numero: t.numero, completo: t.completo, whatsapp: t.whatsapp
-      }))
+      idade: mc.idade || nv.idade || null,
+      telefones: Array.from(telefonesMap.values()),
+      // Enderecos e emails da NovaVida (so se foi consultada nesse fallback)
+      enderecos: (nv.enderecos || []).map(e => ({
+        tipo: e.tipo, logradouro: e.logradouro, numero: e.numero, complemento: e.complemento,
+        bairro: e.bairro, cidade: e.cidade, uf: e.uf, cep: (e.cep || '').replace(/\D/g, '')
+      })),
+      emails: nv.emails || [],
+      obito: !!nv.obito
     };
 
     const vinculo = pb.temVinculo ? {
@@ -211,6 +277,42 @@ export default async function handler(req) {
     const telefonePrincipal = cliente.telefones?.[0]?.completo || null;
     const temNomeETel = !!(cliente.nome && telefonePrincipal);
 
+    // ─── Persiste cliente em clt_clientes (UPSERT por cpf) ───
+    // Sempre atualiza com TUDO que sabemos hoje. Campos vazios nao sobreescrevem.
+    const enderecoNV = cliente.enderecos?.[0] || {};
+    await persistirCliente(cpf, {
+      nome: cliente.nome,
+      data_nascimento: cliente.dataNascimento,
+      sexo: cliente.sexo,
+      nome_mae: cliente.nomeMae,
+      nome_pai: cliente.nomePai,
+      idade: cliente.idade,
+      telefones: cliente.telefones,
+      enderecos: cliente.enderecos,
+      emails: cliente.emails,
+      email: cliente.emails?.[0] || null,
+      cep: enderecoNV.cep || null,
+      rua: enderecoNV.logradouro || null,
+      numero_end: enderecoNV.numero || null,
+      complemento: enderecoNV.complemento || null,
+      bairro: enderecoNV.bairro || null,
+      cidade: enderecoNV.cidade || null,
+      uf: enderecoNV.uf || null,
+      empregador_nome: vinculo?.empregador,
+      empregador_cnpj: vinculo?.cnpj,
+      matricula: vinculo?.matricula,
+      renda: vinculo?.renda,
+      saldo_fgts_aproximado: vinculo?.saldoAproximadoFgts,
+      data_admissao: vinculo?.dataAdmissao,
+      tempo_contribuicao_meses: vinculo?.tempoContribuicaoMeses,
+      obito: cliente.obito
+    }, {
+      presencaBank: pbOpor.ok && pb.temVinculo,
+      multicorban: mcClt.ok && !!mc.nome,
+      novaVida: novaVidaUsada,
+      atualizadoEm: new Date().toISOString()
+    });
+
     return jsonResp({
       success: true,
       cpf,
@@ -220,8 +322,12 @@ export default async function handler(req) {
       enriquecimento: {
         presencaBankOk: pbOpor.ok && pb.temVinculo,
         multicorbanOk: mcClt.ok && !!mc.nome,
-        nomeOrigem: mc.nome ? 'multicorban' : null,
-        telefoneOrigem: telefonePrincipal ? 'multicorban' : null
+        novaVidaUsada,
+        novaVidaOk: novaVidaUsada && !!(nv.success || nv.nome || (nv.telefones || []).length > 0),
+        nomeOrigem: mc.nome ? 'multicorban' : (pb.dadosCliente?.nome ? 'presencabank' : (nv.nome ? 'novavida' : null)),
+        telefoneOrigem: cliente.telefones?.[0]?.fonte || null,
+        enderecoOrigem: cliente.enderecos?.length > 0 ? 'novavida' : null,
+        emailOrigem: cliente.emails?.length > 0 ? 'novavida' : null
       },
       ofertas,
       totalBancosDisponiveis: totalDisponivel,
@@ -231,6 +337,7 @@ export default async function handler(req) {
       _raw: {
         presencabank: pb,
         multicorban: mc,
+        novavida: nv,
         c6,
         v8QI: v8QI?.data,
         v8Celcoin: v8Celcoin?.data
