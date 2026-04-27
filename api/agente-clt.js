@@ -25,6 +25,7 @@ const CLT_INSTANCE = () => process.env.CLT_EVOLUTION_INSTANCE || '';
 const APP_URL    = () => process.env.APP_URL || 'https://flowforce.vercel.app';
 const WEBHOOK_SECRET = () => process.env.WEBHOOK_SECRET || '';
 const INTERNAL_TOKEN = () => process.env.INTERNAL_SERVICE_TOKEN || '';
+const GROQ_KEY   = () => process.env.GROQ_API_KEY || '';
 
 // Whitelist de teste — se vazia ou '*', responde geral
 const WHITELIST = () => (process.env.CLT_WHATSAPP_WHITELIST || '')
@@ -393,33 +394,112 @@ async function sendMsg(instance, number, text) {
   } catch { return false; }
 }
 
-// Extrai texto (ou indica áudio/imagem) de uma mensagem Evolution
+// Baixa midia (img/audio/pdf) do Evolution em base64.
+// Endpoint: POST /chat/getBase64FromMediaMessage/{instance}
+// Body: { message: { key, message }, convertToMp4: false }
+// Retorna: { base64, mimetype, fileName } ou null.
+async function downloadMediaFromEvolution(data, instance) {
+  try {
+    const r = await fetch(EVO_URL() + '/chat/getBase64FromMediaMessage/' + instance, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY() },
+      body: JSON.stringify({
+        message: { key: data.key, message: data.message },
+        convertToMp4: false
+      })
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      return { base64: null, error: { status: r.status, body: txt.substring(0, 300) } };
+    }
+    const d = await r.json();
+    if (d?.base64) return { base64: d.base64, mimetype: d.mimetype || null, fileName: d.fileName || null, error: null };
+    return { base64: null, error: { status: r.status, body: 'sem campo base64', d } };
+  } catch (e) {
+    return { base64: null, error: { status: 0, body: e.message } };
+  }
+}
+
+// Transcreve audio via Groq Whisper (whisper-large-v3-turbo).
+// Aceita base64 do .ogg/.opus do WhatsApp. Retorna texto ou null.
+async function transcribeAudioGroq(base64, mimetype = 'audio/ogg') {
+  if (!GROQ_KEY()) return { text: null, error: 'GROQ_API_KEY nao configurado' };
+  try {
+    // base64 -> Uint8Array -> Blob -> FormData
+    const bin = atob(base64);
+    const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    const ext = (mimetype.includes('mp3') || mimetype.includes('mpeg')) ? 'mp3'
+              : (mimetype.includes('wav')) ? 'wav'
+              : (mimetype.includes('m4a')) ? 'm4a'
+              : 'ogg'; // WhatsApp usa OGG/Opus
+    const blob = new Blob([buf], { type: mimetype });
+    const form = new FormData();
+    form.append('file', blob, 'audio.' + ext);
+    form.append('model', 'whisper-large-v3-turbo');
+    form.append('language', 'pt');
+    form.append('response_format', 'json');
+
+    const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + GROQ_KEY() },
+      body: form
+    });
+    const txt = await r.text();
+    let d; try { d = JSON.parse(txt); } catch { d = { raw: txt.substring(0, 300) }; }
+    if (!r.ok) return { text: null, error: `Groq ${r.status}: ${d.error?.message || txt.substring(0, 200)}` };
+    return { text: d.text || null, error: null };
+  } catch (e) {
+    return { text: null, error: e.message };
+  }
+}
+
+// Extrai metadados da msg Evolution. Indica se precisa download (img/audio/pdf).
 function extractMessageContent(data) {
   const m = data.message || {};
   // Texto direto
   if (m.conversation) return { type: 'text', text: m.conversation };
   if (m.extendedTextMessage?.text) return { type: 'text', text: m.extendedTextMessage.text };
 
-  // Áudio (Evolution pode transcrever nativamente se configurado)
+  // Audio
   if (m.audioMessage) {
-    // Algumas versões do Evolution entregam transcrição em m.audioMessage.speechToText
-    // ou em data.speechToText. Tentamos ambos.
-    const transcribed = m.audioMessage.speechToText
-                     || data.speechToText
-                     || m.audioMessage.transcription;
+    // Tentativa 1: transcricao ja vinda do Evolution (se Whisper estiver configurado la)
+    const transcribed = m.audioMessage.speechToText || data.speechToText || m.audioMessage.transcription;
     if (transcribed) return { type: 'text', text: transcribed };
-    return { type: 'audio_no_transcript' };
+    // Senao, indica que precisa baixar e transcrever via Groq
+    return {
+      type: 'audio_needs_download',
+      mimetype: m.audioMessage.mimetype || 'audio/ogg',
+      seconds: m.audioMessage.seconds || 0
+    };
   }
 
-  // Imagem
+  // Imagem - sempre baixa o full (thumbnail eh borrado)
   if (m.imageMessage) {
-    const caption = m.imageMessage.caption || '';
-    const base64 = m.imageMessage.jpegThumbnail || data.imageBase64 || null;
-    return { type: 'image', caption, base64, mediaKey: m.imageMessage.url || null };
+    return {
+      type: 'image_needs_download',
+      caption: m.imageMessage.caption || '',
+      mimetype: m.imageMessage.mimetype || 'image/jpeg'
+    };
   }
 
-  // Outros tipos (doc, video, sticker) — por enquanto ignora
-  if (m.documentMessage) return { type: 'document_ignored' };
+  // Documento — aceita PDF, ignora resto
+  if (m.documentMessage || m.documentWithCaptionMessage) {
+    const doc = m.documentMessage || m.documentWithCaptionMessage?.message?.documentMessage || {};
+    const mime = doc.mimetype || '';
+    const caption = doc.caption || m.documentWithCaptionMessage?.message?.documentMessage?.caption || '';
+    if (mime.includes('pdf')) {
+      return {
+        type: 'pdf_needs_download',
+        caption,
+        mimetype: 'application/pdf',
+        fileName: doc.fileName || 'documento.pdf'
+      };
+    }
+    // Documento que nao eh PDF (docx, xlsx, etc) — ignora por enquanto
+    return { type: 'document_ignored', mimetype: mime };
+  }
+
   if (m.videoMessage) return { type: 'video_ignored' };
   if (m.stickerMessage) return { type: 'sticker_ignored' };
 
@@ -808,25 +888,71 @@ export default async function handler(req) {
         return jsonResp({ ok: true, skip: 'pausada_humano' }, 200, req);
       }
 
-      // ─── Lida com áudio/imagem/outros ───
+      // ─── Lida com texto/audio/imagem/pdf/outros ───
       let textoDoCliente = '';
-      let imageBlock = null;
+      let imageBlock = null;     // bloco de imagem pro Claude (multimodal)
+      let documentBlock = null;  // bloco de PDF pro Claude (multimodal)
+
       if (msgContent.type === 'text') {
         textoDoCliente = msgContent.text;
-      } else if (msgContent.type === 'audio_no_transcript') {
-        await sendMsg(instance, telefone, 'Ops, não consegui ouvir o áudio aqui 😅 Pode escrever pra mim?');
-        await logEvento(conversa.id, telefone, 'audio_sem_transcricao');
-        return jsonResp({ ok: true, handled: 'audio_no_transcript' }, 200, req);
-      } else if (msgContent.type === 'image') {
+
+      } else if (msgContent.type === 'audio_needs_download') {
+        // Baixa o audio do Evolution e transcreve via Groq Whisper
+        const dl = await downloadMediaFromEvolution(data, instance);
+        if (!dl.base64) {
+          await logEvento(conversa.id, telefone, 'audio_download_falhou', dl.error);
+          await sendMsg(instance, telefone, 'Ops, não consegui baixar seu áudio 😅 Pode escrever pra mim?');
+          return jsonResp({ ok: true, handled: 'audio_download_fail' }, 200, req);
+        }
+        const tr = await transcribeAudioGroq(dl.base64, dl.mimetype || msgContent.mimetype);
+        if (!tr.text) {
+          await logEvento(conversa.id, telefone, 'audio_transcricao_falhou', { error: tr.error, mime: dl.mimetype });
+          await sendMsg(instance, telefone, 'Não consegui ouvir o áudio aqui 😅 Pode escrever pra mim?');
+          return jsonResp({ ok: true, handled: 'audio_transcribe_fail' }, 200, req);
+        }
+        textoDoCliente = tr.text;
+        await logEvento(conversa.id, telefone, 'audio_transcrito', {
+          texto: tr.text.substring(0, 200), seconds: msgContent.seconds
+        });
+
+      } else if (msgContent.type === 'image_needs_download') {
+        // Baixa imagem completa (nao thumbnail)
+        const dl = await downloadMediaFromEvolution(data, instance);
         textoDoCliente = msgContent.caption || '(cliente enviou uma imagem sem legenda)';
-        if (msgContent.base64) {
+        if (dl.base64) {
+          // Claude aceita image/jpeg, image/png, image/gif, image/webp
+          let mime = dl.mimetype || msgContent.mimetype || 'image/jpeg';
+          if (!['image/jpeg','image/png','image/gif','image/webp'].includes(mime)) mime = 'image/jpeg';
           imageBlock = {
             type: 'image',
-            source: { type: 'base64', media_type: 'image/jpeg', data: msgContent.base64 }
+            source: { type: 'base64', media_type: mime, data: dl.base64 }
           };
+          await logEvento(conversa.id, telefone, 'imagem_baixada', { bytes: dl.base64.length, mime });
+        } else {
+          await logEvento(conversa.id, telefone, 'imagem_download_falhou', dl.error);
         }
-      } else if (msgContent.type === 'document_ignored' || msgContent.type === 'video_ignored' || msgContent.type === 'sticker_ignored') {
-        await sendMsg(instance, telefone, 'Recebi o arquivo, mas no momento trabalho só com texto e imagem. Pode me escrever?');
+
+      } else if (msgContent.type === 'pdf_needs_download') {
+        // Baixa PDF e manda pro Claude como document
+        const dl = await downloadMediaFromEvolution(data, instance);
+        textoDoCliente = msgContent.caption || `(cliente enviou um PDF: ${msgContent.fileName || 'sem nome'})`;
+        if (dl.base64) {
+          documentBlock = {
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: dl.base64 }
+          };
+          await logEvento(conversa.id, telefone, 'pdf_baixado', { bytes: dl.base64.length, fileName: msgContent.fileName });
+        } else {
+          await logEvento(conversa.id, telefone, 'pdf_download_falhou', dl.error);
+          await sendMsg(instance, telefone, 'Ops, não consegui abrir seu PDF 😅 Pode tentar mandar de novo?');
+          return jsonResp({ ok: true, handled: 'pdf_download_fail' }, 200, req);
+        }
+
+      } else if (msgContent.type === 'document_ignored') {
+        await sendMsg(instance, telefone, `Recebi seu arquivo, mas só consigo ler PDF, imagens e áudio. Você pode mandar como PDF ou tirar foto? 📄`);
+        return jsonResp({ ok: true, handled: 'doc_ignored', mime: msgContent.mimetype }, 200, req);
+      } else if (msgContent.type === 'video_ignored' || msgContent.type === 'sticker_ignored') {
+        await sendMsg(instance, telefone, 'Recebi! Mas no momento trabalho só com texto, imagem, áudio e PDF. Pode me escrever?');
         return jsonResp({ ok: true, handled: 'media_ignored' }, 200, req);
       } else {
         return jsonResp({ ok: true, skip: 'unknown_message_type' }, 200, req);
@@ -1005,13 +1131,14 @@ export default async function handler(req) {
         claudeMessages.push({ role: h.role, content: h.content });
       }
 
-      // Mensagem atual (texto ou texto+imagem)
+      // Mensagem atual (texto, texto+imagem, ou texto+pdf)
       const contextContent = contextParts.join('\n');
-      if (imageBlock) {
-        claudeMessages.push({
-          role: 'user',
-          content: [imageBlock, { type: 'text', text: contextContent }]
-        });
+      if (imageBlock || documentBlock) {
+        const parts = [];
+        if (documentBlock) parts.push(documentBlock); // PDF antes do texto pra Claude analisar primeiro
+        if (imageBlock) parts.push(imageBlock);
+        parts.push({ type: 'text', text: contextContent });
+        claudeMessages.push({ role: 'user', content: parts });
       } else {
         claudeMessages.push({ role: 'user', content: contextContent });
       }
