@@ -392,11 +392,26 @@ export default async function handler(req) {
     });
     if (error) return jsonError('Erro criando fila: ' + error, 500, req);
 
+    // DISPARA OS 5 PROCESSADORES NO BACKEND — garantia de execucao mesmo se
+    // o frontend fechar a janela. Cada um roda em paralelo (fetch sem await),
+    // mas como o handler `processar` faz await ate terminar, o trabalho roda
+    // ate o fim mesmo se o cliente desconectar.
+    const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6'];
+    const baseUrl = APP_URL();
+    for (const banco of bancos) {
+      // Fire-and-forget mas COM internal-secret (evita 401 de chamadas internas)
+      fetch(baseUrl + '/api/clt-fila', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
+        body: JSON.stringify({ action: 'processar', id: row.id, banco })
+      }).catch(e => console.error('[clt-fila] dispatch ' + banco + ':', e.message));
+    }
+
     return jsonResp({
       success: true,
       id: row.id,
       cpf,
-      mensagem: 'Consulta adicionada à fila. Use action=processar (1 por banco) e action=status pra acompanhar.'
+      mensagem: 'Consulta adicionada à fila — processadores disparados em background.'
     }, 200, req);
   }
 
