@@ -79,11 +79,11 @@ async function aguardarCliente(id, timeoutMs = 9000, intervalMs = 700) {
 }
 
 // Mescla dados do cliente (PB > MC > NV) preservando o que ja foi salvo
+// E persiste em clt_clientes pra reusar em consultas futuras
 async function mesclarCliente(id, novoBloco) {
   const { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
   const atual = row?.cliente || {};
   const merged = { ...novoBloco, ...atual }; // ATUAL tem prioridade (nao sobrescreve)
-  // Pra campos que faltam no atual, novoBloco preenche:
   for (const k of Object.keys(novoBloco)) {
     if (atual[k] === null || atual[k] === undefined || atual[k] === '' ||
         (Array.isArray(atual[k]) && atual[k].length === 0)) {
@@ -91,6 +91,27 @@ async function mesclarCliente(id, novoBloco) {
     }
   }
   await dbUpdate('clt_consultas_fila', { id }, { cliente: merged });
+
+  // Persiste em clt_clientes (UPSERT por cpf) — campos vazios nao sobrescrevem
+  if (row?.cpf) {
+    try {
+      const persistir = {
+        cpf: row.cpf,
+        ultima_consulta_at: new Date().toISOString()
+      };
+      if (merged.nome) persistir.nome = merged.nome;
+      if (merged.dataNascimento) persistir.data_nascimento = merged.dataNascimento;
+      if (merged.sexo) persistir.sexo = merged.sexo;
+      if (merged.nomeMae) persistir.nome_mae = merged.nomeMae;
+      if (merged.idade) persistir.idade = merged.idade;
+      if (Array.isArray(merged.telefones) && merged.telefones.length > 0) persistir.telefones = merged.telefones;
+      if (Array.isArray(merged.emails) && merged.emails.length > 0) {
+        persistir.emails = merged.emails;
+        persistir.email = merged.emails[0];
+      }
+      await dbUpsert('clt_clientes', persistir, 'cpf');
+    } catch { /* nao quebra fluxo */ }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -337,7 +358,31 @@ export default async function handler(req) {
       v8_celcoin: { status: 'pending' },
       c6: { status: 'pending' }
     };
-    const clienteInicial = nomeManual ? { nome: nomeManual } : null;
+
+    // PRE-POPULA cliente com o que ja sabemos desse CPF (clt_clientes acumulado).
+    // Assim mesmo que o PB ou MC nao tragam dados nessa consulta, o V8 ainda
+    // consegue gerar termo com dataNasc/sexo de consultas anteriores.
+    let clienteInicial = nomeManual ? { nome: nomeManual } : {};
+    try {
+      const { data: clienteSalvo } = await dbSelect('clt_clientes', {
+        filters: { cpf }, single: true
+      });
+      if (clienteSalvo) {
+        // Reusa: nome (se nao tem manual), dataNasc, sexo, mae, telefones
+        if (!clienteInicial.nome && clienteSalvo.nome) clienteInicial.nome = clienteSalvo.nome;
+        if (clienteSalvo.data_nascimento) clienteInicial.dataNascimento = clienteSalvo.data_nascimento;
+        if (clienteSalvo.sexo) clienteInicial.sexo = clienteSalvo.sexo;
+        if (clienteSalvo.nome_mae) clienteInicial.nomeMae = clienteSalvo.nome_mae;
+        if (clienteSalvo.idade) clienteInicial.idade = clienteSalvo.idade;
+        if (Array.isArray(clienteSalvo.telefones) && clienteSalvo.telefones.length > 0) {
+          clienteInicial.telefones = clienteSalvo.telefones;
+        }
+        if (clienteSalvo.email) clienteInicial.emails = [clienteSalvo.email];
+      }
+    } catch { /* nao quebra se nao tem ainda */ }
+
+    if (Object.keys(clienteInicial).length === 0) clienteInicial = null;
+
     const { data: row, error } = await dbInsert('clt_consultas_fila', {
       cpf, nome_manual: nomeManual, incluir_c6: incluirC6,
       status_geral: 'processando',
