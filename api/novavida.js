@@ -75,17 +75,68 @@ async function nvCheck(token, documento) {
   }
   if (!res.ok) return { ok: false, error: 'NVCheck HTTP ' + res.status, raw: text.substring(0, 300) };
   let data; try { data = JSON.parse(text); } catch { return { ok: false, error: 'session expired (non-JSON response)', raw: text.substring(0, 300) }; }
-  // Detecta resposta de bloqueio ("CONSULTA NÃO DISPONIVEL PARA O USUARIO" significa
-  // que a credencial NOVAVIDA_USER nao tem o produto NVCHECK liberado pra API).
   const inner = data && data.d ? data.d : data;
   if (typeof inner === 'string' && inner.toUpperCase().includes('NÃO DISPONIVEL')) {
-    return {
-      ok: false,
-      error: 'NovaVida bloqueou: credencial sem permissao pra NVCHECK via API. Contatar suporte NovaVida pra liberar.',
-      raw: inner
-    };
+    return { ok: false, blocked: true, error: 'NVCHECK bloqueado pra credencial', raw: inner };
   }
   return { ok: true, data: inner };
+}
+
+// FALLBACK: endpoint cadastral completo (separado do NVCHECK).
+// Usado quando NVCHECK retorna "CONSULTA NAO DISPONIVEL".
+// Tenta primeiro a variante Json, depois HTTP POST form-encoded.
+async function consultaCadastralPF(token, documento) {
+  // 1) Tenta variante JSON
+  try {
+    const res = await fetch(BASE + '/Consulta_CadastralPFJson', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ documento, token })
+    });
+    const text = await res.text();
+    console.log('[CADASTRALPF_JSON_RAW]', { status: res.status, len: text.length, preview: text.substring(0, 1500) });
+    if (res.ok) {
+      let data; try { data = JSON.parse(text); } catch { data = null; }
+      if (data) {
+        const inner = data && data.d ? data.d : data;
+        if (typeof inner === 'string' && inner.toUpperCase().includes('NÃO DISPONIVEL')) {
+          return { ok: false, blocked: true, error: 'Consulta_CadastralPF tambem bloqueada', raw: inner };
+        }
+        // Se inner eh string JSON, parseia
+        if (typeof inner === 'string') {
+          try { return { ok: true, data: JSON.parse(inner), variant: 'json' }; }
+          catch { return { ok: true, data: inner, variant: 'json-string' }; }
+        }
+        return { ok: true, data: inner, variant: 'json' };
+      }
+    }
+  } catch (e) { /* falhou - tenta form-encoded */ }
+
+  // 2) Fallback form-encoded (HTTP POST simples)
+  try {
+    const res = await fetch(BASE + '/Consulta_CadastralPF', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `documento=${encodeURIComponent(documento)}&token=${encodeURIComponent(token)}`
+    });
+    const text = await res.text();
+    console.log('[CADASTRALPF_FORM_RAW]', { status: res.status, len: text.length, preview: text.substring(0, 1500) });
+    if (!res.ok) return { ok: false, error: 'Consulta_CadastralPF HTTP ' + res.status, raw: text.substring(0, 300) };
+    // Resposta vem como <string xmlns="...">CONTEUDO_AQUI</string>
+    const m = text.match(/<string[^>]*>([\s\S]*?)<\/string>/);
+    if (!m) return { ok: false, error: 'Resposta sem <string> wrapper', raw: text.substring(0, 300) };
+    let inner = m[1].trim();
+    // decodifica entidades XML basicas
+    inner = inner.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+    if (inner.toUpperCase().includes('NÃO DISPONIVEL')) {
+      return { ok: false, blocked: true, error: 'Consulta_CadastralPF bloqueada', raw: inner };
+    }
+    // Tenta parse JSON; se nao for, devolve string crua
+    try { return { ok: true, data: JSON.parse(inner), variant: 'form-json' }; }
+    catch { return { ok: true, data: inner, variant: 'form-string' }; }
+  } catch (e) {
+    return { ok: false, error: 'Falha de rede Consulta_CadastralPF: ' + e.message };
+  }
 }
 
 function mapTelefones(consulta) {
@@ -162,9 +213,28 @@ export default async function handler(req) {
     tk = await gerarToken();
     if (tk.ok) r = await nvCheck(tk.token, docPad);
   }
+
+  // 2b) Se NVCHECK foi BLOQUEADO (credencial sem produto), tenta endpoint
+  // alternativo Consulta_CadastralPF (cadastral completo, separado do check)
+  let cadastralUsado = null;
+  if (!r.ok && r.blocked) {
+    const cad = await consultaCadastralPF(tk.token, docPad);
+    if (cad.ok) {
+      r = { ok: true, data: cad.data };
+      cadastralUsado = cad.variant || 'sim';
+    } else {
+      // Ambos endpoints bloqueados — devolve erro claro
+      return j({
+        success: false,
+        error: 'NovaVida bloqueada: nem NVCHECK nem Consulta_CadastralPF disponiveis pra essa credencial. Contatar suporte NovaVida.',
+        raw: { nvcheck: r.raw, cadastral: cad.raw }
+      }, 502, req);
+    }
+  }
   if (!r.ok) return j({ success: false, error: r.error, raw: r.raw }, 502, req);
 
   // Estrutura: r.data.CONSULTA.{CADASTRAIS, TELEFONES, ENDERECOS, EMAILS, OBITO, ...}
+  // OU se veio do Consulta_CadastralPF, pode ter outra estrutura — log mostra
   const consulta = r.data?.CONSULTA || r.data || {};
   const cad = consulta.CADASTRAIS || {};
   const telefones = mapTelefones(consulta);
@@ -188,7 +258,9 @@ export default async function handler(req) {
     })),
     emails: (consulta.EMAILS || []).map(e => e.EMAIL || '').filter(Boolean),
     obito,
-    fonte: 'novavida'
+    fonte: 'novavida',
+    _via: cadastralUsado ? `Consulta_CadastralPF (${cadastralUsado})` : 'NVCHECK',
+    _debugRaw: r.data // TEMPORARIO pra inspecionar estrutura do Consulta_CadastralPF
   };
 
   // ─── Salva no cache (30 dias TTL) ──────────────────────────
