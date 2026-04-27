@@ -4619,6 +4619,51 @@ async function _restaurarUltimaConsulta() {
   } catch (e) { /* nao quebra UI */ }
 }
 
+// Seleciona uma consulta da lista pra mostrar o detalhe abaixo (estilo INSS)
+async function selecionarConsulta(id) {
+  cltConsultaState.selecionadaId = id;
+  cltConsultaState.filaId = id;
+  try { localStorage.setItem('clt_fila_atual', id); } catch {}
+  // Se ja esta na pilha, so re-renderiza
+  const pilha = cltConsultaState.consultas || [];
+  if (pilha.find(c => c.id === id)) {
+    renderApp();
+    _pollingFila(id); // garante polling se ainda nao concluiu
+    return;
+  }
+  // Senao, busca do banco e adiciona na pilha
+  renderApp();
+  try {
+    const r = await fetch('/api/clt-fila', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'status', id })
+    });
+    const d = await r.json();
+    if (d.success && d.fila) {
+      const result = _filaToResult(d.fila);
+      _upsertConsultaPilha(d.fila.id, d.fila.cpf, result);
+      renderApp();
+      _dispararDetalhesParcial(result);
+      if (d.fila.status_geral !== 'concluido') _pollingFila(id);
+    }
+  } catch (e) { /* nao quebra UI */ }
+}
+
+// Limpa a lista visivel de consultas (NAO deleta do banco)
+function limparUltimasConsultas() {
+  if (!confirm('Limpar a lista de últimas consultas? (não deleta do banco, apenas oculta da tela)')) return;
+  // Para todos os pollings ativos
+  if (cltConsultaState._pollingsAtivos) cltConsultaState._pollingsAtivos.clear();
+  cltConsultaState.consultas = [];
+  cltConsultaState.recentes = [];
+  cltConsultaState.selecionadaId = null;
+  cltConsultaState.filaId = null;
+  cltConsultaState.bancosDetalhesDisparados = {};
+  try { localStorage.removeItem('clt_fila_atual'); } catch {}
+  renderApp();
+}
+
 // Abre uma consulta recente — adiciona na pilha (se nao tiver) e retoma polling
 async function abrirConsultaRecente(id) {
   cltConsultaState.filaId = id;
@@ -4697,6 +4742,7 @@ async function rodarConsultaCLT(opts) {
     const d1 = await r1.json();
     if (!d1.success || !d1.id) throw new Error(d1.error || 'Falha ao criar fila');
     cltConsultaState.filaId = d1.id;
+    cltConsultaState.selecionadaId = d1.id; // abre a nova consulta automaticamente
     _addRecente(d1.id, cpf, nomeManual, 'processando');
     // Cria placeholder na pilha imediatamente
     _upsertConsultaPilha(d1.id, cpf, {
@@ -5313,19 +5359,6 @@ function renderCltConsulta() {
   h += '<button class="btn-acc" style="padding:14px 28px;font-size:14px;white-space:nowrap" onclick="rodarConsultaCLT()">🔍 Consultar</button>';
   h += '</div>';
 
-  // ─── Lista de consultas recentes (operador pode navegar entre elas) ───
-  if (Array.isArray(cltConsultaState.recentes) && cltConsultaState.recentes.length > 0) {
-    h += '<div style="margin-bottom:18px;padding:10px;background:var(--card);border:1px solid var(--brd);border-radius:10px">';
-    h += '<div style="font-size:11px;color:var(--t3);text-transform:uppercase;margin-bottom:8px">📋 Consultas recentes (clique pra ver)</div>';
-    h += '<div style="display:flex;gap:6px;flex-wrap:wrap">';
-    for (const c of cltConsultaState.recentes.slice(0, 8)) {
-      const isAtual = c.id === cltConsultaState.filaId;
-      const statusEmoji = c.status === 'concluido' ? '✅' : '⏳';
-      h += `<button class="btn btn-sm" style="font-size:11px;${isAtual?'background:var(--acc);color:#fff;':''}padding:6px 10px" onclick="abrirConsultaRecente('${c.id}')">${statusEmoji} ${c.cpf}${c.nome?' · '+c.nome.substring(0,20):''}</button>`;
-    }
-    h += '</div>';
-    h += '</div>';
-  }
 
   // ─── Banner do LINK DE SELFIE (quando gerado) ───
   if (cltConsultaState.linkSelfie) {
@@ -5357,14 +5390,72 @@ function renderCltConsulta() {
     h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:14px">Erro: ${cltConsultaState.error}</div>`;
   }
 
-  // ─── EMPILHAMENTO: cada consulta vira um bloco visivel em paralelo ───
+  // ─── LISTA DE ULTIMAS CONSULTAS (estilo INSS — lista de linhas) ───
+  // Mescla as em andamento (consultas[]) com as recentes do banco
   const pilha = Array.isArray(cltConsultaState.consultas) ? cltConsultaState.consultas : [];
-  for (const item of pilha) {
-    h += _renderConsultaBloco(item);
+  const recentesArr = Array.isArray(cltConsultaState.recentes) ? cltConsultaState.recentes : [];
+  // Monta lista unificada (id, cpf, nome, status, timestamp)
+  const idsVistos = new Set();
+  const listaUnificada = [];
+  // Primeiro as em andamento (pq tem result completo)
+  for (const it of pilha) {
+    if (idsVistos.has(it.id)) continue;
+    idsVistos.add(it.id);
+    const r = it.result || {};
+    listaUnificada.push({
+      id: it.id, cpf: it.cpf,
+      nome: r.cliente?.nome || '(sem nome)',
+      status: r.statusGeral || 'processando',
+      ts: it.lastUpdate || Date.now(),
+      empregador: r.vinculo?.empregador,
+      ofertasOk: r.totalBancosDisponiveis || 0
+    });
+  }
+  // Depois recentes do banco que nao estao em andamento
+  for (const r of recentesArr) {
+    if (idsVistos.has(r.id)) continue;
+    idsVistos.add(r.id);
+    listaUnificada.push({
+      id: r.id, cpf: r.cpf, nome: r.nome || '(sem nome)',
+      status: r.status || 'concluido', ts: 0
+    });
   }
 
-  if (pilha.length === 0 && !cltConsultaState.loading && !cltConsultaState.error) {
-    h += '<div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">Digite um CPF acima ou clique numa consulta recente pra começar.</div>';
+  if (listaUnificada.length > 0) {
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px">';
+    h += '<div style="font-size:14px;font-weight:700">📁 Últimas Consultas</div>';
+    h += `<button class="btn btn-sm" style="font-size:11px;border-color:var(--red);color:var(--red)" onclick="limparUltimasConsultas()">Limpar</button>`;
+    h += '</div>';
+    h += '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:18px">';
+    for (const c of listaUnificada.slice(0, 12)) {
+      const ativo = cltConsultaState.selecionadaId === c.id;
+      const statusBadge = c.status === 'concluido'
+        ? '<span class="pill pill-grn" style="font-size:9px">✅ CONCLUÍDA</span>'
+        : '<span class="pill" style="font-size:9px;background:rgba(59,130,246,.15);color:var(--acc)">⏳ EM ANDAMENTO</span>';
+      const tsStr = c.ts ? new Date(c.ts).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
+      h += `<div onclick="selecionarConsulta('${c.id}')" style="padding:12px 16px;background:var(--card);border:1px solid ${ativo?'var(--acc)':'var(--brd)'};border-radius:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:all .15s${ativo?';box-shadow:0 0 0 2px rgba(59,130,246,.18)':''}" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='${ativo?'var(--acc)':'var(--brd)'}'">`;
+      h += '<div style="flex:1">';
+      h += `<div style="display:flex;gap:8px;align-items:center;margin-bottom:3px">${statusBadge}<div style="font-size:14px;font-weight:700">${c.nome}</div>`;
+      if (c.ofertasOk) h += `<span style="font-size:10px;color:var(--grn);font-weight:700">· ${c.ofertasOk} oferta(s)</span>`;
+      h += '</div>';
+      h += `<div style="font-size:11px;color:var(--t3)"><b>CPF:</b> ${c.cpf}${c.empregador?` · ${c.empregador.substring(0,40)}`:''}</div>`;
+      h += '</div>';
+      if (tsStr) h += `<div style="font-size:11px;color:var(--t3)">${tsStr}</div>`;
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+
+  // ─── DETALHE DA CONSULTA SELECIONADA (so uma por vez) ───
+  const selecionadaId = cltConsultaState.selecionadaId;
+  const itemSelecionado = pilha.find(c => c.id === selecionadaId);
+  if (itemSelecionado) {
+    h += _renderConsultaBloco(itemSelecionado);
+  } else if (selecionadaId) {
+    // Selecionada mas nao esta em pilha — busca do banco
+    h += '<div style="padding:24px;text-align:center;color:var(--t2)">⏳ Carregando detalhes...</div>';
+  } else if (listaUnificada.length === 0 && !cltConsultaState.loading && !cltConsultaState.error) {
+    h += '<div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">Digite um CPF acima pra começar.</div>';
   }
 
   // Modal de digitação (renderiza por cima)
