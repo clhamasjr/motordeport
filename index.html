@@ -4681,19 +4681,14 @@ async function liberarC6Consulta() {
   const tel = r.cliente?.telefones?.[0]?.completo || '';
 
   if (!cpf || !nome || !dataNasc) {
-    alert('Faltam dados (nome ou data de nascimento) pra gerar link C6. Os dados precisam vir do enriquecimento do PresençaBank/Multicorban.');
-    return;
-  }
-  if (!tel) {
-    alert('Cliente sem telefone — não é possível enviar link via WhatsApp');
+    alert('Faltam dados básicos do cliente (nome ou data de nascimento). Preencha o nome na consulta e tente novamente.');
     return;
   }
 
-  // 1. Gera link de selfie
+  // Gera link de selfie — funciona com ou sem telefone (se sem tel,
+  // só mostra o link na tela pra operador copiar e enviar manualmente)
   await cltGerarSelfieC6(cpf, nome, dataNasc, tel);
-  // 2. Marca pra incluir C6 nas próximas consultas dessa sessão
   cltConsultaState.incluirC6 = true;
-  // 3. Quando cliente autorizar, operador clica "🔄 Verificar C6" e a consulta inclui C6
 }
 
 async function reconsultarComC6() {
@@ -4924,7 +4919,7 @@ function renderModalDigitacao() {
 
 async function cltGerarSelfieC6(cpf, nome, dataNascimento, telefone) {
   if (!nome || !dataNascimento) {
-    alert('Pra gerar link de selfie C6, preciso de nome e data de nascimento. Esses dados precisam vir do enriquecimento (PresençaBank/Multicorban).');
+    alert('Pra gerar link de selfie, preciso de nome e data de nascimento. Preencha o nome na consulta e tente novamente.');
     return;
   }
   try {
@@ -4938,21 +4933,45 @@ async function cltGerarSelfieC6(cpf, nome, dataNascimento, telefone) {
     });
     const d = await r.json();
     if (d.success && d.link) {
-      // Copia link pro clipboard + mostra modal
       try { await navigator.clipboard.writeText(d.link); } catch {}
-      const enviar = confirm(
-        `✅ Link gerado e copiado!\n\n${d.link}\n\nValidade: ${d.dataExpiracao || '30 dias'}\n\n` +
-        `Mande pro cliente fazer a selfie. Quando ele autorizar, o C6 mostra a oferta na próxima consulta.\n\n` +
-        `Quer abrir o WhatsApp pra enviar agora?`
-      );
-      if (enviar && telefone) {
-        const msg = encodeURIComponent(d.mensagemParaCliente || `Pra prosseguir com sua oferta de crédito CLT, faça uma selfie rápida aqui: ${d.link}`);
-        window.open(`https://wa.me/55${telefone.replace(/\D/g,'')}?text=${msg}`, '_blank');
-      }
+      // Salva no state pra renderizar na tela (NÃO usa alert/confirm)
+      cltConsultaState.linkSelfie = {
+        link: d.link,
+        validade: d.dataExpiracao || '30 dias',
+        mensagem: d.mensagemParaCliente || `Pra prosseguir com sua oferta de crédito CLT, faça uma selfie rápida aqui: ${d.link}`,
+        telefone: telefone || ''
+      };
+      renderApp();
     } else {
       alert('Erro ao gerar link: ' + (d.erro || 'desconhecido'));
     }
   } catch (e) { alert('Erro: ' + e.message); }
+}
+
+function fecharLinkSelfie() {
+  cltConsultaState.linkSelfie = null;
+  renderApp();
+}
+
+function abrirWhatsAppLink() {
+  const ls = cltConsultaState.linkSelfie;
+  if (!ls || !ls.telefone) return;
+  const msg = encodeURIComponent(ls.mensagem);
+  window.open(`https://wa.me/55${ls.telefone.replace(/\D/g,'')}?text=${msg}`, '_blank');
+}
+
+function copiarLinkSelfie() {
+  const ls = cltConsultaState.linkSelfie;
+  if (!ls) return;
+  try {
+    navigator.clipboard.writeText(ls.link);
+    const btn = document.getElementById('btnCopiarLink');
+    if (btn) {
+      const originalText = btn.innerHTML;
+      btn.innerHTML = '✅ Copiado!';
+      setTimeout(() => { btn.innerHTML = originalText; }, 1500);
+    }
+  } catch (e) { alert('Não foi possível copiar — selecione e copie manualmente'); }
 }
 
 function _cltOfertaCard(o, ctx) {
@@ -5060,6 +5079,29 @@ function renderCltConsulta() {
   h += '<input class="form-input" id="cltNome" placeholder="Nome completo (opcional)" style="flex:2;min-width:240px;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
   h += '<button class="btn-acc" style="padding:14px 28px;font-size:14px;white-space:nowrap" onclick="rodarConsultaCLT()">🔍 Consultar</button>';
   h += '</div>';
+
+  // ─── Banner do LINK DE SELFIE (quando gerado) ───
+  if (cltConsultaState.linkSelfie) {
+    const ls = cltConsultaState.linkSelfie;
+    h += '<div style="margin-bottom:18px;padding:18px;background:linear-gradient(135deg,rgba(34,211,238,.12),rgba(34,211,238,.04));border:2px solid var(--cyan);border-radius:14px">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+    h += '<div style="font-size:16px;font-weight:800;color:var(--cyan)">🔗 Link de Selfie Gerado</div>';
+    h += `<button class="btn btn-sm" onclick="fecharLinkSelfie()" style="font-size:11px">✕ Fechar</button>`;
+    h += '</div>';
+    h += `<div style="font-size:11px;color:var(--t3);margin-bottom:6px">Validade: ${ls.validade}</div>`;
+    h += '<div style="background:var(--bg);padding:12px;border-radius:8px;margin-bottom:10px;word-break:break-all;font-family:monospace;font-size:12px;border:1px solid var(--brd)">';
+    h += ls.link;
+    h += '</div>';
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+    h += `<button class="btn-acc btn-sm" id="btnCopiarLink" onclick="copiarLinkSelfie()">📋 Copiar Link</button>`;
+    if (ls.telefone) {
+      h += `<button class="btn btn-sm" style="background:var(--grn);color:#000;border:none" onclick="abrirWhatsAppLink()">💬 Enviar via WhatsApp</button>`;
+    } else {
+      h += `<div style="font-size:11px;color:var(--ylw);align-self:center;padding:0 8px">⚠️ Cliente sem telefone — copie o link e envie manualmente</div>`;
+    }
+    h += '</div>';
+    h += '</div>';
+  }
 
   if (cltConsultaState.loading) {
     h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Adicionando à esteira de consulta...</div>';
