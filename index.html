@@ -4862,21 +4862,40 @@ async function _pollingFila(filaId) {
   }
 }
 
-function _dispararDetalhesParcial(result) {
-  // Chave por filaId (cada consulta tem seu controle de detalhes ja disparados)
+// Salva detalhes do simular-detalhe num state PERSISTENTE (sobrevive aos
+// re-renders do polling, que recriam o array de ofertas).
+// cltConsultaState.detalhes[filaId][bancoKey] = { detalhes, idSimulacao, comSeguro, erro, calculando }
+function _dispararDetalhesParcial(result, opts) {
+  opts = opts || {};
   if (!cltConsultaState.bancosDetalhesDisparados) cltConsultaState.bancosDetalhesDisparados = {};
+  if (!cltConsultaState.detalhes) cltConsultaState.detalhes = {};
   const filaId = result.filaId;
   if (!cltConsultaState.bancosDetalhesDisparados[filaId]) cltConsultaState.bancosDetalhesDisparados[filaId] = new Set();
+  if (!cltConsultaState.detalhes[filaId]) cltConsultaState.detalhes[filaId] = {};
   const set = cltConsultaState.bancosDetalhesDisparados[filaId];
+  const detalhesStore = cltConsultaState.detalhes[filaId];
   const cli = result.cliente || {};
   const tel = cli.telefones?.[0]?.completo || '';
   const cpf = result.cpf;
+
   for (const o of result.ofertas) {
     if (!o.disponivel) continue;
-    if (o.detalhes && o.detalhes.valorLiquido) continue;
     const key = `${o.banco}_${o.provider || ''}`;
-    if (set.has(key)) continue;
+    // Se ja temos detalhes salvos, popula a oferta com eles (sobrevive ao re-render)
+    const cached = detalhesStore[key];
+    if (cached) {
+      if (cached.detalhes) {
+        o.detalhes = cached.detalhes;
+        if (cached.idSimulacao) o.idSimulacao = cached.idSimulacao;
+      }
+      if (cached.erro) o._erroDetalhe = cached.erro;
+      if (cached.calculando) o._calculando = true;
+    }
+    // Pula se ja tem detalhes ok ou ja disparou (e nao foi force)
+    if (o.detalhes && o.detalhes.valorLiquido) continue;
+    if (set.has(key) && !opts.forceKeys?.includes(key)) continue;
     set.add(key);
+    detalhesStore[key] = { calculando: true };
     o._calculando = true;
     let payload = null;
     if (o.banco === 'presencabank' && cli.nome && tel) {
@@ -4886,7 +4905,12 @@ function _dispararDetalhesParcial(result) {
     } else if (o.banco === 'c6') {
       payload = { banco: 'c6', cpf };
     }
-    if (!payload) { o._calculando = false; set.delete(key); continue; }
+    if (!payload) {
+      o._calculando = false;
+      detalhesStore[key] = { erro: 'Faltam dados pra simular detalhe (nome ou telefone)' };
+      set.delete(key);
+      continue;
+    }
     fetch('/api/clt-simular-detalhe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
@@ -4897,14 +4921,37 @@ function _dispararDetalhesParcial(result) {
         o.detalhes = d.detalhes;
         if (d.idSimulacao) o.idSimulacao = d.idSimulacao;
         if (d.type) o.type = d.type;
+        detalhesStore[key] = { detalhes: d.detalhes, idSimulacao: d.idSimulacao, type: d.type };
       } else {
-        o._erroDetalhe = d.mensagem || 'Falha ao simular';
+        const erroMsg = d.mensagem || 'Falha ao simular';
+        o._erroDetalhe = erroMsg;
+        detalhesStore[key] = { erro: erroMsg };
       }
       renderApp();
     }).catch(e => {
-      o._calculando = false; o._erroDetalhe = e.message; renderApp();
+      o._calculando = false;
+      o._erroDetalhe = e.message;
+      detalhesStore[key] = { erro: e.message };
+      renderApp();
     });
   }
+}
+
+// Re-tenta simular detalhe pra um banco especifico (operador clicou Re-tentar)
+function reTentarSimulacao(bancoKey) {
+  const filaId = cltConsultaState.selecionadaId || cltConsultaState.filaId;
+  if (!filaId) return;
+  // Limpa o set + cache do banco — proximo polling vai re-disparar
+  if (cltConsultaState.bancosDetalhesDisparados?.[filaId]) {
+    cltConsultaState.bancosDetalhesDisparados[filaId].delete(bancoKey);
+  }
+  if (cltConsultaState.detalhes?.[filaId]) {
+    delete cltConsultaState.detalhes[filaId][bancoKey];
+  }
+  // Re-dispara imediatamente
+  const item = cltConsultaState.consultas?.find(c => c.id === filaId);
+  if (item?.result) _dispararDetalhesParcial(item.result, { forceKeys: [bancoKey] });
+  renderApp();
 }
 
 async function liberarC6Consulta() {
@@ -5292,7 +5339,11 @@ function _cltOfertaCard(o, ctx) {
     if (o._calculando) {
       h += `<div style="margin-top:10px;padding:8px;background:rgba(59,130,246,.08);border-radius:6px;font-size:11px;color:var(--acc)">⏳ Calculando simulação detalhada...</div>`;
     } else if (o._erroDetalhe) {
+      const bancoKey = o.banco === 'v8'
+        ? (o.provider === 'CELCOIN' ? 'v8_celcoin' : 'v8_qi')
+        : o.banco;
       h += `<div style="margin-top:10px;font-size:11px;color:var(--red)">⚠️ ${o._erroDetalhe}</div>`;
+      h += `<button class="btn btn-sm" style="width:100%;margin-top:8px;border-color:var(--acc);color:var(--acc)" onclick="reTentarSimulacao('${bancoKey}')">🔄 Re-tentar simulação</button>`;
     } else if (o.mensagem) {
       h += `<div style="font-size:11px;color:var(--t3);margin-top:6px">${o.mensagem}</div>`;
     }

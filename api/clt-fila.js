@@ -490,6 +490,34 @@ export default async function handler(req) {
     if (!id) return jsonError('id obrigatório', 400, req);
     const { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
     if (!row) return jsonError('Fila não encontrada', 404, req);
+
+    // TIMEOUT ABSOLUTO: se a fila esta processando ha mais de 10min, forca
+    // conclusao marcando bancos pendentes como falha (V8 pode ficar
+    // WAITING_CREDIT_ANALYSIS eternamente se DataPrev nao confirmar)
+    if (row.status_geral === 'processando' && row.iniciado_em) {
+      const idadeMs = Date.now() - new Date(row.iniciado_em).getTime();
+      if (idadeMs > 10 * 60 * 1000) {
+        const bancosNovos = { ...(row.bancos || {}) };
+        for (const k of ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6']) {
+          if (bancosNovos[k] && ['pending', 'processando'].includes(bancosNovos[k].status)) {
+            bancosNovos[k] = {
+              ...bancosNovos[k],
+              status: 'falha',
+              mensagem: bancosNovos[k].mensagem || '⏱ Timeout 10min — banco não confirmou',
+              atualizado_em: new Date().toISOString()
+            };
+          }
+        }
+        await dbUpdate('clt_consultas_fila', { id }, {
+          bancos: bancosNovos,
+          status_geral: 'concluido',
+          concluido_em: new Date().toISOString()
+        });
+        row.bancos = bancosNovos;
+        row.status_geral = 'concluido';
+      }
+    }
+
     return jsonResp({ success: true, fila: row }, 200, req);
   }
 
