@@ -4466,90 +4466,209 @@ function normalizeCPF(raw) {
   return digits.padStart(11, '0');
 }
 
+// ─── ESTEIRA: converte registro da fila no formato esperado pela UI ───
+function _filaToResult(fila) {
+  const b = fila.bancos || {};
+  const cli = fila.cliente || {};
+  const ofertas = [];
+
+  const _statusToFlags = (st) => ({
+    processando: st === 'processando' || st === 'pending',
+    pending: st === 'pending'
+  });
+
+  // PresencaBank
+  const pb = b.presencabank || { status: 'pending' };
+  const pbF = _statusToFlags(pb.status);
+  ofertas.push({
+    banco: 'presencabank', label: 'PresençaBank',
+    disponivel: pb.status === 'ok' && pb.disponivel === true,
+    processando: pbF.processando,
+    elegibilidade: pb.dados || null,
+    mensagem: pb.mensagem || (pbF.pending ? 'Aguardando início...' : 'Consultando...')
+  });
+
+  // V8 QI
+  const qi = b.v8_qi || { status: 'pending' };
+  const qiF = _statusToFlags(qi.status);
+  ofertas.push({
+    banco: 'v8', provider: 'QI', label: 'V8 (QI Tech)',
+    disponivel: qi.status === 'ok' && qi.disponivel === true,
+    consultId: qi.consultId,
+    processando: qiF.processando,
+    elegibilidade: qi.dados ? { margemDisponivel: qi.dados.margemDisponivel } : null,
+    mensagem: qi.mensagem || (qiF.pending ? 'Aguardando início...' : 'Consultando + gerando termo...')
+  });
+
+  // V8 CELCOIN
+  const cc = b.v8_celcoin || { status: 'pending' };
+  const ccF = _statusToFlags(cc.status);
+  ofertas.push({
+    banco: 'v8', provider: 'CELCOIN', label: 'V8 (CELCOIN)',
+    disponivel: cc.status === 'ok' && cc.disponivel === true,
+    consultId: cc.consultId,
+    processando: ccF.processando,
+    elegibilidade: cc.dados ? { margemDisponivel: cc.dados.margemDisponivel } : null,
+    mensagem: cc.mensagem || (ccF.pending ? 'Aguardando início...' : 'Consultando + gerando termo...')
+  });
+
+  // C6
+  const c6 = b.c6 || { status: 'pending' };
+  const c6F = _statusToFlags(c6.status);
+  ofertas.push({
+    banco: 'c6', label: 'C6 Bank',
+    disponivel: c6.status === 'ok' && c6.disponivel === true,
+    bloqueado: c6.status === 'bloqueado',
+    statusAutorizacao: c6.statusAutorizacao,
+    ja_autorizado: c6.ja_autorizado === true,
+    processando: c6F.processando,
+    detalhes: c6.dados ? {
+      valorLiquido: c6.dados.valorLiquido,
+      parcelas: c6.dados.parcelas,
+      valorParcela: c6.dados.valorParcela,
+      seguroSugerido: c6.dados.seguroSugerido
+    } : null,
+    mensagem: c6.mensagem || (c6F.pending ? 'Aguardando início...' : 'Consultando...')
+  });
+
+  return {
+    success: true,
+    cpf: fila.cpf,
+    filaId: fila.id,
+    statusGeral: fila.status_geral,
+    cliente: {
+      nome: cli.nome, cpf: fila.cpf,
+      dataNascimento: cli.dataNascimento, sexo: cli.sexo,
+      nomeMae: cli.nomeMae, nomePai: cli.nomePai, idade: cli.idade,
+      telefones: cli.telefones || [], emails: cli.emails || []
+    },
+    vinculo: fila.vinculo,
+    ofertas,
+    totalBancosDisponiveis: ofertas.filter(o => o.disponivel).length,
+    enriquecimento: {
+      presencaBankOk: pb.status === 'ok',
+      multicorbanOk: b.multicorban?.status === 'ok',
+      multicorbanMensagem: b.multicorban?.mensagem
+    },
+    mensagem: fila.status_geral === 'concluido'
+      ? `${ofertas.filter(o => o.disponivel).length} banco(s) com oferta disponível`
+      : 'Consultando os bancos em paralelo...'
+  };
+}
+
 async function rodarConsultaCLT(opts) {
   opts = opts || {};
   const cpf = opts.cpf || normalizeCPF(document.getElementById('cltCpf').value);
   if (!cpf) { alert('CPF inválido. Digite um CPF com 9-11 dígitos.'); return; }
 
-  // Nome digitado manualmente (opcional) — vai pro backend que persiste em clt_clientes
   const nomeManualEl = document.getElementById('cltNome');
   const nomeManual = opts.nome || (nomeManualEl ? (nomeManualEl.value || '').trim() : '');
-
-  const incluirC6 = opts.incluirC6 || cltConsultaState.incluirC6 || false;
+  const incluirC6 = opts.incluirC6 !== undefined ? opts.incluirC6 : true; // sempre true por default agora
 
   cltConsultaState.loading = true;
   cltConsultaState.result = null;
   cltConsultaState.error = null;
   cltConsultaState.cpfAtual = cpf;
   cltConsultaState.incluirC6 = incluirC6;
+  cltConsultaState.filaId = null;
+  cltConsultaState.bancosDetalhesDisparados = new Set();
   renderApp();
 
   try {
-    const body = { cpf, incluirC6 };
+    // 1) Cria registro na esteira
+    const body = { action: 'criar', cpf, incluirC6 };
     if (nomeManual) body.nome = nomeManual;
-    const r = await fetch('/api/clt-oportunidades', {
+    const r1 = await fetch('/api/clt-fila', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
       body: JSON.stringify(body)
     });
-    cltConsultaState.result = await r.json();
+    const d1 = await r1.json();
+    if (!d1.success || !d1.id) throw new Error(d1.error || 'Falha ao criar fila');
+    cltConsultaState.filaId = d1.id;
+
+    // 2) Dispara 5 processadores em paralelo (fire-and-forget)
+    const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6'];
+    for (const b of bancos) {
+      fetch('/api/clt-fila', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+        body: JSON.stringify({ action: 'processar', id: d1.id, banco: b })
+      }).catch(e => console.error('Erro processar ' + b, e));
+    }
+
+    // 3) Inicia polling
     cltConsultaState.loading = false;
     renderApp();
-
-    // ─── ETAPA B: dispara simulação DETALHADA em paralelo (não-bloqueante) ───
-    // Cards aparecem rápido com "calculando...", atualizam quando vier o detalhe
-    const r1 = cltConsultaState.result;
-    if (r1?.success && r1.ofertas?.length) {
-      const cli = r1.cliente || {};
-      const tel = cli.telefones?.[0]?.completo || '';
-
-      for (const o of r1.ofertas) {
-        if (!o.disponivel) continue;
-        if (o.detalhes && o.detalhes.valorLiquido) continue; // ja tem detalhe
-        o._calculando = true;
-        // Dispara em paralelo (sem await — não bloqueia UI)
-        let payload = null;
-        if (o.banco === 'presencabank' && cli.nome && tel) {
-          payload = { banco: 'presencabank', cpf, nome: cli.nome, telefone: tel };
-        } else if (o.banco === 'v8' && o.consultId) {
-          payload = {
-            banco: 'v8', cpf, provider: o.provider, consultId: o.consultId,
-            margem: o.elegibilidade?.margemDisponivel || 0
-          };
-        } else if (o.banco === 'c6') {
-          payload = { banco: 'c6', cpf };
-        }
-        if (!payload) { o._calculando = false; continue; }
-
-        fetch('/api/clt-simular-detalhe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
-          body: JSON.stringify(payload)
-        })
-        .then(r => r.json())
-        .then(d => {
-          o._calculando = false;
-          if (d.success && d.detalhes) {
-            o.detalhes = d.detalhes;
-            if (d.idSimulacao) o.idSimulacao = d.idSimulacao;
-            if (d.type) o.type = d.type;
-          } else {
-            o._erroDetalhe = d.mensagem || 'Falha ao simular';
-          }
-          renderApp();
-        })
-        .catch(e => {
-          o._calculando = false;
-          o._erroDetalhe = e.message;
-          renderApp();
-        });
-      }
-      renderApp(); // re-render pra mostrar "calculando"
-    }
+    _pollingFila(d1.id);
   } catch (e) {
     cltConsultaState.error = e.message;
     cltConsultaState.loading = false;
     renderApp();
+  }
+}
+
+async function _pollingFila(filaId) {
+  const inicio = Date.now();
+  const TIMEOUT = 90000; // 90s max
+  while (Date.now() - inicio < TIMEOUT) {
+    if (cltConsultaState.filaId !== filaId) return; // user mudou de consulta
+    try {
+      const r = await fetch('/api/clt-fila', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+        body: JSON.stringify({ action: 'status', id: filaId })
+      });
+      const d = await r.json();
+      if (d.success && d.fila) {
+        cltConsultaState.result = _filaToResult(d.fila);
+        renderApp();
+        _dispararDetalhesParcial(cltConsultaState.result);
+        if (d.fila.status_geral === 'concluido') return;
+      }
+    } catch (e) { console.error('polling erro', e); }
+    await new Promise(r => setTimeout(r, 1500));
+  }
+}
+
+function _dispararDetalhesParcial(result) {
+  if (!cltConsultaState.bancosDetalhesDisparados) cltConsultaState.bancosDetalhesDisparados = new Set();
+  const cli = result.cliente || {};
+  const tel = cli.telefones?.[0]?.completo || '';
+  const cpf = result.cpf;
+  for (const o of result.ofertas) {
+    if (!o.disponivel) continue;
+    if (o.detalhes && o.detalhes.valorLiquido) continue;
+    const key = `${o.banco}_${o.provider || ''}`;
+    if (cltConsultaState.bancosDetalhesDisparados.has(key)) continue;
+    cltConsultaState.bancosDetalhesDisparados.add(key);
+    o._calculando = true;
+    let payload = null;
+    if (o.banco === 'presencabank' && cli.nome && tel) {
+      payload = { banco: 'presencabank', cpf, nome: cli.nome, telefone: tel };
+    } else if (o.banco === 'v8' && o.consultId) {
+      payload = { banco: 'v8', cpf, provider: o.provider, consultId: o.consultId, margem: o.elegibilidade?.margemDisponivel || 0 };
+    } else if (o.banco === 'c6') {
+      payload = { banco: 'c6', cpf };
+    }
+    if (!payload) { o._calculando = false; cltConsultaState.bancosDetalhesDisparados.delete(key); continue; }
+    fetch('/api/clt-simular-detalhe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify(payload)
+    }).then(r => r.json()).then(d => {
+      o._calculando = false;
+      if (d.success && d.detalhes) {
+        o.detalhes = d.detalhes;
+        if (d.idSimulacao) o.idSimulacao = d.idSimulacao;
+        if (d.type) o.type = d.type;
+      } else {
+        o._erroDetalhe = d.mensagem || 'Falha ao simular';
+      }
+      renderApp();
+    }).catch(e => {
+      o._calculando = false; o._erroDetalhe = e.message; renderApp();
+    });
   }
 }
 
@@ -4853,11 +4972,10 @@ function _cltOfertaCard(o, ctx) {
   }
   h += '</div>';
 
-  // Card "processando" (V8 aguardando webhook)
+  // Card em processamento (esteira está rodando — atualiza sozinho via polling)
   if (o.processando) {
-    h += `<div style="font-size:13px;color:var(--acc);margin-bottom:10px">⏳ ${o.mensagem || 'Processando...'}</div>`;
-    h += `<div style="font-size:11px;color:var(--t3);margin-bottom:10px">O V8 demora 30s a 5min pra processar consulta DataPrev. Quando ficar pronto, atualize esta tela.</div>`;
-    h += `<button class="btn-acc btn-sm" style="width:100%" onclick="rodarConsultaCLT()">🔄 Verificar status agora</button>`;
+    h += `<div style="font-size:13px;color:var(--acc);margin-bottom:8px">⏳ ${o.mensagem || 'Processando...'}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3)">A tela atualiza sozinha quando este banco terminar.</div>`;
     h += '</div>';
     return h;
   }
@@ -4935,7 +5053,7 @@ function _cltOfertaCard(o, ctx) {
 function renderCltConsulta() {
   let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
   h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">💼 CLT — Consulta de Oportunidades</div>';
-  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:24px">Digite CPF + Nome (opcional) — o sistema enriquece via PresençaBank + Multicorban e consulta os bancos. Se passar o nome, ele é gravado e usado no atendimento.</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:24px">Digite CPF + Nome (opcional). Os bancos são consultados em paralelo — cada card atualiza sozinho conforme termina (não trava esperando todos).</div>';
 
   h += '<div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap">';
   h += '<input class="form-input" id="cltCpf" placeholder="CPF (só números)" maxlength="14" style="flex:1;min-width:180px;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
@@ -4944,7 +5062,7 @@ function renderCltConsulta() {
   h += '</div>';
 
   if (cltConsultaState.loading) {
-    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Consultando 3 bancos + enriquecendo dados (pode levar 5-10s)...</div>';
+    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Adicionando à esteira de consulta...</div>';
   } else if (cltConsultaState.error) {
     h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">Erro: ${cltConsultaState.error}</div>`;
   } else if (cltConsultaState.result) {
