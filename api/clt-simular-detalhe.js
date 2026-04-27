@@ -98,12 +98,38 @@ export default async function handler(req) {
         }, 200, req);
       }
 
-      const cfgs = await callApi('/api/v8', { action: 'simularConfigs' }, auth, secret);
+      const cfgs = await callApi('/api/v8', { action: 'simularConfigs', provider }, auth, secret);
       const lista = cfgs.data?.configs || [];
       if (!lista.length) {
         return jsonResp({ success: false, banco, provider, mensagem: 'Sem tabelas V8 disponiveis' }, 200, req);
       }
-      const cfg = lista[0];
+
+      // LOG temporario pra investigar estrutura real das configs (com vs sem seguro)
+      console.log('[V8_CONFIGS_RAW]', provider, JSON.stringify(lista).substring(0, 2500));
+
+      // Detecta se uma config tem SEGURO (varias heuristicas — qualquer match basta)
+      const temSeguro = (c) => {
+        if (!c) return false;
+        if (c.has_insurance === true || c.with_insurance === true) return true;
+        if (c.insurance === true || c.insurance_type) return true;
+        const txtCampos = [c.name, c.title, c.description, c.code, c.product, c.product_type]
+          .filter(Boolean).join(' ').toLowerCase();
+        if (txtCampos.includes('seguro')) return true;
+        if (txtCampos.includes('insurance')) return true;
+        if (txtCampos.includes(' ins ') || txtCampos.endsWith(' ins') || txtCampos.startsWith('ins ')) return true;
+        return false;
+      };
+
+      // Default: COM SEGURO. Override: body.semSeguro=true ou body.comSeguro=false
+      const querSemSeguro = (body.semSeguro === true) || (body.comSeguro === false);
+      let cfg;
+      if (querSemSeguro) {
+        cfg = lista.find(c => !temSeguro(c)) || lista[0];
+      } else {
+        cfg = lista.find(c => temSeguro(c)) || lista[0]; // se nenhum identificado, fallback pro 1o
+      }
+      const cfgComSeguro = temSeguro(cfg);
+
       const parcelasOpts = (cfg.number_of_installments || ['24']).map(n => parseInt(n)).filter(n => !isNaN(n));
       // Se cliente pediu N parcelas e está disponível, usa. Senão pega o maior.
       const numInst = (numParcelasCustom > 0 && parcelasOpts.includes(numParcelasCustom))
@@ -137,9 +163,12 @@ export default async function handler(req) {
             parcelas: d.qtdParcelas,
             valorParcela: d.valorParcela,
             taxaMensal: cfg.monthly_interest_rate,
-            cetMensal: d.cet
+            cetMensal: d.cet,
+            comSeguro: cfgComSeguro
           },
           idSimulacao: d.idSimulation,
+          configId: cfg.id,
+          comSeguro: cfgComSeguro,
           consultId
         }, 200, req);
       }

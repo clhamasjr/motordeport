@@ -5254,6 +5254,12 @@ function _cltOfertaCard(o, ctx) {
 
   if (o.disponivel && o.detalhes) {
     const d = o.detalhes;
+    // Badge SEGURO (V8) — mostra se a tabela escolhida tem seguro embutido
+    if (o.banco === 'v8' && d.comSeguro === true) {
+      h += '<div style="margin-bottom:10px"><span class="pill" style="font-size:10px;background:rgba(34,197,94,.18);color:var(--grn)">🛡️ COM SEGURO</span></div>';
+    } else if (o.banco === 'v8' && d.comSeguro === false) {
+      h += '<div style="margin-bottom:10px"><span class="pill" style="font-size:10px;background:rgba(245,194,66,.15);color:var(--ylw)">⚠️ SEM SEGURO</span></div>';
+    }
     h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
     if (d.valorLiquido != null) {
       h += `<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase">Valor</div><div style="font-size:22px;font-weight:900;color:var(--grn)">R$ ${(d.valorLiquido||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>`;
