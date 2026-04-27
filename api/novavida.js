@@ -73,11 +73,19 @@ async function nvCheck(token, documento) {
   } catch (e) {
     return { ok: false, error: 'Falha de rede no NVCheck: ' + e.message };
   }
-  // LOG TEMPORARIO: response cru pra debugar parsing (remover depois)
-  console.log('[NVCHECK_RAW]', { status: res.status, len: text.length, preview: text.substring(0, 1500) });
   if (!res.ok) return { ok: false, error: 'NVCheck HTTP ' + res.status, raw: text.substring(0, 300) };
   let data; try { data = JSON.parse(text); } catch { return { ok: false, error: 'session expired (non-JSON response)', raw: text.substring(0, 300) }; }
-  return { ok: true, data: data && data.d ? data.d : data, _rawText: text };
+  // Detecta resposta de bloqueio ("CONSULTA NÃO DISPONIVEL PARA O USUARIO" significa
+  // que a credencial NOVAVIDA_USER nao tem o produto NVCHECK liberado pra API).
+  const inner = data && data.d ? data.d : data;
+  if (typeof inner === 'string' && inner.toUpperCase().includes('NÃO DISPONIVEL')) {
+    return {
+      ok: false,
+      error: 'NovaVida bloqueou: credencial sem permissao pra NVCHECK via API. Contatar suporte NovaVida pra liberar.',
+      raw: inner
+    };
+  }
+  return { ok: true, data: inner };
 }
 
 function mapTelefones(consulta) {
@@ -180,10 +188,7 @@ export default async function handler(req) {
     })),
     emails: (consulta.EMAILS || []).map(e => e.EMAIL || '').filter(Boolean),
     obito,
-    fonte: 'novavida',
-    // DEBUG: mantem o response cru pra inspecao em consultas_cache.response
-    _debugRaw: r.data,
-    _debugRawText: typeof r._rawText === 'string' ? r._rawText.substring(0, 4000) : null
+    fonte: 'novavida'
   };
 
   // ─── Salva no cache (30 dias TTL) ──────────────────────────
