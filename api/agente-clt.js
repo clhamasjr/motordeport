@@ -118,6 +118,40 @@ PERMITIDO dizer:
 - "a taxa fica no contrato"
 - "voce ve tudo detalhado antes de assinar"
 
+═══ 🚨 REGRA INVIOLAVEL — MARGEM ≠ VALOR LIBERADO 🚨 ═══
+ATENCAO MAXIMA: margem disponivel NAO eh o valor que cliente recebe.
+
+  • MARGEM (R$ 923,98/mes) = PARCELA MENSAL MAXIMA que cabe na folha
+  • VALOR LIBERADO (R$ 12.000) = VALOR DO EMPRESTIMO que cliente recebe na conta
+
+NUNCA apresente margem como se fosse valor de empréstimo.
+NUNCA diga "libero R$ 923 na sua conta" se 923 eh a margem.
+NUNCA usar o valor da margem em frases tipo "vou liberar R$ X pra voce".
+
+So apresente VALOR LIBERADO se voce tem o campo valor_liquido REAL no
+contexto da oferta. Se a oferta vier marcada como "AINDA NAO SIMULADA"
+ou "NAO APRESENTAR — falta simular", VOCE NAO APRESENTA NADA — pede
+desculpas, fala que esta processando e segue conversando ate ter dados
+reais.
+
+═══ 🚨 REGRA INVIOLAVEL — RESPEITAR O LIMITE DO CLIENTE 🚨 ═══
+Cliente pediu R$ X mas o sistema so libera R$ Y (Y < X)?
+NAO finja que esta tudo bem. NAO entregue Y como se fosse X.
+
+Resposta correta:
+  "Poxa, infelizmente nesse momento nao consigo te atender com esse
+   valor. O maximo que consigo liberar pra voce eh R$ Y em Nx de R$ Z.
+   Topa seguir com esse valor?"
+
+Variacoes ok ("o maximo possivel hoje eh R$ Y", "consegui liberar
+ate R$ Y"), mas SEMPRE deixar claro que eh menos do que ele pediu E
+explicar que nao deu pra atender o valor solicitado.
+
+PROIBIDO:
+- Apresentar oferta menor sem reconhecer que cliente queria mais
+- Esconder que nao foi possivel chegar no valor pedido
+- Empurrar valor menor como se fosse "a oferta dele" sem ressalva
+
 ═══ BANCOS QUE VOCÊ USA ═══
 Ordem de apresentação HOJE (definida pelo gestor): ${ordemBancos.join(' → ')}
 
@@ -1213,7 +1247,9 @@ export default async function handler(req) {
         }
         const elegiveis = conversa.ofertas.filter(o => o.disponivel && !o.detalhes?.valorLiquido && o.elegibilidade);
         for (const o of elegiveis) {
-          contextParts.push(`• ${o.banco.toUpperCase()}: ELEGIVEL — margem R$ ${(o.elegibilidade.margemDisponivel||0).toFixed(2)} (sem simulacao detalhada ainda)`);
+          // IMPORTANTE: NAO mandamos a margem aqui pra evitar Claude apresentar como valor liberado.
+          // Esse banco eh ELEGIVEL mas ainda NAO foi simulado — Claude NAO PODE apresentar oferta dele ainda.
+          contextParts.push(`• ${o.banco.toUpperCase()}: AINDA NAO SIMULADO — NAO APRESENTE pro cliente. Apenas informe que ainda esta processando se cliente perguntar especificamente.`);
         }
         const bloqueadas = conversa.ofertas.filter(o => o.bloqueado);
         for (const o of bloqueadas) {
@@ -1489,18 +1525,20 @@ Avise o cliente em tom acolhedor, sugerindo:
             });
             const ofertasDisp = ofertasOrdenadas.filter(o => o.disponivel);
             const ofertasBloqueadas = ofertasOrdenadas.filter(o => o.bloqueado);
-            const primeira = ofertasDisp[0] || null;
+            // primeira = primeira oferta APRESENTAVEL (precisa ter valorLiquido REAL,
+            // nao basta ter margem) — evita apresentar margem como valor liberado
+            const primeira = ofertasDisp.find(o => o.detalhes?.valorLiquido) || null;
+            const ofertasSimulando = ofertasDisp.filter(o => !o.detalhes?.valorLiquido);
 
             const formatOferta = (o, idx) => {
               const d = o.detalhes || {};
-              const e = o.elegibilidade || {};
               const ord = idx + 1;
               if (d.valorLiquido) {
                 return `${ord}. [${o.banco.toUpperCase()}${o.provider?'/'+o.provider:''}] ${o.label}: R$ ${Number(d.valorLiquido).toFixed(2)} liquido em ${d.parcelas}x R$ ${Number(d.valorParcela).toFixed(2)}`;
-              } else if (e.margemDisponivel) {
-                return `${ord}. [${o.banco.toUpperCase()}${o.provider?'/'+o.provider:''}] ${o.label}: ELEGIVEL — margem R$ ${Number(e.margemDisponivel).toFixed(2)} (simular tabela exata se cliente aceitar)`;
               } else {
-                return `${ord}. [${o.banco.toUpperCase()}${o.provider?'/'+o.provider:''}] ${o.label}: ${o.mensagem || 'disponivel'}`;
+                // NUNCA expor margem aqui — Claude pode apresentar como valor liberado.
+                // Marca explicitamente como NAO APRESENTAVEL.
+                return `${ord}. [${o.banco.toUpperCase()}${o.provider?'/'+o.provider:''}] ${o.label}: AINDA SIMULANDO — NAO APRESENTE essa oferta pro cliente. Use APENAS as ofertas com valor_liquido REAL.`;
               }
             };
 
@@ -1519,7 +1557,11 @@ ${ofertasBloqueadas.length === 0 ? 'Nenhuma' : ofertasBloqueadas.map(o => `- ${o
 
 ⚡ INSTRUCOES OBRIGATORIAS:
 
-1. ${primeira ? `Apresente APENAS A 1ª oferta (${primeira.banco.toUpperCase()}${primeira.provider?'/'+primeira.provider:''}) — VALOR + PARCELAS.` : 'Sem ofertas disponiveis ainda. Avise cliente que esta consultando mais bancos.'}
+1. ${primeira
+    ? `Apresente APENAS A 1ª oferta com valor_liquido REAL (${primeira.banco.toUpperCase()}${primeira.provider?'/'+primeira.provider:''}: R$ ${Number(primeira.detalhes.valorLiquido).toFixed(2)} em ${primeira.detalhes.parcelas}x R$ ${Number(primeira.detalhes.valorParcela).toFixed(2)}). Use ESSES VALORES exatos. NUNCA invente. NUNCA use margem como valor liberado.`
+    : (ofertasSimulando.length > 0
+      ? 'AINDA NAO TEMOS valor liberado simulado. NAO apresente nenhum valor pro cliente. Avise: "Estou processando aqui, em alguns segundos te dou os valores exatos."'
+      : 'Sem ofertas disponiveis. Avise cliente que esta consultando mais bancos.')}
 
 2. **NAO MENCIONE O NOME DO BANCO** na sua mensagem. Cliente quer saber valor e condicoes, nao instituicao.
    Errado: "O V8 te liberou R$ 2.000"
