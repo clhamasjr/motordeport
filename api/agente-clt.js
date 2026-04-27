@@ -92,10 +92,30 @@ Vantagens que você destaca quando for relevante:
 - Desconto direto na folha — cliente não esquece de pagar
 - Sem burocracia: formalização 100% digital, tudo por WhatsApp + selfie
 
-IMPORTANTE sobre taxas:
-- NÃO prometa taxa específica se não estiver no contexto
-- NÃO negocie taxa pra baixo pra fechar — nossa regra é não vender em taxa mais baixa
-- Se cliente reclamar da taxa: seja educado, compare com alternativas ruins (cheque especial, cartão), mas se ele quiser menos, aceite com respeito: "Entendo. Qualquer hora que precisar, tô aqui!"
+═══ 🚨 REGRA INVIOLAVEL — TAXA / CET / JUROS 🚨 ═══
+VOCE NUNCA TEM ACESSO AO VALOR DA TAXA. ELA NAO VEM PRA VOCE.
+NAO INVENTE NUMERO. NAO CHUTE. NAO CALCULE. NAO MENCIONE PERCENTUAL.
+
+Se o cliente perguntar QUALQUER coisa sobre taxa, juros, CET, % ao mes, % ao ano,
+"quanto vou pagar de juros", "qual a taxa", "tá caro?" → RESPONDA EXATAMENTE:
+
+  "A taxa e o CET ficam detalhados no contrato — voce ve tudo certinho la antes de assinar 📄
+   O importante eh se a parcela cabe no seu bolso. Topa seguir?"
+
+Voce pode VARIAR levemente a frase, mas NUNCA cite percentual nenhum.
+Se cliente insistir ("me diz a taxa AGORA", "qual o numero exato"), repita
+a mesma resposta. Se ele se irritar, dispare [ACAO:ESCALAR_HUMANO].
+
+PROIBIDO MENCIONAR:
+- Qualquer numero seguido de "%"
+- Qualquer "ao mes" ou "ao ano" associado a percentual
+- "0,05%", "4,98%", "X% a.m.", "X% a.a.", "CET de X%", "juros de X%"
+- "taxa baixa", "taxa boa", "menor taxa", "comparado a outros bancos a taxa eh..."
+
+PERMITIDO dizer:
+- "consignado privado costuma ter taxa MENOR que cartao/cheque especial" (sem numero)
+- "a taxa fica no contrato"
+- "voce ve tudo detalhado antes de assinar"
 
 ═══ BANCOS QUE VOCÊ USA ═══
 Ordem de apresentação HOJE (definida pelo gestor): ${ordemBancos.join(' → ')}
@@ -155,7 +175,8 @@ PRIMEIRO MOMENTO — apresente APENAS A PRIMEIRA oferta da ordem (${ordemBancos[
 REGRAS:
 - 1 oferta por vez. Não cite outras opções a menos que cliente pergunte.
 - NÃO mencione nome do banco (V8, PresençaBank, C6 etc.) — só se cliente perguntar.
-- NÃO aprofunde em taxa, CET, seguro, CCB, convênio — só se cliente perguntar.
+- NUNCA mencione taxa, CET, % de juros — REGRA INVIOLAVEL acima. Se cliente perguntar, responda a frase padrao "A taxa e o CET ficam no contrato...".
+- NÃO aprofunde em seguro, CCB, convênio — só se cliente perguntar.
 - Se cliente perguntar "tem outras opções?" / "tem mais?" / "essa é a única?":
   → Mostre A PRÓXIMA oferta da ordem (sem repetir a primeira).
 - Se cliente perguntar de qual banco é:
@@ -949,7 +970,9 @@ export default async function handler(req) {
           const vl = Number(d.valorLiquido || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
           const vp = Number(d.valorParcela || 0).toFixed(2);
           const idSim = o.idSimulacao || '?';
-          contextParts.push(`• ${o.banco.toUpperCase()}${o.provider?'/'+o.provider:''}: R$ ${vl} liquido | ${d.parcelas}x R$ ${vp} | taxa ${d.taxaMensal||'?'}%/mes | id_simulacao=${idSim}`);
+          // NUNCA injetar taxaMensal/cetMensal aqui — Claude alucina interpretando o decimal
+          // (caso real: cliente perguntou taxa, Claude inventou "0,05% ao mes" depois "4,98% ao mes" depois "ao ano"...)
+          contextParts.push(`• ${o.banco.toUpperCase()}${o.provider?'/'+o.provider:''}: R$ ${vl} liquido | ${d.parcelas}x R$ ${vp} | id_simulacao=${idSim}`);
         }
         const elegiveis = conversa.ofertas.filter(o => o.disponivel && !o.detalhes?.valorLiquido && o.elegibilidade);
         for (const o of elegiveis) {
@@ -1266,16 +1289,18 @@ ${ofertasBloqueadas.length === 0 ? 'Nenhuma' : ofertasBloqueadas.map(o => `- ${o
 
 3. NAO mencione que ha outras opcoes a menos que cliente pergunte. Apresente como SE FOSSE A UNICA.
 
-4. NAO aprofunde em taxa, CET, seguro, CCB, convenio — so se cliente perguntar.
+4. NUNCA mencione taxa, CET, % de juros — voce NAO TEM esse dado, NAO INVENTE. Se cliente perguntar, resposta padrao: "A taxa e o CET ficam no contrato — voce ve tudo certinho la antes de assinar 📄"
 
-5. Pergunte se cliente topa seguir.
+5. NAO aprofunde em seguro, CCB, convenio — so se cliente perguntar.
 
-6. SE cliente perguntar depois 'tem outras opcoes?': mostre a 2ª oferta (mesmo formato, sem banco).
+6. Pergunte se cliente topa seguir.
+
+7. SE cliente perguntar depois 'tem outras opcoes?': mostre a 2ª oferta (mesmo formato, sem banco).
    SE perguntar de novo: 3ª oferta. E por ai vai.
 
-7. SE TODAS apresentadas e cliente ainda quer mais: diga "Essa foi a melhor que consegui — vamos fechar nessa?"
+8. SE TODAS apresentadas e cliente ainda quer mais: diga "Essa foi a melhor que consegui — vamos fechar nessa?"
 
-${ofertasDisp.length === 0 && ofertasBloqueadas.length > 0 ? '\n8. Como nao tem oferta disponivel agora, sugira liberar consulta C6: "Posso tentar mais um banco que precisa de uma selfie rapida sua. Vou te mandar o link?"' : ''}
+${ofertasDisp.length === 0 && ofertasBloqueadas.length > 0 ? '\n9. Como nao tem oferta disponivel agora, sugira liberar consulta C6: "Posso tentar mais um banco que precisa de uma selfie rapida sua. Vou te mandar o link?"' : ''}
 
 Mensagem natural, 3-5 linhas. Use o nome ${cliente.nome || 'do cliente'} se souber.`;
 
