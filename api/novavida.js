@@ -1,14 +1,19 @@
 // NovaVida — enriquecimento de telefones / dados cadastrais por CPF.
 // Endpoints WSDL: GerarTokenJson + NVCHECKJson
 // Token tem TTL de 24h, cacheamos por 22h pra ter margem.
+//
+// CACHE DE CONSULTA: 30 dias por CPF (dados cadastrais quase nunca mudam).
+// Pra forçar nova consulta, mande {forceRefresh: true} no body.
 
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
+import { dbSelect, dbUpsert } from './_lib/supabase.js';
 
 const BASE = 'https://wsnv.novavidati.com.br/wslocalizador.asmx';
 let tokenCache = { token: null, ts: 0 };
 const TOKEN_TTL = 22 * 3600 * 1000;
+const CACHE_TTL_DIAS = 30; // 30 dias - cadastrais quase nunca mudam
 
 function getCreds() {
   return {
@@ -107,6 +112,34 @@ export default async function handler(req) {
   const cpf = String(body.cpf || '').replace(/\D/g, '');
   if (!cpf || cpf.length < 9) return jsonError('CPF invalido', 400, req);
   const docPad = cpf.padStart(11, '0');
+  const forceRefresh = body.forceRefresh === true;
+
+  // ─── CACHE 30D ─────────────────────────────────────────────
+  // NovaVida cobra por consulta. Dados cadastrais (telefone/endereco/email)
+  // quase nunca mudam em 30 dias. Cache em consultas_cache (fonte='novavida').
+  // Pra forcar nova consulta: body.forceRefresh = true
+  if (!forceRefresh) {
+    try {
+      const { data: cacheRow } = await dbSelect('consultas_cache', {
+        filters: { fonte: 'novavida', chave: docPad },
+        single: true
+      });
+      if (cacheRow && cacheRow.expira_em && new Date(cacheRow.expira_em) > new Date()) {
+        // Cache valido — retorna direto + incrementa hits
+        try {
+          await dbUpsert('consultas_cache', {
+            fonte: 'novavida',
+            chave: docPad,
+            response: cacheRow.response,
+            consultado_em: cacheRow.consultado_em,
+            expira_em: cacheRow.expira_em,
+            hits: (cacheRow.hits || 0) + 1
+          }, 'fonte,chave');
+        } catch { /* nao quebra fluxo se update falhar */ }
+        return j({ ...cacheRow.response, _cache: { hit: true, consultadoEm: cacheRow.consultado_em } }, 200, req);
+      }
+    } catch { /* cache miss ou erro - segue pra consulta real */ }
+  }
 
   // 1) Token (com cache de 22h)
   let tk = await gerarToken();
@@ -129,7 +162,7 @@ export default async function handler(req) {
   const totalValidos = telefones.filter(t => t.whatsapp).length;
   const obito = !!(consulta.OBITO && String(consulta.OBITO.FLOBITO || '').toUpperCase() === 'S');
 
-  return j({
+  const responseData = {
     success: telefones.length > 0,
     cpf: docPad,
     nome: cad.NOME || '',
@@ -146,5 +179,22 @@ export default async function handler(req) {
     emails: (consulta.EMAILS || []).map(e => e.EMAIL || '').filter(Boolean),
     obito,
     fonte: 'novavida'
-  }, 200, req);
+  };
+
+  // ─── Salva no cache (30 dias TTL) ──────────────────────────
+  // Salva mesmo quando vem vazio — evita gastar nova consulta no
+  // mesmo CPF "fantasma" pelos proximos 30 dias
+  try {
+    const expiraEm = new Date(Date.now() + CACHE_TTL_DIAS * 24 * 3600 * 1000).toISOString();
+    await dbUpsert('consultas_cache', {
+      fonte: 'novavida',
+      chave: docPad,
+      response: responseData,
+      consultado_em: new Date().toISOString(),
+      expira_em: expiraEm,
+      hits: 0
+    }, 'fonte,chave');
+  } catch { /* nao quebra fluxo se cache falhar */ }
+
+  return j({ ...responseData, _cache: { hit: false, ttlDias: CACHE_TTL_DIAS } }, 200, req);
 }
