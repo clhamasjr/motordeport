@@ -768,7 +768,8 @@ const BD={
   // BRB: cod 070 (agencia propria) aceito com pgMin=12 em todos destinos.
   //      cod 925 (BRB correspondente) BLOQUEADO em TODOS os destinos — regra definitiva.
   // PAN (623) em QUALI/FACTA: so aceita com 12+ pagas (correspondente, regra operacional)
-  QUALI:{sMin:2000,tMin:250,pMin:0,pgMin:0,faixa:[1.66,1.85],coefF:null,block:["359","246","025","047","063","320","394","422","654","212","626","925","935","753","330","149","012","752","082","079","329","643","243"],pgMinMap:{"070":12,"623":12},invRules:{minAge:55,dibAgeRange:[55,57],dibMinYears:15}},
+  // SAFRA (422), FACTA (149), MERCANTIL (389): QUALI porta SE taxa origem > 1.50% (cliente esta pagando caro o suficiente pra port fazer sentido)
+  QUALI:{sMin:2000,tMin:250,pMin:0,pgMin:0,faixa:[1.66,1.85],coefF:null,block:["359","246","025","047","063","320","394","654","212","626","925","935","753","330","012","752","082","079","329","643","243"],pgMinMap:{"070":12,"623":12},taxaOrigemMin:{"422":1.50,"149":1.50,"389":1.50},invRules:{minAge:55,dibAgeRange:[55,57],dibMinYears:15}},
   FACTA:{sMin:0,tMin:100,pMin:50,pgMin:0,faixa:[1.75,1.85],coefF:null,block:["071","925","935","149","012","611","643","917"],pgMinMap:{"070":12,"623":12},invRules:{minAge:60}},
   // C6: bancos de correspondente (BMG 318 com pgMin=12, BRB 070 com pgMin=12). 925 bloqueado.
   C6:{sMin:2000,tMin:50,pMin:0,pgMin:0,faixa:[1.55,1.85],coefF:null,block:["707","121","012","422","925"],pgMinMap:{"254":13,"623":37,"070":12,"318":12},blockInv:true,priorityFor:["329","149","935","643"],priorityRate:1.55,contractPrefixBlock:{"329":["FIN","QUA","FDC"]}},
@@ -796,7 +797,7 @@ function bestR(p,s,t,fx,src){let base=src||COEFS;let pool=fx?base.filter(c=>c.t>
 // Teto = 80 anos no fim → idade atual max 72 (todos os bancos, inclusive invalidez)
 const IDADE_MAX=72;
 // Verifica se banco b aceita o origem cd considerando todas as regras
-function bankAccepts(b,r,cd,con,p,s,pg,i1,inv,age,bY,espN){
+function bankAccepts(b,r,cd,con,p,s,pg,i1,inv,age,bY,espN,taxaOrig){
   if(r.block.includes(cd))return false;
   if(r.espBlock&&espN&&r.espBlock.includes(espN))return false;
   if(inv&&r.blockInv)return false;
@@ -809,6 +810,12 @@ function bankAccepts(b,r,cd,con,p,s,pg,i1,inv,age,bY,espN){
   if(r.sMin&&s<r.sMin)return false;
   const pgR=i1?1:(r.pgMinMap&&r.pgMinMap[cd]?r.pgMinMap[cd]:r.pgMin);
   if(pgR&&pg<pgR)return false;
+  // Taxa origem minima por banco origem — ex: QUALI so porta SAFRA/FACTA/MERCANTIL se taxa > 1.50%
+  if(r.taxaOrigemMin&&r.taxaOrigemMin[cd]!==undefined){
+    const minTx=r.taxaOrigemMin[cd];
+    // Se nao temos taxa de origem (zero/null/sem dado), nao da pra portar — bloqueia
+    if(!taxaOrig||taxaOrig<=minTx)return false;
+  }
   if(age!==null){
     if(age>IDADE_MAX)return false;
     if(inv&&r.invRules){
@@ -4556,6 +4563,46 @@ function _filaToResult(fila) {
   };
 }
 
+// Adiciona/atualiza uma consulta na lista de recentes (em memoria — perdida no refresh)
+function _addRecente(id, cpf, nome, status) {
+  if (!cltConsultaState.recentes) cltConsultaState.recentes = [];
+  // Remove se ja existe (vai re-adicionar no topo)
+  cltConsultaState.recentes = cltConsultaState.recentes.filter(r => r.id !== id);
+  cltConsultaState.recentes.unshift({ id, cpf, nome, status });
+  if (cltConsultaState.recentes.length > 20) cltConsultaState.recentes.length = 20;
+}
+
+// Abre uma consulta recente — re-faz polling e exibe
+async function abrirConsultaRecente(id) {
+  cltConsultaState.filaId = id;
+  cltConsultaState.loading = true;
+  cltConsultaState.result = null;
+  cltConsultaState.bancosDetalhesDisparados = new Set();
+  renderApp();
+  // Busca status atual e exibe
+  try {
+    const r = await fetch('/api/clt-fila', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'status', id })
+    });
+    const d = await r.json();
+    if (d.success && d.fila) {
+      cltConsultaState.result = _filaToResult(d.fila);
+      cltConsultaState.cpfAtual = d.fila.cpf;
+      cltConsultaState.loading = false;
+      renderApp();
+      _dispararDetalhesParcial(cltConsultaState.result);
+      // Se ainda nao concluiu, retoma polling
+      if (d.fila.status_geral !== 'concluido') _pollingFila(id);
+    }
+  } catch (e) {
+    cltConsultaState.error = e.message;
+    cltConsultaState.loading = false;
+    renderApp();
+  }
+}
+
 async function rodarConsultaCLT(opts) {
   opts = opts || {};
   const cpf = opts.cpf || normalizeCPF(document.getElementById('cltCpf').value);
@@ -4586,6 +4633,7 @@ async function rodarConsultaCLT(opts) {
     const d1 = await r1.json();
     if (!d1.success || !d1.id) throw new Error(d1.error || 'Falha ao criar fila');
     cltConsultaState.filaId = d1.id;
+    _addRecente(d1.id, cpf, nomeManual, 'processando');
 
     // 2) Dispara 5 processadores em paralelo (fire-and-forget)
     const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6'];
@@ -4610,7 +4658,9 @@ async function rodarConsultaCLT(opts) {
 
 async function _pollingFila(filaId) {
   const inicio = Date.now();
-  const TIMEOUT = 90000; // 90s max
+  // Timeout maior pq V8 pode demorar 30s-5min pra DataPrev confirmar.
+  // Polling: 1.5s nos primeiros 30s, depois 5s, depois 15s ate 6min total.
+  const TIMEOUT = 360000; // 6 minutos
   while (Date.now() - inicio < TIMEOUT) {
     if (cltConsultaState.filaId !== filaId) return; // user mudou de consulta
     try {
@@ -4622,12 +4672,20 @@ async function _pollingFila(filaId) {
       const d = await r.json();
       if (d.success && d.fila) {
         cltConsultaState.result = _filaToResult(d.fila);
+        // Atualiza nome/status na lista de recentes
+        const cliNome = d.fila.cliente?.nome || d.fila.nome_manual || '';
+        _addRecente(d.fila.id, d.fila.cpf, cliNome, d.fila.status_geral);
         renderApp();
         _dispararDetalhesParcial(cltConsultaState.result);
         if (d.fila.status_geral === 'concluido') return;
       }
     } catch (e) { console.error('polling erro', e); }
-    await new Promise(r => setTimeout(r, 1500));
+    // Intervalo crescente: 1.5s -> 5s -> 15s
+    const elapsed = Date.now() - inicio;
+    const intervalo = elapsed < 30000 ? 1500
+                    : elapsed < 90000 ? 5000
+                    : 15000;
+    await new Promise(r => setTimeout(r, intervalo));
   }
 }
 
@@ -4994,7 +5052,7 @@ function _cltOfertaCard(o, ctx) {
   // Card em processamento (esteira está rodando — atualiza sozinho via polling)
   if (o.processando) {
     h += `<div style="font-size:13px;color:var(--acc);margin-bottom:8px">⏳ ${o.mensagem || 'Processando...'}</div>`;
-    h += `<div style="font-size:11px;color:var(--t3)">A tela atualiza sozinha quando este banco terminar.</div>`;
+    h += `<div style="font-size:11px;color:var(--t3)">A tela atualiza sozinha. Pode demorar até 5min em alguns bancos. Pode fechar a tela e voltar — a consulta continua rodando em background.</div>`;
     h += '</div>';
     return h;
   }
@@ -5074,11 +5132,25 @@ function renderCltConsulta() {
   h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">💼 CLT — Consulta de Oportunidades</div>';
   h += '<div style="font-size:13px;color:var(--t2);margin-bottom:24px">Digite CPF + Nome (opcional). Os bancos são consultados em paralelo — cada card atualiza sozinho conforme termina (não trava esperando todos).</div>';
 
-  h += '<div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap">';
+  h += '<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">';
   h += '<input class="form-input" id="cltCpf" placeholder="CPF (só números)" maxlength="14" style="flex:1;min-width:180px;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
   h += '<input class="form-input" id="cltNome" placeholder="Nome completo (opcional)" style="flex:2;min-width:240px;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
   h += '<button class="btn-acc" style="padding:14px 28px;font-size:14px;white-space:nowrap" onclick="rodarConsultaCLT()">🔍 Consultar</button>';
   h += '</div>';
+
+  // ─── Lista de consultas recentes (operador pode navegar entre elas) ───
+  if (Array.isArray(cltConsultaState.recentes) && cltConsultaState.recentes.length > 0) {
+    h += '<div style="margin-bottom:18px;padding:10px;background:var(--card);border:1px solid var(--brd);border-radius:10px">';
+    h += '<div style="font-size:11px;color:var(--t3);text-transform:uppercase;margin-bottom:8px">📋 Consultas recentes (clique pra ver)</div>';
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap">';
+    for (const c of cltConsultaState.recentes.slice(0, 8)) {
+      const isAtual = c.id === cltConsultaState.filaId;
+      const statusEmoji = c.status === 'concluido' ? '✅' : '⏳';
+      h += `<button class="btn btn-sm" style="font-size:11px;${isAtual?'background:var(--acc);color:#fff;':''}padding:6px 10px" onclick="abrirConsultaRecente('${c.id}')">${statusEmoji} ${c.cpf}${c.nome?' · '+c.nome.substring(0,20):''}</button>`;
+    }
+    h += '</div>';
+    h += '</div>';
+  }
 
   // ─── Banner do LINK DE SELFIE (quando gerado) ───
   if (cltConsultaState.linkSelfie) {

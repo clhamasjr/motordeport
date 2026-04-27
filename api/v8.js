@@ -134,6 +134,10 @@ async function handleWebhook(body, req) {
           margem_v8: body.availableMarginValue || null,
           webhook_ultimo: body
         }).catch(() => {});
+
+        // ESTEIRA — atualiza clt_consultas_fila se algum registro tem esse consultId
+        // Status final: SUCCESS / REJECTED / FAILED. Outros sao intermediarios (PROCESSING)
+        await atualizarFilaPorConsultId(consultId, body).catch(e => console.error('atualizar fila:', e.message));
       }
     }
     if (tipo === 'private.consignment.operation.created' || tipo === 'private.consignment.operation.updated') {
@@ -152,6 +156,68 @@ async function handleWebhook(body, req) {
   } catch (err) {
     console.error('v8 webhook erro:', err);
     return jsonResp({ ok: true, error: err.message }, 200, req); // sempre 2xx pra V8 não retentar
+  }
+}
+
+// Atualiza clt_consultas_fila quando V8 manda webhook com status novo.
+// Busca em bancos.v8_qi.consultId OU bancos.v8_celcoin.consultId via PostgREST
+// JSON path filters. Atualiza so o provider correspondente.
+async function atualizarFilaPorConsultId(consultId, webhookBody) {
+  const SUPA_URL = process.env.SUPABASE_URL;
+  const SUPA_KEY = process.env.SUPABASE_SERVICE_KEY;
+  if (!SUPA_URL || !SUPA_KEY) return;
+  const headers = { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, 'Content-Type': 'application/json' };
+
+  // Busca registros onde algum dos 2 providers V8 tem esse consultId
+  // OR no PostgREST: ?or=(bancos->v8_qi->>consultId.eq.X,bancos->v8_celcoin->>consultId.eq.X)
+  const filtro = `or=(bancos->v8_qi->>consultId.eq.${consultId},bancos->v8_celcoin->>consultId.eq.${consultId})`;
+  const r = await fetch(`${SUPA_URL}/rest/v1/clt_consultas_fila?${filtro}&order=iniciado_em.desc&limit=5`, { headers });
+  if (!r.ok) return;
+  const rows = await r.json();
+  if (!Array.isArray(rows) || rows.length === 0) return;
+
+  for (const row of rows) {
+    const bancos = { ...(row.bancos || {}) };
+    // Identifica qual provider tem esse consultId
+    let bancoKey = null;
+    if (bancos.v8_qi?.consultId === consultId) bancoKey = 'v8_qi';
+    else if (bancos.v8_celcoin?.consultId === consultId) bancoKey = 'v8_celcoin';
+    if (!bancoKey) continue;
+
+    const status = webhookBody.status;
+    const margem = parseFloat(webhookBody.availableMarginValue || 0);
+    let patch;
+    if (status === 'SUCCESS') {
+      patch = {
+        status: 'ok', disponivel: true, consultId,
+        mensagem: `Cliente elegível — margem R$ ${margem.toFixed(2)}`,
+        dados: { margemDisponivel: margem, consultId }
+      };
+    } else if (status === 'REJECTED' || status === 'FAILED') {
+      patch = {
+        status: 'falha', disponivel: false, consultId,
+        mensagem: `❌ ${status}: ${webhookBody.descricao || webhookBody.failureReason || 'cliente rejeitado'}`
+      };
+    } else {
+      // Status intermediario (CONSENT_APPROVED, WAITING_CREDIT_ANALYSIS, etc)
+      patch = {
+        status: 'processando', processando: true, consultId,
+        mensagem: `${status} — aguardando confirmação`
+      };
+    }
+    bancos[bancoKey] = { ...(bancos[bancoKey] || {}), ...patch, atualizado_em: new Date().toISOString() };
+
+    // Recalcula status_geral
+    const todosTerminaram = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6']
+      .every(b => bancos[b] && ['ok', 'falha', 'bloqueado', 'pulado'].includes(bancos[b].status));
+    const updatePatch = { bancos };
+    if (todosTerminaram && row.status_geral !== 'concluido') {
+      updatePatch.status_geral = 'concluido';
+      updatePatch.concluido_em = new Date().toISOString();
+    }
+    await fetch(`${SUPA_URL}/rest/v1/clt_consultas_fila?id=eq.${row.id}`, {
+      method: 'PATCH', headers, body: JSON.stringify(updatePatch)
+    }).catch(() => {});
   }
 }
 
