@@ -948,10 +948,27 @@ export default async function handler(req) {
       if (!data || !data.key) return jsonResp({ ok: true }, 200, req);
       if (data.key.fromMe) return jsonResp({ ok: true, skip: 'fromMe' }, 200, req);
 
-      const jid = data.key.remoteJid || '';
+      // WhatsApp introduziu LID (Linked Identity) que mascara o numero real.
+      // Quando addressingMode === 'lid', o JID em remoteJid eh um ID anonimo
+      // (ex: 260266461782095@lid) e o NUMERO REAL vem em remoteJidAlt.
+      // Sem esse fix, conversas com @lid criariam telefones bizarros e nao
+      // dariam pra mandar resposta de volta (sendText precisa @s.whatsapp.net).
+      let jid = data.key.remoteJid || '';
+      if (data.key.addressingMode === 'lid' && data.key.remoteJidAlt) {
+        jid = data.key.remoteJidAlt;
+      } else if (jid.endsWith('@lid') && data.key.remoteJidAlt) {
+        // fallback: as vezes addressingMode nao vem mas remoteJidAlt sim
+        jid = data.key.remoteJidAlt;
+      }
       if (jid.includes('@g.us')) return jsonResp({ ok: true, skip: 'group' }, 200, req);
+      if (jid.endsWith('@lid')) {
+        // Veio @lid mas SEM remoteJidAlt — nao dá pra responder. Loga e ignora.
+        console.log('[LID_SEM_ALT]', { jid, fullKey: data.key, pushName: data.pushName });
+        return jsonResp({ ok: true, skip: 'lid_sem_remoteJidAlt', jid }, 200, req);
+      }
 
-      const telefone = jid.replace('@s.whatsapp.net', '');
+      // Limpa qualquer sufixo conhecido pra ficar so com numero limpo
+      const telefone = jid.replace('@s.whatsapp.net', '').replace('@c.us', '').replace(/@.*$/, '');
       const msgContent = extractMessageContent(data);
       const instance = body.instance || CLT_INSTANCE();
       const pushName = data.pushName || '';
