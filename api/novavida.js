@@ -82,61 +82,59 @@ async function nvCheck(token, documento) {
   return { ok: true, data: inner };
 }
 
-// FALLBACK: endpoint cadastral completo (separado do NVCHECK).
-// Usado quando NVCHECK retorna "CONSULTA NAO DISPONIVEL".
-// Tenta primeiro a variante Json, depois HTTP POST form-encoded.
-async function consultaCadastralPF(token, documento) {
-  // 1) Tenta variante JSON
+// Helper: tenta UM endpoint, formato form-encoded ou JSON, devolve { ok, raw, parsed, blocked }
+async function tentarEndpoint(opName, token, documento, variant = 'form') {
+  let res, text;
   try {
-    const res = await fetch(BASE + '/Consulta_CadastralPFJson', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ documento, token })
-    });
-    const text = await res.text();
-    console.log('[CADASTRALPF_JSON_RAW]', { status: res.status, len: text.length, preview: text.substring(0, 1500) });
-    if (res.ok) {
-      let data; try { data = JSON.parse(text); } catch { data = null; }
-      if (data) {
-        const inner = data && data.d ? data.d : data;
-        if (typeof inner === 'string' && inner.toUpperCase().includes('NÃO DISPONIVEL')) {
-          return { ok: false, blocked: true, error: 'Consulta_CadastralPF tambem bloqueada', raw: inner };
-        }
-        // Se inner eh string JSON, parseia
-        if (typeof inner === 'string') {
-          try { return { ok: true, data: JSON.parse(inner), variant: 'json' }; }
-          catch { return { ok: true, data: inner, variant: 'json-string' }; }
-        }
-        return { ok: true, data: inner, variant: 'json' };
-      }
+    if (variant === 'json') {
+      res = await fetch(BASE + '/' + opName + 'Json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'Token': token },
+        body: JSON.stringify({ documento, token, cpf: documento })
+      });
+    } else {
+      res = await fetch(BASE + '/' + opName, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `documento=${encodeURIComponent(documento)}&token=${encodeURIComponent(token)}&cpf=${encodeURIComponent(documento)}`
+      });
     }
-  } catch (e) { /* falhou - tenta form-encoded */ }
-
-  // 2) Fallback form-encoded (HTTP POST simples)
-  try {
-    const res = await fetch(BASE + '/Consulta_CadastralPF', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `documento=${encodeURIComponent(documento)}&token=${encodeURIComponent(token)}`
-    });
-    const text = await res.text();
-    console.log('[CADASTRALPF_FORM_RAW]', { status: res.status, len: text.length, preview: text.substring(0, 1500) });
-    if (!res.ok) return { ok: false, error: 'Consulta_CadastralPF HTTP ' + res.status, raw: text.substring(0, 300) };
-    // Resposta vem como <string xmlns="...">CONTEUDO_AQUI</string>
-    const m = text.match(/<string[^>]*>([\s\S]*?)<\/string>/);
-    if (!m) return { ok: false, error: 'Resposta sem <string> wrapper', raw: text.substring(0, 300) };
-    let inner = m[1].trim();
-    // decodifica entidades XML basicas
-    inner = inner.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"');
-    if (inner.toUpperCase().includes('NÃO DISPONIVEL')) {
-      return { ok: false, blocked: true, error: 'Consulta_CadastralPF bloqueada', raw: inner };
-    }
-    // Tenta parse JSON; se nao for, devolve string crua
-    try { return { ok: true, data: JSON.parse(inner), variant: 'form-json' }; }
-    catch { return { ok: true, data: inner, variant: 'form-string' }; }
+    text = await res.text();
   } catch (e) {
-    return { ok: false, error: 'Falha de rede Consulta_CadastralPF: ' + e.message };
+    return { ok: false, endpoint: opName, variant, error: 'rede: ' + e.message };
   }
+  if (!res.ok) {
+    return { ok: false, endpoint: opName, variant, status: res.status, raw: text.substring(0, 600) };
+  }
+  let inner = text;
+  // Tenta parsear como JSON (variante Json)
+  if (variant === 'json') {
+    try {
+      const data = JSON.parse(text);
+      inner = data && data.d ? data.d : data;
+      if (typeof inner === 'string') {
+        try { inner = JSON.parse(inner); } catch { /* deixa string */ }
+      }
+    } catch { /* nao eh JSON valido */ }
+  } else {
+    // form-encoded retorna <string>...</string>
+    const m = text.match(/<string[^>]*>([\s\S]*?)<\/string>/);
+    if (m) {
+      inner = m[1].trim().replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+      try { inner = JSON.parse(inner); } catch { /* deixa string/xml */ }
+    }
+  }
+  const innerStr = typeof inner === 'string' ? inner : JSON.stringify(inner);
+  const blocked = innerStr.toUpperCase().includes('NÃO DISPONIVEL') || innerStr.toUpperCase().includes('NAO DISPONIVEL');
+  return {
+    ok: !blocked && innerStr.length > 5 && !innerStr.toUpperCase().includes('ERRO'),
+    blocked,
+    endpoint: opName,
+    variant,
+    status: res.status,
+    raw: typeof inner === 'string' ? inner.substring(0, 1500) : null,
+    parsed: typeof inner === 'object' ? inner : null
+  };
 }
 
 function mapTelefones(consulta) {
@@ -214,21 +212,43 @@ export default async function handler(req) {
     if (tk.ok) r = await nvCheck(tk.token, docPad);
   }
 
-  // 2b) Se NVCHECK foi BLOQUEADO (credencial sem produto), tenta endpoint
-  // alternativo Consulta_CadastralPF (cadastral completo, separado do check)
+  // 2b) Se NVCHECK foi BLOQUEADO, tenta vários endpoints alternativos do WSDL.
+  // Devolve TODAS as tentativas em _tentativas pra inspecao.
   let cadastralUsado = null;
+  const tentativas = [];
   if (!r.ok && r.blocked) {
-    const cad = await consultaCadastralPF(tk.token, docPad);
-    if (cad.ok) {
-      r = { ok: true, data: cad.data };
-      cadastralUsado = cad.variant || 'sim';
-    } else {
-      // Ambos endpoints bloqueados — devolve erro claro
+    // Lista de endpoints candidatos (tentativa em ordem de prioridade)
+    const candidatos = [
+      ['Consulta_CadastralPF', 'json'],
+      ['Consulta_CadastralPF', 'form'],
+      ['Cadastral', 'json'],
+      ['Cadastral', 'form'],
+      ['SituacaoCadastralTK', 'json'],
+      ['SituacaoCadastralTK', 'form'],
+      ['Doc_Fones', 'json'],
+      ['Doc_Fones', 'form'],
+      ['EnriquecimentoFoneTk', 'json'],
+      ['PERSONASGERALPF', 'form'],
+      ['NVENDERECO', 'form']
+    ];
+    for (const [op, variant] of candidatos) {
+      const t = await tentarEndpoint(op, tk.token, docPad, variant);
+      tentativas.push(t);
+      if (t.ok && t.parsed) {
+        // Achamos um que funcionou! Usa esse
+        r = { ok: true, data: t.parsed };
+        cadastralUsado = `${op} (${variant})`;
+        break;
+      }
+    }
+    if (!r.ok) {
+      // Nenhum endpoint funcionou — devolve TUDO em 200 (nao 502) pra cache poder gravar
       return j({
         success: false,
-        error: 'NovaVida bloqueada: nem NVCHECK nem Consulta_CadastralPF disponiveis pra essa credencial. Contatar suporte NovaVida.',
-        raw: { nvcheck: r.raw, cadastral: cad.raw }
-      }, 502, req);
+        error: 'Todos os endpoints NovaVida bloqueados pra essa credencial. Contatar suporte.',
+        nvcheckRaw: r.raw,
+        _tentativas: tentativas
+      }, 200, req);
     }
   }
   if (!r.ok) return j({ success: false, error: r.error, raw: r.raw }, 502, req);
@@ -259,8 +279,9 @@ export default async function handler(req) {
     emails: (consulta.EMAILS || []).map(e => e.EMAIL || '').filter(Boolean),
     obito,
     fonte: 'novavida',
-    _via: cadastralUsado ? `Consulta_CadastralPF (${cadastralUsado})` : 'NVCHECK',
-    _debugRaw: r.data // TEMPORARIO pra inspecionar estrutura do Consulta_CadastralPF
+    _via: cadastralUsado || 'NVCHECK',
+    _tentativas: tentativas, // sempre vazio se NVCHECK funcionou
+    _debugRaw: r.data
   };
 
   // ─── Salva no cache (30 dias TTL) ──────────────────────────
