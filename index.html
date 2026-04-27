@@ -768,8 +768,8 @@ const BD={
   // BRB: cod 070 (agencia propria) aceito com pgMin=12 em todos destinos.
   //      cod 925 (BRB correspondente) BLOQUEADO em TODOS os destinos — regra definitiva.
   // PAN (623) em QUALI/FACTA: so aceita com 12+ pagas (correspondente, regra operacional)
-  // SAFRA (422), FACTA (149), MERCANTIL (389): QUALI porta SE taxa origem > 1.50% (cliente esta pagando caro o suficiente pra port fazer sentido)
-  QUALI:{sMin:2000,tMin:250,pMin:0,pgMin:0,faixa:[1.66,1.85],coefF:null,block:["359","246","025","047","063","320","394","654","212","626","925","935","753","330","012","752","082","079","329","643","243"],pgMinMap:{"070":12,"623":12},taxaOrigemMin:{"422":1.50,"149":1.50,"389":1.50},invRules:{minAge:55,dibAgeRange:[55,57],dibMinYears:15}},
+  // SAFRA (422), FACTA (149), MERCANTIL (389): QUALI porta SE taxa origem > 1.10% (regra operacional QUALI atual — abr/2026)
+  QUALI:{sMin:2000,tMin:250,pMin:0,pgMin:0,faixa:[1.66,1.85],coefF:null,block:["359","246","025","047","063","320","394","654","212","626","925","935","753","330","012","752","082","079","329","643","243"],pgMinMap:{"070":12,"623":12},taxaOrigemMin:{"422":1.10,"149":1.10,"389":1.10},invRules:{minAge:55,dibAgeRange:[55,57],dibMinYears:15}},
   FACTA:{sMin:0,tMin:100,pMin:50,pgMin:0,faixa:[1.75,1.85],coefF:null,block:["071","925","935","149","012","611","643","917"],pgMinMap:{"070":12,"623":12},invRules:{minAge:60}},
   // C6: bancos de correspondente (BMG 318 com pgMin=12, BRB 070 com pgMin=12). 925 bloqueado.
   C6:{sMin:2000,tMin:50,pMin:0,pgMin:0,faixa:[1.55,1.85],coefF:null,block:["707","121","012","422","925"],pgMinMap:{"254":13,"623":37,"070":12,"318":12},blockInv:true,priorityFor:["329","149","935","643"],priorityRate:1.55,contractPrefixBlock:{"329":["FIN","QUA","FDC"]}},
@@ -4596,39 +4596,41 @@ async function _carregarRecentesDoBanco() {
   } catch (e) { /* nao quebra UI se falhar */ }
 }
 
-// Restaura a ultima consulta ativa do localStorage (depois de F5)
+// Restaura a ultima consulta ativa + outras consultas em andamento (depois de F5)
 async function _restaurarUltimaConsulta() {
   try {
-    const lastId = localStorage.getItem('clt_fila_atual');
-    if (!lastId) return;
-    // Verifica se ainda existe
+    // Busca consultas EM ANDAMENTO do banco — restaura todas pra pilha
     const r = await fetch('/api/clt-fila', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
-      body: JSON.stringify({ action: 'status', id: lastId })
+      body: JSON.stringify({ action: 'listar', status_geral: 'processando', limit: 5 })
     });
     const d = await r.json();
-    if (d.success && d.fila) {
-      cltConsultaState.filaId = lastId;
-      cltConsultaState.cpfAtual = d.fila.cpf;
-      cltConsultaState.result = _filaToResult(d.fila);
-      cltConsultaState.bancosDetalhesDisparados = new Set();
+    if (d.success && Array.isArray(d.items)) {
+      for (const fila of d.items) {
+        const result = _filaToResult(fila);
+        _upsertConsultaPilha(fila.id, fila.cpf, result);
+        _pollingFila(fila.id); // retoma polling
+      }
+      const lastId = localStorage.getItem('clt_fila_atual');
+      if (lastId && d.items.find(it => it.id === lastId)) cltConsultaState.filaId = lastId;
       renderApp();
-      _dispararDetalhesParcial(cltConsultaState.result);
-      // Retoma polling se ainda nao concluiu
-      if (d.fila.status_geral !== 'concluido') _pollingFila(lastId);
     }
   } catch (e) { /* nao quebra UI */ }
 }
 
-// Abre uma consulta recente — re-faz polling e exibe
+// Abre uma consulta recente — adiciona na pilha (se nao tiver) e retoma polling
 async function abrirConsultaRecente(id) {
   cltConsultaState.filaId = id;
-  cltConsultaState.loading = true;
-  cltConsultaState.result = null;
-  cltConsultaState.bancosDetalhesDisparados = new Set();
-  renderApp();
-  // Busca status atual e exibe
+  try { localStorage.setItem('clt_fila_atual', id); } catch {}
+  // Se ja esta na pilha, scroll pra ela e retoma
+  const pilha = cltConsultaState.consultas || [];
+  if (pilha.find(c => c.id === id)) {
+    renderApp();
+    _pollingFila(id);
+    return;
+  }
+  // Senao, busca status e adiciona
   try {
     const r = await fetch('/api/clt-fila', {
       method: 'POST',
@@ -4637,37 +4639,50 @@ async function abrirConsultaRecente(id) {
     });
     const d = await r.json();
     if (d.success && d.fila) {
-      cltConsultaState.result = _filaToResult(d.fila);
+      const result = _filaToResult(d.fila);
+      _upsertConsultaPilha(d.fila.id, d.fila.cpf, result);
       cltConsultaState.cpfAtual = d.fila.cpf;
-      cltConsultaState.loading = false;
       renderApp();
-      _dispararDetalhesParcial(cltConsultaState.result);
-      // Se ainda nao concluiu, retoma polling
+      _dispararDetalhesParcial(result);
       if (d.fila.status_geral !== 'concluido') _pollingFila(id);
     }
-  } catch (e) {
-    cltConsultaState.error = e.message;
-    cltConsultaState.loading = false;
-    renderApp();
+  } catch (e) { /* nao quebra UI */ }
+}
+
+// Adiciona/atualiza um item no array de consultas empilhadas
+function _upsertConsultaPilha(id, cpf, result) {
+  if (!cltConsultaState.consultas) cltConsultaState.consultas = [];
+  const idx = cltConsultaState.consultas.findIndex(c => c.id === id);
+  if (idx >= 0) {
+    cltConsultaState.consultas[idx].result = result;
+    cltConsultaState.consultas[idx].lastUpdate = Date.now();
+  } else {
+    // Nova: empilha no TOPO
+    cltConsultaState.consultas.unshift({ id, cpf, result, lastUpdate: Date.now() });
+    if (cltConsultaState.consultas.length > 10) cltConsultaState.consultas.length = 10;
   }
 }
 
 async function rodarConsultaCLT(opts) {
   opts = opts || {};
-  const cpf = opts.cpf || normalizeCPF(document.getElementById('cltCpf').value);
+  const cpfEl = document.getElementById('cltCpf');
+  const cpfInput = cpfEl ? cpfEl.value : '';
+  const cpf = opts.cpf || normalizeCPF(cpfInput);
   if (!cpf) { alert('CPF inválido. Digite um CPF com 9-11 dígitos.'); return; }
 
   const nomeManualEl = document.getElementById('cltNome');
   const nomeManual = opts.nome || (nomeManualEl ? (nomeManualEl.value || '').trim() : '');
-  const incluirC6 = opts.incluirC6 !== undefined ? opts.incluirC6 : true; // sempre true por default agora
+  const incluirC6 = opts.incluirC6 !== undefined ? opts.incluirC6 : true;
 
   cltConsultaState.loading = true;
-  cltConsultaState.result = null;
   cltConsultaState.error = null;
   cltConsultaState.cpfAtual = cpf;
   cltConsultaState.incluirC6 = incluirC6;
   cltConsultaState.filaId = null;
-  cltConsultaState.bancosDetalhesDisparados = new Set();
+  if (!cltConsultaState.bancosDetalhesDisparados) cltConsultaState.bancosDetalhesDisparados = {};
+  // Limpa inputs depois de capturar
+  if (cpfEl) cpfEl.value = '';
+  if (nomeManualEl) nomeManualEl.value = '';
   renderApp();
 
   try {
@@ -4683,6 +4698,18 @@ async function rodarConsultaCLT(opts) {
     if (!d1.success || !d1.id) throw new Error(d1.error || 'Falha ao criar fila');
     cltConsultaState.filaId = d1.id;
     _addRecente(d1.id, cpf, nomeManual, 'processando');
+    // Cria placeholder na pilha imediatamente
+    _upsertConsultaPilha(d1.id, cpf, {
+      success: true, cpf, filaId: d1.id, statusGeral: 'processando',
+      cliente: { cpf, nome: nomeManual },
+      ofertas: [
+        { banco: 'presencabank', label: 'PresençaBank', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
+        { banco: 'v8', provider: 'QI', label: 'V8 (QI Tech)', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
+        { banco: 'v8', provider: 'CELCOIN', label: 'V8 (CELCOIN)', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
+        { banco: 'c6', label: 'C6 Bank', disponivel: false, processando: true, mensagem: 'Aguardando início...' }
+      ],
+      mensagem: 'Consultando os bancos em paralelo...'
+    });
 
     // 2) Dispara 5 processadores em paralelo (fire-and-forget)
     const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6'];
@@ -4706,40 +4733,49 @@ async function rodarConsultaCLT(opts) {
 }
 
 async function _pollingFila(filaId) {
+  if (!cltConsultaState._pollingsAtivos) cltConsultaState._pollingsAtivos = new Set();
+  // Evita polling duplicado pra mesma fila
+  if (cltConsultaState._pollingsAtivos.has(filaId)) return;
+  cltConsultaState._pollingsAtivos.add(filaId);
+
   const inicio = Date.now();
-  // Timeout maior pq V8 pode demorar 30s-5min pra DataPrev confirmar.
-  // Polling: 1.5s nos primeiros 30s, depois 5s, depois 15s ate 6min total.
-  const TIMEOUT = 360000; // 6 minutos
-  while (Date.now() - inicio < TIMEOUT) {
-    if (cltConsultaState.filaId !== filaId) return; // user mudou de consulta
-    try {
-      const r = await fetch('/api/clt-fila', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
-        body: JSON.stringify({ action: 'status', id: filaId })
-      });
-      const d = await r.json();
-      if (d.success && d.fila) {
-        cltConsultaState.result = _filaToResult(d.fila);
-        // Atualiza nome/status na lista de recentes
-        const cliNome = d.fila.cliente?.nome || d.fila.nome_manual || '';
-        _addRecente(d.fila.id, d.fila.cpf, cliNome, d.fila.status_geral);
-        renderApp();
-        _dispararDetalhesParcial(cltConsultaState.result);
-        if (d.fila.status_geral === 'concluido') return;
-      }
-    } catch (e) { console.error('polling erro', e); }
-    // Intervalo crescente: 1.5s -> 5s -> 15s
-    const elapsed = Date.now() - inicio;
-    const intervalo = elapsed < 30000 ? 1500
-                    : elapsed < 90000 ? 5000
-                    : 15000;
-    await new Promise(r => setTimeout(r, intervalo));
+  const TIMEOUT = 360000; // 6 min
+  try {
+    while (Date.now() - inicio < TIMEOUT) {
+      // Para se removeu da pilha
+      if (!cltConsultaState._pollingsAtivos.has(filaId)) return;
+      try {
+        const r = await fetch('/api/clt-fila', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+          body: JSON.stringify({ action: 'status', id: filaId })
+        });
+        const d = await r.json();
+        if (d.success && d.fila) {
+          const result = _filaToResult(d.fila);
+          _upsertConsultaPilha(d.fila.id, d.fila.cpf, result);
+          const cliNome = d.fila.cliente?.nome || d.fila.nome_manual || '';
+          _addRecente(d.fila.id, d.fila.cpf, cliNome, d.fila.status_geral);
+          renderApp();
+          _dispararDetalhesParcial(result);
+          if (d.fila.status_geral === 'concluido') return;
+        }
+      } catch (e) { console.error('polling erro', e); }
+      const elapsed = Date.now() - inicio;
+      const intervalo = elapsed < 30000 ? 1500 : elapsed < 90000 ? 5000 : 15000;
+      await new Promise(r => setTimeout(r, intervalo));
+    }
+  } finally {
+    cltConsultaState._pollingsAtivos.delete(filaId);
   }
 }
 
 function _dispararDetalhesParcial(result) {
-  if (!cltConsultaState.bancosDetalhesDisparados) cltConsultaState.bancosDetalhesDisparados = new Set();
+  // Chave por filaId (cada consulta tem seu controle de detalhes ja disparados)
+  if (!cltConsultaState.bancosDetalhesDisparados) cltConsultaState.bancosDetalhesDisparados = {};
+  const filaId = result.filaId;
+  if (!cltConsultaState.bancosDetalhesDisparados[filaId]) cltConsultaState.bancosDetalhesDisparados[filaId] = new Set();
+  const set = cltConsultaState.bancosDetalhesDisparados[filaId];
   const cli = result.cliente || {};
   const tel = cli.telefones?.[0]?.completo || '';
   const cpf = result.cpf;
@@ -4747,8 +4783,8 @@ function _dispararDetalhesParcial(result) {
     if (!o.disponivel) continue;
     if (o.detalhes && o.detalhes.valorLiquido) continue;
     const key = `${o.banco}_${o.provider || ''}`;
-    if (cltConsultaState.bancosDetalhesDisparados.has(key)) continue;
-    cltConsultaState.bancosDetalhesDisparados.add(key);
+    if (set.has(key)) continue;
+    set.add(key);
     o._calculando = true;
     let payload = null;
     if (o.banco === 'presencabank' && cli.nome && tel) {
@@ -4758,7 +4794,7 @@ function _dispararDetalhesParcial(result) {
     } else if (o.banco === 'c6') {
       payload = { banco: 'c6', cpf };
     }
-    if (!payload) { o._calculando = false; cltConsultaState.bancosDetalhesDisparados.delete(key); continue; }
+    if (!payload) { o._calculando = false; set.delete(key); continue; }
     fetch('/api/clt-simular-detalhe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
@@ -5176,6 +5212,88 @@ function _cltOfertaCard(o, ctx) {
   return h;
 }
 
+// Renderiza UM bloco de consulta (cliente + cards de banco + resumo)
+function _renderConsultaBloco(item) {
+  if (!item || !item.result) return '';
+  const r = item.result;
+  let h = '';
+
+  if (r.error) {
+    h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:14px">`;
+    h += `<div style="display:flex;justify-content:space-between"><div>Erro CPF ${item.cpf}: ${r.error} — ${r.message || ''}</div>`;
+    h += `<button class="btn btn-sm" style="font-size:11px" onclick="fecharConsultaPilha('${item.id}')">✕</button></div></div>`;
+    return h;
+  }
+
+  // Wrapper do bloco (cada consulta empilhada vira um cartao expansivel)
+  h += '<div style="margin-bottom:24px;padding:0;border:1px solid var(--brd);border-radius:14px;overflow:hidden;background:var(--card)">';
+
+  // Cabecalho (cliente)
+  const c = r.cliente || {};
+  const v = r.vinculo;
+  const statusBadge = r.statusGeral === 'concluido'
+    ? '<span class="pill pill-grn" style="font-size:10px">✅ CONCLUÍDA</span>'
+    : '<span class="pill" style="font-size:10px;background:rgba(59,130,246,.15);color:var(--acc)">⏳ EM ANDAMENTO</span>';
+
+  h += '<div style="padding:16px 18px;background:linear-gradient(135deg,rgba(59,130,246,.08),rgba(34,211,238,.04));border-bottom:1px solid var(--brd)">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:start;gap:14px;flex-wrap:wrap">';
+  h += '<div>';
+  h += `<div style="display:flex;gap:10px;align-items:center;margin-bottom:4px">${statusBadge}<span style="font-size:17px;font-weight:800">${c.nome || '(sem nome)'}</span></div>`;
+  h += `<div style="font-size:11px;color:var(--t2)">CPF ${c.cpf || item.cpf}${c.idade?` · ${c.idade} anos`:''}${c.sexo?` · ${c.sexo==='M'?'Masc':'Fem'}`:''}</div>`;
+  if (c.nomeMae) h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">Mãe: ${c.nomeMae}</div>`;
+  h += '</div>';
+  h += '<div style="display:flex;gap:8px;align-items:start">';
+  if (v) {
+    h += '<div style="text-align:right">';
+    if (v.empregador) h += `<div style="font-size:12px;font-weight:700;color:var(--cyan)">${v.empregador}</div>`;
+    h += `<div style="font-size:10px;color:var(--t3)">CNPJ ${v.cnpj || '-'}${v.matricula?` · Mat ${v.matricula}`:''}</div>`;
+    if (v.renda) h += `<div style="font-size:11px;color:var(--grn);margin-top:2px">Renda: R$ ${v.renda.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>`;
+    h += '</div>';
+  }
+  h += `<button class="btn btn-sm" style="font-size:11px" onclick="fecharConsultaPilha('${item.id}')" title="Remover do empilhamento (não deleta do banco)">✕</button>`;
+  h += '</div>';
+  h += '</div>';
+  // Telefones
+  if (c.telefones && c.telefones.length) {
+    h += '<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--brd);display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
+    h += '<span style="font-size:10px;color:var(--t3);text-transform:uppercase">Telefones:</span>';
+    for (const t of c.telefones.slice(0, 5)) {
+      h += `<a href="https://wa.me/55${t.completo}" target="_blank" class="pill pill-grn" style="text-decoration:none;font-size:11px">📱 ${t.ddd} ${t.numero}</a>`;
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // Cards das ofertas (4 colunas no desktop)
+  h += '<div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">';
+  for (const o of (r.ofertas || [])) {
+    h += _cltOfertaCard(o, r);
+  }
+  h += '</div>';
+
+  // Resumo do bloco
+  const total = r.totalBancosDisponiveis || 0;
+  h += `<div style="padding:10px 14px;background:${total>0?'rgba(34,197,94,.08)':'rgba(156,163,175,.06)'};border-top:1px solid var(--brd);text-align:center;font-size:12px">`;
+  h += total > 0 ? `✅ <b>${r.mensagem}</b>` : `⚠️ ${r.mensagem || 'Aguardando bancos...'}`;
+  h += '</div>';
+
+  h += '</div>'; // fim do wrapper
+  return h;
+}
+
+function fecharConsultaPilha(id) {
+  if (!cltConsultaState.consultas) return;
+  cltConsultaState.consultas = cltConsultaState.consultas.filter(c => c.id !== id);
+  // Para o polling associado a essa consulta
+  if (!cltConsultaState._pollingsAtivos) cltConsultaState._pollingsAtivos = new Set();
+  cltConsultaState._pollingsAtivos.delete(id);
+  if (cltConsultaState.filaId === id) {
+    try { localStorage.removeItem('clt_fila_atual'); } catch {}
+    cltConsultaState.filaId = null;
+  }
+  renderApp();
+}
+
 function renderCltConsulta() {
   // Bootstrap: na primeira renderizacao da sessao, carrega recentes do banco
   // e restaura a ultima consulta ativa (pra sobreviver a F5/reload)
@@ -5233,58 +5351,20 @@ function renderCltConsulta() {
   }
 
   if (cltConsultaState.loading) {
-    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Adicionando à esteira de consulta...</div>';
-  } else if (cltConsultaState.error) {
-    h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">Erro: ${cltConsultaState.error}</div>`;
-  } else if (cltConsultaState.result) {
-    const r = cltConsultaState.result;
-    if (r.error) {
-      h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">Erro: ${r.error} — ${r.message || ''}</div>`;
-    } else {
-      // Card cliente (dados enriquecidos)
-      const c = r.cliente || {};
-      const v = r.vinculo;
-      h += '<div style="padding:18px;background:linear-gradient(135deg,rgba(59,130,246,.08),rgba(34,211,238,.04));border:1px solid var(--brd);border-radius:14px;margin-bottom:18px">';
-      h += '<div style="display:flex;justify-content:space-between;align-items:start;gap:14px;flex-wrap:wrap">';
-      h += '<div>';
-      h += `<div style="font-size:18px;font-weight:800">${c.nome || '(nome não obtido)'}</div>`;
-      h += `<div style="font-size:11px;color:var(--t2);margin-top:2px">CPF ${c.cpf}${c.idade?` · ${c.idade} anos`:''}${c.sexo?` · ${c.sexo==='M'?'Masc':'Fem'}`:''}</div>`;
-      if (c.nomeMae) h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">Mãe: ${c.nomeMae}</div>`;
-      h += '</div>';
-      if (v) {
-        h += '<div style="text-align:right">';
-        h += `<div style="font-size:12px;font-weight:700;color:var(--cyan)">${v.empregador || ''}</div>`;
-        h += `<div style="font-size:10px;color:var(--t3)">CNPJ ${v.cnpj || '-'}${v.matricula?` · Mat ${v.matricula}`:''}</div>`;
-        if (v.renda) h += `<div style="font-size:11px;color:var(--grn);margin-top:2px">Renda: R$ ${v.renda.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>`;
-        h += '</div>';
-      }
-      h += '</div>';
-      // Telefones (se tiver)
-      if (c.telefones && c.telefones.length) {
-        h += '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--brd)">';
-        h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Telefones</div>';
-        h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
-        for (const t of c.telefones.slice(0, 5)) {
-          h += `<a href="https://wa.me/55${t.completo}" target="_blank" class="pill pill-grn" style="text-decoration:none">📱 ${t.ddd} ${t.numero}</a>`;
-        }
-        h += '</div></div>';
-      }
-      h += '</div>';
+    h += '<div style="padding:14px;text-align:center;color:var(--t2);background:var(--card);border-radius:10px;margin-bottom:14px">⏳ Adicionando à esteira de consulta...</div>';
+  }
+  if (cltConsultaState.error) {
+    h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:14px">Erro: ${cltConsultaState.error}</div>`;
+  }
 
-      // Cards das ofertas
-      h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">';
-      for (const o of (r.ofertas || [])) {
-        h += _cltOfertaCard(o, r);
-      }
-      h += '</div>';
+  // ─── EMPILHAMENTO: cada consulta vira um bloco visivel em paralelo ───
+  const pilha = Array.isArray(cltConsultaState.consultas) ? cltConsultaState.consultas : [];
+  for (const item of pilha) {
+    h += _renderConsultaBloco(item);
+  }
 
-      // Resumo
-      const total = r.totalBancosDisponiveis || 0;
-      h += `<div style="margin-top:20px;padding:14px;background:${total>0?'rgba(34,197,94,.08)':'rgba(156,163,175,.08)'};border-radius:10px;text-align:center;font-size:14px">`;
-      h += total > 0 ? `✅ <b>${r.mensagem}</b>` : `⚠️ ${r.mensagem}`;
-      h += '</div>';
-
-    }
+  if (pilha.length === 0 && !cltConsultaState.loading && !cltConsultaState.error) {
+    h += '<div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">Digite um CPF acima ou clique numa consulta recente pra começar.</div>';
   }
 
   // Modal de digitação (renderiza por cima)
