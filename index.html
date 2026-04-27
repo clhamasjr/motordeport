@@ -4507,6 +4507,8 @@ function _filaToResult(fila) {
     disponivel: pb.status === 'ok' && pb.disponivel === true,
     processando: pbF.processando,
     elegibilidade: pb.dados || null,
+    retryable: pb.retryable === true,
+    falhou: pb.status === 'falha',
     mensagem: msgDefault(pb, pb.status)
   });
 
@@ -4519,6 +4521,7 @@ function _filaToResult(fila) {
     consultId: qi.consultId,
     processando: qiF.processando,
     elegibilidade: qi.dados ? { margemDisponivel: qi.dados.margemDisponivel } : null,
+    falhou: qi.status === 'falha',
     mensagem: msgDefault(qi, qi.status)
   });
 
@@ -4531,6 +4534,7 @@ function _filaToResult(fila) {
     consultId: cc.consultId,
     processando: ccF.processando,
     elegibilidade: cc.dados ? { margemDisponivel: cc.dados.margemDisponivel } : null,
+    falhou: cc.status === 'falha',
     mensagem: msgDefault(cc, cc.status)
   });
 
@@ -5296,6 +5300,14 @@ function _cltOfertaCard(o, ctx) {
     h += `<div style="color:var(--t3);font-size:13px">${o.mensagem || 'Sem oferta'}</div>`;
   }
 
+  // Botao "Re-tentar" pra falhas (especialmente as retryable do PB)
+  if (o.falhou && !o.disponivel) {
+    const bancoKey = o.banco === 'v8'
+      ? (o.provider === 'CELCOIN' ? 'v8_celcoin' : 'v8_qi')
+      : o.banco;
+    h += `<button class="btn btn-sm" style="width:100%;margin-top:10px;border-color:var(--acc);color:var(--acc)" onclick="reTentarBanco('${bancoKey}')">🔄 Re-tentar este banco</button>`;
+  }
+
   // Botão "Digitar" só aparece se a oferta está disponível
   if (o.disponivel && o.detalhes) {
     const provArg = o.provider ? `,'${o.provider}'` : '';
@@ -5304,6 +5316,21 @@ function _cltOfertaCard(o, ctx) {
 
   h += '</div>';
   return h;
+}
+
+// Re-dispara um banco específico de uma fila (com force=true bypassa idempotencia)
+async function reTentarBanco(bancoKey) {
+  const filaId = cltConsultaState.selecionadaId || cltConsultaState.filaId;
+  if (!filaId) { alert('Nenhuma consulta selecionada'); return; }
+  try {
+    await fetch('/api/clt-fila', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'processar', id: filaId, banco: bancoKey, force: true })
+    });
+    // Polling pega o update no proximo ciclo
+    _pollingFila(filaId);
+  } catch (e) { alert('Erro ao re-tentar: ' + e.message); }
 }
 
 // Renderiza UM bloco de consulta (cliente + cards de banco + resumo)

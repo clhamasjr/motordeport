@@ -152,15 +152,32 @@ async function processarPresencaBank(id, cpf, auth, secret) {
       dataAdmissao: pb.vinculo?.dataAdmissao
     };
     await dbUpdate('clt_consultas_fila', { id }, { vinculo: vinculoData });
+    const margemDisp = parseFloat(pb.margem?.disponivel || 0);
+    const margemBase = parseFloat(pb.margem?.base || 0);
+
+    // DETECTA FALHA TRANSITORIA: PB retorna 'temVinculo: true' mas margem zero
+    // (acontece quando sessao deles esta com problema). NAO eh "sem margem real" —
+    // eh response incompleto. Marcamos como falha pra re-tentar.
+    if (margemDisp === 0 && margemBase === 0) {
+      await patchBanco(id, 'presencabank', {
+        status: 'falha',
+        disponivel: false,
+        mensagem: '⚠️ Resposta incompleta da API — clique em re-tentar (provavelmente glitch temporário)',
+        retryable: true,
+        dados: { empregador: pb.vinculo?.empregador }
+      });
+      return;
+    }
+
     await patchBanco(id, 'presencabank', {
       status: 'ok',
       disponivel: true,
-      mensagem: pb.margem?.disponivel
-        ? `Cliente elegível — margem R$ ${parseFloat(pb.margem.disponivel).toFixed(2)}`
+      mensagem: margemDisp > 0
+        ? `Cliente elegível — margem R$ ${margemDisp.toFixed(2)}`
         : 'Cliente elegível mas sem margem disponível',
       dados: {
-        margemDisponivel: pb.margem?.disponivel,
-        margemBase: pb.margem?.base,
+        margemDisponivel: margemDisp,
+        margemBase: margemBase,
         empregador: pb.vinculo?.empregador
       }
     });
