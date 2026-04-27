@@ -839,7 +839,7 @@ function tryBank(b,r,p,s){
   if(res)return{banco:b,troco:res.tr,vc:res.vc,taxa:res.t};
   return null;
 }
-function testar(p,s,pg,cd,inv,age,bY,rest,espN,con){
+function testar(p,s,pg,cd,inv,age,bY,rest,espN,con,taxaOrig){
   const i1=B1P.includes(cd);
   // Regra global por especie (ex: esp 21 pensao por morte => min 45 anos)
   if(espN&&ESP_AGE_MIN[espN]&&age!==null&&age<ESP_AGE_MIN[espN])return null;
@@ -847,7 +847,7 @@ function testar(p,s,pg,cd,inv,age,bY,rest,espN,con){
   if(espN&&ESP_LOAS.includes(espN))return null;
   // C6 prioridade para origens exclusivas (QI TECH, FACTA, PINE) com taxa fixa — so aplica se C6 estiver em ORDEM
   const c6=BD.C6;
-  if(ORDEM.includes('C6')&&c6&&c6.priorityFor&&c6.priorityFor.includes(cd)&&bankAccepts('C6',c6,cd,con,p,s,pg,i1,inv,age,bY,espN)){
+  if(ORDEM.includes('C6')&&c6&&c6.priorityFor&&c6.priorityFor.includes(cd)&&bankAccepts('C6',c6,cd,con,p,s,pg,i1,inv,age,bY,espN,taxaOrig)){
     const tx=c6.priorityRate||1.55;
     const coef=COEFS.find(x=>x.t===tx);
     if(coef){const vc=p/coef.c,tr=vc-s;if(tr>=c6.tMin)return{banco:'C6',troco:tr,vc,taxa:tx,i1}}
@@ -855,7 +855,7 @@ function testar(p,s,pg,cd,inv,age,bY,rest,espN,con){
   // Fluxo normal: tenta cada banco em ORDEM
   for(const b of ORDEM){
     const r=BD[b];
-    if(!bankAccepts(b,r,cd,con,p,s,pg,i1,inv,age,bY,espN))continue;
+    if(!bankAccepts(b,r,cd,con,p,s,pg,i1,inv,age,bY,espN,taxaOrig))continue;
     const res=tryBank(b,r,p,s);
     if(res){res.i1=i1;return res}
   }
@@ -863,7 +863,7 @@ function testar(p,s,pg,cd,inv,age,bY,rest,espN,con){
 }
 
 // testarTodos: retorna ARRAY com TODOS os bancos elegiveis na ordem (vendedor escolhe qual)
-function testarTodos(p,s,pg,cd,inv,age,bY,rest,espN,con){
+function testarTodos(p,s,pg,cd,inv,age,bY,rest,espN,con,taxaOrig){
   const out=[];
   const i1=B1P.includes(cd);
   if(espN&&ESP_AGE_MIN[espN]&&age!==null&&age<ESP_AGE_MIN[espN])return out;
@@ -871,7 +871,7 @@ function testarTodos(p,s,pg,cd,inv,age,bY,rest,espN,con){
   // C6 priority (origens exclusivas — QI TECH/FACTA/PINE) entra no topo com taxa fixa — so aplica se C6 estiver em ORDEM
   const c6=BD.C6;
   let c6Priority=false;
-  if(ORDEM.includes('C6')&&c6&&c6.priorityFor&&c6.priorityFor.includes(cd)&&bankAccepts('C6',c6,cd,con,p,s,pg,i1,inv,age,bY,espN)){
+  if(ORDEM.includes('C6')&&c6&&c6.priorityFor&&c6.priorityFor.includes(cd)&&bankAccepts('C6',c6,cd,con,p,s,pg,i1,inv,age,bY,espN,taxaOrig)){
     const tx=c6.priorityRate||1.55;
     const coef=COEFS.find(x=>x.t===tx);
     if(coef){const vc=p/coef.c,tr=vc-s;if(tr>=c6.tMin){out.push({banco:'C6',troco:tr,vc,taxa:tx,i1,priority:true});c6Priority=true}}
@@ -880,7 +880,7 @@ function testarTodos(p,s,pg,cd,inv,age,bY,rest,espN,con){
   for(const b of ORDEM){
     if(b==='C6'&&c6Priority)continue; // evita duplicar C6 priority
     const r=BD[b];
-    if(!bankAccepts(b,r,cd,con,p,s,pg,i1,inv,age,bY,espN))continue;
+    if(!bankAccepts(b,r,cd,con,p,s,pg,i1,inv,age,bY,espN,taxaOrig))continue;
     const res=tryBank(b,r,p,s);
     if(res){out.push({...res,i1})}
   }
@@ -892,12 +892,12 @@ function processar(data){
   if(!data||data.length<2)return null;let H=data[0].map(h=>h?String(h).trim():""),rows=data.slice(1);
   let cNm=findFirst(H,["Nome"]),cCP=findFirst(H,["CPF"]),cBn=findFirst(H,["Beneficio"]),cEs=findFirst(H,["Especie"]),cNs=findFirst(H,["Data Nascimento"]),cDI=findFirst(H,["DIB"]),cT1=findFirst(H,["Telefone1"]),cT2=findFirst(H,["Telefone2"]),cT3=findFirst(H,["Telefone3"]);
   let cMg=findFirst(H,["Margem"]);
-  let allTE=findAllPos(H,"Tipo Emprestimo"),allCon=findAllPos(H,"Contrato"),allCod=findAllPos(H,"Codigo"),allVE=findAllPos(H,"Valor Emprestimo"),allMC=findAllPos(H,"Margem Cartao"),allVP=findAllPos(H,"Valor Parcela"),allPr=findAllPos(H,"Prazo"),allSQ=findAllPos(H,"Saldo Quitacao");
+  let allTE=findAllPos(H,"Tipo Emprestimo"),allCon=findAllPos(H,"Contrato"),allCod=findAllPos(H,"Codigo"),allVE=findAllPos(H,"Valor Emprestimo"),allMC=findAllPos(H,"Margem Cartao"),allVP=findAllPos(H,"Valor Parcela"),allPr=findAllPos(H,"Prazo"),allSQ=findAllPos(H,"Saldo Quitacao"),allTx=findAllPos(H,"Taxa");
   let cardBlocks=[];for(let te of allTE){let mc=allMC.find(m=>m>te&&m<te+8);if(mc!==undefined)cardBlocks.push({te,mc})}
   let rmcB=null,rccB=null;
   if(cardBlocks.length>=1){let{te,mc}=cardBlocks[0];rmcB={tipo:te,con:allCon.find(c=>c>te&&c<te+8),cod:allCod.find(c=>c>te&&c<te+8),val:allVE.find(v=>v>te&&v<te+8),mc}}
   if(cardBlocks.length>=2){let{te,mc}=cardBlocks[1];rccB={tipo:te,con:allCon.find(c=>c>te&&c<te+8),cod:allCod.find(c=>c>te&&c<te+8),val:allVE.find(v=>v>te&&v<te+8),mc}}
-  let lbs=[];for(let vp of allVP){let con=allCon.filter(c=>c<vp).pop(),cod=allCod.find(c=>c>con-1&&c<vp),prz=allPr.find(p=>p>vp&&p<vp+4),sq=allSQ.find(s=>s>vp&&s<vp+5);if(con!==undefined)lbs.push({cc:con,ck:cod,cp:vp,cz:prz,cs:sq})}
+  let lbs=[];for(let vp of allVP){let con=allCon.filter(c=>c<vp).pop(),cod=allCod.find(c=>c>con-1&&c<vp),prz=allPr.find(p=>p>vp&&p<vp+4),sq=allSQ.find(s=>s>vp&&s<vp+5),tx=allTx.find(t=>t>con-1&&t<vp+8);if(con!==undefined)lbs.push({cc:con,ck:cod,cp:vp,cz:prz,cs:sq,ctx:tx})}
   // Also look for standalone margin columns
   let cMDE=findFirst(H,["Margem Disponivel Emprestimo","MargemDisponivelEmprestimo","Margem Emprestimo"]);
   let cMDR=findFirst(H,["Margem Disponivel Rcc","MargemDisponivelRcc","Margem Rcc","Margem Disponivel Cartao"]);
@@ -934,11 +934,13 @@ function processar(data){
     }
     for(let lb of lbs){
       let con=g(row,lb.cc),par=gv(row,lb.cp),sal=gv(row,lb.cs);let[rest,tot,pag]=lb.cz!=null?pP(row[lb.cz]):[0,0,0];let cod=lb.ck!=null?pC(gr(row,lb.ck)??""):"";
+      // Taxa de origem do contrato (do XLSX) — pra regras tipo "QUALI so porta SAFRA/MERCANTIL/FACTA se taxa origem > 1.50%"
+      let txOrig=0;if(lb.ctx!=null){let v=gr(row,lb.ctx);if(v!=null&&v!==""){txOrig=parseFloat(String(v).replace(/[^\d.,]/g,"").replace(",","."))||0}}
       if(!con&&par===0&&sal===0)continue;let i1=B1P.includes(cod);
       // testarTodos retorna TODAS as opcoes viaveis (QUALI, FACTA, BRB, ...) ordenadas pela prioridade
-      let todosDest=testarTodos(par,sal,pag,cod,isInv,idade,bY,rest,eN,con);
+      let todosDest=testarTodos(par,sal,pag,cod,isInv,idade,bY,rest,eN,con,txOrig);
       let res=todosDest.length?todosDest[0]:null; // melhor (primeira)
-      let reg={nome,cpf,ben,esp,con,cod,par:Math.round(par*100)/100,sal:Math.round(sal*100)/100,prazo:`${rest}/${tot}`,pag,idade:idade??"-",isInv,is1p:i1,
+      let reg={nome,cpf,ben,esp,con,cod,par:Math.round(par*100)/100,sal:Math.round(sal*100)/100,prazo:`${rest}/${tot}`,pag,idade:idade??"-",isInv,is1p:i1,taxaOrig:txOrig,
         dest:res?res.banco:"-",troco:res?Math.round(res.troco*100)/100:0,vc:res?Math.round(res.vc*100)/100:0,taxa:res?res.taxa:"-",ok:!!res,
         destinos:todosDest.map(d=>({banco:d.banco,troco:Math.round(d.troco*100)/100,vc:Math.round(d.vc*100)/100,taxa:d.taxa})),
         t1,t2,t3};
@@ -4563,13 +4565,60 @@ function _filaToResult(fila) {
   };
 }
 
-// Adiciona/atualiza uma consulta na lista de recentes (em memoria — perdida no refresh)
+// Adiciona/atualiza uma consulta na lista de recentes (memoria + localStorage)
 function _addRecente(id, cpf, nome, status) {
   if (!cltConsultaState.recentes) cltConsultaState.recentes = [];
-  // Remove se ja existe (vai re-adicionar no topo)
   cltConsultaState.recentes = cltConsultaState.recentes.filter(r => r.id !== id);
   cltConsultaState.recentes.unshift({ id, cpf, nome, status });
   if (cltConsultaState.recentes.length > 20) cltConsultaState.recentes.length = 20;
+  // Persiste filaId atual no localStorage pra restaurar apos F5
+  try { localStorage.setItem('clt_fila_atual', id); } catch {}
+}
+
+// Busca as ultimas consultas do banco (sobrevive a F5/reload)
+async function _carregarRecentesDoBanco() {
+  try {
+    const r = await fetch('/api/clt-fila', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'listar', limit: 15 })
+    });
+    const d = await r.json();
+    if (d.success && Array.isArray(d.items)) {
+      cltConsultaState.recentes = d.items.map(it => ({
+        id: it.id,
+        cpf: it.cpf,
+        nome: it.cliente?.nome || it.nome_manual || '',
+        status: it.status_geral
+      }));
+      renderApp();
+    }
+  } catch (e) { /* nao quebra UI se falhar */ }
+}
+
+// Restaura a ultima consulta ativa do localStorage (depois de F5)
+async function _restaurarUltimaConsulta() {
+  try {
+    const lastId = localStorage.getItem('clt_fila_atual');
+    if (!lastId) return;
+    // Verifica se ainda existe
+    const r = await fetch('/api/clt-fila', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'status', id: lastId })
+    });
+    const d = await r.json();
+    if (d.success && d.fila) {
+      cltConsultaState.filaId = lastId;
+      cltConsultaState.cpfAtual = d.fila.cpf;
+      cltConsultaState.result = _filaToResult(d.fila);
+      cltConsultaState.bancosDetalhesDisparados = new Set();
+      renderApp();
+      _dispararDetalhesParcial(cltConsultaState.result);
+      // Retoma polling se ainda nao concluiu
+      if (d.fila.status_geral !== 'concluido') _pollingFila(lastId);
+    }
+  } catch (e) { /* nao quebra UI */ }
 }
 
 // Abre uma consulta recente — re-faz polling e exibe
@@ -5128,6 +5177,14 @@ function _cltOfertaCard(o, ctx) {
 }
 
 function renderCltConsulta() {
+  // Bootstrap: na primeira renderizacao da sessao, carrega recentes do banco
+  // e restaura a ultima consulta ativa (pra sobreviver a F5/reload)
+  if (!cltConsultaState._bootstrapped) {
+    cltConsultaState._bootstrapped = true;
+    _carregarRecentesDoBanco();
+    _restaurarUltimaConsulta();
+  }
+
   let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
   h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">💼 CLT — Consulta de Oportunidades</div>';
   h += '<div style="font-size:13px;color:var(--t2);margin-bottom:24px">Digite CPF + Nome (opcional). Os bancos são consultados em paralelo — cada card atualiza sozinho conforme termina (não trava esperando todos).</div>';
@@ -6213,7 +6270,7 @@ if(r.contratos&&r.contratos.length){for(let ct of r.contratos){
     // (ou array vazio se nada passa). Vendedor escolhe qual usar.
     let destinos=[];
     if(par>0&&sal>0&&total>0){
-      destinos=testarTodos(par,sal,pag,cod,isInvCons,idadeNum,bYCons,rest,espN,ct.contrato||ct.id||'');
+      destinos=testarTodos(par,sal,pag,cod,isInvCons,idadeNum,bYCons,rest,espN,ct.contrato||ct.id||'',taxa);
     }
     const first=destinos[0]||null;
     portContratos.push({
