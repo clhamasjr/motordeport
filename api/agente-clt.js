@@ -705,8 +705,21 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
   }
 
   if (acao === 'GERAR_AUTORIZACAO_C6') {
-    if (!cpf || !nome || !conversa.data_nascimento) {
-      return { ok: false, erro: 'Faltam cpf, nome ou data_nascimento' };
+    if (!cpf) return { ok: false, erro: 'Sem CPF do cliente.' };
+
+    // PRE-CHECK: cliente ja tem autorizacao? Se sim, nao precisa gerar link novo.
+    const status = await callBankApi('c6', { action: 'statusAutorizacao', cpf });
+    if (status.ok && (status.data?.autorizado === true || status.data?.statusAutorizacao === 'AUTORIZADO')) {
+      return {
+        ok: true,
+        ja_autorizado: true,
+        link: null,
+        mensagem: 'Cliente já tem autorização válida. Não precisa enviar selfie.'
+      };
+    }
+
+    if (!nome || !conversa.data_nascimento) {
+      return { ok: false, erro: 'Faltam dados básicos do cliente (nome ou data de nascimento).' };
     }
     const tel = conversa.telefone.replace(/^55/, '');
     const ddd = tel.substring(0, 2);

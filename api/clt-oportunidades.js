@@ -105,11 +105,18 @@ export default async function handler(req) {
       callApi('/api/multicorban',   { action: 'consult_clt', cpf },         auth, secret),
       callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'QI' },     auth, secret).catch(() => ({ ok: false })),
       callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'CELCOIN' }, auth, secret).catch(() => ({ ok: false })),
-      incluirC6
-        ? callApi('/api/c6', { action: 'oferta', cpf }, auth, secret)
-        : Promise.resolve({ ok: false, data: { _bloqueado: true } })
+      // C6: SEMPRE checa status de autorizacao primeiro (gratis, rapido).
+      // Se cliente ja tem autorizacao, roda oferta completa. Se nao, mostra bloqueado.
+      callApi('/api/c6', { action: 'statusAutorizacao', cpf }, auth, secret).catch(() => ({ ok: false }))
     ];
-    const [pbOpor, mcClt, v8QI, v8Celcoin, c6Of] = await Promise.all(tarefas);
+    const [pbOpor, mcClt, v8QI, v8Celcoin, c6Status] = await Promise.all(tarefas);
+
+    // Se C6 ja autorizado, busca oferta tambem (em paralelo nao da pra fazer porque depende do status)
+    let c6Of = { ok: false, data: { _bloqueado: true } };
+    const c6Autorizado = c6Status?.data?.autorizado === true || c6Status?.data?.statusAutorizacao === 'AUTORIZADO';
+    if (c6Autorizado || incluirC6) {
+      c6Of = await callApi('/api/c6', { action: 'oferta', cpf, skipAuthCheck: c6Autorizado }, auth, secret).catch(() => ({ ok: false, data: {} }));
+    }
 
     // ─── Mescla dados do cliente (PresençaBank > Multicorban) ─────
     const pb = pbOpor.data || {};
@@ -203,7 +210,7 @@ export default async function handler(req) {
         banco: 'presencabank',
         label: 'PresençaBank',
         disponivel: false,
-        mensagem: pb.mensagem || 'Sem vínculo CLT elegível'
+        mensagem: pb.mensagem || 'Sem vínculo CLT elegível pra este banco'
       });
     }
 
@@ -215,8 +222,8 @@ export default async function handler(req) {
           disponivel: false,
           podeGerarTermo: !!(cliente.nome && cliente.dataNascimento && cliente.sexo && cliente.telefones?.[0]),
           mensagem: cliente.nome
-            ? 'Sem termo V8 ainda — clique Digitar pra criar termo + simular'
-            : 'Faltam dados básicos pra criar termo V8'
+            ? 'Aguardando geração de termo. Clique Digitar pra prosseguir.'
+            : 'Faltam dados básicos do cliente (nome, data de nascimento ou telefone).'
         });
         return;
       }
@@ -235,7 +242,7 @@ export default async function handler(req) {
         ofertas.push({
           banco: 'v8', provider, label,
           disponivel: false,
-          mensagem: `❌ ${st}: ${existing.descricao || 'rejeitado'}`
+          mensagem: `❌ ${st}: ${existing.descricao || 'cliente rejeitado'}`
         });
       } else {
         ofertas.push({
@@ -243,38 +250,47 @@ export default async function handler(req) {
           disponivel: false,
           processando: true,
           consultId: existing.consultId,
-          mensagem: `V8 ${provider}: ${st} — aguardando webhook (pode levar até 5min)`
+          mensagem: `${st} — aguardando confirmação (pode levar até 5min)`
         });
       }
     }
     montarCardV8('QI', 'V8 (QI Tech)', v8QI?.data);
     montarCardV8('CELCOIN', 'V8 (CELCOIN)', v8Celcoin?.data);
 
-    // C6 — só se incluirC6=true OU se já foi consultado por estar autorizado
+    // C6 — montagem do card baseada no status de autorizacao + oferta (se rodou)
     const c6 = c6Of.data || {};
-    if (incluirC6) {
+    if (c6Autorizado) {
+      // Cliente JA autorizou anteriormente — mostra oferta direto se houver
       ofertas.push({
         banco: 'c6',
         label: 'C6 Bank',
         disponivel: !!(c6.success && c6.temOferta),
-        requiresLiveness: !!c6.requiresLiveness,
-        statusAutorizacao: c6.statusAutorizacao || null,
+        statusAutorizacao: 'AUTORIZADO',
+        ja_autorizado: true,
         detalhes: c6.temOferta ? {
           valorLiquido: c6.oferta?.valorCliente,
           parcelas: c6.oferta?.qtdParcelas,
           valorParcela: c6.oferta?.valorParcela,
           seguroSugerido: c6.oferta?.valorSeguroSugerido
         } : null,
-        mensagem: c6.mensagem || null
+        mensagem: c6.temOferta
+          ? `Cliente já autorizado — oferta disponível.`
+          : (c6.mensagem || 'Cliente já autorizado, mas sem oferta disponível no momento.')
       });
     } else {
-      // Card "bloqueado" — cliente precisa autorizar primeiro
+      // Cliente nunca autorizou OU autorizacao expirou — precisa selfie
+      const status = c6Status?.data?.statusAutorizacao || 'NAO_AUTORIZADO';
       ofertas.push({
         banco: 'c6',
         label: 'C6 Bank',
         disponivel: false,
         bloqueado: true,
-        mensagem: 'C6 exige selfie de autorização DataPrev. Clique pra liberar e enviar link ao cliente via WhatsApp.'
+        statusAutorizacao: status,
+        mensagem: status === 'AGUARDANDO_AUTORIZACAO'
+          ? 'Aguardando cliente fazer a selfie de autorização (link já enviado).'
+          : status === 'NAO_AUTORIZADO'
+          ? 'Cliente recusou ou link expirou. Clique pra gerar nova selfie de autorização.'
+          : 'Cliente ainda não autorizou. Clique pra gerar selfie de autorização e enviar via WhatsApp.'
       });
     }
 
