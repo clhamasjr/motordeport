@@ -4818,6 +4818,23 @@ async function _pollingFila(filaId) {
           _addRecente(d.fila.id, d.fila.cpf, cliNome, d.fila.status_geral);
           renderApp();
           _dispararDetalhesParcial(result);
+
+          // RE-DISPARA processadores travados em 'pending' (acontece se o disparo
+          // inicial falhou — rede, edge timeout). Aguarda 20s antes de re-disparar.
+          const elapsedMs = Date.now() - inicio;
+          if (elapsedMs > 20000) {
+            const bancos = d.fila.bancos || {};
+            for (const bancoKey of ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6']) {
+              if (bancos[bancoKey]?.status === 'pending') {
+                fetch('/api/clt-fila', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+                  body: JSON.stringify({ action: 'processar', id: filaId, banco: bancoKey })
+                }).catch(() => {});
+              }
+            }
+          }
+
           if (d.fila.status_geral === 'concluido') return;
         }
       } catch (e) { console.error('polling erro', e); }

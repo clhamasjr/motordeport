@@ -419,10 +419,25 @@ export default async function handler(req) {
   if (action === 'processar') {
     const id = body.id;
     const banco = body.banco;
+    const forceRerun = body.force === true; // re-disparo manual
     if (!id || !banco) return jsonError('id e banco obrigatórios', 400, req);
 
     const { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
     if (!row) return jsonError('Fila não encontrada', 404, req);
+
+    // IDEMPOTENCIA: se ja esta em estado final ou processando ativamente,
+    // nao re-roda (evita corrida quando re-disparos chegam em paralelo)
+    const bancoStatus = row.bancos?.[banco]?.status;
+    if (!forceRerun && ['ok', 'falha', 'bloqueado'].includes(bancoStatus)) {
+      return jsonResp({ success: true, banco, id, skipped: 'estado final: ' + bancoStatus }, 200, req);
+    }
+    if (!forceRerun && bancoStatus === 'processando') {
+      // Se esta processando ha menos de 20s, deixa quieto
+      const atualizadoEm = row.bancos?.[banco]?.atualizado_em;
+      if (atualizadoEm && Date.now() - new Date(atualizadoEm).getTime() < 20000) {
+        return jsonResp({ success: true, banco, id, skipped: 'recente' }, 200, req);
+      }
+    }
 
     try {
       if (banco === 'presencabank') await processarPresencaBank(id, row.cpf, auth, secret);
