@@ -6068,6 +6068,9 @@ if(oportunidades.length){
     html += hasWpp
       ? '<button class="btn btn-sm btn-cyan" style="width:100%" onclick="wppStartChatFromConsulta(\'' + wppNum + '\',\'' + esc(b.nome || '') + '\',\'' + esc(b.cpf || '') + '\')">💬 WhatsApp</button>'
       : '<button class="btn btn-sm" disabled style="width:100%">💬 Sem telefone</button>';
+    // Higienizacao via NovaVida — busca telefones na API quando o cliente nao tem ou pra confirmar
+    const higT1 = tels[0] || '', higT2 = tels[1] || '', higT3 = tels[2] || '';
+    html += '<button class="btn btn-sm" style="width:100%;border-color:var(--cyan);color:var(--cyan)" onclick="higienizarCPF(\'' + esc(b.cpf || '') + '\',\'' + esc(b.nome || '') + '\',\'' + esc(higT1) + '\',\'' + esc(higT2) + '\',\'' + esc(higT3) + '\')" title="Buscar telefones via NovaVida (custo)">📞 Higienizar</button>';
     html += '<button class="btn btn-sm" style="width:100%;border-color:var(--pur);color:var(--pur)" onclick="consultarIN100(\'' + esc(b.cpf || '') + '\',\'' + esc(b.nb || '') + '\',\'' + esc(b.nome || '') + '\')">🔍 IN100</button>';
     html += '<button class="btn btn-sm" style="width:100%" onclick="openCrmModal(\'' + esc(b.cpf || '') + '\',\'' + esc(b.nome || '') + '\')">🏷️ CRM</button>';
     html += '</div>';
