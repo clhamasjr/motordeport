@@ -254,6 +254,70 @@ export default async function handler(req) {
         });
       }
     }
+    // ─── AUTO-GERAR TERMO V8 (QI + CELCOIN) se nao existir ainda ───
+    // V8 precisa: cpf, nome, dataNascimento, email, telefone, sexo.
+    // Pra campos administrativos sem dado real, usamos defaults seguros
+    // (eh so pra registro do termo — o email/telefone real do cliente
+    // sao usados depois no momento de criar a proposta de verdade).
+    function precisaTermo(existing) {
+      // Se nao foi encontrado consultarPorCPF, ou foi mas esta REJECTED/FAILED
+      // tentamos gerar. Se ja eh SUCCESS ou esta processando, nao mexemos.
+      if (!existing?.encontrado) return true;
+      const st = existing.status;
+      return st === 'REJECTED' || st === 'FAILED';
+    }
+    const tellQI = v8QI?.data;
+    const tellCELCOIN = v8Celcoin?.data;
+    const podeGerar = !!(cliente.nome && cliente.dataNascimento);
+
+    if (podeGerar && (precisaTermo(tellQI) || precisaTermo(tellCELCOIN))) {
+      const dataIso = cliente.dataNascimento.includes('-') ? cliente.dataNascimento : ddMmYyToIso(cliente.dataNascimento);
+      const sexoPadrao = (cliente.sexo || 'M').toUpperCase().startsWith('F') ? 'F' : 'M';
+      const telefonePadrao = cliente.telefones?.[0]?.completo || '11900000000';
+      const emailPadrao = (cliente.emails?.[0]) || `${cpf}@lead.lhamascred.com.br`;
+      const payloadTermo = {
+        action: 'gerarTermo',
+        cpf,
+        nome: cliente.nome,
+        dataNascimento: dataIso,
+        email: emailPadrao,
+        telefone: telefonePadrao,
+        sexo: sexoPadrao
+      };
+
+      // Gera termo nos 2 providers em paralelo
+      const tarefasTermo = [];
+      if (precisaTermo(tellQI)) {
+        tarefasTermo.push(callApi('/api/v8', { ...payloadTermo, provider: 'QI' }, auth, secret).catch(() => ({ ok: false })));
+      } else { tarefasTermo.push(Promise.resolve(null)); }
+      if (precisaTermo(tellCELCOIN)) {
+        tarefasTermo.push(callApi('/api/v8', { ...payloadTermo, provider: 'CELCOIN' }, auth, secret).catch(() => ({ ok: false })));
+      } else { tarefasTermo.push(Promise.resolve(null)); }
+      const [termoQI, termoCelcoin] = await Promise.all(tarefasTermo);
+
+      // Auto-autoriza os termos que foram criados (Lhamas como correspondente)
+      const tarefasAutz = [];
+      if (termoQI?.data?.consultId) {
+        tarefasAutz.push(callApi('/api/v8', { action: 'autorizarTermo', consultId: termoQI.data.consultId, provider: 'QI' }, auth, secret).catch(() => ({ ok: false })));
+      }
+      if (termoCelcoin?.data?.consultId) {
+        tarefasAutz.push(callApi('/api/v8', { action: 'autorizarTermo', consultId: termoCelcoin.data.consultId, provider: 'CELCOIN' }, auth, secret).catch(() => ({ ok: false })));
+      }
+      if (tarefasAutz.length > 0) await Promise.all(tarefasAutz);
+
+      // Re-consulta status pra ver se ficou SUCCESS
+      const tarefasRe = [];
+      if (termoQI?.data?.consultId) {
+        tarefasRe.push(callApi('/api/v8', { action: 'consultarPorCPF', cpf, provider: 'QI' }, auth, secret).catch(() => ({ ok: false })));
+      } else { tarefasRe.push(Promise.resolve(null)); }
+      if (termoCelcoin?.data?.consultId) {
+        tarefasRe.push(callApi('/api/v8', { action: 'consultarPorCPF', cpf, provider: 'CELCOIN' }, auth, secret).catch(() => ({ ok: false })));
+      } else { tarefasRe.push(Promise.resolve(null)); }
+      const [reQI, reCelcoin] = await Promise.all(tarefasRe);
+      if (reQI?.data) v8QI.data = reQI.data;
+      if (reCelcoin?.data) v8Celcoin.data = reCelcoin.data;
+    }
+
     montarCardV8('QI', 'V8 (QI Tech)', v8QI?.data);
     montarCardV8('CELCOIN', 'V8 (CELCOIN)', v8Celcoin?.data);
 
