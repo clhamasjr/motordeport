@@ -104,6 +104,19 @@ export default async function handler(req) {
         return jsonResp({ success: false, banco, provider, mensagem: 'Sem tabelas V8 disponiveis' }, 200, req);
       }
 
+      // Modo inspecao — retorna as configs cruas pra investigar estrutura
+      if (body.inspecionarConfigs === true) {
+        return jsonResp({
+          success: true, banco, provider,
+          totalConfigs: lista.length,
+          configs: lista,
+          _resumo: lista.map((c, i) => ({
+            idx: i, id: c.id,
+            campos_top_level: Object.keys(c)
+          }))
+        }, 200, req);
+      }
+
       // LOG temporario pra investigar estrutura real das configs (com vs sem seguro)
       console.log('[V8_CONFIGS_RAW]', provider, JSON.stringify(lista).substring(0, 2500));
 
