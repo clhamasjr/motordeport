@@ -3470,6 +3470,66 @@ async function wppDeleteInstance(name){
   }catch(e){showToast('Erro: '+e.message,'error')}
 }
 
+// Aponta a webhook do Evolution dessa instance pra Sofia (/api/agent)
+async function wppSetupSofia(instName){
+  if(!confirm(`Apontar webhook do "${instName}" pra Sofia?\n\nIsso vai fazer com que toda mensagem recebida nesse número entre na Sofia (api/agent) e seja gravada no novo banco de chat.`))return;
+  try{
+    showToast?.('Configurando webhook…','info');
+    const r=await apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'setWebhook',instance:instName})});
+    const d=await r.json();
+    const cur=d?.current||{};
+    const curEnabled=!!(cur.enabled||cur.webhook?.enabled);
+    const curUrl=cur.url||cur.webhook?.url||'(?)';
+    const msg=`Webhook setada.\n\nURL: ${curUrl}\nEnabled: ${curEnabled?'SIM ✅':'NÃO ❌'}\n\n${curEnabled?'Sofia está ativa pro testesofia. Manda uma mensagem pra testar.':'⚠ Algo falhou. Manda print disso aqui pro suporte.'}\n\nResposta crua:\n${JSON.stringify(d.current||d,null,2).substring(0,800)}`;
+    alert(msg);
+  }catch(e){alert('Erro: '+e.message)}
+}
+// Mostra onde a webhook do Evolution dessa instance está apontando
+async function wppCheckWebhook(instName){
+  try{
+    const r=await apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'getWebhook',instance:instName})});
+    const d=await r.json();
+    const url=d?.response?.url||d?.response?.webhook?.url||d?.url||'(nao configurada)';
+    const enabled=d?.response?.enabled??d?.response?.webhook?.enabled;
+    alert(`Instance: ${instName}\nWebhook URL: ${url}\nEnabled: ${enabled?'sim':'nao'}\n\nResposta crua:\n${JSON.stringify(d.response||d,null,2).substring(0,500)}`);
+  }catch(e){alert('Erro: '+e.message)}
+}
+// Diagnóstico completo: status conexão, webhook, chatwoot nativo, settings
+async function wppDiag(instName){
+  try{
+    showToast?.('Diagnosticando…','info');
+    const r=await apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'evoDiag',instance:instName})});
+    const d=await r.json();
+    const di=d.diag||{};
+    const conn=di.connectionState?.instance?.state||di.connectionState?.state||'?';
+    const wh=di.webhook||{};
+    const whEnabled=!!(wh.enabled||wh.webhook?.enabled);
+    const whUrl=wh.url||wh.webhook?.url||'(nao configurada)';
+    const cw=di.chatwoot||{};
+    const cwEnabled=!!(cw.enabled||cw.chatwoot?.enabled);
+    const settings=di.settings||{};
+    const groupsIgnore=!!settings.groupsIgnore;
+    const readMessages=!!settings.readMessages;
+    const alwaysOnline=!!settings.alwaysOnline;
+    let diag=`📡 DIAGNÓSTICO ${instName}\n\n`;
+    diag+=`🟢 Conexão: ${conn}\n`;
+    diag+=`📨 Webhook: ${whEnabled?'✅ ATIVO':'❌ DESLIGADO'}\n`;
+    diag+=`   URL: ${whUrl}\n`;
+    diag+=`💬 Chatwoot nativo: ${cwEnabled?'⚠️ SIM (sobrepõe webhook!)':'OK desligado'}\n`;
+    diag+=`🔇 Ignora grupos: ${groupsIgnore?'sim':'não'}\n\n`;
+    if(cwEnabled){
+      diag+='⚠️ AVISO: Chatwoot nativo está LIGADO. Isso pode estar capturando as mensagens em vez do webhook!\n';
+      diag+='Posso desligar — clique OK pra continuar e abra um console:\n';
+    }
+    diag+='\n--- RAW ---\n'+JSON.stringify(di,null,2).substring(0,1500);
+    alert(diag);
+    if(cwEnabled&&confirm('Desligar Chatwoot nativo nessa instância? (recomendado pra Sofia funcionar)')){
+      const r2=await apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'disableChatwoot',instance:instName})});
+      const d2=await r2.json();
+      alert('Chatwoot nativo desligado. Resposta: '+JSON.stringify(d2.response||d2,null,2).substring(0,400));
+    }
+  }catch(e){alert('Erro: '+e.message)}
+}
 async function wppSetupChatwoot(instName){
   try{
     showToast('Configurando Chatwoot para '+instName+'...','info');
@@ -3824,7 +3884,8 @@ function renderWhatsApp(){
       html+=`<span class="pill pill-acc" style="font-size:9px">Chat ativo</span>`;
     }
     if(isAdmin){
-      html+=`<button class="btn btn-sm" style="font-size:10px;border-color:var(--pur);color:var(--pur)" onclick="wppSetupChatwoot('${esc(name)}')" title="Chatwoot">🔗</button>`;
+      html+=`<button class="btn btn-sm" style="font-size:10px;border-color:var(--cyan);color:var(--cyan)" onclick="wppSetupSofia('${esc(name)}')" title="Apontar webhook pra Sofia (api/agent)">🤖 Sofia</button>`;
+      html+=`<button class="btn btn-sm" style="font-size:10px;border-color:var(--org);color:var(--org)" onclick="wppDiag('${esc(name)}')" title="Diagnóstico completo (status, webhook, chatwoot)">🩺 Diag</button>`;
       html+=`<button class="btn btn-sm btn-red" style="font-size:10px" onclick="wppDeleteInstance('${esc(name)}')">🗑️</button>`;
     }
     html+=`</div>`;
@@ -3869,9 +3930,102 @@ function wppUnreadTotal(){return cwState.conversations.reduce((s,c)=>s+(c.unread
 // ══════ CHATWOOT INTEGRATION ══════
 let cwState={conversations:[],activeConv:null,messages:[],agents:[],inboxes:[],loading:false,filter:'open',pollTimer:null,clientData:null};
 
+// Adaptador: cwCall agora bate em /api/inss-chat (sem Chatwoot) e remolda a resposta no formato antigo.
+// Mapeamento:
+//   conversa: {id=telefone, meta:{sender:{phone_number,name}}, last_message_at, inbox_id, unread_count}
+//   message:  {id, content, message_type: 0=cliente / 1=eu/sofia, created_at}
+function _ts2int(ts){ if(!ts)return 0; const t=Date.parse(ts); return isNaN(t)?0:Math.floor(t/1000); }
+function _convToCw(c){
+  return {
+    id: c.telefone, // usamos telefone como ID interno
+    inbox_id: 1,
+    status: c.status||'open',
+    unread_count: c.unread||c.unread_count||0,
+    last_activity_at: _ts2int(c.last_msg_at||c.updated_at),
+    last_message_at: _ts2int(c.last_msg_at||c.updated_at),
+    created_at: _ts2int(c.created_at),
+    agente_ativo: !!c.agente_ativo,
+    meta: { sender: { phone_number: c.telefone, name: c.nome||c.telefone } },
+    contact: { phone_number: c.telefone, name: c.nome||c.telefone },
+    messages: [{ content: c.last_msg_preview||'', created_at: _ts2int(c.last_msg_at) }]
+  };
+}
+function _msgsToCw(historico){
+  if(!Array.isArray(historico))return [];
+  return historico.map((m,i)=>({
+    id: i+1,
+    content: m.content||'',
+    message_type: m.role==='cliente'?0:1, // 0=incoming, 1=outgoing
+    created_at: _ts2int(m.ts),
+    sender: m.role==='cliente'?null:{name: m.role==='sofia'?'Sofia':(m.sender||'Eu')},
+    private: false,
+    attachments: m.anexo?[m.anexo]:[]
+  }));
+}
 async function cwCall(action,data={}){
-  const res=await apiFetch('/api/chatwoot',{method:'POST',body:JSON.stringify({action,...data})});
-  return res.json();
+  // Adapta cada action antiga -> nova
+  const tel = data.id || data.phone || data.telefone || '';
+  switch(action){
+    case 'conversations': {
+      const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action:'listConversas',status:data.status||'open',scope:localStorage.getItem('ff_chat_scope')||'mine'})});
+      const d=await r.json();
+      const list=(d?.conversas||[]).map(_convToCw);
+      return { ok:true, data:{ payload:list }, payload:list };
+    }
+    case 'messages': {
+      const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action:'getConversa',telefone:tel})});
+      const d=await r.json();
+      const conv=d?.conversa||{};
+      const msgs=_msgsToCw(conv.historico||[]);
+      return { payload:msgs, data:msgs };
+    }
+    case 'send': {
+      const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action:'sendMessage',telefone:tel,content:data.content||''})});
+      return r.json();
+    }
+    case 'inboxes': {
+      // Compat: nao temos mais inboxes (sem Chatwoot). Devolve 1 inbox virtual com nome da instancia do user.
+      const inst=(getMyInstance&&getMyInstance())||'inss';
+      return { payload:[{id:1,name:inst}], data:[{id:1,name:inst}] };
+    }
+    case 'agents':
+      return { payload:[], data:[] };
+    case 'contacts': {
+      // Busca conversas existentes que batem no numero
+      const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action:'listConversas',status:'all',limit:200})});
+      const d=await r.json();
+      const q=String(data.q||'').replace(/\D/g,'');
+      const matches=(d?.conversas||[]).filter(c=>String(c.telefone).includes(q));
+      return { payload:matches.map(_convToCw), data:matches.map(_convToCw) };
+    }
+    case 'createConversation': {
+      const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action:'createConversa',telefone:data.phone||tel,nome:data.name})});
+      const d=await r.json();
+      const conv=d?.conversa?_convToCw({telefone:d.conversa.telefone,nome:d.conversa.nome,status:d.conversa.status,last_msg_at:d.conversa.last_msg_at,created_at:d.conversa.created_at}):null;
+      return { conversation: conv, payload: conv, data: conv };
+    }
+    case 'updateConvStatus': {
+      const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action:'setStatus',telefone:tel,status:data.status})});
+      return r.json();
+    }
+    case 'markRead': {
+      const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action:'markRead',telefone:tel})});
+      return r.json();
+    }
+    case 'pausarAgente': {
+      const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action:'pausarAgente',telefone:tel})});
+      return r.json();
+    }
+    case 'retomarAgente': {
+      const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action:'retomarAgente',telefone:tel})});
+      return r.json();
+    }
+    case 'clientByPhone':
+      // Compat: legacy do Chatwoot pra puxar dados do cliente. Ignorado por enquanto.
+      return { ok:false };
+    default:
+      return { ok:false, error:'action sem mapeamento: '+action };
+  }
 }
 
 // Retorna Set com os inbox_ids correspondentes as instancias Evolution do user atual.
@@ -4645,7 +4799,7 @@ function _filaToResult(fila) {
     filaId: fila.id,
     statusGeral: fila.status_geral,
     cliente: {
-      nome: cli.nome, cpf: fila.cpf,
+      nome: cli.nome || fila.nome_manual, cpf: fila.cpf,
       dataNascimento: cli.dataNascimento, sexo: cli.sexo,
       nomeMae: cli.nomeMae, nomePai: cli.nomePai, idade: cli.idade,
       telefones: cli.telefones || [], emails: cli.emails || []
@@ -4827,7 +4981,11 @@ async function rodarConsultaCLT(opts) {
   const sexoEl = document.getElementById('cltSexo');
   const sexo = opts.sexo || (sexoEl ? (sexoEl.value || '').trim() : '');
   const incluirC6 = opts.incluirC6 !== undefined ? opts.incluirC6 : true;
-  const forceNew = opts.forceNew === true;
+  // Se operador preencheu QUALQUER dado manual (nome, data, sexo) ele quer
+  // que esses dados sejam usados — força nova consulta em vez de reaproveitar
+  // uma anterior que poderia estar sem esses dados.
+  const temDadosManuais = !!(nomeManual || dataNasc || sexo);
+  const forceNew = opts.forceNew === true || temDadosManuais;
 
   // ─── DEDUP: se ja tem consulta DESSE CPF na pilha (em andamento OU concluida
   // ha < 10min), NAO cria nova — abre a existente
@@ -5609,9 +5767,8 @@ function renderCltConsulta() {
   // Linha 2 — campos opcionais que destravam V8 quando os bancos nao trazem
   h += '<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">';
   h += '<span style="font-size:11px;color:var(--t3);text-transform:uppercase">Caso falte:</span>';
-  h += '<input class="form-input" id="cltDataNasc" type="date" placeholder="Data nascimento" style="flex:1;min-width:140px;font-size:13px;padding:10px 12px" title="Data de nascimento — opcional, supre quando bancos não trazem (V8 exige)">';
-  h += '<select class="form-input" id="cltSexo" style="flex:0 0 auto;width:110px;font-size:13px;padding:10px 12px" title="Sexo — opcional"><option value="">Sexo (auto)</option><option value="M">Masculino</option><option value="F">Feminino</option></select>';
-  h += '<span style="font-size:10px;color:var(--t3);flex:1;min-width:200px">Esses campos só são usados se PB/Multicorban não trouxerem.</span>';
+  h += '<input class="form-input" id="cltDataNasc" type="date" placeholder="Data nascimento" style="flex:1;min-width:140px;font-size:13px;padding:10px 12px">';
+  h += '<select class="form-input" id="cltSexo" style="flex:0 0 auto;width:110px;font-size:13px;padding:10px 12px"><option value="">Sexo (auto)</option><option value="M">Masculino</option><option value="F">Feminino</option></select>';
   h += '</div>';
 
 

@@ -405,7 +405,19 @@ export default async function handler(req) {
     const cpf = normalizeCPF(body.cpf);
     if (!cpf) return jsonError('CPF inválido', 400, req);
     const nomeManual = (body.nome || '').trim() || null;
-    const dataNascManual = (body.dataNascimento || '').trim() || null;
+    // Aceita YYYY-MM-DD (input type=date) ou DD/MM/YYYY (digitado a mao)
+    let dataNascManual = (body.dataNascimento || '').trim() || null;
+    if (dataNascManual) {
+      const m1 = dataNascManual.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      const m2 = dataNascManual.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (m1) {
+        dataNascManual = `${m1[1]}-${m1[2]}-${m1[3]}`;
+      } else if (m2) {
+        dataNascManual = `${m2[3]}-${m2[2]}-${m2[1]}`;
+      } else {
+        dataNascManual = null; // formato invalido — ignora
+      }
+    }
     const sexoManual = (body.sexo || '').toUpperCase().startsWith('F') ? 'F'
                      : (body.sexo || '').toUpperCase().startsWith('M') ? 'M' : null;
     const incluirC6 = body.incluirC6 !== false; // default true
