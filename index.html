@@ -80,6 +80,7 @@ input,select,textarea{font-family:inherit;outline:none;font-size:14px}.rh:hover{
 .btn-acc{background:linear-gradient(135deg,#0EA5E9,var(--acc));color:#fff;border:none;padding:10px 28px;border-radius:10px;font-size:13px;font-weight:700;box-shadow:0 4px 12px rgba(59,130,246,.2)}
 .btn-sm{padding:5px 12px;font-size:11px;border-radius:6px}
 .clt-row-hover:hover{border-color:var(--acc)!important}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .container{max-width:1520px;margin:0 auto;padding:24px 28px;width:100%;box-sizing:border-box}
 .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px}
 .modal-box{background:var(--sf);border:1px solid var(--brd);border-radius:18px;padding:32px;max-width:600px;width:100%;animation:fadeIn .25s ease;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
@@ -1616,8 +1617,12 @@ function toggleBankActive(bankId){
 function getActiveBanks(){let c=getBankCreds();return Object.entries(c).filter(([k,v])=>v.active&&v.user&&v.pass).map(([k])=>k)}
 
 function renderAdmin(){
-  if(!CU||CU.role!=="admin")return"";
-  const users=getU()||[];
+  if(!CU||(CU.role!=="admin"&&CU.role!=="gestor"))return"";
+  const isAdmin=CU.role==="admin";
+  const isGestor=CU.role==="gestor";
+  const allUsers=getU()||[];
+  // Gestor enxerga so a propria equipe (mesmo parceiro_id) + ele proprio
+  const users=isAdmin?allUsers:allUsers.filter(u=>u.user===CU.user||(u.role!=='admin'&&u.parceiro_id===CU.parceiro_id));
   const parceiros=getParceiros()||[];
   // Mapa id → parceiro
   const parceiroById={};for(const p of parceiros){parceiroById[p.id]=p}
@@ -1637,8 +1642,13 @@ function renderAdmin(){
   };
   const actions=(u)=>{
     if(u.user==='admin')return '—';
-    const editParceiro=u.role!=='admin'?`<button class="btn btn-sm" title="Vincular a Parceiro" style="border-color:var(--pur);color:var(--pur)" onclick="openAssignParceiro('${esc(u.user)}',${u.parceiro_id||'null'})">🏢 Parceiro</button>`:'';
-    return `<button class="btn btn-sm" title="Senha" onclick="rpw('${esc(u.user)}')">🔑</button> <button class="btn btn-sm" title="Codigos Bancos" style="border-color:var(--grn);color:var(--grn)" onclick="editBankCodes('${esc(u.user)}')">📋 Códigos</button> ${editParceiro} <button class="btn btn-red btn-sm" title="Excluir" onclick="dlu('${esc(u.user)}')">🗑</button>`;
+    // Gestor nao mexe em outros admins/gestores nem em users de outro parceiro
+    if(isGestor&&u.role==='admin')return '<span style="color:var(--t3);font-size:10px">—</span>';
+    if(isGestor&&u.role==='gestor'&&u.user!==CU.user)return '<span style="color:var(--t3);font-size:10px">—</span>';
+    const btnEditar=`<button class="btn btn-sm" title="Editar nome / login / role" style="border-color:var(--cyan);color:var(--cyan)" onclick="openEditUser('${esc(u.user)}')">✎ Editar</button>`;
+    const editParceiro=(isAdmin&&u.role!=='admin')?`<button class="btn btn-sm" title="Vincular a Parceiro" style="border-color:var(--pur);color:var(--pur)" onclick="openAssignParceiro('${esc(u.user)}',${u.parceiro_id||'null'})">🏢 Parceiro</button>`:'';
+    const btnDelete=isAdmin?`<button class="btn btn-red btn-sm" title="Excluir" onclick="dlu('${esc(u.user)}')">🗑</button>`:'';
+    return `${btnEditar} <button class="btn btn-sm" title="Senha" onclick="rpw('${esc(u.user)}')">🔑</button> <button class="btn btn-sm" title="Codigos Bancos" style="border-color:var(--grn);color:var(--grn)" onclick="editBankCodes('${esc(u.user)}')">📋 Códigos</button> ${editParceiro} ${btnDelete}`;
   };
   // Ordena: admin -> gestores -> vendedores (agrupados por parceiro)
   const sorted=[
@@ -1835,6 +1845,78 @@ async function openAssignParceiro(targetUser, currentParceiroId){
     await loadUsersFromApi();
     renderApp();
   }catch(e){alert('Erro: '+e.message)}
+}
+
+// Editar usuario: nome, login (username), role
+async function openEditUser(targetUser){
+  const users=getU()||[];
+  const target=users.find(x=>x.user===targetUser);
+  if(!target){alert('Usuario nao encontrado');return}
+  if(targetUser==='admin'){alert('Nao pode editar o admin master');return}
+  const isAdmin=CU&&CU.role==='admin';
+  // Modal HTML
+  const modalId='editUserModal';
+  let modal=document.getElementById(modalId);
+  if(!modal){
+    modal=document.createElement('div');
+    modal.id=modalId;
+    modal.className='modal-overlay';
+    document.body.appendChild(modal);
+  }
+  // Roles disponiveis: admin so admin pode definir; gestor nao promove a admin nem a gestor
+  const rolesDisponiveis=isAdmin?[
+    {v:'admin',l:'Admin'},{v:'gestor',l:'Gestor'},{v:'operador',l:'Vendedor'}
+  ]:[
+    {v:'operador',l:'Vendedor'}
+  ];
+  const roleOpts=rolesDisponiveis.map(r=>`<option value="${r.v}"${target.role===r.v?' selected':''}>${r.l}</option>`).join('');
+  modal.style.display='flex';
+  modal.innerHTML=`<div class="modal-box" style="max-width:480px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="font-size:16px;font-weight:700">✎ Editar Usuário</div>
+      <button class="btn btn-sm" onclick="document.getElementById('${modalId}').style.display='none'">✕</button>
+    </div>
+    <div style="font-size:11px;color:var(--t3);margin-bottom:16px">Editando: <b style="color:var(--t1)">${esc(target.name)}</b> (login atual: <code>${esc(target.user)}</code>)</div>
+    <div class="form-group">
+      <label class="form-label">Nome completo</label>
+      <input class="form-input" id="euName" type="text" value="${esc(target.name||'')}" placeholder="Nome">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Login (e-mail/username)</label>
+      <input class="form-input" id="euUsername" type="text" value="${esc(target.user||'')}" placeholder="login">
+      <div style="font-size:10px;color:var(--t3);margin-top:4px">Trocar o login altera como o usuário entra no sistema. Use com cuidado.</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Perfil</label>
+      <select class="form-input" id="euRole">${roleOpts}</select>
+      ${!isAdmin?'<div style="font-size:10px;color:var(--t3);margin-top:4px">Como gestor, você só pode definir vendedores.</div>':''}
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="login-btn" style="flex:1" onclick="saveEditUser('${esc(targetUser)}')">💾 Salvar</button>
+      <button class="btn" style="padding:12px 20px" onclick="document.getElementById('${modalId}').style.display='none'">Cancelar</button>
+    </div>
+    <div class="login-error" id="euError" style="margin-top:10px"></div>
+  </div>`;
+}
+async function saveEditUser(targetUser){
+  const name=document.getElementById('euName').value.trim();
+  const newUsername=document.getElementById('euUsername').value.trim().toLowerCase();
+  const role=document.getElementById('euRole').value;
+  const err=document.getElementById('euError');
+  err.textContent='';
+  if(!name){err.textContent='Nome obrigatorio';return}
+  if(!newUsername){err.textContent='Login obrigatorio';return}
+  try{
+    const body={action:'update_user',targetUser,name,role};
+    if(newUsername!==targetUser.toLowerCase())body.newUsername=newUsername;
+    const res=await apiFetch('/api/auth',{method:'POST',body:JSON.stringify(body)});
+    const d=await res.json();
+    if(!d.ok){err.textContent='Erro: '+(d.error||'falha');return}
+    document.getElementById('editUserModal').style.display='none';
+    showToast?.(d.mensagem||'Usuario atualizado','success');
+    await loadUsersFromApi();
+    renderApp();
+  }catch(e){err.textContent='Erro: '+e.message}
 }
 async function editBankCodes(u){
   const users=getU()||[];
@@ -4642,8 +4724,8 @@ async function selecionarConsulta(id) {
   cltConsultaState.filaId = id;
   try { localStorage.setItem('clt_fila_atual', id); } catch {}
   const _scroll = () => setTimeout(() => {
-    const el = document.querySelector('.clt-detalhe-bloco');
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Scroll pro topo da pagina — detalhe aparece logo abaixo do form
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, 150);
   // Se ja esta na pilha, so re-renderiza
   const pilha = cltConsultaState.consultas || [];
@@ -4740,7 +4822,45 @@ async function rodarConsultaCLT(opts) {
 
   const nomeManualEl = document.getElementById('cltNome');
   const nomeManual = opts.nome || (nomeManualEl ? (nomeManualEl.value || '').trim() : '');
+  const dataNascEl = document.getElementById('cltDataNasc');
+  const dataNasc = opts.dataNascimento || (dataNascEl ? (dataNascEl.value || '').trim() : '');
+  const sexoEl = document.getElementById('cltSexo');
+  const sexo = opts.sexo || (sexoEl ? (sexoEl.value || '').trim() : '');
   const incluirC6 = opts.incluirC6 !== undefined ? opts.incluirC6 : true;
+  const forceNew = opts.forceNew === true;
+
+  // ─── DEDUP: se ja tem consulta DESSE CPF na pilha (em andamento OU concluida
+  // ha < 10min), NAO cria nova — abre a existente
+  if (!forceNew) {
+    const pilha = cltConsultaState.consultas || [];
+    const recentes = cltConsultaState.recentes || [];
+    const existenteNaPilha = pilha.find(c => c.cpf === cpf);
+    if (existenteNaPilha) {
+      // Abre a existente
+      cltConsultaState.selecionadaId = existenteNaPilha.id;
+      cltConsultaState.filaId = existenteNaPilha.id;
+      try { localStorage.setItem('clt_fila_atual', existenteNaPilha.id); } catch {}
+      if (cpfEl) cpfEl.value = '';
+      if (nomeManualEl) nomeManualEl.value = '';
+      renderApp();
+      setTimeout(() => {
+        const el = document.querySelector('.clt-detalhe-bloco');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 150);
+      // Garante polling rodando se ainda nao concluiu
+      if (existenteNaPilha.result?.statusGeral !== 'concluido') _pollingFila(existenteNaPilha.id);
+      return;
+    }
+    // Procura nas recentes do banco (concluidas, nao na pilha) — reaproveita as < 10min
+    const recente = recentes.find(r => r.cpf === cpf);
+    if (recente) {
+      // Abre via selecionar (ele busca do banco e adiciona na pilha)
+      await selecionarConsulta(recente.id);
+      if (cpfEl) cpfEl.value = '';
+      if (nomeManualEl) nomeManualEl.value = '';
+      return;
+    }
+  }
 
   cltConsultaState.loading = true;
   cltConsultaState.error = null;
@@ -4751,12 +4871,16 @@ async function rodarConsultaCLT(opts) {
   // Limpa inputs depois de capturar
   if (cpfEl) cpfEl.value = '';
   if (nomeManualEl) nomeManualEl.value = '';
+  if (dataNascEl) dataNascEl.value = '';
+  if (sexoEl) sexoEl.value = '';
   renderApp();
 
   try {
     // 1) Cria registro na esteira
     const body = { action: 'criar', cpf, incluirC6 };
     if (nomeManual) body.nome = nomeManual;
+    if (dataNasc) body.dataNascimento = dataNasc;
+    if (sexo) body.sexo = sexo;
     const r1 = await fetch('/api/clt-fila', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
@@ -4783,10 +4907,9 @@ async function rodarConsultaCLT(opts) {
     // Backend dispara os 5 processadores automaticamente — frontend so faz polling
     cltConsultaState.loading = false;
     renderApp();
-    // Scroll automatico pro detalhe (o bloco fica abaixo da lista)
+    // Scroll suave pro topo (form + detalhe ficam visiveis sem rolar)
     setTimeout(() => {
-      const blocoEl = document.querySelector('.clt-detalhe-bloco');
-      if (blocoEl) blocoEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }, 200);
     _pollingFila(d1.id);
   } catch (e) {
@@ -5275,8 +5398,7 @@ function _cltOfertaCard(o, ctx) {
 
   // Card em processamento (esteira está rodando — atualiza sozinho via polling)
   if (o.processando) {
-    h += `<div style="font-size:13px;color:var(--acc);margin-bottom:8px">⏳ ${o.mensagem || 'Processando...'}</div>`;
-    h += `<div style="font-size:11px;color:var(--t3)">A tela atualiza sozinha. Pode demorar até 5min em alguns bancos. Pode fechar a tela e voltar — a consulta continua rodando em background.</div>`;
+    h += `<div style="font-size:12px;color:var(--acc);animation:pulse 1.5s infinite">⏳ ${o.mensagem || 'Processando...'}</div>`;
     h += '</div>';
     return h;
   }
@@ -5479,10 +5601,17 @@ function renderCltConsulta() {
   h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">💼 CLT — Consulta de Oportunidades</div>';
   h += '<div style="font-size:13px;color:var(--t2);margin-bottom:24px">Digite CPF + Nome (opcional). Os bancos são consultados em paralelo — cada card atualiza sozinho conforme termina (não trava esperando todos).</div>';
 
-  h += '<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">';
-  h += '<input class="form-input" id="cltCpf" placeholder="CPF (só números)" maxlength="14" style="flex:1;min-width:180px;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
-  h += '<input class="form-input" id="cltNome" placeholder="Nome completo (opcional)" style="flex:2;min-width:240px;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
+  h += '<div style="display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap">';
+  h += '<input class="form-input" id="cltCpf" placeholder="CPF (só números)" maxlength="14" style="flex:2;min-width:180px;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
+  h += '<input class="form-input" id="cltNome" placeholder="Nome completo (opcional)" style="flex:3;min-width:240px;font-size:16px;padding:14px 18px" onkeydown="if(event.key===\'Enter\')rodarConsultaCLT()">';
   h += '<button class="btn-acc" style="padding:14px 28px;font-size:14px;white-space:nowrap" onclick="rodarConsultaCLT()">🔍 Consultar</button>';
+  h += '</div>';
+  // Linha 2 — campos opcionais que destravam V8 quando os bancos nao trazem
+  h += '<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">';
+  h += '<span style="font-size:11px;color:var(--t3);text-transform:uppercase">Caso falte:</span>';
+  h += '<input class="form-input" id="cltDataNasc" type="date" placeholder="Data nascimento" style="flex:1;min-width:140px;font-size:13px;padding:10px 12px" title="Data de nascimento — opcional, supre quando bancos não trazem (V8 exige)">';
+  h += '<select class="form-input" id="cltSexo" style="flex:0 0 auto;width:110px;font-size:13px;padding:10px 12px" title="Sexo — opcional"><option value="">Sexo (auto)</option><option value="M">Masculino</option><option value="F">Feminino</option></select>';
+  h += '<span style="font-size:10px;color:var(--t3);flex:1;min-width:200px">Esses campos só são usados se PB/Multicorban não trouxerem.</span>';
   h += '</div>';
 
 
@@ -5516,28 +5645,39 @@ function renderCltConsulta() {
     h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:14px">Erro: ${cltConsultaState.error}</div>`;
   }
 
-  // ─── LISTA DE ULTIMAS CONSULTAS (estilo INSS — lista de linhas) ───
-  // Mescla as em andamento (consultas[]) com as recentes do banco
+  // ─── PREPARA dados da pilha + lista ───
   const pilha = Array.isArray(cltConsultaState.consultas) ? cltConsultaState.consultas : [];
   const recentesArr = Array.isArray(cltConsultaState.recentes) ? cltConsultaState.recentes : [];
-  // Monta lista unificada (id, cpf, nome, status, timestamp)
   const idsVistos = new Set();
   const listaUnificada = [];
-  // Primeiro as em andamento (pq tem result completo)
   for (const it of pilha) {
     if (idsVistos.has(it.id)) continue;
     idsVistos.add(it.id);
     const r = it.result || {};
+    // Monta indicadores por banco (4 pontinhos)
+    const ofs = r.ofertas || [];
+    const indicadores = ['presencabank','v8_qi','v8_celcoin','c6'].map(key => {
+      let o;
+      if (key === 'presencabank') o = ofs.find(x => x.banco === 'presencabank');
+      else if (key === 'v8_qi') o = ofs.find(x => x.banco === 'v8' && x.provider === 'QI');
+      else if (key === 'v8_celcoin') o = ofs.find(x => x.banco === 'v8' && x.provider === 'CELCOIN');
+      else if (key === 'c6') o = ofs.find(x => x.banco === 'c6');
+      if (!o) return { key, st: 'pending' };
+      if (o.disponivel) return { key, st: 'ok' };
+      if (o.processando) return { key, st: 'proc' };
+      if (o.bloqueado) return { key, st: 'lock' };
+      return { key, st: 'fail' };
+    });
     listaUnificada.push({
       id: it.id, cpf: it.cpf,
       nome: r.cliente?.nome || '(sem nome)',
       status: r.statusGeral || 'processando',
       ts: it.lastUpdate || Date.now(),
       empregador: r.vinculo?.empregador,
-      ofertasOk: r.totalBancosDisponiveis || 0
+      ofertasOk: r.totalBancosDisponiveis || 0,
+      indicadores
     });
   }
-  // Depois recentes do banco que nao estao em andamento
   for (const r of recentesArr) {
     if (idsVistos.has(r.id)) continue;
     idsVistos.add(r.id);
@@ -5547,6 +5687,16 @@ function renderCltConsulta() {
     });
   }
 
+  // ─── 1) DETALHE DA CONSULTA SELECIONADA (em cima — operador NÃO precisa rolar) ───
+  const selecionadaId = cltConsultaState.selecionadaId;
+  const itemSelecionado = pilha.find(c => c.id === selecionadaId);
+  if (itemSelecionado) {
+    h += _renderConsultaBloco(itemSelecionado);
+  } else if (selecionadaId) {
+    h += '<div style="padding:24px;text-align:center;color:var(--t2);background:var(--card);border-radius:10px;margin-bottom:18px">⏳ Carregando detalhes...</div>';
+  }
+
+  // ─── 2) LISTA DE ÚLTIMAS CONSULTAS (depois do detalhe) ───
   if (listaUnificada.length > 0) {
     h += '<div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px">';
     h += '<div style="font-size:14px;font-weight:700">📁 Últimas Consultas</div>';
@@ -5561,28 +5711,39 @@ function renderCltConsulta() {
       const tsStr = c.ts ? new Date(c.ts).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
       const borderClr = ativo ? 'var(--acc)' : 'var(--brd)';
       const shadow = ativo ? ';box-shadow:0 0 0 2px rgba(59,130,246,.18)' : '';
-      h += `<div onclick="selecionarConsulta('${c.id}')" class="clt-row-hover" style="padding:12px 16px;background:var(--card);border:1px solid ${borderClr};border-radius:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:border-color .15s${shadow}">`;
-      h += '<div style="flex:1">';
-      h += `<div style="display:flex;gap:8px;align-items:center;margin-bottom:3px">${statusBadge}<div style="font-size:14px;font-weight:700">${c.nome}</div>`;
+      // Mini-indicadores por banco (visual de progresso)
+      let indicHtml = '';
+      if (Array.isArray(c.indicadores)) {
+        const labelMap = { presencabank: 'PB', v8_qi: 'QI', v8_celcoin: 'CC', c6: 'C6' };
+        const colorMap = {
+          ok: 'background:rgba(34,197,94,.18);color:var(--grn)',
+          proc: 'background:rgba(59,130,246,.18);color:var(--acc);animation:pulse 1.5s infinite',
+          lock: 'background:rgba(245,194,66,.15);color:var(--ylw)',
+          fail: 'background:rgba(239,68,68,.12);color:var(--red)',
+          pending: 'background:rgba(156,163,175,.12);color:var(--t3)'
+        };
+        const iconMap = { ok: '✓', proc: '⏳', lock: '🔒', fail: '✕', pending: '·' };
+        indicHtml = '<div style="display:flex;gap:4px;margin-top:5px">';
+        for (const ind of c.indicadores) {
+          const cor = colorMap[ind.st] || colorMap.pending;
+          const ico = iconMap[ind.st] || '·';
+          indicHtml += `<span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;${cor}">${labelMap[ind.key]} ${ico}</span>`;
+        }
+        indicHtml += '</div>';
+      }
+      h += `<div onclick="selecionarConsulta('${c.id}')" class="clt-row-hover" style="padding:10px 14px;background:var(--card);border:1px solid ${borderClr};border-radius:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:border-color .15s${shadow}">`;
+      h += '<div style="flex:1;min-width:0">';
+      h += `<div style="display:flex;gap:8px;align-items:center;margin-bottom:2px">${statusBadge}<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.nome}</div>`;
       if (c.ofertasOk) h += `<span style="font-size:10px;color:var(--grn);font-weight:700">· ${c.ofertasOk} oferta(s)</span>`;
       h += '</div>';
-      h += `<div style="font-size:11px;color:var(--t3)"><b>CPF:</b> ${c.cpf}${c.empregador?` · ${c.empregador.substring(0,40)}`:''}</div>`;
+      h += `<div style="font-size:10px;color:var(--t3)"><b>CPF:</b> ${c.cpf}${c.empregador?` · ${c.empregador.substring(0,30)}`:''}</div>`;
+      h += indicHtml;
       h += '</div>';
-      if (tsStr) h += `<div style="font-size:11px;color:var(--t3)">${tsStr}</div>`;
+      if (tsStr) h += `<div style="font-size:10px;color:var(--t3);white-space:nowrap">${tsStr}</div>`;
       h += '</div>';
     }
     h += '</div>';
-  }
-
-  // ─── DETALHE DA CONSULTA SELECIONADA (so uma por vez) ───
-  const selecionadaId = cltConsultaState.selecionadaId;
-  const itemSelecionado = pilha.find(c => c.id === selecionadaId);
-  if (itemSelecionado) {
-    h += _renderConsultaBloco(itemSelecionado);
-  } else if (selecionadaId) {
-    // Selecionada mas nao esta em pilha — busca do banco
-    h += '<div style="padding:24px;text-align:center;color:var(--t2)">⏳ Carregando detalhes...</div>';
-  } else if (listaUnificada.length === 0 && !cltConsultaState.loading && !cltConsultaState.error) {
+  } else if (!itemSelecionado && !cltConsultaState.loading && !cltConsultaState.error) {
     h += '<div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">Digite um CPF acima pra começar.</div>';
   }
 
@@ -6898,9 +7059,9 @@ const MENU=[
       {group:'Gestão',icon:'📊',needsRole:['gestor','admin'],items:[
         {k:'gestao',icon:'📊',label:'Relatórios'}
       ]},
-      {group:'Admin',icon:'⚙️',needsRole:['admin'],items:[
+      {group:'Admin',icon:'⚙️',needsRole:['admin','gestor'],items:[
         {k:'wpp',icon:'📱',label:'Conexões WhatsApp',needsRole:['gestor','admin']},
-        {k:'admin',icon:'👥',label:'Usuários & Bancos'}
+        {k:'admin',icon:'👥',label:'Usuários & Bancos',needsRole:['gestor','admin']}
       ]}
     ]},
   {product:'clt',icon:'💼',label:'CLT',active:true,

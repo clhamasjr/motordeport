@@ -79,13 +79,39 @@ async function patchBanco(id, banco, payload) {
 }
 
 // Espera ate aparecer cliente.nome+dataNascimento no registro (timeout configuravel)
-// Usado pelos processadores V8 que precisam dos dados do enriquecimento
+// Usado pelos processadores V8 que precisam dos dados do enriquecimento.
+// FALLBACK: se PB+MC nao trouxerem, busca em clt_clientes (cache de consultas
+// anteriores) e mescla na fila. Resolve casos onde o cliente ja foi consultado
+// antes mas a consulta atual nao trouxe dados (ex: PB sem vinculo nesta vez).
 async function aguardarCliente(id, timeoutMs = 9000, intervalMs = 700) {
   const inicio = Date.now();
   while (Date.now() - inicio < timeoutMs) {
     const { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
     const cli = row?.cliente || {};
     if (cli.nome && cli.dataNascimento) return cli;
+
+    // Apos 4s sem ter dados completos da consulta atual, busca em clt_clientes
+    // (cache de qualquer consulta anterior do mesmo CPF)
+    if (Date.now() - inicio > 4000 && row?.cpf) {
+      try {
+        const { data: clienteSalvo } = await dbSelect('clt_clientes', { filters: { cpf: row.cpf }, single: true });
+        if (clienteSalvo) {
+          const enriquecido = { ...cli };
+          if (clienteSalvo.nome && !enriquecido.nome) enriquecido.nome = clienteSalvo.nome;
+          if (clienteSalvo.data_nascimento && !enriquecido.dataNascimento) enriquecido.dataNascimento = clienteSalvo.data_nascimento;
+          if (clienteSalvo.sexo && !enriquecido.sexo) enriquecido.sexo = clienteSalvo.sexo;
+          if (clienteSalvo.nome_mae && !enriquecido.nomeMae) enriquecido.nomeMae = clienteSalvo.nome_mae;
+          if (clienteSalvo.telefones?.length && !enriquecido.telefones?.length) enriquecido.telefones = clienteSalvo.telefones;
+          if (clienteSalvo.emails?.length && !enriquecido.emails?.length) enriquecido.emails = clienteSalvo.emails;
+          if (enriquecido.nome && enriquecido.dataNascimento) {
+            // Salva enriquecido na fila pra outros processadores aproveitarem
+            await dbUpdate('clt_consultas_fila', { id }, { cliente: enriquecido });
+            return enriquecido;
+          }
+        }
+      } catch { /* segue tentando aguardar PB/MC */ }
+    }
+
     await new Promise(r => setTimeout(r, intervalMs));
   }
   return null;
@@ -379,6 +405,9 @@ export default async function handler(req) {
     const cpf = normalizeCPF(body.cpf);
     if (!cpf) return jsonError('CPF inválido', 400, req);
     const nomeManual = (body.nome || '').trim() || null;
+    const dataNascManual = (body.dataNascimento || '').trim() || null;
+    const sexoManual = (body.sexo || '').toUpperCase().startsWith('F') ? 'F'
+                     : (body.sexo || '').toUpperCase().startsWith('M') ? 'M' : null;
     const incluirC6 = body.incluirC6 !== false; // default true
 
     const inicial = {
@@ -392,7 +421,12 @@ export default async function handler(req) {
     // PRE-POPULA cliente com o que ja sabemos desse CPF (clt_clientes acumulado).
     // Assim mesmo que o PB ou MC nao tragam dados nessa consulta, o V8 ainda
     // consegue gerar termo com dataNasc/sexo de consultas anteriores.
-    let clienteInicial = nomeManual ? { nome: nomeManual } : {};
+    // Manuais tem PRIORIDADE — operador supre o que bancos nao trazem
+    let clienteInicial = {};
+    if (nomeManual) clienteInicial.nome = nomeManual;
+    if (dataNascManual) clienteInicial.dataNascimento = dataNascManual;
+    if (sexoManual) clienteInicial.sexo = sexoManual;
+
     try {
       const { data: clienteSalvo } = await dbSelect('clt_clientes', {
         filters: { cpf }, single: true
