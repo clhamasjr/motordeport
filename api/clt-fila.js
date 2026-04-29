@@ -491,6 +491,40 @@ export default async function handler(req) {
     }, 200, req);
   }
 
+  // ─── VERIFICAR V8 (verificacao leve — so consultarPorCPF, sem gerar termo) ──
+  // Usado quando V8 esta em status intermediario (CONSENT_APPROVED, WAITING_*)
+  // pra atualizar sem refazer todo o processarV8 (que estoura timeout do Edge)
+  if (action === 'verificarV8') {
+    const id = body.id;
+    const provider = body.provider; // 'QI' ou 'CELCOIN'
+    if (!id || !provider) return jsonError('id e provider obrigatórios', 400, req);
+    const { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+    if (!row) return jsonError('Fila não encontrada', 404, req);
+
+    const r = await callApi('/api/v8', { action: 'consultarPorCPF', cpf: row.cpf, provider }, auth, secret);
+    const v8 = r.data || {};
+    const banco = provider === 'QI' ? 'v8_qi' : 'v8_celcoin';
+
+    if (v8.encontrado && v8.status === 'SUCCESS') {
+      await patchBanco(id, banco, {
+        status: 'ok', disponivel: true, consultId: v8.consultId,
+        mensagem: `Cliente elegível — margem R$ ${parseFloat(v8.availableMarginValue || 0).toFixed(2)}`,
+        dados: { margemDisponivel: parseFloat(v8.availableMarginValue || 0), consultId: v8.consultId }
+      });
+    } else if (['REJECTED', 'FAILED'].includes(v8.status)) {
+      await patchBanco(id, banco, {
+        status: 'falha', mensagem: `❌ ${v8.status}: ${v8.descricao || 'cliente rejeitado'}`
+      });
+    } else if (v8.encontrado) {
+      // Continua processando — atualiza só atualizado_em pra polling saber que checamos
+      await patchBanco(id, banco, {
+        status: 'processando', processando: true, consultId: v8.consultId,
+        mensagem: `${v8.status} — aguardando confirmação`
+      });
+    }
+    return jsonResp({ success: true, banco, status: v8.status }, 200, req);
+  }
+
   // ─── PROCESSAR ─────────────────────────────────────────────
   if (action === 'processar') {
     const id = body.id;

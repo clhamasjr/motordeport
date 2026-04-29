@@ -3495,6 +3495,22 @@ async function wppCheckWebhook(instName){
   }catch(e){alert('Erro: '+e.message)}
 }
 // Diagnóstico completo: status conexão, webhook, chatwoot nativo, settings
+// Reset completo: desliga Chatwoot nativo + apaga webhook + reconfigura Sofia do zero
+async function wppResetWebhook(instName){
+  if(!confirm(`RESET completo do webhook de "${instName}"?\n\nIsso vai:\n1. Desligar Chatwoot nativo\n2. Apagar webhook atual\n3. Reconfigurar Sofia do zero (com secret embutido)\n\nContinuar?`))return;
+  try{
+    showToast?.('Resetando…','info');
+    const r=await apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'resetWebhook',instance:instName})});
+    const d=await r.json();
+    const fin=d?.final||{};
+    const enabled=!!(fin.enabled||fin.webhook?.enabled);
+    const url=fin.url||fin.webhook?.url||'(sem url)';
+    let msg=`RESET concluído.\n\nFinal: ${enabled?'✅ ATIVO':'❌ INATIVO'}\nURL: ${url}\n\nLog:\n`;
+    for(const step of (d.log||[])){msg+=`• ${step.step}: ${step.ok?'OK':'ERRO '+(step.error||'')}\n`}
+    msg+='\n\n--- RAW ---\n'+JSON.stringify(d,null,2).substring(0,1500);
+    alert(msg);
+  }catch(e){alert('Erro: '+e.message)}
+}
 async function wppDiag(instName){
   try{
     showToast?.('Diagnosticando…','info');
@@ -3885,6 +3901,7 @@ function renderWhatsApp(){
     }
     if(isAdmin){
       html+=`<button class="btn btn-sm" style="font-size:10px;border-color:var(--cyan);color:var(--cyan)" onclick="wppSetupSofia('${esc(name)}')" title="Apontar webhook pra Sofia (api/agent)">🤖 Sofia</button>`;
+      html+=`<button class="btn btn-sm" style="font-size:10px;border-color:var(--ylw);color:var(--ylw)" onclick="wppResetWebhook('${esc(name)}')" title="Reset completo do webhook (limpa Chatwoot nativo + reconfigura Sofia)">♻️ Reset</button>`;
       html+=`<button class="btn btn-sm" style="font-size:10px;border-color:var(--org);color:var(--org)" onclick="wppDiag('${esc(name)}')" title="Diagnóstico completo (status, webhook, chatwoot)">🩺 Diag</button>`;
       html+=`<button class="btn btn-sm btn-red" style="font-size:10px" onclick="wppDeleteInstance('${esc(name)}')">🗑️</button>`;
     }
@@ -5105,9 +5122,10 @@ async function _pollingFila(filaId) {
           _dispararDetalhesParcial(result);
 
           // RE-DISPARA processadores travados:
-          // - status='pending' apos 20s (disparo inicial falhou)
-          // - status='processando' com atualizado_em > 30s (Edge function morreu
-          //   por timeout — PB / V8 podem demorar mais que 25s do Edge limit)
+          // - 'pending' apos 20s -> processar (full)
+          // - V8 em 'processando' >25s -> verificarV8 (leve, so consultarPorCPF)
+          //   evita timeout 504 que acontece no processar full do V8
+          // - Outros bancos em 'processando' >30s -> processar (full) com force
           const elapsedMs = Date.now() - inicio;
           if (elapsedMs > 20000) {
             const bancos = d.fila.bancos || {};
@@ -5115,16 +5133,29 @@ async function _pollingFila(filaId) {
               const bk = bancos[bancoKey];
               if (!bk) continue;
               const isPending = bk.status === 'pending';
-              const isStuckProcessing = bk.status === 'processando'
-                && bk.atualizado_em
-                && (Date.now() - new Date(bk.atualizado_em).getTime() > 30000);
-              if (isPending || isStuckProcessing) {
+              const idleMs = bk.atualizado_em
+                ? (Date.now() - new Date(bk.atualizado_em).getTime())
+                : 999999;
+              const isV8Stuck = (bancoKey === 'v8_qi' || bancoKey === 'v8_celcoin')
+                && bk.status === 'processando' && idleMs > 25000;
+              const isOutroStuck = (bancoKey !== 'v8_qi' && bancoKey !== 'v8_celcoin')
+                && bk.status === 'processando' && idleMs > 30000;
+
+              if (isV8Stuck) {
+                // Verificacao leve do V8 — evita 504 do processar full
+                const provider = bancoKey === 'v8_qi' ? 'QI' : 'CELCOIN';
+                fetch('/api/clt-fila', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+                  body: JSON.stringify({ action: 'verificarV8', id: filaId, provider })
+                }).catch(() => {});
+              } else if (isPending || isOutroStuck) {
                 fetch('/api/clt-fila', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
                   body: JSON.stringify({
                     action: 'processar', id: filaId, banco: bancoKey,
-                    force: isStuckProcessing // forca re-execucao se morreu por timeout
+                    force: isOutroStuck
                   })
                 }).catch(() => {});
               }
