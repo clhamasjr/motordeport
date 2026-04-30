@@ -68,12 +68,21 @@ async function loginAutomatico() {
   // Senha vai base64 encoded
   const senhaB64 = (typeof btoa !== 'undefined') ? btoa(senha) : Buffer.from(senha).toString('base64');
 
+  // dnaBrowser: fingerprint minimo. Mercantil parece nao validar conteudo,
+  // so checa se vem string nao-null. Pegamos de env MERCANTIL_DNA_BROWSER ou
+  // fallback pra um JSON minimo que costuma passar.
+  const dnaBrowser = process.env.MERCANTIL_DNA_BROWSER || JSON.stringify({
+    VERSION: '2.1.2',
+    MFP: { BR: 'chrome', BV: '147', UA },
+    UC: { ASYNC_FP: false, ASYNC_DOM_CHECK: true }
+  });
+
   const payload = {
     loginUsuario: usuario,
     senha: senhaB64,
     agenteUsuario: UA,
     agenteUsuarioData: null,
-    dnaBrowser: null,
+    dnaBrowser,
     enderecoIp: null,
     reCaptchaToken: null,
     sessaoIdExterna: '',
@@ -86,10 +95,14 @@ async function loginAutomatico() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
         'Origin': 'https://meu.bancomercantil.com.br',
         'Referer': 'https://meu.bancomercantil.com.br/',
-        'User-Agent': UA
+        'User-Agent': UA,
+        'sec-ch-ua': '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"'
       },
       body: JSON.stringify(payload)
     });
@@ -98,8 +111,25 @@ async function loginAutomatico() {
     return { ok: false, error: 'Falha de rede no login: ' + e.message };
   }
   if (!res.ok) {
-    let erro; try { erro = JSON.parse(text); } catch { erro = { raw: text.substring(0, 300) }; }
-    return { ok: false, error: 'Login Mercantil HTTP ' + res.status, raw: erro };
+    let erro; try { erro = JSON.parse(text); } catch { erro = { raw: text.substring(0, 500) }; }
+    // Loga detalhado pra debug — runtime logs do Vercel mostram
+    console.log('[MERCANTIL_LOGIN_FAIL]', {
+      status: res.status,
+      usuario: usuario.substring(0, 4) + '***',
+      senhaLen: senha.length,
+      senhaB64Len: senhaB64.length,
+      raw: text.substring(0, 500)
+    });
+    return {
+      ok: false,
+      error: 'Login Mercantil HTTP ' + res.status + ': ' + (erro?.mensagem || erro?.message || erro?.error || erro?.raw?.substring(0,150) || 'sem detalhes'),
+      httpStatus: res.status,
+      raw: erro,
+      _hint: res.status === 401 ? 'Credenciais rejeitadas — verifique MERCANTIL_USER e MERCANTIL_PASS no Vercel. Tente fazer login manual no portal pra confirmar que estao ativas.'
+           : res.status === 403 ? 'Acesso bloqueado — usuario pode estar travado por tentativas erradas. Logue manualmente pra desbloquear.'
+           : res.status === 422 ? 'Body invalido — pode ser captcha agora ou campo faltando.'
+           : null
+    };
   }
   let data; try { data = JSON.parse(text); } catch { return { ok: false, error: 'Response invalido', raw: text.substring(0, 200) }; }
 
