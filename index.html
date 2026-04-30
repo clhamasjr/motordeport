@@ -5242,6 +5242,14 @@ function _dispararDetalhesParcial(result, opts) {
     set.add(key);
     detalhesStore[key] = { calculando: true };
     o._calculando = true;
+    // Bancos que NAO precisam de clt-simular-detalhe (digitacao manual ou
+    // sem fluxo de simulacao automatica): skip silencioso, sem mensagem de erro
+    if (o.banco === 'joinbank' || o.banco === 'mercantil') {
+      o._calculando = false;
+      detalhesStore[key] = { skip: true };
+      set.delete(key);
+      continue;
+    }
     let payload = null;
     if (o.banco === 'presencabank' && cli.nome && tel) {
       payload = { banco: 'presencabank', cpf, nome: cli.nome, telefone: tel };
@@ -5252,7 +5260,11 @@ function _dispararDetalhesParcial(result, opts) {
     }
     if (!payload) {
       o._calculando = false;
-      detalhesStore[key] = { erro: 'Faltam dados pra simular detalhe (nome ou telefone)' };
+      // Mensagem só pra PB (que precisa nome+telefone). Outros bancos sem
+      // payload mappeado simplesmente nao disparam silenciosamente.
+      if (o.banco === 'presencabank') {
+        detalhesStore[key] = { erro: 'Faltam dados pra simular tabela detalhada (nome ou telefone)' };
+      }
       set.delete(key);
       continue;
     }
@@ -5707,9 +5719,13 @@ function _cltOfertaCard(o, ctx) {
     h += '</div>';
     if (d.totalTabelas > 1) h += `<div style="font-size:11px;color:var(--t3);margin-top:8px">+${d.totalTabelas-1} outras tabelas disponíveis</div>`;
   } else if (o.disponivel && o.elegibilidade) {
-    h += '<div style="color:var(--ylw);font-size:13px;margin-bottom:8px">📊 Cliente elegível</div>';
-    h += `<div style="font-size:13px"><b>Margem:</b> R$ ${(o.elegibilidade.margemDisponivel||0).toFixed(2)}</div>`;
-    if (o.elegibilidade.empregador) h += `<div style="font-size:12px;color:var(--t2)">${o.elegibilidade.empregador}</div>`;
+    h += '<div style="color:var(--grn);font-size:13px;margin-bottom:8px">📊 Cliente elegível</div>';
+    const margem = parseFloat(o.elegibilidade.margemDisponivel || 0);
+    if (margem > 0) {
+      h += `<div style="font-size:13px"><b>Margem:</b> R$ ${margem.toFixed(2)}</div>`;
+    }
+    if (o.elegibilidade.empregador) h += `<div style="font-size:12px;color:var(--t2);margin-top:4px"><b>Empregador:</b> ${(o.elegibilidade.empregador||'').substring(0,40)}</div>`;
+    if (o.elegibilidade.empregadorCnpj) h += `<div style="font-size:11px;color:var(--t3)">CNPJ: ${o.elegibilidade.empregadorCnpj}</div>`;
     if (o._calculando) {
       h += `<div style="margin-top:10px;padding:8px;background:rgba(59,130,246,.08);border-radius:6px;font-size:11px;color:var(--acc)">⏳ Calculando simulação detalhada...</div>`;
     } else if (o._erroDetalhe) {
@@ -5718,6 +5734,9 @@ function _cltOfertaCard(o, ctx) {
         : o.banco;
       h += `<div style="margin-top:10px;font-size:11px;color:var(--red)">⚠️ ${o._erroDetalhe}</div>`;
       h += `<button class="btn btn-sm" style="width:100%;margin-top:8px;border-color:var(--acc);color:var(--acc)" onclick="reTentarSimulacao('${bancoKey}')">🔄 Re-tentar simulação</button>`;
+    } else if (o.banco === 'joinbank') {
+      // QualiBanking elegivel ainda nao tem clt-simular-detalhe automatico
+      h += `<div style="font-size:11px;color:var(--t3);margin-top:6px">Clique <b>Digitar</b> pra simular tabela exata.</div>`;
     } else if (o.mensagem) {
       h += `<div style="font-size:11px;color:var(--t3);margin-top:6px">${o.mensagem}</div>`;
     }
