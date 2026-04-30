@@ -348,19 +348,45 @@ async function processarMercantil(id, cpf, auth, secret) {
     return;
   }
 
-  if (mb.success && mb.temVinculo) {
+  // Mercantil retorna o nome do cliente — aproveita pra enriquecer
+  if (mb.nomeCliente) {
+    await mesclarCliente(id, { nome: mb.nomeCliente });
+  }
+
+  if (mb.success && mb.temCadastro && mb.tokenValidoConsignadoPrivado) {
+    // CASO IDEAL: cliente cadastrado + ja autorizou consulta consignado privado
     await patchBanco(id, 'mercantil', {
       status: 'ok',
       disponivel: true,
       operacaoId: mb.operacaoId,
-      mensagem: `Cliente elegível — operação ${mb.operacaoId}. Clique Digitar pra simular tabela.`,
-      dados: { operacaoId: mb.operacaoId, convenio: mb.convenio }
+      nomeCliente: mb.nomeCliente,
+      mensagem: `Cliente elegível — clique Digitar pra simular tabela.`,
+      dados: { operacaoId: mb.operacaoId, convenio: mb.convenio, nomeCliente: mb.nomeCliente }
+    });
+  } else if (mb.success && mb.temCadastro && mb.precisaAutorizacao) {
+    // Cliente conhecido mas precisa autorizar consulta — proximo passo: gerar token/termo
+    await patchBanco(id, 'mercantil', {
+      status: 'bloqueado',
+      bloqueado: true,
+      operacaoId: mb.operacaoId,
+      nomeCliente: mb.nomeCliente,
+      precisaAutorizacao: true,
+      mensagem: `Cliente cadastrado (${mb.nomeCliente}) — precisa autorizar consulta consignado privado primeiro.`,
+      dados: { operacaoId: mb.operacaoId, nomeCliente: mb.nomeCliente }
+    });
+  } else if (mb.semCadastro) {
+    // 400 Bad Request — cliente novo / sem ficha
+    await patchBanco(id, 'mercantil', {
+      status: 'falha',
+      disponivel: false,
+      mensagem: 'Cliente sem cadastro prévio no Mercantil',
+      _raw_response: mb
     });
   } else {
     await patchBanco(id, 'mercantil', {
       status: 'falha',
       disponivel: false,
-      mensagem: mb.dados?.mensagem || mb.error || 'Cliente sem vínculo no convênio MTE',
+      mensagem: mb.mensagem || mb.error || 'Falha consulta Mercantil',
       _raw_response: mb
     });
   }

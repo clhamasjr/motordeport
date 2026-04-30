@@ -146,14 +146,28 @@ export default async function handler(req) {
     };
 
     const r = await mbCall('POST', `${SITE_BFF}/PropostasProspect/IniciarOperacao`, payload);
+    const d = r.data || {};
+    // Estrutura do response (200 OK):
+    // { id: UUID, cpf, nomeCliente, modalidadeConvenio, propostaComboId,
+    //   tokenBeneficiarioInssValido, tokenValidoConsignadoPrivado }
+    const operacaoId = d.id || d.operacaoId || null;
+    const tokenValido = d.tokenValidoConsignadoPrivado === true;
     return j({
       success: r.ok,
       httpStatus: r.status,
       cpf,
       convenio: convenio.nome,
-      operacaoId: r.data?.operacaoId || r.data?.id || null,
-      temVinculo: r.ok && !!(r.data?.operacaoId || r.data?.id),
-      dados: r.data,
+      operacaoId,
+      temCadastro: r.ok && !!operacaoId,             // Mercantil conhece o cliente
+      nomeCliente: d.nomeCliente || null,            // nome retornado pelo banco
+      tokenValidoConsignadoPrivado: tokenValido,     // cliente autorizou consulta?
+      tokenBeneficiarioInssValido: d.tokenBeneficiarioInssValido === true,
+      precisaAutorizacao: r.ok && !tokenValido,      // se conhece mas sem token valido
+      semCadastro: !r.ok && r.status === 400,        // 400 = cliente novo / sem ficha
+      mensagem: r.ok
+        ? (tokenValido ? 'Cliente elegível com autorização válida' : 'Cliente cadastrado — precisa autorizar consulta consignado privado')
+        : (r.status === 400 ? 'Cliente sem cadastro prévio no Mercantil' : 'Erro: ' + (d.mensagem || d.erro || r.status)),
+      dados: d,
       _payload: payload
     }, 200, req);
   }
