@@ -38,34 +38,104 @@ const CONVENIOS = {
   MTE: { id: 4325761, nome: 'MINISTERIO DO TRABALHO E EMPREGO MTE' }
 };
 
-// Cache do token JWT (TTL ~12h padrao)
+// Cache do token JWT (TTL ~12h padrao). Auto-renova via login quando expira.
 let tokenCache = { token: null, sessaoId: null, ts: 0, exp: 0 };
 
-// TODO: implementar quando soubermos endpoint de LOGIN
-// Por enquanto, aceita JWT pre-gerado via env MERCANTIL_JWT (manual)
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
+
+// Decodifica payload do JWT (base64url -> JSON)
+function decodeJwtPayload(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const json = (typeof atob !== 'undefined') ? atob(b64) : Buffer.from(b64, 'base64').toString();
+    return JSON.parse(json);
+  } catch { return null; }
+}
+
+// LOGIN AUTOMATICO no Mercantil — usa MERCANTIL_USER + MERCANTIL_PASS das env vars.
+// Endpoint: POST /pcb/sitebff/api/Usuarios/Autenticacao
+// Senha vai em base64. Response retorna { access_token: JWT } com sessaoId no payload.
+async function loginAutomatico() {
+  const usuario = process.env.MERCANTIL_USER;
+  const senha = process.env.MERCANTIL_PASS;
+  if (!usuario || !senha) {
+    return { ok: false, error: 'MERCANTIL_USER e MERCANTIL_PASS precisam estar setados nas env vars' };
+  }
+
+  // Senha vai base64 encoded
+  const senhaB64 = (typeof btoa !== 'undefined') ? btoa(senha) : Buffer.from(senha).toString('base64');
+
+  const payload = {
+    loginUsuario: usuario,
+    senha: senhaB64,
+    agenteUsuario: UA,
+    agenteUsuarioData: null,
+    dnaBrowser: null,
+    enderecoIp: null,
+    reCaptchaToken: null,
+    sessaoIdExterna: '',
+    urlReferencia: 'https://meu.bancomercantil.com.br/'
+  };
+
+  let res, text;
+  try {
+    res = await fetch(`${BASE}${SITE_BFF}/Usuarios/Autenticacao`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Origin': 'https://meu.bancomercantil.com.br',
+        'Referer': 'https://meu.bancomercantil.com.br/',
+        'User-Agent': UA
+      },
+      body: JSON.stringify(payload)
+    });
+    text = await res.text();
+  } catch (e) {
+    return { ok: false, error: 'Falha de rede no login: ' + e.message };
+  }
+  if (!res.ok) {
+    let erro; try { erro = JSON.parse(text); } catch { erro = { raw: text.substring(0, 300) }; }
+    return { ok: false, error: 'Login Mercantil HTTP ' + res.status, raw: erro };
+  }
+  let data; try { data = JSON.parse(text); } catch { return { ok: false, error: 'Response invalido', raw: text.substring(0, 200) }; }
+
+  const accessToken = data.access_token;
+  if (!accessToken) return { ok: false, error: 'access_token ausente na response', raw: data };
+
+  const jwtPayload = decodeJwtPayload(accessToken);
+  const sessaoId = jwtPayload?.['mb.data']?.usuario?.sessaoId;
+  const exp = (jwtPayload?.exp || 0) * 1000;
+
+  if (!sessaoId) return { ok: false, error: 'sessaoId nao encontrado no JWT' };
+
+  // Atualiza cache
+  tokenCache = { token: accessToken, sessaoId, ts: Date.now(), exp };
+  return { ok: true, token: accessToken, sessaoId, exp };
+}
+
+// Pega token valido (cache ou login automatico).
+// Fallback final: env MERCANTIL_JWT + MERCANTIL_SESSAO_ID (manual, deprecated).
 async function getToken() {
-  // 1) Token do cache (se nao expirou)
+  // 1) Cache valido (com 60s margem antes do exp)
   if (tokenCache.token && tokenCache.exp > Date.now() + 60000) {
     return { ok: true, token: tokenCache.token, sessaoId: tokenCache.sessaoId };
   }
-  // 2) JWT pre-gerado em env (fallback temporario)
+  // 2) Tenta login automatico (preferido)
+  const login = await loginAutomatico();
+  if (login.ok) return login;
+  // 3) Fallback: JWT manual em env (deprecated, mas mantem compatibilidade)
   const envToken = process.env.MERCANTIL_JWT;
   const envSessao = process.env.MERCANTIL_SESSAO_ID;
   if (envToken && envSessao) {
-    // Decodifica payload pra pegar exp
-    try {
-      const parts = envToken.split('.');
-      const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-      tokenCache = {
-        token: envToken,
-        sessaoId: envSessao,
-        ts: Date.now(),
-        exp: (payload.exp || 0) * 1000
-      };
-      return { ok: true, token: envToken, sessaoId: envSessao };
-    } catch { /* invalido */ }
+    const payload = decodeJwtPayload(envToken);
+    tokenCache = { token: envToken, sessaoId: envSessao, ts: Date.now(), exp: (payload?.exp || 0) * 1000 };
+    return { ok: true, token: envToken, sessaoId: envSessao };
   }
-  return { ok: false, error: 'JWT nao configurado. Setar MERCANTIL_JWT + MERCANTIL_SESSAO_ID nas env vars (TODO: implementar login automatico)' };
+  return { ok: false, error: login.error || 'Sem credenciais Mercantil configuradas' };
 }
 
 // HTTP helper com auth + headers padrao
@@ -172,6 +242,20 @@ export default async function handler(req) {
     }, 200, req);
   }
 
+  // ─── LOGIN — forca novo login (renova JWT). Util pra testar credenciais ──
+  if (action === 'login') {
+    tokenCache = { token: null, sessaoId: null, ts: 0, exp: 0 }; // limpa cache
+    const r = await loginAutomatico();
+    if (!r.ok) return j({ success: false, error: r.error, raw: r.raw }, 200, req);
+    return j({
+      success: true,
+      sessaoId: r.sessaoId,
+      tokenExpEm: new Date(r.exp).toISOString(),
+      tokenLength: r.token.length,
+      observacao: 'JWT em cache. Use action=iniciarOperacao agora.'
+    }, 200, req);
+  }
+
   // ─── TEST: valida JWT/sessao + tenta IniciarOperacao com CPF teste ──
   if (action === 'test') {
     const tk = await getToken();
@@ -185,5 +269,5 @@ export default async function handler(req) {
     }, 200, req);
   }
 
-  return jsonError(`action invalida. Disponiveis: iniciarOperacao, test`, 400, req);
+  return jsonError(`action invalida. Disponiveis: login, iniciarOperacao, test`, 400, req);
 }
