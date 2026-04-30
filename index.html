@@ -5752,10 +5752,15 @@ function _cltOfertaCard(o, ctx) {
     h += `<button class="btn btn-sm" style="width:100%;margin-top:10px;border-color:var(--acc);color:var(--acc)" onclick="reTentarBanco('${bancoKey}')">🔄 Re-tentar este banco</button>`;
   }
 
-  // Botão "Digitar" só aparece se a oferta está disponível
-  if (o.disponivel && o.detalhes) {
+  // Botão "Digitar" — aparece sempre que cliente eh elegivel (mesmo sem
+  // tabela detalhada ja simulada). Cada banco tem sua sequencia no
+  // /api/clt-digitacao que monta termo + simula tabela exata + cria proposta.
+  if (o.disponivel) {
     const provArg = o.provider ? `,'${o.provider}'` : '';
-    h += `<button class="btn-acc btn-sm" style="width:100%;margin-top:14px" onclick="cltAbrirDigitacao('${o.banco}'${provArg})">📝 Digitar Proposta</button>`;
+    const labelBtn = o.detalhes && o.detalhes.valorLiquido
+      ? '📝 Digitar Proposta'
+      : '📝 Simular & Digitar';
+    h += `<button class="btn-acc btn-sm" style="width:100%;margin-top:14px" onclick="cltAbrirDigitacao('${o.banco}'${provArg})">${labelBtn}</button>`;
   }
 
   h += '</div>';

@@ -210,6 +210,22 @@ export default async function handler(req) {
         result = await callApi('/api/v8', payload, auth);
       }
 
+      else if (banco === 'mercantil') {
+        // Mercantil: ainda nao tem fluxo completo de criar proposta via API
+        // (precisa endpoints de simular tabela + criar proposta capturados via DevTools).
+        // Por enquanto retorna info do operacaoId pra operador continuar manualmente
+        // no portal usando esses dados.
+        result = {
+          ok: false,
+          status: 501,
+          data: {
+            erro: 'Mercantil ainda em modo manual — abra o portal pra simular tabela e criar proposta. Endpoints de simular/criar via API ainda nao capturados.',
+            portalUrl: 'https://meu.bancomercantil.com.br/login',
+            operacaoId: proposta.operacaoId || null
+          }
+        };
+      }
+
       // Extrai info comum do response
       const r = result.data || {};
       const ok = result.ok && (r.propostaNumero || r.operationId || r.propostaId || r.signature || r.id);
