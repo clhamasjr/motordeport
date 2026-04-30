@@ -58,13 +58,22 @@ function ddMmYyToIso(s) {
   return m ? `${m[3]}-${m[2]}-${m[1]}` : s;
 }
 
-// Atualiza UM banco no jsonb bancos sem sobrescrever os outros
+// Atualiza UM banco no jsonb bancos sem sobrescrever os outros.
+// Quando status muda pra terminal (ok/falha/bloqueado/manual_aguardando)
+// limpa flags transitorias (processando) automaticamente — evita ficarem
+// gruda do nos merges e travarem o card no frontend.
 async function patchBanco(id, banco, payload) {
   // Lê estado atual
   const { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
   if (!row) return { error: 'fila nao encontrada' };
   const bancos = { ...(row.bancos || {}) };
-  bancos[banco] = { ...(bancos[banco] || {}), ...payload, atualizado_em: new Date().toISOString() };
+  const merged = { ...(bancos[banco] || {}), ...payload, atualizado_em: new Date().toISOString() };
+  // Limpa flags transitorias quando status virou terminal
+  const terminal = ['ok', 'falha', 'bloqueado', 'manual_aguardando', 'pulado'];
+  if (terminal.includes(merged.status) && payload.processando !== true) {
+    merged.processando = false;
+  }
+  bancos[banco] = merged;
 
   // Marca conclusao se todos terminaram
   const todosTerminaram = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6']
