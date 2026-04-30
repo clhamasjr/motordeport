@@ -361,6 +361,58 @@ export default async function handler(req) {
     }, 200, req);
   }
 
+  // ─── STATUS — diagnostico do token atual (cache memoria + tabela) ──
+  // Retorna info pro painel admin: token valido? exp? quem renovou?
+  if (action === 'status') {
+    let token_valido = false, exp_ms = null, origem = 'nenhum', salvo_por_nome = null, salvo_em = null;
+    // Cache em memoria
+    if (tokenCache.token && tokenCache.exp > Date.now() + 60000) {
+      token_valido = true;
+      exp_ms = tokenCache.exp;
+      origem = 'cache_memoria';
+    }
+    // Tabela
+    try {
+      const { data: sess } = await dbSelect('clt_mercantil_session', { filters: { id: 1 }, single: true });
+      if (sess?.token && sess?.exp) {
+        const expMs = new Date(sess.exp).getTime();
+        const valido = expMs > Date.now() + 60000;
+        // Tabela tem prioridade na exibicao (fonte unica de verdade)
+        if (!exp_ms || expMs > exp_ms) {
+          exp_ms = expMs;
+          token_valido = valido;
+          origem = valido ? 'tabela_supabase' : 'tabela_expirada';
+        }
+        salvo_em = sess.atualizado_em;
+        // Tenta resolver nome do user
+        if (sess.atualizado_por_user_id) {
+          try {
+            const { data: u } = await dbSelect('usuarios', { filters: { id: sess.atualizado_por_user_id }, single: true });
+            salvo_por_nome = u?.nome || u?.username || ('User #' + sess.atualizado_por_user_id);
+          } catch { salvo_por_nome = 'User #' + sess.atualizado_por_user_id; }
+        }
+      }
+    } catch { /* tabela pode nao existir */ }
+    // Env fallback
+    if (!token_valido && process.env.MERCANTIL_JWT && process.env.MERCANTIL_SESSAO_ID) {
+      const p = decodeJwtPayload(process.env.MERCANTIL_JWT);
+      const expEnv = (p?.exp || 0) * 1000;
+      if (expEnv > Date.now() + 60000) {
+        token_valido = true;
+        exp_ms = expEnv;
+        origem = 'env_var';
+      }
+    }
+    return jsonResp({
+      success: true,
+      token_valido,
+      exp_ms,
+      origem,
+      salvo_por_nome,
+      salvo_em
+    }, 200, req);
+  }
+
   // ─── SET JWT — operador cola JWT do portal Mercantil (renovacao manual) ──
   // Workaround: banco bloqueia login programatico, entao o operador loga
   // no portal manualmente, copia o Bearer JWT do DevTools, cola aqui.

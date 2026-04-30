@@ -637,7 +637,9 @@ export default async function handler(req) {
       status_geral: 'processando',
       bancos: inicial,
       cliente: clienteInicial,
-      iniciado_em: new Date().toISOString()
+      iniciado_em: new Date().toISOString(),
+      criada_por_user_id: user?.id || null,
+      criada_por_nome: user?.nome || user?.username || null
     });
     if (error) return jsonError('Erro criando fila: ' + error, 500, req);
 

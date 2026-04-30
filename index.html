@@ -5317,15 +5317,34 @@ async function liberarC6Consulta() {
   const cpf = r.cliente?.cpf;
   const nome = (r.cliente?.nome || '').replace(/'/g, "\\'");
   const dataNasc = r.cliente?.dataNascimento || '';
-  const tel = r.cliente?.telefones?.[0]?.completo || '';
+  let tel = r.cliente?.telefones?.[0]?.completo || '';
 
   if (!cpf || !nome || !dataNasc) {
     alert('Faltam dados básicos do cliente (nome ou data de nascimento). Preencha o nome na consulta e tente novamente.');
     return;
   }
 
-  // Gera link de selfie — funciona com ou sem telefone (se sem tel,
-  // só mostra o link na tela pra operador copiar e enviar manualmente)
+  // Sem telefone → pede pro operador digitar (prompt) pra mandar SMS direto pro cliente.
+  if (!tel) {
+    const inp = prompt('📱 Telefone do cliente não encontrado nas bases.\n\nDigite o celular pra enviar o link de autorização C6 (com DDD, ex: 15998583505):');
+    if (inp === null) return; // cancelou
+    const digits = String(inp).replace(/\D/g, '');
+    if (digits.length < 10 || digits.length > 11) {
+      alert('Telefone inválido. Use formato: DDD + 9 dígitos (ex: 15998583505).');
+      return;
+    }
+    tel = digits;
+    // Persiste no state pra próximas chamadas usarem
+    if (!r.cliente.telefones) r.cliente.telefones = [];
+    r.cliente.telefones.unshift({
+      ddd: digits.substring(0, 2),
+      numero: digits.substring(2),
+      completo: digits,
+      whatsapp: true,
+      fonte: 'manual_operador'
+    });
+  }
+
   await cltGerarSelfieC6(cpf, nome, dataNasc, tel);
   cltConsultaState.incluirC6 = true;
 }
@@ -6983,6 +7002,300 @@ function renderCltChats() {
   return h;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// CLT — Painel de Consultas (KPIs + por operador + por banco)
+// ════════════════════════════════════════════════════════════════════
+let cltPainelState = { loading: false, periodo: 'mes', resumo: null, error: null, _loaded: false, lista: null, listaLoading: false, listaUserId: null };
+
+async function cltPainelCarregar() {
+  cltPainelState.loading = true;
+  cltPainelState.error = null;
+  renderApp();
+  try {
+    const r = await fetch('/api/clt-painel-consultas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'resumo', periodo: cltPainelState.periodo })
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'erro');
+    cltPainelState.resumo = d;
+  } catch (e) {
+    cltPainelState.error = e.message;
+  }
+  cltPainelState.loading = false;
+  renderApp();
+}
+
+async function cltPainelVerLista(userId) {
+  cltPainelState.listaUserId = userId || null;
+  cltPainelState.listaLoading = true;
+  cltPainelState.lista = null;
+  renderApp();
+  try {
+    const r = await fetch('/api/clt-painel-consultas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'listar', periodo: cltPainelState.periodo, user_id: userId || null })
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'erro');
+    cltPainelState.lista = d.items || [];
+  } catch (e) {
+    alert('Erro: ' + e.message);
+  }
+  cltPainelState.listaLoading = false;
+  renderApp();
+}
+
+function cltPainelTrocarPeriodo(p) {
+  cltPainelState.periodo = p;
+  cltPainelState.lista = null;
+  cltPainelCarregar();
+}
+
+function renderCltPainel() {
+  if (!cltPainelState._loaded && !cltPainelState.loading && !cltPainelState.resumo) {
+    cltPainelState._loaded = true;
+    setTimeout(cltPainelCarregar, 0);
+  }
+
+  const BANCO_LABELS = {
+    presencabank: 'Presença', multicorban: 'Multicorban', v8_qi: 'V8 — QI',
+    v8_celcoin: 'V8 — Celcoin', joinbank: 'JoinBank', mercantil: 'Mercantil', c6: 'C6'
+  };
+  const fmtPct = v => (v == null ? '0' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })) + '%';
+
+  let h = '<div style="max-width:1400px;margin:0 auto;padding:16px" class="fi">';
+  // Header
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;flex-wrap:wrap;gap:10px">';
+  h += '<div><div style="font-size:22px;font-weight:800">📊 CLT — Painel de Consultas</div>';
+  h += '<div style="font-size:12px;color:var(--t2)">Quem consultou, quantas oportunidades, conversão por operador e por banco</div></div>';
+  h += '<div style="display:flex;gap:6px;align-items:center">';
+  for (const [k, lbl] of [['hoje', 'Hoje'], ['semana', '7 dias'], ['mes', '30 dias']]) {
+    const ativo = cltPainelState.periodo === k;
+    h += `<button class="btn btn-sm" style="${ativo ? 'background:var(--acc);color:#000;border-color:var(--acc)' : ''}" onclick="cltPainelTrocarPeriodo('${k}')">${lbl}</button>`;
+  }
+  h += `<button class="btn btn-sm" onclick="cltPainelCarregar()" title="Recarregar">🔄</button>`;
+  h += '</div></div>';
+
+  if (cltPainelState.loading) {
+    h += '<div style="padding:60px;text-align:center;color:var(--t2)">⏳ Carregando agregações...</div>';
+    h += '</div>';
+    return h;
+  }
+  if (cltPainelState.error) {
+    h += `<div style="padding:40px;text-align:center;background:var(--card);border:1px solid var(--brd);border-radius:12px"><div style="font-size:30px;margin-bottom:8px">❌</div><div style="color:var(--red);font-weight:700">${esc(cltPainelState.error)}</div><button class="btn btn-sm" style="margin-top:12px" onclick="cltPainelCarregar()">🔄 Tentar de novo</button></div>`;
+    h += '</div>';
+    return h;
+  }
+  const r = cltPainelState.resumo;
+  if (!r) { h += '<div style="padding:40px;text-align:center;color:var(--t3)">Sem dados ainda.</div></div>'; return h; }
+
+  const k = r.kpis || {};
+  // KPIs cards
+  h += '<div class="kpi-grid" style="margin-bottom:22px">';
+  h += `<div class="kpi"><div class="kpi-label">Consultas Totais</div><div class="kpi-value" style="color:var(--acc)">${N(k.total||0)}</div></div>`;
+  h += `<div class="kpi"><div class="kpi-label">Concluídas</div><div class="kpi-value" style="color:var(--cyan)">${N(k.concluidas||0)}</div></div>`;
+  h += `<div class="kpi" style="border-color:rgba(34,197,94,.35)"><div class="kpi-label">💰 Oportunidades</div><div class="kpi-value" style="color:var(--grn)">${N(k.oportunidades||0)}</div></div>`;
+  h += `<div class="kpi" style="border-color:rgba(245,194,66,.35)"><div class="kpi-label">Taxa de Oportunidade</div><div class="kpi-value" style="color:var(--ylw)">${fmtPct(k.taxa_oportunidade_pct)}</div></div>`;
+  h += `<div class="kpi"><div class="kpi-label">Sem Vínculo</div><div class="kpi-value" style="color:var(--t3)">${N(k.sem_vinculo||0)}</div></div>`;
+  h += '</div>';
+
+  // 2 colunas: operadores | bancos
+  h += '<div style="display:grid;grid-template-columns:2fr 1fr;gap:18px">';
+
+  // OPERADORES
+  h += '<div>';
+  h += '<div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:10px;text-transform:uppercase">👥 Por Operador</div>';
+  h += '<div class="table-wrap"><div class="table-scroll"><table>';
+  h += '<thead><tr><th>Operador</th><th>Consultas</th><th>Concluídas</th><th>Oportunidades</th><th>Taxa</th><th></th></tr></thead><tbody>';
+  if (!r.operadores || !r.operadores.length) {
+    h += '<tr><td colspan="6" style="text-align:center;color:var(--t3);padding:20px">Sem consultas no período</td></tr>';
+  } else {
+    for (const op of r.operadores) {
+      const taxa = +op.taxa_oportunidade || 0;
+      const taxaCor = taxa >= 30 ? 'var(--grn)' : (taxa >= 15 ? 'var(--ylw)' : 'var(--t2)');
+      h += '<tr>';
+      h += `<td style="font-weight:700">${esc(op.nome || '-')}</td>`;
+      h += `<td>${N(op.total)}</td>`;
+      h += `<td style="color:var(--cyan)">${N(op.concluidas)}</td>`;
+      h += `<td style="color:var(--grn);font-weight:700">${N(op.oportunidades)}</td>`;
+      h += `<td style="color:${taxaCor};font-weight:700">${fmtPct(taxa)}</td>`;
+      h += `<td><button class="btn btn-sm" onclick="cltPainelVerLista(${op.user_id || 'null'})">👁️ Ver</button></td>`;
+      h += '</tr>';
+    }
+  }
+  h += '</tbody></table></div></div></div>';
+
+  // BANCOS
+  h += '<div>';
+  h += '<div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:10px;text-transform:uppercase">🏦 Elegíveis por Banco</div>';
+  h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px">';
+  const bancos = r.por_banco || {};
+  const bancosArr = Object.entries(bancos).sort((a, b) => b[1] - a[1]);
+  const max = Math.max(...bancosArr.map(x => x[1]), 1);
+  for (const [k2, v2] of bancosArr) {
+    const pct = max > 0 ? (v2 / max * 100) : 0;
+    h += '<div style="margin-bottom:10px">';
+    h += `<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;font-weight:700">${BANCO_LABELS[k2] || k2}</span><span style="font-size:11px;color:var(--t2)">${N(v2)}</span></div>`;
+    h += `<div class="taxa-bar"><div class="taxa-fill" style="width:${pct}%"></div></div>`;
+    h += '</div>';
+  }
+  h += '</div></div>';
+
+  h += '</div>'; // fim grid
+
+  // LISTA DETALHADA (drilldown opcional)
+  if (cltPainelState.lista || cltPainelState.listaLoading) {
+    h += '<div style="margin-top:24px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+    const filtro = cltPainelState.listaUserId
+      ? (r.operadores.find(o => o.user_id === cltPainelState.listaUserId)?.nome || ('User #' + cltPainelState.listaUserId))
+      : 'Todos os operadores';
+    h += `<div style="font-size:14px;font-weight:700">📋 Consultas — ${esc(filtro)}</div>`;
+    h += `<button class="btn btn-sm" onclick="cltPainelState.lista=null;cltPainelState.listaUserId=null;renderApp()">✕ Fechar</button>`;
+    h += '</div>';
+    if (cltPainelState.listaLoading) {
+      h += '<div style="padding:30px;text-align:center;color:var(--t2)">⏳ Carregando...</div>';
+    } else {
+      h += '<div class="table-wrap"><div class="table-scroll"><table>';
+      h += '<thead><tr><th>CPF</th><th>Nome</th><th>Operador</th><th>Status</th><th>Bancos OK</th><th>Empregador</th><th>Iniciado</th></tr></thead><tbody>';
+      for (const it of cltPainelState.lista) {
+        const eOp = it.eh_oportunidade;
+        h += '<tr>';
+        h += `<td class="mono">${esc(it.cpf || '-')}</td>`;
+        h += `<td>${esc(it.nome || '-')}</td>`;
+        h += `<td style="font-size:11px;color:var(--t2)">${esc(it.operador_nome || '-')}</td>`;
+        h += `<td><span class="pill ${it.status_geral === 'concluido' ? 'pill-grn' : 'pill-acc'}">${esc(it.status_geral || '-')}</span></td>`;
+        h += `<td style="font-weight:700;color:${eOp ? 'var(--grn)' : 'var(--t3)'}">${it.bancos_disponiveis}</td>`;
+        h += `<td style="font-size:11px;color:var(--t2)">${esc(it.empregador || '-')}</td>`;
+        h += `<td style="font-size:11px;color:var(--t3)">${it.iniciado_em ? new Date(it.iniciado_em).toLocaleString('pt-BR') : '-'}</td>`;
+        h += '</tr>';
+      }
+      if (!cltPainelState.lista.length) h += '<tr><td colspan="7" style="text-align:center;color:var(--t3);padding:20px">Sem consultas</td></tr>';
+      h += '</tbody></table></div></div>';
+    }
+    h += '</div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CLT — Admin Token Mercantil (cola JWT manual do portal)
+// ════════════════════════════════════════════════════════════════════
+let cltAdminMercState = { loading: false, jwt: '', status: null, error: null, _loaded: false };
+
+async function cltAdminMercStatus() {
+  cltAdminMercState.loading = true;
+  cltAdminMercState.error = null;
+  renderApp();
+  try {
+    const r = await fetch('/api/mercantil', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'status' })
+    });
+    const d = await r.json();
+    cltAdminMercState.status = d;
+  } catch (e) {
+    cltAdminMercState.error = e.message;
+  }
+  cltAdminMercState.loading = false;
+  renderApp();
+}
+
+async function cltAdminMercSalvarJwt() {
+  const inp = document.getElementById('cltMercJwtInput');
+  let token = (inp?.value || '').trim();
+  // Aceita "Bearer X..." ou só "X..."
+  if (token.toLowerCase().startsWith('bearer ')) token = token.substring(7).trim();
+  if (!token || token.split('.').length !== 3) {
+    alert('JWT inválido — cole o token JWT inteiro (3 partes separadas por ponto).');
+    return;
+  }
+  if (!confirm('Salvar este JWT como token oficial Mercantil para todos os operadores?')) return;
+  cltAdminMercState.loading = true;
+  renderApp();
+  try {
+    const r = await fetch('/api/mercantil', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'setJwt', token })
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'erro');
+    alert('✅ Token Mercantil salvo! Válido até ' + (d.tokenExpEm ? new Date(d.tokenExpEm).toLocaleString('pt-BR') : '?') + (d.usuario?.nome ? '\nUsuário: ' + d.usuario.nome : ''));
+    if (inp) inp.value = '';
+    cltAdminMercStatus();
+  } catch (e) {
+    alert('❌ Erro: ' + e.message);
+    cltAdminMercState.loading = false;
+    renderApp();
+  }
+}
+
+function renderCltAdminMercantil() {
+  if (!cltAdminMercState._loaded) {
+    cltAdminMercState._loaded = true;
+    setTimeout(cltAdminMercStatus, 0);
+  }
+
+  let h = '<div style="max-width:920px;margin:0 auto;padding:16px" class="fi">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;flex-wrap:wrap;gap:10px">';
+  h += '<div><div style="font-size:22px;font-weight:800">🔑 Token Mercantil</div>';
+  h += '<div style="font-size:12px;color:var(--t2)">O Mercantil bloqueia login automático. Cole o JWT do portal aqui 1x/dia.</div></div>';
+  h += '<button class="btn btn-sm" onclick="cltAdminMercStatus()">🔄 Atualizar</button>';
+  h += '</div>';
+
+  // Status atual
+  const st = cltAdminMercState.status;
+  if (cltAdminMercState.loading && !st) {
+    h += '<div style="padding:30px;text-align:center;color:var(--t2)">⏳ Verificando status...</div>';
+  } else if (st) {
+    const ok = !!st.token_valido;
+    const expMs = st.exp_ms;
+    const expData = expMs ? new Date(expMs) : null;
+    const restanteMin = expMs ? Math.round((expMs - Date.now()) / 60000) : null;
+    const cor = ok ? 'var(--grn)' : 'var(--red)';
+    h += `<div style="background:var(--card);border:1px solid var(--brd);border-left:4px solid ${cor};border-radius:12px;padding:16px;margin-bottom:18px">`;
+    h += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><div style="font-size:24px">${ok ? '✅' : '⚠️'}</div>`;
+    h += `<div><div style="font-weight:800;color:${cor}">${ok ? 'Token Válido' : 'Token Ausente / Expirado'}</div>`;
+    h += `<div style="font-size:12px;color:var(--t2)">Origem atual: ${esc(st.origem || '?')}</div></div></div>`;
+    if (expData) {
+      h += `<div style="font-size:12px;color:var(--t2)">Expira em: <b>${expData.toLocaleString('pt-BR')}</b>`;
+      if (restanteMin !== null) {
+        const corRest = restanteMin > 60 ? 'var(--grn)' : (restanteMin > 0 ? 'var(--ylw)' : 'var(--red)');
+        h += ` <span style="color:${corRest};font-weight:700">(${restanteMin > 0 ? restanteMin + ' min restantes' : 'expirado'})</span>`;
+      }
+      h += '</div>';
+    }
+    if (st.salvo_por_nome) h += `<div style="font-size:11px;color:var(--t3);margin-top:4px">Última renovação: ${esc(st.salvo_por_nome)} em ${st.salvo_em ? new Date(st.salvo_em).toLocaleString('pt-BR') : '?'}</div>`;
+    h += '</div>';
+  }
+
+  // Form colar JWT
+  h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:18px">';
+  h += '<div style="font-weight:700;margin-bottom:6px">📝 Colar novo JWT</div>';
+  h += '<div style="font-size:12px;color:var(--t2);margin-bottom:14px">Faça login no portal Mercantil → DevTools (F12) → Aba Network → procure header <code style="background:var(--sf);padding:2px 6px;border-radius:4px">Authorization: Bearer ...</code> em qualquer chamada → copie tudo após "Bearer ".</div>';
+  h += '<textarea id="cltMercJwtInput" rows="6" placeholder="eyJhbGciOiJSUzI1NiIs..." style="width:100%;font-family:monospace;font-size:11px;padding:10px;border:1px solid var(--brd);border-radius:8px;background:var(--sf);color:var(--t1);resize:vertical"></textarea>';
+  h += '<div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">';
+  h += '<button class="btn" onclick="document.getElementById(\'cltMercJwtInput\').value=\'\'">Limpar</button>';
+  h += '<button class="btn-acc" onclick="cltAdminMercSalvarJwt()">💾 Salvar Token</button>';
+  h += '</div>';
+  h += '</div>';
+
+  // Instruções
+  h += '<div style="margin-top:18px;background:rgba(245,194,66,.08);border:1px solid rgba(245,194,66,.3);border-radius:12px;padding:14px;font-size:12px;color:var(--t2)">';
+  h += '<div style="font-weight:700;color:var(--ylw);margin-bottom:6px">⚠️ Por que isso é necessário?</div>';
+  h += 'O Mercantil detecta requisições programáticas (TLS fingerprinting + dnaBrowser) e bloqueia login via API. Como workaround, o operador admin loga 1x no portal real, copia o JWT e cola aqui — todos os operadores usam esse token até expirar (~12h). Quando expirar, repita o processo.';
+  h += '</div>';
+
+  h += '</div>';
+  return h;
+}
+
 function renderConsulta() {
   let html = '';
   // Search bar
@@ -7509,9 +7822,13 @@ const MENU=[
       {group:'Agente IA',icon:'🤖',items:[
         {k:'cltChats',icon:'💬',label:'Conversas'}
       ]},
+      {group:'Gestão',icon:'📈',items:[
+        {k:'cltPainel',icon:'📊',label:'Painel de Consultas'}
+      ]},
       {group:'Admin',icon:'⚙️',needsRole:['gestor','admin'],items:[
         {k:'cltWpp',icon:'📱',label:'WhatsApp CLT'},
-        {k:'cltWebhooks',icon:'🪝',label:'Webhooks (V8)'}
+        {k:'cltWebhooks',icon:'🪝',label:'Webhooks (V8)'},
+        {k:'cltAdminMercantil',icon:'🔑',label:'Token Mercantil',needsRole:['gestor','admin']}
       ]}
     ]},
   {product:'fgts',icon:'🏦',label:'FGTS',soon:true},
@@ -7865,6 +8182,8 @@ if(!D){
   else if(S.tab==="cltAutz")content=renderCltAutz();
   else if(S.tab==="cltWebhooks")content=renderCltWebhooks();
   else if(S.tab==="cltWpp")content=renderCltWpp();
+  else if(S.tab==="cltPainel")content=renderCltPainel();
+  else if(S.tab==="cltAdminMercantil"&&isGes)content=renderCltAdminMercantil();
   if(content){tabContent.innerHTML=content;return}
   // Sem data: tab 'bases' = tela de upload; tab 'home' (padrao) = home
   if(S.tab==="bases"){renderLanding(tabContent);return}
@@ -7901,6 +8220,8 @@ if(!D){
   else if(S.tab==="cltAutz")tcontent=renderCltAutz();
   else if(S.tab==="cltWebhooks")tcontent=renderCltWebhooks();
   else if(S.tab==="cltWpp")tcontent=renderCltWpp();
+  else if(S.tab==="cltPainel")tcontent=renderCltPainel();
+  else if(S.tab==="cltAdminMercantil"&&isGes)tcontent=renderCltAdminMercantil();
   if(tcontent){tabContent.innerHTML=tcontent;return}
 
   // ═══ DASHBOARD ═══
