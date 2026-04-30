@@ -178,6 +178,8 @@ async function processarPresencaBank(id, cpf, auth, secret) {
       dataAdmissao: pb.vinculo?.dataAdmissao
     };
     await dbUpdate('clt_consultas_fila', { id }, { vinculo: vinculoData });
+    // PERSISTE response RAW pra inspecao posterior (debug)
+    await patchBanco(id, 'presencabank', { _raw_response: pb._raw }).catch(() => {});
     const margemDisp = parseFloat(pb.margem?.disponivel || 0);
     const margemBase = parseFloat(pb.margem?.base || 0);
 
@@ -211,7 +213,9 @@ async function processarPresencaBank(id, cpf, auth, secret) {
     await patchBanco(id, 'presencabank', {
       status: 'falha',
       disponivel: false,
-      mensagem: pb.mensagem || 'Sem vínculo CLT elegível pra este banco'
+      mensagem: pb.mensagem || 'Sem vínculo CLT elegível pra este banco',
+      _raw_response: pb._raw, // salva mesmo assim pra debug
+      _totalVinculosBrutos: pb.totalVinculosBrutos // se PB recebeu vinculos mas todos elegivel=false
     });
   }
 }
