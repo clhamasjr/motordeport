@@ -4749,6 +4749,7 @@ function _filaToResult(fila) {
     if (status === 'falha') return '⏱ Sem retorno do banco';
     if (status === 'ok') return 'OK';
     if (status === 'bloqueado') return 'Bloqueado';
+    if (status === 'manual_aguardando') return 'Aguardando digitação manual no portal';
     return '—';
   };
 
@@ -4806,6 +4807,21 @@ function _filaToResult(fila) {
     } : null,
     falhou: jb.status === 'falha',
     mensagem: msgDefault(jb, jb.status)
+  });
+
+  // Mercantil (digitação manual — sem API)
+  const mc6 = b.mercantil || { status: 'pending' };
+  const mc6F = _statusToFlags(mc6.status);
+  ofertas.push({
+    banco: 'mercantil', label: 'Mercantil',
+    manual: true,
+    portalUrl: mc6.portalUrl || 'https://meu.bancomercantil.com.br/login',
+    aguardandoManual: mc6.status === 'manual_aguardando',
+    disponivel: mc6.status === 'ok' && mc6.disponivel === true,
+    processando: mc6F.processando,
+    detalhes: mc6.detalhes || null,
+    falhou: mc6.status === 'falha',
+    mensagem: msgDefault(mc6, mc6.status === 'manual_aguardando' ? 'manual_aguardando' : mc6.status)
   });
 
   // C6
@@ -5586,7 +5602,7 @@ function copiarLinkSelfie() {
 }
 
 function _cltOfertaCard(o, ctx) {
-  const cores = { c6: 'var(--cyan)', presencabank: 'var(--grn)', joinbank: 'var(--pur)', v8: 'var(--ylw)' };
+  const cores = { c6: 'var(--cyan)', presencabank: 'var(--grn)', joinbank: 'var(--pur)', mercantil: 'var(--pur)', v8: 'var(--ylw)' };
   const cor = cores[o.banco] || 'var(--t1)';
   let h = `<div style="padding:20px;background:var(--card);border:1px solid var(--brd);border-radius:14px;border-left:4px solid ${cor}">`;
   h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
@@ -5605,6 +5621,36 @@ function _cltOfertaCard(o, ctx) {
   // Card em processamento (esteira está rodando — atualiza sozinho via polling)
   if (o.processando) {
     h += `<div style="font-size:12px;color:var(--acc);animation:pulse 1.5s infinite">⏳ ${o.mensagem || 'Processando...'}</div>`;
+    h += '</div>';
+    return h;
+  }
+
+  // Card MERCANTIL — banco sem API, digitação manual no portal
+  if (o.banco === 'mercantil' && o.aguardandoManual) {
+    const cli = ctx?.cliente || {};
+    const cpfStr = (cli.cpf || ctx?.cpf || '').replace(/\D/g, '');
+    const dataNascStr = cli.dataNascimento || '';
+    const portalUrl = o.portalUrl || 'https://meu.bancomercantil.com.br/login';
+    h += `<div style="font-size:12px;color:var(--pur);margin-bottom:8px">✍️ Digitação manual no portal</div>`;
+    h += `<button class="btn-acc btn-sm" style="width:100%;margin-bottom:8px" onclick="window.open('${portalUrl}','_blank')">🔗 Abrir Portal Mercantil</button>`;
+    // Botões copiar
+    h += `<div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Copiar dados:</div>`;
+    h += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">';
+    const escSafe = s => String(s||'').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    if (cpfStr) h += `<button class="btn btn-sm" style="font-size:10px;padding:3px 8px" onclick="copiarTexto('${cpfStr}',this)">📋 CPF</button>`;
+    if (cli.nome) h += `<button class="btn btn-sm" style="font-size:10px;padding:3px 8px" onclick="copiarTexto('${escSafe(cli.nome)}',this)">📋 Nome</button>`;
+    if (dataNascStr) h += `<button class="btn btn-sm" style="font-size:10px;padding:3px 8px" onclick="copiarTexto('${dataNascStr}',this)">📋 Data Nasc</button>`;
+    if (cli.nomeMae) h += `<button class="btn btn-sm" style="font-size:10px;padding:3px 8px" onclick="copiarTexto('${escSafe(cli.nomeMae)}',this)">📋 Mãe</button>`;
+    h += '</div>';
+    // Form manual de simulação
+    h += `<div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px;margin-top:6px">Após simular, registre o resultado:</div>`;
+    h += `<div style="display:grid;grid-template-columns:1fr 70px 1fr;gap:4px;margin-bottom:6px">`;
+    h += `<input class="form-input" id="merc_vl_${ctx?.filaId||'x'}" placeholder="R$ liberado" style="font-size:11px;padding:6px 8px">`;
+    h += `<input class="form-input" id="merc_p_${ctx?.filaId||'x'}" placeholder="Nx" style="font-size:11px;padding:6px 8px;text-align:center">`;
+    h += `<input class="form-input" id="merc_vp_${ctx?.filaId||'x'}" placeholder="R$ parcela" style="font-size:11px;padding:6px 8px">`;
+    h += `</div>`;
+    h += `<button class="btn btn-sm" style="width:100%;margin-bottom:4px;border-color:var(--pur);color:var(--pur);font-size:11px" onclick="anexarPrintMercantil('${ctx?.filaId}','mercantil')">📷 Anexar print da simulação (IA lê)</button>`;
+    h += `<button class="btn-acc btn-sm" style="width:100%;font-size:11px" onclick="confirmarMercantilManual('${ctx?.filaId}','mercantil')">✅ Confirmar simulação</button>`;
     h += '</div>';
     return h;
   }
@@ -5695,6 +5741,83 @@ function _cltOfertaCard(o, ctx) {
 
   h += '</div>';
   return h;
+}
+
+// ─── HELPERS pra digitação manual (Mercantil etc) ───
+async function copiarTexto(texto, btnEl) {
+  try {
+    await navigator.clipboard.writeText(String(texto));
+    if (btnEl) {
+      const original = btnEl.innerHTML;
+      btnEl.innerHTML = '✅ Copiado!';
+      btnEl.style.borderColor = 'var(--grn)';
+      btnEl.style.color = 'var(--grn)';
+      setTimeout(() => {
+        btnEl.innerHTML = original;
+        btnEl.style.borderColor = '';
+        btnEl.style.color = '';
+      }, 1500);
+    }
+  } catch { alert('Não consegui copiar — selecione e copie manualmente'); }
+}
+
+async function confirmarMercantilManual(filaId, banco) {
+  const vl = parseFloat((document.getElementById('merc_vl_'+filaId)?.value || '').replace(/[^\d.,]/g,'').replace(',','.')) || 0;
+  const p = parseInt(document.getElementById('merc_p_'+filaId)?.value || '0') || 0;
+  const vp = parseFloat((document.getElementById('merc_vp_'+filaId)?.value || '').replace(/[^\d.,]/g,'').replace(',','.')) || 0;
+  if (!vl || !p || !vp) { alert('Preencha valor liberado, parcelas e valor da parcela'); return; }
+  try {
+    const r = await fetch('/api/clt-fila', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer '+getToken() },
+      body: JSON.stringify({ action: 'simularManual', id: filaId, banco, valorLiquido: vl, parcelas: p, valorParcela: vp })
+    });
+    const d = await r.json();
+    if (d.success) {
+      // Recarrega via polling
+      _pollingFila(filaId);
+    } else {
+      alert('Erro: ' + (d.error || 'desconhecido'));
+    }
+  } catch (e) { alert('Erro: ' + e.message); }
+}
+
+async function anexarPrintMercantil(filaId, banco) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/*';
+  inp.onchange = async (ev) => {
+    const file = ev.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      // reader.result = "data:image/png;base64,XXXX"
+      const dataUrl = reader.result;
+      const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (!m) { alert('Formato inválido'); return; }
+      const mimeType = m[1];
+      const b64 = m[2];
+      try {
+        const r = await fetch('/api/clt-fila', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer '+getToken() },
+          body: JSON.stringify({ action: 'interpretarPrint', id: filaId, banco, imagemBase64: b64, mimeType })
+        });
+        const d = await r.json();
+        if (d.success && d.extraido) {
+          // Preenche o form com o que IA extraiu
+          if (d.extraido.valorLiquido) document.getElementById('merc_vl_'+filaId).value = String(d.extraido.valorLiquido).replace('.', ',');
+          if (d.extraido.parcelas) document.getElementById('merc_p_'+filaId).value = d.extraido.parcelas;
+          if (d.extraido.valorParcela) document.getElementById('merc_vp_'+filaId).value = String(d.extraido.valorParcela).replace('.', ',');
+          alert('✅ IA leu o print: R$ ' + d.extraido.valorLiquido + ' em ' + d.extraido.parcelas + 'x R$ ' + d.extraido.valorParcela + '. Confira e clique em Confirmar.');
+        } else {
+          alert('IA não conseguiu ler o print: ' + (d.error || 'tente preencher manualmente'));
+        }
+      } catch (e) { alert('Erro: ' + e.message); }
+    };
+    reader.readAsDataURL(file);
+  };
+  inp.click();
 }
 
 // Re-dispara um banco específico de uma fila (com force=true bypassa idempotencia)
@@ -5861,15 +5984,17 @@ function renderCltConsulta() {
     const r = it.result || {};
     // Monta indicadores por banco (4 pontinhos)
     const ofs = r.ofertas || [];
-    const indicadores = ['presencabank','v8_qi','v8_celcoin','joinbank','c6'].map(key => {
+    const indicadores = ['presencabank','v8_qi','v8_celcoin','joinbank','mercantil','c6'].map(key => {
       let o;
       if (key === 'presencabank') o = ofs.find(x => x.banco === 'presencabank');
       else if (key === 'v8_qi') o = ofs.find(x => x.banco === 'v8' && x.provider === 'QI');
       else if (key === 'v8_celcoin') o = ofs.find(x => x.banco === 'v8' && x.provider === 'CELCOIN');
       else if (key === 'joinbank') o = ofs.find(x => x.banco === 'joinbank');
+      else if (key === 'mercantil') o = ofs.find(x => x.banco === 'mercantil');
       else if (key === 'c6') o = ofs.find(x => x.banco === 'c6');
       if (!o) return { key, st: 'pending' };
       if (o.disponivel) return { key, st: 'ok' };
+      if (o.aguardandoManual) return { key, st: 'manual' };
       if (o.processando) return { key, st: 'proc' };
       if (o.bloqueado) return { key, st: 'lock' };
       return { key, st: 'fail' };
@@ -5920,15 +6045,16 @@ function renderCltConsulta() {
       // Mini-indicadores por banco (visual de progresso)
       let indicHtml = '';
       if (Array.isArray(c.indicadores)) {
-        const labelMap = { presencabank: 'PB', v8_qi: 'QI', v8_celcoin: 'CC', joinbank: 'JB', c6: 'C6' };
+        const labelMap = { presencabank: 'PB', v8_qi: 'QI', v8_celcoin: 'CC', joinbank: 'JB', mercantil: 'MC', c6: 'C6' };
         const colorMap = {
           ok: 'background:rgba(34,197,94,.18);color:var(--grn)',
           proc: 'background:rgba(59,130,246,.18);color:var(--acc);animation:pulse 1.5s infinite',
+          manual: 'background:rgba(168,85,247,.18);color:var(--pur)',
           lock: 'background:rgba(245,194,66,.15);color:var(--ylw)',
           fail: 'background:rgba(239,68,68,.12);color:var(--red)',
           pending: 'background:rgba(156,163,175,.12);color:var(--t3)'
         };
-        const iconMap = { ok: '✓', proc: '⏳', lock: '🔒', fail: '✕', pending: '·' };
+        const iconMap = { ok: '✓', proc: '⏳', manual: '✍️', lock: '🔒', fail: '✕', pending: '·' };
         indicHtml = '<div style="display:flex;gap:4px;margin-top:5px">';
         for (const ind of c.indicadores) {
           const cor = colorMap[ind.st] || colorMap.pending;

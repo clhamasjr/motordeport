@@ -322,6 +322,33 @@ async function processarV8(id, provider, cpf, auth, secret) {
   }
 }
 
+// Banco MERCANTIL — sem API, apenas digitacao manual no portal.
+// Status final 'manual_aguardando' indica que esta esperando operador
+// simular no portal e clicar 'Marcar simulado' com os valores.
+async function processarMercantil(id, cpf, auth, secret) {
+  await patchBanco(id, 'mercantil', { status: 'processando' });
+
+  // Aguarda dados basicos (precisa do nome/CPF pro operador colar no portal)
+  const cli = await aguardarCliente(id, 6000);
+  if (!cli || !cli.nome) {
+    await patchBanco(id, 'mercantil', {
+      status: 'falha',
+      mensagem: 'Faltam dados básicos do cliente (nome) — Mercantil exige nome pra simular'
+    });
+    return;
+  }
+
+  // Marca como aguardando digitacao manual — o operador vai abrir o portal,
+  // simular, e voltar pra cadastrar o resultado via action simularManual
+  await patchBanco(id, 'mercantil', {
+    status: 'manual_aguardando',
+    disponivel: false,
+    manual: true,
+    portalUrl: process.env.MERCANTIL_PORTAL_URL || 'https://meu.bancomercantil.com.br/login',
+    mensagem: 'Aguardando digitação manual no portal — clique em "Abrir Portal" e simule.'
+  });
+}
+
 async function processarJoinBank(id, cpf, auth, secret) {
   await patchBanco(id, 'joinbank', { status: 'processando' });
 
@@ -500,6 +527,7 @@ export default async function handler(req) {
       v8_qi: { status: 'pending' },
       v8_celcoin: { status: 'pending' },
       joinbank: { status: 'pending' },
+      mercantil: { status: 'pending' },
       c6: { status: 'pending' }
     };
 
@@ -545,7 +573,7 @@ export default async function handler(req) {
     // o frontend fechar a janela. Cada um roda em paralelo (fetch sem await),
     // mas como o handler `processar` faz await ate terminar, o trabalho roda
     // ate o fim mesmo se o cliente desconectar.
-    const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'c6'];
+    const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'mercantil', 'c6'];
     const baseUrl = APP_URL();
     for (const banco of bancos) {
       // Fire-and-forget mas COM internal-secret (evita 401 de chamadas internas)
@@ -562,6 +590,89 @@ export default async function handler(req) {
       cpf,
       mensagem: 'Consulta adicionada à fila — processadores disparados em background.'
     }, 200, req);
+  }
+
+  // ─── SIMULAR MANUAL — operador digitou os valores que viu no portal do banco ──
+  // Usado por bancos sem API (ex: Mercantil). Aceita valor liberado, parcelas,
+  // valor parcela e marca o card como 'ok' com dados manuais.
+  if (action === 'simularManual') {
+    const id = body.id;
+    const banco = body.banco;
+    if (!id || !banco) return jsonError('id e banco obrigatórios', 400, req);
+    const valorLiquido = parseFloat(body.valorLiquido || 0);
+    const parcelas = parseInt(body.parcelas || 0);
+    const valorParcela = parseFloat(body.valorParcela || 0);
+    if (!valorLiquido || !parcelas || !valorParcela) {
+      return jsonError('valorLiquido, parcelas e valorParcela obrigatórios', 400, req);
+    }
+
+    await patchBanco(id, banco, {
+      status: 'ok',
+      disponivel: true,
+      manual: true,
+      digitadoEm: new Date().toISOString(),
+      mensagem: `Simulado manualmente — R$ ${valorLiquido.toFixed(2)} em ${parcelas}x R$ ${valorParcela.toFixed(2)}`,
+      detalhes: { valorLiquido, parcelas, valorParcela },
+      dados: { valorLiquido, parcelas, valorParcela, fonte: 'manual', protocolo: body.protocolo || null }
+    });
+    return jsonResp({ success: true, banco, valorLiquido, parcelas, valorParcela }, 200, req);
+  }
+
+  // ─── INTERPRETAR PRINT — Claude Vision le o screenshot da simulação manual ──
+  // Operador anexa foto da tela com simulação do portal. IA extrai valor/parcelas/taxa.
+  if (action === 'interpretarPrint') {
+    const id = body.id;
+    const banco = body.banco;
+    const imagemBase64 = body.imagemBase64; // sem o prefix "data:image/..."
+    const mimeType = body.mimeType || 'image/png';
+    if (!id || !banco || !imagemBase64) {
+      return jsonError('id, banco e imagemBase64 obrigatórios', 400, req);
+    }
+
+    const claudeKey = process.env.CLAUDE_API_KEY_AGENTE_CLT || process.env.CLAUDE_API_KEY;
+    if (!claudeKey) return jsonError('CLAUDE_API_KEY não configurado', 500, req);
+
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': claudeKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-5-20250929',
+        max_tokens: 600,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mimeType, data: imagemBase64 } },
+            { type: 'text', text:
+`Esta é uma tela de simulação de empréstimo consignado. Extraia os seguintes dados em JSON:
+{
+  "valorLiquido": <numero, valor que cliente recebe na conta>,
+  "parcelas": <numero inteiro de parcelas>,
+  "valorParcela": <numero, valor de cada parcela mensal>,
+  "taxaMensal": <numero opcional, % ao mês>,
+  "iof": <numero opcional>,
+  "cet": <numero opcional, % CET ao mês>,
+  "protocolo": <string opcional, número do protocolo da simulação>
+}
+Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível, use null.` }
+          ]
+        }]
+      })
+    });
+    const d = await r.json();
+    const texto = d.content?.[0]?.text || '';
+    let extraido;
+    try {
+      const m = texto.match(/\{[\s\S]*\}/);
+      extraido = m ? JSON.parse(m[0]) : null;
+    } catch { extraido = null; }
+    if (!extraido) {
+      return jsonResp({ success: false, error: 'Não consegui extrair dados do print', _raw: texto.substring(0, 300) }, 200, req);
+    }
+    return jsonResp({ success: true, extraido }, 200, req);
   }
 
   // ─── VERIFICAR V8 (verificacao leve — so consultarPorCPF, sem gerar termo) ──
@@ -628,8 +739,9 @@ export default async function handler(req) {
       else if (banco === 'v8_qi') await processarV8(id, 'QI', row.cpf, auth, secret);
       else if (banco === 'v8_celcoin') await processarV8(id, 'CELCOIN', row.cpf, auth, secret);
       else if (banco === 'joinbank') await processarJoinBank(id, row.cpf, auth, secret);
+      else if (banco === 'mercantil') await processarMercantil(id, row.cpf, auth, secret);
       else if (banco === 'c6') await processarC6(id, row.cpf, !!row.incluir_c6, auth, secret);
-      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, c6', 400, req);
+      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, c6', 400, req);
     } catch (e) {
       await patchBanco(id, banco, { status: 'falha', mensagem: 'Erro: ' + e.message });
       return jsonResp({ success: false, error: e.message }, 200, req);
