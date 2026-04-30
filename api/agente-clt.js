@@ -244,14 +244,36 @@ CENÁRIO 1 — Cliente diz "NÃO QUERO" / "tá caro" / "muito alto":
    → [ACAO:GERAR_AUTORIZACAO_C6]
 
 CENÁRIO 2 — Cliente diz "VOU PENSAR" / "depois te falo" / "preciso ver":
-1. NUNCA aceite "vou pensar" sem investigar:
-   "Claro, sem pressa! Mas me conta — tem algo específico que tá te fazendo dar uma freada? Posso tentar ajustar pra você decidir agora."
-2. Conforme resposta:
-   - "Tô comparando com X" → "Que bom! Posso melhorar essa condição se precisar — me diz o que falta pra fechar"
-   - "Não preciso agora" → "Sem problema! Mas se aproveitarmos a oportunidade hoje, garantimos a condição. Me diz se prefere deixar pendente ou ja avançar?"
-   - "Tô com dúvida sobre X" → responde a dúvida específica
-3. Se cliente confirmar que quer pensar mesmo:
-   "Beleza! Vou deixar a oferta guardada aqui por 24h. Me chama quando decidir, OK? 😊"
+
+🔍 DETECTAR TIPO DE RECUSA — leia o contexto da conversa pra entender:
+
+A) RECUSA REAL (cliente NÃO quer mesmo):
+   Sinais: respostas curtas e secas, sem perguntas, sem entusiasmo, fala
+   em prazo definido ("semana que vem", "no fim do mês"), demonstrou
+   objeção concreta antes (taxa, valor não cabe, etc).
+   → Respeite. Diga "Beleza! Deixo guardado aqui por 24h. Me chama
+   quando decidir 😊" + [ACAO:AGENDAR_RETORNO] (sistema vai pingar depois).
+
+B) INDECISÃO / QUER SER CONVENCIDO (cliente quer fechar mas tem dúvida):
+   Sinais: fez muitas perguntas antes, demonstrou interesse, hesita só
+   na hora de decidir, fala "vou pensar" mas continua respondendo.
+   → INSISTA com perguntas:
+   "Posso te perguntar o que tá te impedindo? É o valor da parcela,
+   o prazo, ou outra coisa? Vou tentar ajustar pra você decidir agora."
+
+C) COMPARANDO PROPOSTAS (objeção competitiva):
+   Sinais: "tô vendo com outro banco", "vou ver outras opções".
+   → "Posso melhorar essa condição se precisar — me diz qual outra
+   proposta tem pra ver se consigo bater?"
+
+D) MOMENTO ERRADO (não pode falar agora):
+   Sinais: "tô no trabalho", "depois te ligo", responde rápido demais.
+   → "Tranquilo! Que horas posso te chamar de volta? Marco aqui."
+   → [ACAO:AGENDAR_RETORNO] (cliente diz horário, vc agenda)
+
+REGRA: NUNCA aceitar primeira recusa sem perguntar a razão UMA vez.
+Mas se cliente repetir 2x que quer pensar, RESPEITA — pressionar mais
+queima a venda.
 
 CENÁRIO 3 — Já tentou tudo e ainda não fechou:
 - Sugira liberar C6 (se ainda não liberou):
@@ -296,7 +318,43 @@ PROCESSO:
 1. Liste mentalmente: "tenho X, X, X. Preciso de Y, Y"
 2. Peça SÓ Y, Y — em 2-3 campos por vez (não bombardeie)
 3. Use [DADO:campo=valor] pra cada coleta
-4. Quando todos os campos estiverem preenchidos: [ACAO:INCLUIR_PROPOSTA]
+4. Quando todos os campos estiverem preenchidos: faça VALIDAÇÃO antes de incluir!
+
+═══ ⚠️ VALIDAR DADOS ANTES DE FECHAR (OBRIGATÓRIO) ═══
+ANTES de disparar [ACAO:INCLUIR_PROPOSTA], SEMPRE faça uma confirmação
+final repetindo os dados criticos. NUNCA fechar sem confirmar.
+
+Mensagem padrão de confirmação:
+  "Antes de fechar, confirma só pra garantir:
+  💰 R$ [valor] em [parcelas]x de R$ [parcela]
+  💳 PIX: [chave_pix] ([tipo_chave_pix])
+  📍 [rua, numero, bairro, cidade/UF]
+  📧 [email]
+  Tá tudo certo? Posso fechar?"
+
+Se cliente:
+- "Sim" / "Tá certo" / "Pode fechar" → [ACAO:INCLUIR_PROPOSTA]
+- "Não, [campo] errado, é [novo_valor]" → corrige com [DADO:campo=valor] + repete confirmação
+
+═══ 📸 PEDIR FOTO DE DOCUMENTOS ═══
+Se faltar dado que o cliente pode mandar via foto (ex: RG, contracheque,
+comprovante de residência), peça assim:
+
+Pra RG:
+  "Pra agilizar, manda uma foto do seu RG aqui no chat? 📸 Eu já leio
+  os dados pra você (frente e verso, se possível)."
+
+Pra contracheque:
+  "Manda um print/foto do seu último contracheque? 📸 Aproveita pra
+  gente fechar tudo agora."
+
+Pra comprovante:
+  "Foto de uma conta de luz/água/cartão recente serve. 📸"
+
+Quando cliente mandar a foto, você LÊ ela (visão multimodal) e extrai
+os dados, depois confirma com o cliente:
+  "Recebi! Vi aqui: RG 12.345.678-9 SSP/SP, expedido em 01/01/2010.
+  Confirma se é isso?"
 
 ⚠️ AO FECHAR A PROPOSTA: NUNCA mencione o nome do banco.
 ERRADO: "Vou fechar pelo PresençaBank" / "no V8" / "no C6"
@@ -344,9 +402,11 @@ Responda APENAS a mensagem pro cliente, em PT-BR, natural. No FINAL (em linhas s
 
 AÇÕES VÁLIDAS:
 - INICIAR_SIMULACAO, GERAR_AUTORIZACAO_C6, VERIFICAR_AUTORIZACAO
-- RESIMULAR (cliente quer valor/prazo diferente)
-- COLETAR_DADOS (cliente aceitou oferta, iniciar coleta)
-- INCLUIR_PROPOSTA (tem todos dados, criar no banco)
+- RESIMULAR (cliente quer valor/prazo diferente — aceita valor_solicitado, valor_parcela_desejado, prazo)
+- COLETAR_DADOS (cliente aceitou oferta, iniciar coleta + auto-preenche via NovaVida)
+- INCLUIR_PROPOSTA (DEPOIS de validar dados com cliente, criar no banco)
+- CONSULTAR_STATUS (cliente pergunta "tá aprovado?" — busca status real da proposta)
+- AGENDAR_RETORNO (cliente quer ser chamado depois — passa [DADO:agendar_retorno_em=2026-04-30T15:00])
 - ESCALAR_HUMANO, REINICIAR, ENCERRAR
 
 CAMPOS VÁLIDOS pra [DADO]:
@@ -380,6 +440,49 @@ async function getOrCreateConversa(telefone, instance, extras = {}) {
     ...extras
   });
   return created;
+}
+
+// MEMORIA PERSISTENTE — busca historico relevante de outras conversas
+// e propostas do mesmo telefone/CPF. Usado pra dar contexto ao Claude.
+async function buscarMemoriaCliente(telefone, cpf) {
+  const memoria = { ultimasOfertas: [], propostasAnteriores: [], ultimaMensagem: null };
+  try {
+    // Procura outras conversas do mesmo telefone (ou CPF) com ofertas
+    const filters = cpf ? { cpf } : { telefone };
+    const { data: outrasConv } = await dbSelect('clt_conversas', {
+      filters, order: 'last_message_at.desc', limit: 5
+    });
+    for (const c of outrasConv || []) {
+      if (Array.isArray(c.ofertas) && c.ofertas.length > 0) {
+        const okOfertas = c.ofertas.filter(o => o.disponivel && o.detalhes?.valorLiquido).slice(0, 2);
+        for (const o of okOfertas) {
+          memoria.ultimasOfertas.push({
+            quando: c.last_message_at,
+            valorLiquido: o.detalhes.valorLiquido,
+            parcelas: o.detalhes.parcelas,
+            valorParcela: o.detalhes.valorParcela
+          });
+        }
+      }
+      if (c.last_message_at && (!memoria.ultimaMensagem || c.last_message_at > memoria.ultimaMensagem)) {
+        memoria.ultimaMensagem = c.last_message_at;
+      }
+    }
+    // Propostas criadas (CRMs reais)
+    if (cpf) {
+      try {
+        const { data: props } = await dbSelect('clt_propostas', {
+          filters: { cpf }, order: 'created_at.desc', limit: 3
+        });
+        memoria.propostasAnteriores = (props || []).map(p => ({
+          status: p.status_externo || p.status,
+          valorLiquido: p.valor_liquido,
+          criadaEm: p.created_at
+        }));
+      } catch { /* tabela pode nao existir */ }
+    }
+  } catch { /* nao quebra fluxo */ }
+  return memoria;
 }
 
 async function updateConversa(id, patch) {
@@ -426,6 +529,56 @@ async function sendMsg(instance, number, text) {
     const r = await fetch(EVO_URL() + '/message/sendText/' + instance, opts);
     return r.ok;
   } catch { return false; }
+}
+
+// VOICE REPLY — gera audio (TTS via OpenAI) e envia como msg de voz no WhatsApp.
+// Soa mais humano em mensagens longas (4+ linhas) ou quando cliente mandou audio.
+// Custo: ~$0.015 por mensagem media. So usa se VOICE_TTS_ENABLED=1 e OPENAI_API_KEY setados.
+async function sendVoiceMsg(instance, number, text) {
+  const enabled = process.env.VOICE_TTS_ENABLED === '1' || process.env.VOICE_TTS_ENABLED === 'true';
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (!enabled || !openaiKey) return false; // sem TTS configurado, retorna false
+  try {
+    // 1) Gera audio MP3 via OpenAI TTS
+    const ttsRes = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + openaiKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'tts-1',
+        voice: 'nova', // alloy/echo/fable/onyx/nova/shimmer — nova soa feminino brasileiro razoavel
+        input: text.substring(0, 4000),
+        response_format: 'mp3'
+      })
+    });
+    if (!ttsRes.ok) return false;
+    const arrayBuf = await ttsRes.arrayBuffer();
+    // 2) Converte pra base64
+    const bytes = new Uint8Array(arrayBuf);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const base64 = btoa(binary);
+    // 3) Manda via Evolution sendWhatsAppAudio
+    const r = await fetch(EVO_URL() + '/message/sendWhatsAppAudio/' + instance, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY() },
+      body: JSON.stringify({ number, audio: base64, encoding: true })
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
+// Decide se mensagem deve ir como voz ou texto
+// Voz: mensagens longas (>3 linhas OU >200 chars), exceto se tem link/code
+function devoVirarVoz(text) {
+  if (!text) return false;
+  if (process.env.VOICE_TTS_ENABLED !== '1' && process.env.VOICE_TTS_ENABLED !== 'true') return false;
+  if (text.includes('http://') || text.includes('https://')) return false; // link nao funciona em audio
+  if (text.includes('```') || text.includes('[link')) return false;
+  const linhas = text.split('\n').filter(l => l.trim()).length;
+  return linhas >= 4 || text.length >= 200;
 }
 
 // Baixa midia (img/audio/pdf) do Evolution em base64.
@@ -960,6 +1113,84 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
     };
   }
 
+  // ═══ CONSULTAR_STATUS — cliente pergunta "tá aprovado?" ═══
+  // Busca todas as propostas do CPF nas tabelas e retorna estado humanizado
+  if (acao === 'CONSULTAR_STATUS') {
+    const cpf = conversa.cpf || conversa.dados?.cpf;
+    if (!cpf) return { ok: false, mensagem: 'Sem CPF na conversa' };
+    try {
+      const { data: propostas } = await dbSelect('clt_propostas', {
+        filters: { cpf }, order: 'created_at.desc', limit: 5
+      });
+      if (!propostas || propostas.length === 0) {
+        return {
+          ok: true, propostas: [], statusHumanizado: 'Nenhuma proposta encontrada ainda',
+          mensagem: 'Cliente perguntou status mas nao ha proposta criada — voce ainda esta na etapa de oferta'
+        };
+      }
+      const ultima = propostas[0];
+      // Mapeia status pra mensagem humanizada
+      const map = {
+        'pending': 'Em análise pelo banco',
+        'analyzing': 'Em análise pelo banco',
+        'approved': 'Aprovada — falta cliente assinar via link',
+        'awaiting_signature': 'Aguardando cliente assinar contrato',
+        'signed': 'Contrato assinado — aguardando crédito cair',
+        'paid': 'CRÉDITO PAGO — já caiu na conta!',
+        'rejected': 'Recusada pelo banco',
+        'failed': 'Falhou na criação',
+        'cancelled': 'Cancelada'
+      };
+      const st = (ultima.status_externo || ultima.status || '').toLowerCase();
+      return {
+        ok: true,
+        propostas,
+        statusUltima: ultima.status_externo || ultima.status,
+        statusHumanizado: map[st] || `Status: ${st || 'desconhecido'}`,
+        valorLiquido: ultima.valor_liquido,
+        parcelas: ultima.qtd_parcelas,
+        valorParcela: ultima.valor_parcela,
+        criadaEm: ultima.created_at,
+        linkFormalizacao: ultima.link_formalizacao,
+        mensagem: `Status: ${map[st] || st}`
+      };
+    } catch (e) {
+      return { ok: false, erro: 'Erro consultando status: ' + e.message };
+    }
+  }
+
+  // ═══ AGENDAR_RETORNO — cliente quer ser contactado depois ═══
+  // Cria registro em clt_followups (cron dispara mensagem na hora certa)
+  if (acao === 'AGENDAR_RETORNO') {
+    const cpf = conversa.cpf || conversa.dados?.cpf;
+    const tel = conversa.telefone;
+    const dataAgendar = dados.agendar_retorno_em || conversa.dados?.agendar_retorno_em;
+    if (!tel) return { ok: false, mensagem: 'Sem telefone' };
+    let agendarEm = dataAgendar;
+    if (!agendarEm) {
+      // Default: 24h
+      agendarEm = new Date(Date.now() + 24*60*60*1000).toISOString();
+    } else if (!agendarEm.includes('T')) {
+      // Aceita "amanha 15h" ou data ISO. Se nao for ISO, default 24h.
+      agendarEm = new Date(Date.now() + 24*60*60*1000).toISOString();
+    }
+    try {
+      await dbInsert('clt_followups', {
+        telefone: tel, cpf, conversa_id: conversa.id,
+        agendado_para: agendarEm,
+        contexto: dados.motivo_retorno || 'cliente pediu pra falar depois',
+        status: 'pendente'
+      });
+      return {
+        ok: true, agendado_para: agendarEm,
+        mensagem: `Retorno agendado pra ${new Date(agendarEm).toLocaleString('pt-BR')}`
+      };
+    } catch (e) {
+      // Se tabela nao existe ainda, retorna ok mesmo (graceful degradation)
+      return { ok: true, agendado_para: agendarEm, mensagem: 'Anotado (tabela followups ainda sera criada)', _erro: e.message };
+    }
+  }
+
   return { ok: true, noop: true };
 }
 
@@ -1225,6 +1456,25 @@ export default async function handler(req) {
 
       contextParts.push('\n═══ DADOS JÁ CONHECIDOS (NUNCA peça esses ao cliente) ═══');
       contextParts.push(dadosConhecidos.length ? dadosConhecidos.join(' · ') : 'Nenhum ainda');
+
+      // ─── MEMORIA: conversas anteriores do mesmo cliente ───
+      try {
+        const memoria = await buscarMemoriaCliente(telefone, conversa.cpf || dadosCli.cpf);
+        if (memoria.ultimasOfertas.length > 0 || memoria.propostasAnteriores.length > 0) {
+          contextParts.push('\n═══ HISTÓRICO ANTERIOR DESTE CLIENTE (use pra personalizar) ═══');
+          if (memoria.ultimasOfertas.length > 0) {
+            const o = memoria.ultimasOfertas[0];
+            const dataStr = o.quando ? new Date(o.quando).toLocaleDateString('pt-BR') : '?';
+            contextParts.push(`• Última simulação (${dataStr}): R$ ${Number(o.valorLiquido).toFixed(2)} liberado em ${o.parcelas}x R$ ${Number(o.valorParcela).toFixed(2)}`);
+            contextParts.push('  → Considere oferecer essa mesma simulação se for recente: "Da última vez que conversamos eu te ofereci R$ X em Yx, ainda quer essa simulação?"');
+          }
+          if (memoria.propostasAnteriores.length > 0) {
+            for (const p of memoria.propostasAnteriores) {
+              contextParts.push(`• Proposta anterior: ${p.status} (R$ ${Number(p.valorLiquido||0).toFixed(2)})`);
+            }
+          }
+        }
+      } catch { /* nao quebra fluxo */ }
 
       // Faltantes pra digitação
       const camposNecessarios = ['email', 'cep', 'rua', 'numero_end', 'bairro', 'cidade', 'uf', 'pix_key'];

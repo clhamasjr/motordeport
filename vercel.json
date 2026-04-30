@@ -1,5 +1,11 @@
 {
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/:path*" }
+  ],
+  "crons": [
+    {
+      "path": "/api/clt-cron-followups",
+      "schedule": "*/5 * * * *"
+    }
   ]
 }
