@@ -362,7 +362,7 @@ async function processarJoinBank(id, cpf, auth, secret) {
     return;
   }
 
-  // borrower obrigatorio: identity (CPF) + name + birthDate. Outros campos sao bonus.
+  // borrower obrigatorio: identity (CPF) + name + birthDate
   const dataIso = cli.dataNascimento.includes('-') ? cli.dataNascimento : ddMmYyToIso(cli.dataNascimento);
   const borrower = {
     identity: cpf,
@@ -371,13 +371,12 @@ async function processarJoinBank(id, cpf, auth, secret) {
     motherName: cli.nomeMae || undefined,
     gender: (cli.sexo || 'M').toUpperCase().startsWith('F') ? 'female' : 'male'
   };
-  // Telefone se tiver
   if (cli.telefones?.[0]?.completo) {
     const tel = cli.telefones[0].completo.replace(/\D/g, '');
     borrower.phone = tel;
   }
 
-  // 1) Cria simulacao (provider 950002 = QITech, 950703 = 321 Bank — usa default)
+  // 1) Cria simulacao
   const r = await callApi('/api/joinbank', {
     action: 'cltCreateSimulation',
     borrower,
@@ -393,26 +392,47 @@ async function processarJoinBank(id, cpf, auth, secret) {
     return;
   }
 
-  const vinculos = jb.employmentRelationships || [];
-  if (!vinculos.length || !jb.temVinculo) {
+  // 2) ACEITE DO TERMO — Lhamas como correspondente assina, que destrava
+  // a consulta dos vinculos empregaticios (sem isso, employmentRelationships
+  // vem vazio e marcariamos 'sem vinculo' incorretamente)
+  const termoR = await callApi('/api/joinbank', {
+    action: 'cltAuthTerm', simulationId: jb.simulationId
+  }, auth, secret);
+  const termo = termoR.data || {};
+  if (termo.authTermKey && !termo.signed) {
+    await callApi('/api/joinbank', {
+      action: 'cltSignTerm', authTermKey: termo.authTermKey
+    }, auth, secret).catch(() => {});
+  }
+
+  // 3) Re-cria simulacao apos assinatura — agora os vinculos vem populados
+  // (algumas APIs precisam de novo POST; outras a propria simulacao recarrega
+  // o status. Tentamos um GET primeiro pra economizar)
+  const refresh = await callApi('/api/joinbank', {
+    action: 'cltCreateSimulation', borrower, providerCode: '950002'
+  }, auth, secret);
+  const jb2 = refresh.data || jb;
+
+  const vinculos = jb2.employmentRelationships || [];
+  if (!vinculos.length) {
     await patchBanco(id, 'joinbank', {
       status: 'falha',
       disponivel: false,
       mensagem: 'Sem vínculo CLT elegível pra este banco',
-      simulationId: jb.simulationId
+      simulationId: jb2.simulationId || jb.simulationId,
+      _termoAssinado: !!termo.authTermKey
     });
     return;
   }
 
-  // Pega o primeiro vinculo elegivel
   const v = vinculos[0];
   await patchBanco(id, 'joinbank', {
     status: 'ok',
     disponivel: true,
-    simulationId: jb.simulationId,
-    mensagem: `Cliente elegível — ${v.employerName || 'empregador'} · margem disponível pra simulação detalhada`,
+    simulationId: jb2.simulationId || jb.simulationId,
+    mensagem: `Cliente elegível — ${v.employerName || 'empregador'}`,
     dados: {
-      simulationId: jb.simulationId,
+      simulationId: jb2.simulationId || jb.simulationId,
       empregador: v.employerName,
       empregadorCnpj: v.employerDocument,
       registrationNumber: v.registrationNumber,
