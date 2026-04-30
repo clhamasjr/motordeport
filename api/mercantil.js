@@ -16,6 +16,7 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
+import { dbSelect, dbUpsert } from './_lib/supabase.js';
 
 const BASE = 'https://api.mercantil.com.br:8443';
 const SITE_BFF = '/pcb/sitebff/api';
@@ -147,17 +148,32 @@ async function loginAutomatico() {
   return { ok: true, token: accessToken, sessaoId, exp };
 }
 
-// Pega token valido (cache ou login automatico).
-// Fallback final: env MERCANTIL_JWT + MERCANTIL_SESSAO_ID (manual, deprecated).
+// Pega token valido. Ordem:
+// 1. Cache em memoria (Edge mantem warm)
+// 2. Tabela clt_mercantil_session (operador renovou pelo painel)
+// 3. Login automatico (geralmente falha — banco bloqueia, manter como fallback)
+// 4. Env vars MERCANTIL_JWT + SESSAO_ID (deprecated)
 async function getToken() {
   // 1) Cache valido (com 60s margem antes do exp)
   if (tokenCache.token && tokenCache.exp > Date.now() + 60000) {
     return { ok: true, token: tokenCache.token, sessaoId: tokenCache.sessaoId };
   }
-  // 2) Tenta login automatico (preferido)
+  // 2) Tenta carregar da tabela clt_mercantil_session (singleton id=1)
+  try {
+    const { data: sess } = await dbSelect('clt_mercantil_session', { filters: { id: 1 }, single: true });
+    if (sess?.token && sess?.exp) {
+      const expMs = new Date(sess.exp).getTime();
+      if (expMs > Date.now() + 60000) {
+        tokenCache = { token: sess.token, sessaoId: sess.sessao_id, ts: Date.now(), exp: expMs };
+        return { ok: true, token: sess.token, sessaoId: sess.sessao_id };
+      }
+    }
+  } catch { /* tabela pode nao existir, segue */ }
+
+  // 3) Tenta login automatico (geralmente falha por TLS fingerprint)
   const login = await loginAutomatico();
   if (login.ok) return login;
-  // 3) Fallback: JWT manual em env (deprecated, mas mantem compatibilidade)
+  // 4) Fallback: JWT manual em env (deprecated)
   const envToken = process.env.MERCANTIL_JWT;
   const envSessao = process.env.MERCANTIL_SESSAO_ID;
   if (envToken && envSessao) {
@@ -345,6 +361,52 @@ export default async function handler(req) {
     }, 200, req);
   }
 
+  // ─── SET JWT — operador cola JWT do portal Mercantil (renovacao manual) ──
+  // Workaround: banco bloqueia login programatico, entao o operador loga
+  // no portal manualmente, copia o Bearer JWT do DevTools, cola aqui.
+  // Sistema usa por ~12h ate o token expirar.
+  if (action === 'setJwt') {
+    let token = String(body.token || '').trim();
+    // Aceita "Bearer X..." ou só "X..."
+    if (token.toLowerCase().startsWith('bearer ')) token = token.substring(7).trim();
+    if (!token) return jsonError('token obrigatorio (cole o JWT do portal)', 400, req);
+
+    const payload = decodeJwtPayload(token);
+    if (!payload) return jsonError('Token invalido — nao consegui decodificar JWT', 400, req);
+
+    const sessaoId = payload?.['mb.data']?.usuario?.sessaoId;
+    const exp = (payload.exp || 0) * 1000;
+    if (!sessaoId) return jsonError('JWT sem sessaoId em mb.data.usuario', 400, req);
+    if (exp < Date.now()) return jsonError('Token ja expirou — gere um novo', 400, req);
+
+    // Salva singleton id=1
+    const { error: errUp } = await dbUpsert('clt_mercantil_session', {
+      id: 1,
+      token,
+      sessao_id: sessaoId,
+      exp: new Date(exp).toISOString(),
+      atualizado_por_user_id: user.id,
+      atualizado_em: new Date().toISOString()
+    }, 'id');
+    if (errUp) return jsonResp({ success: false, error: errUp }, 500, req);
+
+    // Atualiza cache em memoria
+    tokenCache = { token, sessaoId, ts: Date.now(), exp };
+
+    const usuarioJwt = payload?.['mb.data']?.usuario;
+    return jsonResp({
+      success: true,
+      sessaoId,
+      tokenExpEm: new Date(exp).toISOString(),
+      validoPor: Math.round((exp - Date.now()) / 60000) + ' minutos',
+      usuario: {
+        nome: usuarioJwt?.nome,
+        codigo: usuarioJwt?.codigo,
+        statusSessao: usuarioJwt?.statusSessao
+      }
+    }, 200, req);
+  }
+
   // ─── LOGIN — forca novo login (renova JWT). Util pra testar credenciais ──
   if (action === 'login') {
     tokenCache = { token: null, sessaoId: null, ts: 0, exp: 0 }; // limpa cache
@@ -372,5 +434,5 @@ export default async function handler(req) {
     }, 200, req);
   }
 
-  return jsonError(`action invalida. Disponiveis: login, iniciarOperacao, solicitarAutorizacao, verificarAutorizacao, test`, 400, req);
+  return jsonError(`action invalida. Disponiveis: setJwt, login, iniciarOperacao, solicitarAutorizacao, verificarAutorizacao, test`, 400, req);
 }
