@@ -221,6 +221,75 @@ export default async function handler(req) {
       }, 200, req);
     }
 
+    // ─── CLT CHECK ELIGIBILITY (consolidado) ─────────────────────────
+    // Faz os 4 passos em sequencia + retorno limpo, pra clt-oportunidades
+    // chamar 1x e ja saber se cliente eh elegivel:
+    //   1) cltCreateSimulation
+    //   2) cltAuthTerm  (Lhamas como correspondente assina)
+    //   3) cltSignTerm
+    //   4) cltCreateSimulation novamente (agora vinculos vem populados)
+    // Retorna { disponivel, vinculo, simulationId, motivo, _raw }
+    if (action === 'cltCheckEligibility') {
+      const providerCode = body.providerCode || '950002';
+      if (!body.borrower?.identity || !body.borrower?.name || !body.borrower?.birthDate) {
+        return j({
+          success: false, disponivel: false,
+          motivo: 'Faltam dados básicos do cliente (CPF, nome ou data de nascimento)'
+        }, 200, req);
+      }
+      // Passo 1: cria simulacao
+      const r1 = await jb('POST', `/v3/loan-private-payroll-simulations/providers/${providerCode}`, {
+        borrower: body.borrower, creditMethod: 0, creditBankAccount: null
+      });
+      const d1 = r1.data || {};
+      const simulationId = d1.id || d1.simulationId || null;
+      if (!r1.ok || !simulationId) {
+        const errs = Array.isArray(d1.errors) ? d1.errors.map(e => e.message || e.title || JSON.stringify(e)).join('; ') : null;
+        const motivo = d1.title || d1.detail || d1.message || errs || d1.refusalReason ||
+          (r1.status ? `Erro HTTP ${r1.status}` : 'Falha ao criar simulação');
+        return j({ success: false, disponivel: false, motivo, _raw: d1 }, 200, req);
+      }
+      // Passo 2: cltAuthTerm (Lhamas correspondente assina)
+      const r2 = await jb('GET', `/v3/loan-private-payroll-simulations/${simulationId}/auth-term`);
+      const d2 = r2.data || {};
+      const authTermKey = d2.key || null;
+      const jaAssinado = d2.status?.key === 'signed';
+      // Passo 3: cltSignTerm (se ainda nao assinado)
+      if (authTermKey && !jaAssinado) {
+        await jb('PUT', `/v3/signer/${authTermKey}/accept`, {
+          position: { latitude: '-235489', longitude: '-466388' }
+        }).catch(() => {});
+      }
+      // Passo 4: re-cria simulacao apos assinatura (vinculos populados)
+      const r3 = await jb('POST', `/v3/loan-private-payroll-simulations/providers/${providerCode}`, {
+        borrower: body.borrower, creditMethod: 0, creditBankAccount: null
+      });
+      const d3 = r3.data || d1;
+      const simulationIdFinal = d3.id || d3.simulationId || simulationId;
+      const vinculos = d3.employmentRelationships || [];
+      if (!vinculos.length) {
+        return j({
+          success: true, disponivel: false,
+          motivo: 'Sem vínculo CLT elegível pra este banco',
+          simulationId: simulationIdFinal,
+          _termoAssinado: !!authTermKey
+        }, 200, req);
+      }
+      const v = vinculos[0];
+      return j({
+        success: true, disponivel: true,
+        simulationId: simulationIdFinal,
+        vinculo: {
+          empregador: v.employerName,
+          empregadorCnpj: v.employerDocument,
+          matricula: v.registrationNumber,
+          renda: v.salary,
+          margemDisponivel: v.availableMargin
+        },
+        _raw: d3
+      }, 200, req);
+    }
+
     // Test CLT — tenta criar simulação minima só com CPF pra validar conectividade
     if (action === 'cltTest') {
       const r = await jb('POST', '/v3/loan-products/search/basic', { type: { code: { eq: 21 } }, operation: { code: { eq: 1 } } });

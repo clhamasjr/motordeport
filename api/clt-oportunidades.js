@@ -95,21 +95,22 @@ export default async function handler(req) {
     // Se temos WEBHOOK_SECRET, usa ele nas chamadas internas (mais robusto)
     const secret = process.env.WEBHOOK_SECRET || '';
 
-    // ─── ETAPA ÚNICA: chamadas básicas em paralelo ─
-    // Padrão: V8 (QI + CELCOIN) + PresençaBank + Multicorban
-    // C6 só entra se incluirC6=true (cliente autorizou)
-    // NovaVida fica como FALLBACK (so se PB+MC nao encontrarem) + on-demand
-    // depois (quando cliente aceita oferta, pra completar email/endereco/etc)
+    // ─── FASE 1: chamadas básicas em paralelo (não exigem dados do cliente) ─
+    // PresençaBank, Multicorban, V8 (QI + CELCOIN), C6 status, Mercantil iniciarOperacao
+    // NovaVida fica como FALLBACK (so se PB+MC nao encontrarem)
+    // JoinBank vai pra FASE 2 (precisa nome+dataNasc do cliente)
     const tarefas = [
       callApi('/api/presencabank', { action: 'oportunidadesPorCPF', cpf }, auth, secret),
       callApi('/api/multicorban',   { action: 'consult_clt', cpf },         auth, secret),
       callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'QI' },     auth, secret).catch(() => ({ ok: false })),
       callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'CELCOIN' }, auth, secret).catch(() => ({ ok: false })),
       // C6: SEMPRE checa status de autorizacao primeiro (gratis, rapido).
-      // Se cliente ja tem autorizacao, roda oferta completa. Se nao, mostra bloqueado.
-      callApi('/api/c6', { action: 'statusAutorizacao', cpf }, auth, secret).catch(() => ({ ok: false }))
+      callApi('/api/c6', { action: 'statusAutorizacao', cpf }, auth, secret).catch(() => ({ ok: false })),
+      // Mercantil: iniciarOperacao só checa cadastro. Se JWT inválido, mb.error
+      // contém 'JWT' — frontend mostra "JWT expirado, admin precisa renovar".
+      callApi('/api/mercantil', { action: 'iniciarOperacao', cpf, convenio: 'MTE' }, auth, secret).catch(() => ({ ok: false }))
     ];
-    const [pbOpor, mcClt, v8QI, v8Celcoin, c6Status] = await Promise.all(tarefas);
+    const [pbOpor, mcClt, v8QI, v8Celcoin, c6Status, merc] = await Promise.all(tarefas);
 
     // Se C6 ja autorizado, busca oferta tambem (em paralelo nao da pra fazer porque depende do status)
     let c6Of = { ok: false, data: { _bloqueado: true } };
@@ -358,6 +359,101 @@ export default async function handler(req) {
       });
     }
 
+    // ─── MERCANTIL — card baseado no resultado do iniciarOperacao (Fase 1) ──
+    const mb = merc?.data || {};
+    if (mb.error && String(mb.error).toUpperCase().includes('JWT')) {
+      ofertas.push({
+        banco: 'mercantil', label: 'Mercantil',
+        disponivel: false, bloqueado: true,
+        mensagem: 'Token Mercantil expirado. Admin precisa renovar em CLT > Token Mercantil.'
+      });
+    } else if (mb.success && mb.temCadastro && mb.tokenValidoConsignadoPrivado) {
+      ofertas.push({
+        banco: 'mercantil', label: 'Mercantil',
+        disponivel: true,
+        operacaoId: mb.operacaoId,
+        elegibilidade: { empregador: null, nomeCliente: mb.nomeCliente },
+        mensagem: `Cliente elegível (${mb.nomeCliente || cliente.nome || 'cadastrado'}) — clique Digitar pra simular.`
+      });
+    } else if (mb.success && mb.temCadastro && mb.precisaAutorizacao) {
+      ofertas.push({
+        banco: 'mercantil', label: 'Mercantil',
+        disponivel: false, bloqueado: true,
+        operacaoId: mb.operacaoId,
+        precisaAutorizacao: true,
+        mensagem: `Cliente cadastrado (${mb.nomeCliente || ''}) — precisa autorizar consulta. Clique pra enviar SMS de autorização.`
+      });
+    } else if (mb.semCadastro) {
+      ofertas.push({
+        banco: 'mercantil', label: 'Mercantil',
+        disponivel: false,
+        mensagem: 'Cliente sem cadastro prévio no Mercantil'
+      });
+    } else {
+      ofertas.push({
+        banco: 'mercantil', label: 'Mercantil',
+        disponivel: false,
+        mensagem: mb.mensagem || mb.error || 'Falha ao consultar Mercantil'
+      });
+    }
+
+    // ─── FASE 2: JoinBank/QualiBanking (precisa cliente.nome + dataNasc) ───
+    // Roda só se temos dados suficientes do enriquecimento (PB+MC+manual).
+    // Tempo: ~8-12s (4 chamadas em série encapsuladas em cltCheckEligibility).
+    if (cliente.nome && cliente.dataNascimento) {
+      try {
+        const dataIso = String(cliente.dataNascimento).includes('-')
+          ? cliente.dataNascimento
+          : ddMmYyToIso(cliente.dataNascimento);
+        const sexoNorm = (cliente.sexo || 'M').toUpperCase().startsWith('F') ? 'female' : 'male';
+        const borrower = {
+          identity: cpf,
+          name: cliente.nome,
+          birthDate: dataIso,
+          motherName: cliente.nomeMae || undefined,
+          gender: sexoNorm
+        };
+        if (cliente.telefones?.[0]?.completo) {
+          borrower.phone = String(cliente.telefones[0].completo).replace(/\D/g, '');
+        }
+        const jbR = await callApi('/api/joinbank', {
+          action: 'cltCheckEligibility', borrower, providerCode: '950002'
+        }, auth, secret).catch(() => ({ ok: false, data: {} }));
+        const jb = jbR.data || {};
+        if (jb.disponivel) {
+          ofertas.push({
+            banco: 'joinbank', label: 'QualiBanking',
+            disponivel: true,
+            simulationId: jb.simulationId,
+            elegibilidade: {
+              empregador: jb.vinculo?.empregador,
+              margemDisponivel: jb.vinculo?.margemDisponivel
+            },
+            mensagem: `Cliente elegível — ${jb.vinculo?.empregador || 'empregador'}. Clique Digitar pra simular.`
+          });
+        } else {
+          ofertas.push({
+            banco: 'joinbank', label: 'QualiBanking',
+            disponivel: false,
+            simulationId: jb.simulationId || null,
+            mensagem: jb.motivo || 'Sem vínculo CLT elegível pra este banco'
+          });
+        }
+      } catch (e) {
+        ofertas.push({
+          banco: 'joinbank', label: 'QualiBanking',
+          disponivel: false,
+          mensagem: 'Erro consultando QualiBanking: ' + (e.message || 'desconhecido')
+        });
+      }
+    } else {
+      ofertas.push({
+        banco: 'joinbank', label: 'QualiBanking',
+        disponivel: false,
+        mensagem: 'Faltam dados básicos do cliente (nome ou data de nascimento)'
+      });
+    }
+
     const totalDisponivel = ofertas.filter(o => o.disponivel).length;
     const telefonePrincipal = cliente.telefones?.[0]?.completo || null;
     const temNomeETel = !!(cliente.nome && telefonePrincipal);
@@ -418,13 +514,14 @@ export default async function handler(req) {
       ofertas,
       totalBancosDisponiveis: totalDisponivel,
       mensagem: totalDisponivel > 0
-        ? `${totalDisponivel} de 4 bancos com oferta disponível`
+        ? `${totalDisponivel} banco(s) com oferta disponível`
         : 'Nenhum banco retornou oferta disponível pra esse CPF',
       _raw: {
         presencabank: pb,
         multicorban: mc,
         novavida: nv,
         c6,
+        mercantil: mb,
         v8QI: v8QI?.data,
         v8Celcoin: v8Celcoin?.data
       }
