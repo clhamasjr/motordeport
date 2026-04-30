@@ -326,31 +326,44 @@ async function processarV8(id, provider, cpf, auth, secret) {
   }
 }
 
-// Banco MERCANTIL — sem API, apenas digitacao manual no portal.
-// Status final 'manual_aguardando' indica que esta esperando operador
-// simular no portal e clicar 'Marcar simulado' com os valores.
+// Banco MERCANTIL — API REST real (Layer7 Gateway, JWT auth).
+// Tenta API; se nao tiver JWT configurado (env MERCANTIL_JWT), cai pra
+// modo digitacao manual (operador faz no portal e cadastra valor).
 async function processarMercantil(id, cpf, auth, secret) {
   await patchBanco(id, 'mercantil', { status: 'processando' });
 
-  // Aguarda dados basicos (precisa do nome/CPF pro operador colar no portal)
-  const cli = await aguardarCliente(id, 6000);
-  if (!cli || !cli.nome) {
+  // Tenta via API: iniciarOperacao confirma se cliente tem vinculo
+  const r = await callApi('/api/mercantil', { action: 'iniciarOperacao', cpf, convenio: 'MTE' }, auth, secret);
+  const mb = r.data || {};
+
+  // Se erro de JWT nao configurado: cai pra modo manual (fallback)
+  if (mb.error && String(mb.error).includes('JWT')) {
     await patchBanco(id, 'mercantil', {
-      status: 'falha',
-      mensagem: 'Faltam dados básicos do cliente (nome) — Mercantil exige nome pra simular'
+      status: 'manual_aguardando',
+      disponivel: false,
+      manual: true,
+      portalUrl: process.env.MERCANTIL_PORTAL_URL || 'https://meu.bancomercantil.com.br/login',
+      mensagem: 'API não configurada — clique "Abrir Portal" e simule manualmente.'
     });
     return;
   }
 
-  // Marca como aguardando digitacao manual — o operador vai abrir o portal,
-  // simular, e voltar pra cadastrar o resultado via action simularManual
-  await patchBanco(id, 'mercantil', {
-    status: 'manual_aguardando',
-    disponivel: false,
-    manual: true,
-    portalUrl: process.env.MERCANTIL_PORTAL_URL || 'https://meu.bancomercantil.com.br/login',
-    mensagem: 'Aguardando digitação manual no portal — clique em "Abrir Portal" e simule.'
-  });
+  if (mb.success && mb.temVinculo) {
+    await patchBanco(id, 'mercantil', {
+      status: 'ok',
+      disponivel: true,
+      operacaoId: mb.operacaoId,
+      mensagem: `Cliente elegível — operação ${mb.operacaoId}. Clique Digitar pra simular tabela.`,
+      dados: { operacaoId: mb.operacaoId, convenio: mb.convenio }
+    });
+  } else {
+    await patchBanco(id, 'mercantil', {
+      status: 'falha',
+      disponivel: false,
+      mensagem: mb.dados?.mensagem || mb.error || 'Cliente sem vínculo no convênio MTE',
+      _raw_response: mb
+    });
+  }
 }
 
 async function processarJoinBank(id, cpf, auth, secret) {
