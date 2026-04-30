@@ -1386,6 +1386,38 @@ export default async function handler(req) {
         }
       }
 
+      // ─── DETECTOR DE LINK MERCANTIL (bml.b.br) ───
+      // Cliente recebeu SMS do Mercantil e nos manda o link OU diz que clicou.
+      // Bot reconhece e responde de forma contextual + dispara verificacao
+      // de autorizacao no backend.
+      const linkMercantilMatch = textoDoCliente.match(/bml\.b\.br\/([A-Z0-9]+)/i);
+      const cpfConv = conversa.cpf || conversa.dados?.cpf;
+      const palavrasAutz = /\b(autorizei|autorizado|cliquei|fiz|ok|pronto|finalizei|terminei|liberei|feito)\b/i.test(textoDoCliente);
+      // Se mensagem MENCIONA link bml.b.br OU palavras de "fiz autz" e ja foi solicitada autz Mercantil:
+      if (linkMercantilMatch || (palavrasAutz && (conversa.dados?.mercantil_autz_solicitada))) {
+        if (linkMercantilMatch) {
+          await sendMsg(instance, telefone, `Recebi o link! 📲 Agora é só clicar nele e seguir os passos pra autorizar (leva 30 segundinhos). Quando terminar, me avisa que eu já libero sua oferta!`);
+          await updateConversa(conversa.id, {
+            dados: { ...(conversa.dados||{}), mercantil_link_recebido: linkMercantilMatch[0], mercantil_autz_solicitada: true }
+          });
+          await logEvento(conversa.id, telefone, 'mercantil_link_detectado', { link: linkMercantilMatch[0] });
+          return jsonResp({ ok: true, mercantilLink: linkMercantilMatch[0] }, 200, req);
+        }
+        if (palavrasAutz && cpfConv) {
+          // Cliente diz que autorizou — verifica no Mercantil
+          const verif = await callBankApi('mercantil', { action: 'verificarAutorizacao', cpf: cpfConv });
+          if (verif.ok && verif.data?.autorizado) {
+            await sendMsg(instance, telefone, `Show! 🎉 Confirmei sua autorização aqui — já tô buscando a melhor oferta pra você.`);
+            // Re-dispara processarMercantil em segundo plano (operador ja vai ver no painel)
+            await logEvento(conversa.id, telefone, 'mercantil_autz_confirmada', { cpf: cpfConv });
+            return jsonResp({ ok: true, mercantilAutorizado: true }, 200, req);
+          } else if (verif.ok) {
+            await sendMsg(instance, telefone, `Hmm, ainda não consegui ver a autorização aqui. Você clicou no link e finalizou a tela? Tenta de novo se não tiver feito ainda. ⏳`);
+            return jsonResp({ ok: true, mercantilAguardando: true }, 200, req);
+          }
+        }
+      }
+
       // ─── Comandos especiais ───
       if (textoDoCliente.trim().toLowerCase() === '/pausa') {
         await updateConversa(conversa.id, { pausada_por_humano: true });
