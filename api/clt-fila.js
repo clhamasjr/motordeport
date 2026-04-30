@@ -437,9 +437,28 @@ async function processarJoinBank(id, cpf, auth, secret) {
   const jb = r.data || {};
 
   if (!r.ok || !jb.simulationId) {
+    // Extrai motivo real de TODOS os campos possiveis (JoinBank/QITech retorna
+    // erro em formato diferente conforme tipo: validacao, recusa de credito,
+    // CNAE bloqueado, etc). Sem isso a tela mostra "Falha ao criar simulação"
+    // generico e o operador nao sabe se eh problema do cliente ou bug.
+    const raw = jb._raw || jb;
+    const errs = Array.isArray(raw.errors) ? raw.errors : (Array.isArray(jb.errors) ? jb.errors : []);
+    const errsStr = errs.length
+      ? errs.map(e => e.message || e.title || e.detail || (typeof e === 'string' ? e : JSON.stringify(e))).join('; ')
+      : null;
+    const motivo = raw.title
+      || raw.detail
+      || raw.message
+      || errsStr
+      || jb.message
+      || jb.error
+      || (jb.refusalReason || raw.refusalReason)
+      || (jb.httpStatus || r.status ? `Erro HTTP ${jb.httpStatus || r.status}` : null)
+      || 'Falha ao criar simulação';
     await patchBanco(id, 'joinbank', {
       status: 'falha',
-      mensagem: jb._raw?.title || jb._raw?.detail || jb.message || 'Falha ao criar simulação'
+      mensagem: motivo,
+      _raw_response: raw
     });
     return;
   }
@@ -828,8 +847,45 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
   if (action === 'status') {
     const id = body.id;
     if (!id) return jsonError('id obrigatório', 400, req);
-    const { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+    let { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
     if (!row) return jsonError('Fila não encontrada', 404, req);
+
+    // REFRESH ATIVO V8: se um V8 esta processando ha mais de 60s
+    // (CONSENT_APPROVED ou WAITING_CREDIT_ANALYSIS), re-consulta sincronamente
+    // pra ver se ja virou SUCCESS. Sem isso o card fica eternamente "aguardando
+    // confirmação" no card e eventualmente cai pro timeout 10min como FALHA.
+    if (row.status_geral === 'processando' && row.iniciado_em) {
+      const idadeMs = Date.now() - new Date(row.iniciado_em).getTime();
+      if (idadeMs > 60 * 1000) {
+        for (const provider of ['QI', 'CELCOIN']) {
+          const k = provider === 'QI' ? 'v8_qi' : 'v8_celcoin';
+          const b = row.bancos?.[k];
+          if (b && (b.status === 'processando' || b.processando === true)) {
+            try {
+              const v8r = await callApi('/api/v8', { action: 'consultarPorCPF', cpf: row.cpf, provider }, auth, secret);
+              const v8 = v8r.data || {};
+              if (v8.encontrado && v8.status === 'SUCCESS') {
+                await patchBanco(id, k, {
+                  status: 'ok', disponivel: true, processando: false,
+                  consultId: v8.consultId,
+                  mensagem: `Cliente elegível — margem R$ ${parseFloat(v8.availableMarginValue || 0).toFixed(2)}`,
+                  dados: { margemDisponivel: parseFloat(v8.availableMarginValue || 0), consultId: v8.consultId }
+                });
+              } else if (['REJECTED', 'FAILED'].includes(v8.status)) {
+                await patchBanco(id, k, {
+                  status: 'falha', processando: false,
+                  mensagem: `❌ ${v8.status}: ${v8.descricao || 'cliente rejeitado'}`
+                });
+              }
+              // Se ainda CONSENT_APPROVED ou WAITING — mantem processando (proxima poll re-tenta)
+            } catch { /* ignora erro de refresh, deixa pro proximo poll */ }
+          }
+        }
+        // Re-le row depois das atualizacoes
+        const { data: refreshed } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+        if (refreshed) row = refreshed;
+      }
+    }
 
     // TIMEOUT ABSOLUTO: se a fila esta processando ha mais de 10min, forca
     // conclusao marcando bancos pendentes como falha (V8 pode ficar

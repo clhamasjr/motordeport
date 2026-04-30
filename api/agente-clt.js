@@ -881,6 +881,54 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
       }
     }
 
+    // ── REGISTRA CONSULTA NA FILA (clt_consultas_fila) ──────────
+    // Sem isso, simulações via Agente IA não aparecem no Painel de Consultas
+    // (operador não enxerga o que o bot tá fazendo). criada_por_user_id=null,
+    // criada_por_nome identifica como Agente IA + telefone do cliente.
+    try {
+      const bancosFila = {};
+      for (const o of ofertasBasicas) {
+        if (o.banco === 'v8') {
+          const key = o.provider === 'QI' ? 'v8_qi' : 'v8_celcoin';
+          bancosFila[key] = {
+            status: o.disponivel ? 'ok' : (o.processando ? 'processando' : 'falha'),
+            disponivel: !!o.disponivel,
+            consultId: o.consultId || null,
+            mensagem: o.mensagem || '',
+            dados: o.detalhes || (o.elegibilidade ? { ...o.elegibilidade } : null),
+            atualizado_em: new Date().toISOString()
+          };
+        } else {
+          bancosFila[o.banco] = {
+            status: o.disponivel ? 'ok' : (o.bloqueado ? 'bloqueado' : 'falha'),
+            disponivel: !!o.disponivel,
+            bloqueado: !!o.bloqueado,
+            mensagem: o.mensagem || '',
+            dados: o.detalhes || (o.elegibilidade ? { ...o.elegibilidade } : null),
+            atualizado_em: new Date().toISOString()
+          };
+        }
+      }
+      // Garante que todos os bancos do painel existam (mesmo que sem oferta)
+      for (const b of ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'mercantil', 'c6']) {
+        if (!bancosFila[b]) bancosFila[b] = { status: 'pulado', mensagem: 'Não consultado pelo Agente IA' };
+      }
+      const nomeAgente = `Agente IA · ${conversa.telefone || '?'}`;
+      await dbInsert('clt_consultas_fila', {
+        cpf,
+        nome_manual: cliente.nome || null,
+        cliente,
+        vinculo: r.data.vinculo || null,
+        bancos: bancosFila,
+        ofertas_count: ofertasBasicas.filter(o => o.disponivel).length,
+        status_geral: 'concluido',
+        iniciado_em: new Date().toISOString(),
+        concluido_em: new Date().toISOString(),
+        criada_por_user_id: null,
+        criada_por_nome: nomeAgente
+      });
+    } catch (e) { /* nao bloqueia o fluxo de venda do agente */ }
+
     return {
       ok: true,
       cliente,

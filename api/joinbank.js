@@ -148,6 +148,9 @@ export default async function handler(req) {
         simulationId: r.data?.id || r.data?.simulationId || null,
         employmentRelationships: r.data?.employmentRelationships || [],
         temVinculo: (r.data?.employmentRelationships || []).length > 0,
+        // _raw preservado pra extracao de motivos de rejeicao no clt-fila.
+        // (sem isso, mensagens 422/Reprovado caiam no fallback "Falha generica")
+        _raw: r.data,
         ...r.data,
       }, 200, req);
     }
