@@ -242,6 +242,79 @@ export default async function handler(req) {
     }, 200, req);
   }
 
+  // ─── SOLICITAR AUTORIZACAO DATAPREV — dispara SMS pro cliente com link ──
+  // POST /pcb/sitebff/api/AutorizacoesDigitais/IN100ConsultaDesbloqueio
+  // Banco envia SMS com link encurtado bml.b.br pro telefone informado.
+  // Cliente clica no link, autoriza, e o sistema do Mercantil libera consulta.
+  // Response: vazio/200 OK (banco nao retorna o link — nao da pra interceptar).
+  if (action === 'solicitarAutorizacao') {
+    const propostaProspectId = body.propostaProspectId || body.operacaoId;
+    const ddd = parseInt(String(body.ddd || '').replace(/\D/g, '')) || null;
+    const numeroCelular = parseInt(String(body.numeroCelular || body.telefone || '').replace(/\D/g, '')) || null;
+    if (!propostaProspectId || !ddd || !numeroCelular) {
+      return jsonError('propostaProspectId, ddd e numeroCelular obrigatorios', 400, req);
+    }
+    const payload = {
+      ddd,
+      numeroCelular,
+      propostaProspectId,
+      meioComunicacao: body.meioComunicacao || 'Sms'
+    };
+    const r = await mbCall('POST', `${SITE_BFF}/AutorizacoesDigitais/IN100ConsultaDesbloqueio`, payload);
+    // Banco devolve 200 com body vazio (ou "1") quando SMS foi disparado com sucesso
+    return j({
+      success: r.ok,
+      httpStatus: r.status,
+      smsEnviado: r.ok,
+      mensagem: r.ok
+        ? 'SMS enviado pro cliente. Cliente vai receber link bml.b.br pra autorizar.'
+        : 'Falha ao disparar SMS: ' + (r.data?.error || r.status),
+      _payload: payload,
+      _raw: r.data
+    }, 200, req);
+  }
+
+  // ─── VERIFICAR AUTORIZACAO — re-chama IniciarOperacao pra checar se cliente
+  // ja autorizou. Quando autorizou, tokenValidoConsignadoPrivado vira true.
+  if (action === 'verificarAutorizacao') {
+    const cpf = String(body.cpf || '').replace(/\D/g, '');
+    if (!cpf) return jsonError('cpf obrigatorio', 400, req);
+    const convenio = CONVENIOS[body.convenio || 'MTE'] || CONVENIOS.MTE;
+    const tk = await getToken();
+    if (!tk.ok) return j({ success: false, error: tk.error }, 502, req);
+
+    const payload = {
+      empresaId: CORRESPONDENTE_DEFAULT.empresaId,
+      cpfCliente: parseInt(cpf),
+      cnpjCorrespondente: CORRESPONDENTE_DEFAULT.cnpjCorrespondente,
+      correspondenteId: CORRESPONDENTE_DEFAULT.correspondenteId,
+      correspondenteNome: CORRESPONDENTE_DEFAULT.correspondenteNome,
+      cnpjSubstabelecido: CORRESPONDENTE_DEFAULT.cnpjSubstabelecido,
+      substabelecidoId: CORRESPONDENTE_DEFAULT.substabelecidoId,
+      substabelecidoNome: CORRESPONDENTE_DEFAULT.substabelecidoNome,
+      convenioId: convenio.id,
+      convenioNome: convenio.nome,
+      modalidadeConvenio: 'ConsignadoPrivado',
+      reCaptchaToken: null,
+      sessaoId: tk.sessaoId,
+      uf: (body.uf || 'SP').toUpperCase(),
+      usuarioDigitadorId: CORRESPONDENTE_DEFAULT.usuarioDigitadorId,
+      usuarioDigitadorNome: CORRESPONDENTE_DEFAULT.usuarioDigitadorNome
+    };
+    const r = await mbCall('POST', `${SITE_BFF}/PropostasProspect/IniciarOperacao`, payload);
+    const d = r.data || {};
+    const autorizado = d.tokenValidoConsignadoPrivado === true;
+    return j({
+      success: r.ok,
+      autorizado,
+      operacaoId: d.id || null,
+      nomeCliente: d.nomeCliente || null,
+      mensagem: autorizado
+        ? 'Cliente autorizou! Pode prosseguir pra simulacao.'
+        : 'Cliente ainda nao autorizou. Aguarde alguns minutos e tente de novo.'
+    }, 200, req);
+  }
+
   // ─── LOGIN — forca novo login (renova JWT). Util pra testar credenciais ──
   if (action === 'login') {
     tokenCache = { token: null, sessaoId: null, ts: 0, exp: 0 }; // limpa cache
@@ -269,5 +342,5 @@ export default async function handler(req) {
     }, 200, req);
   }
 
-  return jsonError(`action invalida. Disponiveis: login, iniciarOperacao, test`, 400, req);
+  return jsonError(`action invalida. Disponiveis: login, iniciarOperacao, solicitarAutorizacao, verificarAutorizacao, test`, 400, req);
 }
