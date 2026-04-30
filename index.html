@@ -4791,6 +4791,23 @@ function _filaToResult(fila) {
     mensagem: msgDefault(cc, cc.status)
   });
 
+  // JoinBank / QualiBanking
+  const jb = b.joinbank || { status: 'pending' };
+  const jbF = _statusToFlags(jb.status);
+  ofertas.push({
+    banco: 'joinbank', label: 'QualiBanking',
+    disponivel: jb.status === 'ok' && jb.disponivel === true,
+    simulationId: jb.simulationId,
+    processando: jbF.processando,
+    elegibilidade: jb.dados ? {
+      empregador: jb.dados.empregador,
+      empregadorCnpj: jb.dados.empregadorCnpj,
+      registrationNumber: jb.dados.registrationNumber
+    } : null,
+    falhou: jb.status === 'falha',
+    mensagem: msgDefault(jb, jb.status)
+  });
+
   // C6
   const c6 = b.c6 || { status: 'pending' };
   const c6F = _statusToFlags(c6.status);
@@ -5129,7 +5146,7 @@ async function _pollingFila(filaId) {
           const elapsedMs = Date.now() - inicio;
           if (elapsedMs > 20000) {
             const bancos = d.fila.bancos || {};
-            for (const bancoKey of ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6']) {
+            for (const bancoKey of ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'c6']) {
               const bk = bancos[bancoKey];
               if (!bk) continue;
               const isPending = bk.status === 'pending';
@@ -5844,11 +5861,12 @@ function renderCltConsulta() {
     const r = it.result || {};
     // Monta indicadores por banco (4 pontinhos)
     const ofs = r.ofertas || [];
-    const indicadores = ['presencabank','v8_qi','v8_celcoin','c6'].map(key => {
+    const indicadores = ['presencabank','v8_qi','v8_celcoin','joinbank','c6'].map(key => {
       let o;
       if (key === 'presencabank') o = ofs.find(x => x.banco === 'presencabank');
       else if (key === 'v8_qi') o = ofs.find(x => x.banco === 'v8' && x.provider === 'QI');
       else if (key === 'v8_celcoin') o = ofs.find(x => x.banco === 'v8' && x.provider === 'CELCOIN');
+      else if (key === 'joinbank') o = ofs.find(x => x.banco === 'joinbank');
       else if (key === 'c6') o = ofs.find(x => x.banco === 'c6');
       if (!o) return { key, st: 'pending' };
       if (o.disponivel) return { key, st: 'ok' };
@@ -5902,7 +5920,7 @@ function renderCltConsulta() {
       // Mini-indicadores por banco (visual de progresso)
       let indicHtml = '';
       if (Array.isArray(c.indicadores)) {
-        const labelMap = { presencabank: 'PB', v8_qi: 'QI', v8_celcoin: 'CC', c6: 'C6' };
+        const labelMap = { presencabank: 'PB', v8_qi: 'QI', v8_celcoin: 'CC', joinbank: 'JB', c6: 'C6' };
         const colorMap = {
           ok: 'background:rgba(34,197,94,.18);color:var(--grn)',
           proc: 'background:rgba(59,130,246,.18);color:var(--acc);animation:pulse 1.5s infinite',

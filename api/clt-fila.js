@@ -322,6 +322,78 @@ async function processarV8(id, provider, cpf, auth, secret) {
   }
 }
 
+async function processarJoinBank(id, cpf, auth, secret) {
+  await patchBanco(id, 'joinbank', { status: 'processando' });
+
+  // Espera dados basicos do cliente (nome + dataNasc) — JoinBank exige borrower completo
+  const cli = await aguardarCliente(id, 8000);
+  if (!cli) {
+    await patchBanco(id, 'joinbank', {
+      status: 'falha',
+      mensagem: 'Faltam dados básicos do cliente (nome ou data de nascimento)'
+    });
+    return;
+  }
+
+  // borrower obrigatorio: identity (CPF) + name + birthDate. Outros campos sao bonus.
+  const dataIso = cli.dataNascimento.includes('-') ? cli.dataNascimento : ddMmYyToIso(cli.dataNascimento);
+  const borrower = {
+    identity: cpf,
+    name: cli.nome,
+    birthDate: dataIso,
+    motherName: cli.nomeMae || undefined,
+    gender: (cli.sexo || 'M').toUpperCase().startsWith('F') ? 'female' : 'male'
+  };
+  // Telefone se tiver
+  if (cli.telefones?.[0]?.completo) {
+    const tel = cli.telefones[0].completo.replace(/\D/g, '');
+    borrower.phone = tel;
+  }
+
+  // 1) Cria simulacao (provider 950002 = QITech, 950703 = 321 Bank — usa default)
+  const r = await callApi('/api/joinbank', {
+    action: 'cltCreateSimulation',
+    borrower,
+    providerCode: '950002' // QITech
+  }, auth, secret);
+  const jb = r.data || {};
+
+  if (!r.ok || !jb.simulationId) {
+    await patchBanco(id, 'joinbank', {
+      status: 'falha',
+      mensagem: jb._raw?.title || jb._raw?.detail || jb.message || 'Falha ao criar simulação'
+    });
+    return;
+  }
+
+  const vinculos = jb.employmentRelationships || [];
+  if (!vinculos.length || !jb.temVinculo) {
+    await patchBanco(id, 'joinbank', {
+      status: 'falha',
+      disponivel: false,
+      mensagem: 'Sem vínculo CLT elegível pra este banco',
+      simulationId: jb.simulationId
+    });
+    return;
+  }
+
+  // Pega o primeiro vinculo elegivel
+  const v = vinculos[0];
+  await patchBanco(id, 'joinbank', {
+    status: 'ok',
+    disponivel: true,
+    simulationId: jb.simulationId,
+    mensagem: `Cliente elegível — ${v.employerName || 'empregador'} · margem disponível pra simulação detalhada`,
+    dados: {
+      simulationId: jb.simulationId,
+      empregador: v.employerName,
+      empregadorCnpj: v.employerDocument,
+      registrationNumber: v.registrationNumber,
+      vinculos: vinculos.length
+    }
+  });
+}
+
 async function processarC6(id, cpf, incluirC6, auth, secret) {
   await patchBanco(id, 'c6', { status: 'processando' });
 
@@ -427,6 +499,7 @@ export default async function handler(req) {
       multicorban: { status: 'pending' },
       v8_qi: { status: 'pending' },
       v8_celcoin: { status: 'pending' },
+      joinbank: { status: 'pending' },
       c6: { status: 'pending' }
     };
 
@@ -472,7 +545,7 @@ export default async function handler(req) {
     // o frontend fechar a janela. Cada um roda em paralelo (fetch sem await),
     // mas como o handler `processar` faz await ate terminar, o trabalho roda
     // ate o fim mesmo se o cliente desconectar.
-    const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6'];
+    const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'c6'];
     const baseUrl = APP_URL();
     for (const banco of bancos) {
       // Fire-and-forget mas COM internal-secret (evita 401 de chamadas internas)
@@ -554,8 +627,9 @@ export default async function handler(req) {
       else if (banco === 'multicorban') await processarMulticorban(id, row.cpf, auth, secret);
       else if (banco === 'v8_qi') await processarV8(id, 'QI', row.cpf, auth, secret);
       else if (banco === 'v8_celcoin') await processarV8(id, 'CELCOIN', row.cpf, auth, secret);
+      else if (banco === 'joinbank') await processarJoinBank(id, row.cpf, auth, secret);
       else if (banco === 'c6') await processarC6(id, row.cpf, !!row.incluir_c6, auth, secret);
-      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, c6', 400, req);
+      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, c6', 400, req);
     } catch (e) {
       await patchBanco(id, banco, { status: 'falha', mensagem: 'Erro: ' + e.message });
       return jsonResp({ success: false, error: e.message }, 200, req);
