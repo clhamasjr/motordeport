@@ -831,6 +831,21 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
   if (acao === 'INICIAR_SIMULACAO') {
     if (!cpf || cpf.length !== 11) return { ok: false, erro: 'CPF inválido' };
 
+    // ── FEEDBACK INICIAL ──────────────────────────────────────
+    // Consulta demora 13-20s. Sem feedback, cliente fica achando que sumiu.
+    // Manda mensagem "tô consultando" antes de chamar os bancos.
+    if (conversa?.instance && conversa?.telefone) {
+      const primeiroNome = (nome || '').split(' ')[0];
+      const saudacao = primeiroNome ? `Show, ${primeiroNome}!` : 'Show!';
+      const msgConsultando = `${saudacao} Vou consultar seu CPF nos bancos parceiros aqui agora 🔍\nMe dá uns 15-20 segundinhos que já te volto com o resultado...`;
+      try {
+        await sendMsg(conversa.instance, conversa.telefone, msgConsultando);
+        await logEvento(conversa.id, conversa.telefone, 'msg_enviada', {
+          texto: msgConsultando, origem: 'feedback_inicio_consulta'
+        });
+      } catch { /* nao bloqueia */ }
+    }
+
     // ETAPA A: Consulta basica em paralelo (rapida, ~5-8s)
     const r = await callBankApi('clt-oportunidades', { cpf, incluirC6: false });
     if (!r.ok || !r.data?.success) {
@@ -928,6 +943,57 @@ async function executarAcao(acao, conversa, dadosNovos, config) {
         criada_por_nome: nomeAgente
       });
     } catch (e) { /* nao bloqueia o fluxo de venda do agente */ }
+
+    // ── FALLBACK 0 OFERTAS ─────────────────────────────────────
+    // Se nenhum banco retornou oferta, NÃO podemos deixar cliente no limbo.
+    // Tenta liberar C6 (selfie) se ainda não tiver autorização.
+    // Se nem C6 dá, manda mensagem clara explicando que não há oferta agora.
+    const totalDispNow = ofertasBasicas.filter(o => o.disponivel).length;
+    if (totalDispNow === 0 && conversa?.instance && conversa?.telefone) {
+      const c6Card = ofertasBasicas.find(o => o.banco === 'c6');
+      const c6PrecisaSelfie = !!c6Card?.bloqueado && c6Card?.statusAutorizacao !== 'AGUARDANDO_AUTORIZACAO';
+      const primeiroNome = (cliente.nome || nome || '').split(' ')[0];
+
+      if (c6PrecisaSelfie && cliente.nome && cliente.dataNascimento) {
+        // Auto-dispara link de selfie C6
+        try {
+          const tel = (conversa.telefone || '').replace(/^55/, '');
+          const ddd = tel.substring(0, 2);
+          const numCli = tel.substring(2);
+          const linkR = await callBankApi('c6', {
+            action: 'gerarLinkAutorizacao', cpf, nome: cliente.nome,
+            dataNascimento: cliente.dataNascimento, ddd, telefone: numCli
+          });
+          const link = linkR.data?.link;
+          if (link) {
+            const msg = `Olha ${primeiroNome || 'tudo bem'}, consultei aqui nos bancos parceiros e ainda não consegui ofertas liberadas pra você no momento 😕\n\nMas tem MAIS UM banco que pode liberar — e geralmente esse é o que aprova mais 💪. Pra ele te aprovar, preciso só que você faça uma selfie rapidinha de autorização (leva 2 minutos):\n\n👉 ${link}\n\nAssim que você fizer, eu consulto pra você na hora e volto com a resposta!`;
+            await sendMsg(conversa.instance, conversa.telefone, msg);
+            await logEvento(conversa.id, conversa.telefone, 'msg_enviada', {
+              texto: msg.substring(0, 200), origem: 'fallback_zero_ofertas_c6'
+            });
+            await logEvento(conversa.id, conversa.telefone, 'c6_link_enviado_auto', { link });
+          }
+        } catch { /* ignora — Claude segue fluxo normal */ }
+      } else if (c6Card?.statusAutorizacao === 'AGUARDANDO_AUTORIZACAO') {
+        // Cliente já tem link C6 enviado, ainda não fez selfie
+        const msg = `Olha ${primeiroNome || ''}, consultei nos bancos e por enquanto não tem oferta liberada — MAS tem um banco aguardando aquela selfie de autorização que mandei antes 📸. Faz ela quando puder que eu consulto pra você no minuto seguinte!`;
+        try {
+          await sendMsg(conversa.instance, conversa.telefone, msg);
+          await logEvento(conversa.id, conversa.telefone, 'msg_enviada', {
+            texto: msg.substring(0, 200), origem: 'fallback_zero_ofertas_c6_pendente'
+          });
+        } catch {}
+      } else {
+        // Sem oferta + sem C6 disponivel — mensagem honesta
+        const msg = `Pô ${primeiroNome || 'beleza'}, fiz a consulta nos bancos parceiros aqui e infelizmente, no momento, nenhum tem oferta liberada pra você 😕\n\nIsso geralmente muda em 30-60 dias — o banco atualiza a margem disponível e libera. Posso te avisar aqui mesmo no WhatsApp quando tiver alguma novidade pra você?`;
+        try {
+          await sendMsg(conversa.instance, conversa.telefone, msg);
+          await logEvento(conversa.id, conversa.telefone, 'msg_enviada', {
+            texto: msg.substring(0, 200), origem: 'fallback_zero_ofertas_sem_saida'
+          });
+        } catch {}
+      }
+    }
 
     return {
       ok: true,
