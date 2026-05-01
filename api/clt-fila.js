@@ -929,5 +929,81 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     return jsonResp({ success: true, items: data || [] }, 200, req);
   }
 
-  return jsonError('Action inválida. Válidas: criar, processar, status, listar', 400, req);
+  // ─── COMPLEMENTAR CLIENTE ─────────────────────────────────
+  // Operador completa dados que faltaram (nome/dataNasc/sexo/nomeMae) e o
+  // sistema re-dispara automaticamente os bancos que estavam bloqueados por
+  // falta desses dados (joinbank principalmente). Tambem persiste em
+  // clt_clientes pra reusar em consultas futuras desse CPF.
+  if (action === 'complementarCliente') {
+    const id = body.id;
+    if (!id) return jsonError('id obrigatório', 400, req);
+    let { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+    if (!row) return jsonError('Fila não encontrada', 404, req);
+
+    // Normaliza inputs (aceita YYYY-MM-DD ou DD/MM/YYYY)
+    const nome = (body.nome || '').trim() || null;
+    let dataNasc = (body.dataNascimento || '').trim() || null;
+    if (dataNasc) {
+      const m1 = dataNasc.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      const m2 = dataNasc.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (m1) dataNasc = `${m1[1]}-${m1[2]}-${m1[3]}`;
+      else if (m2) dataNasc = `${m2[3]}-${m2[2]}-${m2[1]}`;
+      else dataNasc = null;
+    }
+    const sexo = (body.sexo || '').toUpperCase().startsWith('F') ? 'F'
+               : (body.sexo || '').toUpperCase().startsWith('M') ? 'M' : null;
+    const nomeMae = (body.nomeMae || '').trim() || null;
+
+    if (!nome && !dataNasc && !sexo && !nomeMae) {
+      return jsonError('Pelo menos um campo (nome, dataNascimento, sexo ou nomeMae) deve ser fornecido', 400, req);
+    }
+
+    // Mescla na fila (sem sobrescrever o que ja tem com vazio)
+    const novosDados = {};
+    if (nome) novosDados.nome = nome;
+    if (dataNasc) novosDados.dataNascimento = dataNasc;
+    if (sexo) novosDados.sexo = sexo;
+    if (nomeMae) novosDados.nomeMae = nomeMae;
+    await mesclarCliente(id, novosDados);
+
+    // Re-le row atualizado
+    const { data: rowAtu } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+    const cli = rowAtu?.cliente || {};
+    const temBasicos = !!(cli.nome && cli.dataNascimento);
+
+    // Re-dispara bancos que estavam bloqueados por falta de dados:
+    // joinbank: SEMPRE re-tenta (precisa nome+dataNasc obrigatoriamente)
+    // v8_qi/v8_celcoin: re-tenta se status atual nao eh ok
+    if (temBasicos) {
+      const baseUrl = APP_URL();
+      const bancosRedisparar = ['joinbank'];
+      // Re-dispara V8 se nao deu ok ainda (precisa termo gerado com dados completos)
+      const v8qiSt = rowAtu?.bancos?.v8_qi?.status;
+      const v8ccSt = rowAtu?.bancos?.v8_celcoin?.status;
+      if (v8qiSt !== 'ok') bancosRedisparar.push('v8_qi');
+      if (v8ccSt !== 'ok') bancosRedisparar.push('v8_celcoin');
+      // Marca status_geral de volta pra processando se estava concluido
+      if (rowAtu?.status_geral === 'concluido') {
+        await dbUpdate('clt_consultas_fila', { id }, { status_geral: 'processando' });
+      }
+      for (const banco of bancosRedisparar) {
+        fetch(baseUrl + '/api/clt-fila', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
+          body: JSON.stringify({ action: 'processar', id, banco })
+        }).catch(e => console.error('[complementar] dispatch ' + banco + ':', e.message));
+      }
+    }
+
+    return jsonResp({
+      success: true,
+      cliente: cli,
+      bancosRedisparados: temBasicos ? ['joinbank', 'v8_qi', 'v8_celcoin'] : [],
+      observacao: temBasicos
+        ? 'Dados completos. Re-disparei JoinBank/V8 — aguarde alguns segundos.'
+        : 'Dados ainda incompletos. Precisa nome + data de nascimento pra re-disparar bancos.'
+    }, 200, req);
+  }
+
+  return jsonError('Action inválida. Válidas: criar, processar, status, listar, complementarCliente', 400, req);
 }

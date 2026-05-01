@@ -153,9 +153,12 @@ export default async function handler(req) {
       } catch { /* falhou - segue sem NovaVida */ }
     }
 
+    // V8 (QI ou CELCOIN) retorna nome do cliente em consultarPorCPF se ja existe
+    // consult anterior — aproveita isso pra nao depender so de PB/MC/NV
+    const v8Nome = v8QI?.data?.nome || v8Celcoin?.data?.nome || null;
     const cliente = {
-      // Prioridade: manual (digitado pelo operador) > MC > PB > NV
-      nome: nomeManual || mc.nome || pb.dadosCliente?.nome || nv.nome || null,
+      // Prioridade: manual (operador) > MC > PB > V8 > NV
+      nome: nomeManual || mc.nome || pb.dadosCliente?.nome || v8Nome || nv.nome || null,
       cpf,
       dataNascimento: pb.dadosCliente?.dataNascimento
                    || (mc.dataNascimento ? ddMmYyToIso(mc.dataNascimento) : null)

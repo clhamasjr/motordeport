@@ -166,8 +166,31 @@ export default async function handler(req) {
       } else {
         payloadV8.disbursedAmount = 1000;
       }
-      const sim = await callApi('/api/v8', payloadV8, auth, secret);
-      const d = sim.data;
+      // Helper que tenta simular e retorna sucesso ou erro
+      const tentarSimular = async (parcelas) => {
+        const r = await callApi('/api/v8', { ...payloadV8, numberOfInstallments: parcelas }, auth, secret);
+        return { d: r.data, parcelasUsadas: parcelas };
+      };
+
+      let sim = await tentarSimular(numInst);
+      let d = sim.d;
+
+      // FALLBACK PROGRESSIVO: se erro de parcelas (margem baixa nao banca N parcelas),
+      // tenta valores progressivamente menores. Resolve caso "Numero de parcelas maior
+      // que o permitido" pra clientes com margem pequena (ex: R$ 157/mes nao banca 96x).
+      if (!d?.idSimulation) {
+        const errMsgEarly = String(d?._raw?.title || d?._raw?.detail || d?.mensagem || '').toLowerCase();
+        const erroParcelas = errMsgEarly.includes('parcela') && (errMsgEarly.includes('maior') || errMsgEarly.includes('permitido') || errMsgEarly.includes('superior'));
+        if (erroParcelas) {
+          // Ordena DESC e pula valores >= que ja tentamos
+          const tentar = [...parcelasOpts].sort((a, b) => b - a).filter(p => p < numInst);
+          for (const p of tentar) {
+            const t = await tentarSimular(p);
+            if (t.d?.idSimulation) { sim = t; d = t.d; break; }
+          }
+        }
+      }
+
       if (d?.idSimulation) {
         return jsonResp({
           success: true, banco, provider,
@@ -182,7 +205,8 @@ export default async function handler(req) {
           idSimulacao: d.idSimulation,
           configId: cfg.id,
           comSeguro: cfgComSeguro,
-          consultId
+          consultId,
+          parcelasFallback: sim.parcelasUsadas !== numInst ? { tentada: numInst, usada: sim.parcelasUsadas } : null
         }, 200, req);
       }
 

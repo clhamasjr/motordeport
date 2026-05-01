@@ -5789,6 +5789,20 @@ function _cltOfertaCard(o, ctx) {
     h += `<button class="btn btn-sm" style="width:100%;margin-top:10px;border-color:var(--acc);color:var(--acc)" onclick="reTentarBanco('${bancoKey}')">🔄 Re-tentar este banco</button>`;
   }
 
+  // Botao "Completar dados" — quando banco falhou por falta de nome/dataNasc.
+  // O QualiBanking exige borrower completo; se PB+MC+V8 nao trouxeram, oferador
+  // precisa digitar manualmente. Apos completar, sistema re-dispara o banco.
+  const msgFaltaDados = (o.mensagem || '').toLowerCase();
+  const precisaDados = !o.disponivel && (
+    msgFaltaDados.includes('faltam dados básicos') ||
+    msgFaltaDados.includes('faltam dados basicos') ||
+    msgFaltaDados.includes('nome ou data de nascimento') ||
+    msgFaltaDados.includes('faltam dados do cliente')
+  );
+  if (precisaDados) {
+    h += `<button class="btn btn-sm" style="width:100%;margin-top:8px;border-color:var(--ylw);color:var(--ylw)" onclick="cltCompletarDadosCliente()">📝 Completar nome e data de nascimento</button>`;
+  }
+
   // Botão "Digitar" — aparece sempre que cliente eh elegivel (mesmo sem
   // tabela detalhada ja simulada). Cada banco tem sua sequencia no
   // /api/clt-digitacao que monta termo + simula tabela exata + cria proposta.
@@ -5935,6 +5949,59 @@ async function verificarAutzMercantil(filaId) {
       alert('⏳ Cliente ainda não autorizou. Pede pra ele clicar no link do SMS e tente de novo em 1-2 min.');
     }
   } catch (e) { alert('Erro: ' + e.message); }
+}
+
+// Operador completa nome+dataNasc+sexo+nomeMae (modal simples via prompts).
+// Backend mescla dados na fila e re-dispara JoinBank/V8 que ficaram bloqueados.
+async function cltCompletarDadosCliente() {
+  const filaId = cltConsultaState.selecionadaId || cltConsultaState.filaId;
+  if (!filaId) { alert('Nenhuma consulta selecionada'); return; }
+  // Pega cliente atual da pilha pra pre-preencher
+  const item = (cltConsultaState.consultas || []).find(c => c.id === filaId);
+  const cli = item?.result?.cliente || {};
+
+  const nome = prompt('📝 Nome completo do cliente:', cli.nome || '');
+  if (nome === null) return; // cancelou
+  const nomeTrim = (nome || '').trim();
+  if (!nomeTrim) { alert('Nome é obrigatório'); return; }
+
+  const dataPlace = cli.dataNascimento || '';
+  const dataNasc = prompt('📅 Data de nascimento (DD/MM/AAAA):', dataPlace);
+  if (dataNasc === null) return;
+  const dataNascTrim = (dataNasc || '').trim();
+  if (!dataNascTrim || !/^(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})$/.test(dataNascTrim)) {
+    alert('Data inválida. Use formato DD/MM/AAAA (ex: 15/03/1985).');
+    return;
+  }
+
+  const sexoIn = prompt('⚧ Sexo (M/F):', cli.sexo || '');
+  if (sexoIn === null) return;
+  const sexoTrim = (sexoIn || '').toUpperCase().trim();
+
+  const nomeMae = prompt('👩 Nome da mãe (opcional, ENTER pra pular):', cli.nomeMae || '');
+  if (nomeMae === null) return;
+
+  try {
+    const r = await fetch('/api/clt-fila', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({
+        action: 'complementarCliente',
+        id: filaId,
+        nome: nomeTrim,
+        dataNascimento: dataNascTrim,
+        sexo: sexoTrim,
+        nomeMae: (nomeMae || '').trim() || null
+      })
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'erro');
+    // Reativa polling (o status_geral volta pra processando)
+    _pollingFila(filaId);
+    alert('✅ Dados salvos! ' + (d.observacao || 'Re-disparei os bancos que estavam bloqueados.'));
+  } catch (e) {
+    alert('❌ Erro: ' + e.message);
+  }
 }
 
 // Re-dispara um banco específico de uma fila (com force=true bypassa idempotencia)
