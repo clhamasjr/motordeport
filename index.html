@@ -5312,8 +5312,13 @@ function reTentarSimulacao(bancoKey) {
 }
 
 async function liberarC6Consulta() {
-  const r = cltConsultaState.result;
-  if (!r) return;
+  const filaId = cltConsultaState.selecionadaId || cltConsultaState.filaId;
+  const item = (cltConsultaState.consultas || []).find(c => c.id === filaId);
+  const r = item?.result || cltConsultaState.result;
+  if (!r) {
+    alert('Não consegui localizar os dados da consulta. Refaça a consulta e tente de novo.');
+    return;
+  }
   const cpf = r.cliente?.cpf;
   const nome = (r.cliente?.nome || '').replace(/'/g, "\\'");
   const dataNasc = r.cliente?.dataNascimento || '';
@@ -5357,13 +5362,23 @@ async function reconsultarComC6() {
 let cltDigitState = { open: false, banco: null, oferta: null, ctx: null, dados: {}, loading: false, result: null };
 
 function cltAbrirDigitacao(banco, provider) {
-  const r = cltConsultaState.result;
-  if (!r) return;
+  // State migrou pra pilha (cltConsultaState.consultas) — pega o result da
+  // consulta selecionada. Bug: antes lia .result direto e ficava silencioso.
+  const filaId = cltConsultaState.selecionadaId || cltConsultaState.filaId;
+  const item = (cltConsultaState.consultas || []).find(c => c.id === filaId);
+  const r = item?.result || cltConsultaState.result; // fallback legado
+  if (!r) {
+    alert('Não consegui localizar os dados da consulta. Refaça a consulta e tente de novo.');
+    return;
+  }
   // Pra V8 multi-provider, escolhe oferta com banco+provider especifico
   const oferta = banco === 'v8' && provider
     ? r.ofertas?.find(o => o.banco === banco && o.provider === provider)
     : r.ofertas?.find(o => o.banco === banco);
-  if (!oferta) return;
+  if (!oferta) {
+    alert('Oferta não encontrada pra ' + banco + (provider ? '/' + provider : ''));
+    return;
+  }
   cltDigitState = {
     open: true, banco, provider: provider || null, oferta, ctx: r,
     dados: {
@@ -5700,6 +5715,26 @@ function _cltOfertaCard(o, ctx) {
     h += `</div>`;
     h += `<button class="btn btn-sm" style="width:100%;margin-bottom:4px;border-color:var(--pur);color:var(--pur);font-size:11px" onclick="anexarPrintMercantil('${ctx?.filaId}','mercantil')">📷 Anexar print da simulação (IA lê)</button>`;
     h += `<button class="btn-acc btn-sm" style="width:100%;font-size:11px" onclick="confirmarMercantilManual('${ctx?.filaId}','mercantil')">✅ Confirmar simulação</button>`;
+    h += '</div>';
+    return h;
+  }
+
+  // Card HANDBANK / UY3 — precisa autorização do cliente (link de cadastro)
+  if (o.banco === 'handbank' && o.bloqueado && o.precisaAutorizacao && o.linkAutorizacao) {
+    const cli = ctx?.cliente || {};
+    const tel = cli.telefones?.[0]?.completo || '';
+    const linkSafe = (o.linkAutorizacao || '').replace(/'/g, "\\'");
+    const filaIdSafe = ctx?.filaId || '';
+    h += `<div style="font-size:13px;color:var(--ylw);margin-bottom:10px">📲 ${o.mensagem}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-bottom:8px;word-break:break-all;background:var(--sf);padding:6px 8px;border-radius:6px;font-family:monospace">${o.linkAutorizacao}</div>`;
+    if (tel) {
+      h += `<button class="btn-acc btn-sm" style="width:100%;margin-bottom:6px" onclick="enviarLinkUY3WhatsApp('${tel}','${linkSafe}','${(cli.nome||'').replace(/'/g,"\\'")}')">📲 Enviar link via WhatsApp ao cliente</button>`;
+    }
+    h += `<div style="display:flex;gap:6px;margin-bottom:6px">`;
+    h += `<button class="btn btn-sm" style="flex:1;font-size:11px" onclick="copiarTexto('${linkSafe}',this)">📋 Copiar link</button>`;
+    h += `<button class="btn btn-sm" style="flex:1;font-size:11px" onclick="window.open('${linkSafe}','_blank')">🔗 Abrir</button>`;
+    h += `</div>`;
+    h += `<button class="btn btn-sm" style="width:100%;font-size:11px;border-color:var(--acc);color:var(--acc)" onclick="reTentarBanco('handbank')">🔄 Já autorizou? Verificar</button>`;
     h += '</div>';
     return h;
   }
