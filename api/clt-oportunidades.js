@@ -108,9 +108,12 @@ export default async function handler(req) {
       callApi('/api/c6', { action: 'statusAutorizacao', cpf }, auth, secret).catch(() => ({ ok: false })),
       // Mercantil: iniciarOperacao só checa cadastro. Se JWT inválido, mb.error
       // contém 'JWT' — frontend mostra "JWT expirado, admin precisa renovar".
-      callApi('/api/mercantil', { action: 'iniciarOperacao', cpf, convenio: 'MTE' }, auth, secret).catch(() => ({ ok: false }))
+      callApi('/api/mercantil', { action: 'iniciarOperacao', cpf, convenio: 'MTE' }, auth, secret).catch(() => ({ ok: false })),
+      // Handbank/UY3: iniciarConsultaCLT tambem checa autorizacao do cliente.
+      // Retorna 202 + linkAutorizacao quando cliente ainda nao autorizou no UY3.
+      callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret).catch(() => ({ ok: false }))
     ];
-    const [pbOpor, mcClt, v8QI, v8Celcoin, c6Status, merc] = await Promise.all(tarefas);
+    const [pbOpor, mcClt, v8QI, v8Celcoin, c6Status, merc, hb] = await Promise.all(tarefas);
 
     // Se C6 ja autorizado, busca oferta tambem (em paralelo nao da pra fazer porque depende do status)
     let c6Of = { ok: false, data: { _bloqueado: true } };
@@ -400,6 +403,52 @@ export default async function handler(req) {
       });
     }
 
+    // ─── HANDBANK/UY3 — card baseado no resultado de iniciarConsultaCLT ──
+    // 3 cenarios mapeados pelo handbank.js:
+    //   precisaAutorizacao=true  → 202: link autz UY3
+    //   autorizado=true          → 201: tem margem
+    //   bloqueado=true           → 400: ja tem contrato OU impedimento
+    const hbData = hb?.data || {};
+    if (hbData.precisaAutorizacao && hbData.linkAutorizacao) {
+      ofertas.push({
+        banco: 'handbank', label: 'Handbank · UY3',
+        disponivel: false, bloqueado: true,
+        precisaAutorizacao: true,
+        linkAutorizacao: hbData.linkAutorizacao,
+        mensagem: 'Cliente precisa autorizar a consulta UY3 (cadastro com selfie). Clique pra enviar link via WhatsApp.'
+      });
+    } else if (hbData.autorizado === true && hbData.disponivel) {
+      ofertas.push({
+        banco: 'handbank', label: 'Handbank · UY3',
+        disponivel: true,
+        elegibilidade: {
+          margemDisponivel: hbData.margem,
+          empregador: hbData.empregador,
+          renda: hbData.renda
+        },
+        dados: hbData,
+        mensagem: hbData.mensagem || 'Cliente autorizado — clique Digitar pra simular.'
+      });
+    } else if (hbData.bloqueado && hbData.jaTemContrato) {
+      ofertas.push({
+        banco: 'handbank', label: 'Handbank · UY3',
+        disponivel: false, bloqueado: true,
+        mensagem: hbData.mensagem || 'Cliente já possui contrato ativo na UY3.'
+      });
+    } else if (hbData._httpStatus === 400) {
+      ofertas.push({
+        banco: 'handbank', label: 'Handbank · UY3',
+        disponivel: false,
+        mensagem: hbData.mensagem || 'UY3 recusou consulta'
+      });
+    } else {
+      ofertas.push({
+        banco: 'handbank', label: 'Handbank · UY3',
+        disponivel: false,
+        mensagem: hbData.mensagem || hbData.error || 'Aguardando resposta do Handbank'
+      });
+    }
+
     // ─── FASE 2: JoinBank/QualiBanking (precisa cliente.nome + dataNasc) ───
     // Roda só se temos dados suficientes do enriquecimento (PB+MC+manual).
     // Tempo: ~8-12s (4 chamadas em série encapsuladas em cltCheckEligibility).
@@ -525,6 +574,7 @@ export default async function handler(req) {
         novavida: nv,
         c6,
         mercantil: mb,
+        handbank: hbData,
         v8QI: v8QI?.data,
         v8Celcoin: v8Celcoin?.data
       }

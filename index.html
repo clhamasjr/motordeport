@@ -5719,22 +5719,28 @@ function _cltOfertaCard(o, ctx) {
     return h;
   }
 
-  // Card HANDBANK / UY3 — precisa autorização do cliente (link de cadastro)
+  // Card HANDBANK / UY3 — precisa autorização. Sistema auto-preenche
+  // (DataprevEmployee/ChallengeInfo) com dados que temos do cliente.
+  // Fallback: link manual se faltar algum dado.
   if (o.banco === 'handbank' && o.bloqueado && o.precisaAutorizacao && o.linkAutorizacao) {
     const cli = ctx?.cliente || {};
     const tel = cli.telefones?.[0]?.completo || '';
     const linkSafe = (o.linkAutorizacao || '').replace(/'/g, "\\'");
-    const filaIdSafe = ctx?.filaId || '';
+    const temDadosBase = !!(cli.nome && cli.dataNascimento && tel);
     h += `<div style="font-size:13px;color:var(--ylw);margin-bottom:10px">📲 ${o.mensagem}</div>`;
-    h += `<div style="font-size:11px;color:var(--t3);margin-bottom:8px;word-break:break-all;background:var(--sf);padding:6px 8px;border-radius:6px;font-family:monospace">${o.linkAutorizacao}</div>`;
-    if (tel) {
-      h += `<button class="btn-acc btn-sm" style="width:100%;margin-bottom:6px" onclick="enviarLinkUY3WhatsApp('${tel}','${linkSafe}','${(cli.nome||'').replace(/'/g,"\\'")}')">📲 Enviar link via WhatsApp ao cliente</button>`;
+    if (temDadosBase) {
+      h += `<div style="font-size:11px;color:var(--grn);margin-bottom:8px">✓ Tenho nome, data de nascimento e telefone — autorizo direto pelo sistema.</div>`;
+      h += `<button class="btn-acc btn-sm" style="width:100%;margin-bottom:6px" onclick="autorizarHandbankAuto()">⚡ Autorizar UY3 automaticamente</button>`;
+    } else {
+      h += `<div style="font-size:11px;color:var(--ylw);margin-bottom:8px">⚠️ Faltam dados pra autorizar automaticamente (precisa nome + data nasc + telefone). Use o botão "Completar dados" ou abra o link manual abaixo.</div>`;
     }
-    h += `<div style="display:flex;gap:6px;margin-bottom:6px">`;
-    h += `<button class="btn btn-sm" style="flex:1;font-size:11px" onclick="copiarTexto('${linkSafe}',this)">📋 Copiar link</button>`;
+    h += `<details style="margin-bottom:6px"><summary style="font-size:11px;color:var(--t3);cursor:pointer">🔗 Link manual (cliente preenche)</summary>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin:6px 0;word-break:break-all;background:var(--sf);padding:6px 8px;border-radius:6px;font-family:monospace">${o.linkAutorizacao}</div>`;
+    h += `<div style="display:flex;gap:6px">`;
+    h += `<button class="btn btn-sm" style="flex:1;font-size:11px" onclick="copiarTexto('${linkSafe}',this)">📋 Copiar</button>`;
     h += `<button class="btn btn-sm" style="flex:1;font-size:11px" onclick="window.open('${linkSafe}','_blank')">🔗 Abrir</button>`;
-    h += `</div>`;
-    h += `<button class="btn btn-sm" style="width:100%;font-size:11px;border-color:var(--acc);color:var(--acc)" onclick="reTentarBanco('handbank')">🔄 Já autorizou? Verificar</button>`;
+    h += `</div></details>`;
+    h += `<button class="btn btn-sm" style="width:100%;font-size:11px;border-color:var(--acc);color:var(--acc)" onclick="reTentarBanco('handbank')">🔄 Já autorizou? Verificar agora</button>`;
     h += '</div>';
     return h;
   }
@@ -6036,6 +6042,46 @@ async function cltCompletarDadosCliente() {
     alert('✅ Dados salvos! ' + (d.observacao || 'Re-disparei os bancos que estavam bloqueados.'));
   } catch (e) {
     alert('❌ Erro: ' + e.message);
+  }
+}
+
+// Auto-autoriza UY3 chamando direto a API DataprevEmployee/ChallengeInfo.
+// Pula o passo do cliente abrir o link manual — usa nome+dataNasc+telefone
+// que ja temos do enriquecimento.
+async function autorizarHandbankAuto() {
+  const filaId = cltConsultaState.selecionadaId || cltConsultaState.filaId;
+  const item = (cltConsultaState.consultas || []).find(c => c.id === filaId);
+  const r = item?.result;
+  if (!r) { alert('Consulta não encontrada'); return; }
+  const cli = r.cliente || {};
+  const tel = cli.telefones?.[0]?.completo;
+  if (!cli.nome || !cli.dataNascimento || !tel) {
+    alert('Faltam dados: nome, data de nascimento ou telefone. Use "Completar dados" primeiro.');
+    return;
+  }
+  if (!confirm(`Autorizar consulta UY3 pra ${cli.nome} (${cli.cpf})?`)) return;
+  try {
+    const res = await fetch('/api/handbank', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({
+        action: 'autorizarUY3',
+        cpf: cli.cpf,
+        nome: cli.nome,
+        dataNascimento: cli.dataNascimento,
+        telefone: tel
+      })
+    });
+    const d = await res.json();
+    if (!d.success) {
+      alert('❌ UY3 recusou autorização: ' + (d.mensagem || 'erro'));
+      return;
+    }
+    alert('✅ Autorização UY3 enviada! Vou re-consultar pra puxar os dados...');
+    // Re-dispara handbank pra buscar dados agora autorizados
+    setTimeout(() => reTentarBanco('handbank'), 1500);
+  } catch (e) {
+    alert('Erro: ' + e.message);
   }
 }
 

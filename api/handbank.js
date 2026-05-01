@@ -168,8 +168,11 @@ export default async function handler(req) {
   // ─── INICIAR CONSULTA CLT (UY3) ───────────────────────────────
   // POST /uy3/simulacao_clt body: {banco_consulta:"uy3",id:null,
   //   valor_solicitado:null,cpf,produtos:[]}
-  // Resposta 202: {mensagem:"https://autorizacao-clt.uy3.com.br/Info.html",
-  //   http_code:202} — cliente precisa autorizar antes de prosseguir
+  //
+  // Cenarios (mapeados via status code):
+  //   202 Accepted     -> {mensagem: URL, http_code: 202}      cliente precisa autorizar
+  //   201 Created      -> {mensagem: ..., margem/produtos...}   cliente autorizado (com dados)
+  //   400 Bad Request  -> {mensagem: erro}                       cliente ja tem contrato OU outro erro
   if (action === 'iniciarConsultaCLT' || action === 'iniciarOperacao') {
     const cpf = String(body.cpf || '').replace(/\D/g, '');
     if (!cpf || cpf.length !== 11) return jsonError('cpf invalido', 400, req);
@@ -181,25 +184,147 @@ export default async function handler(req) {
       produtos: []
     });
     const d = r.data || {};
-    // 202 + mensagem com URL = precisa autorizacao do cliente
-    const linkAutz = (d.mensagem && typeof d.mensagem === 'string' && d.mensagem.startsWith('http'))
-      ? d.mensagem : null;
-    if (linkAutz) {
+    const httpStatus = r.status;
+
+    // 202 Accepted: precisa autorizacao
+    if (httpStatus === 202) {
+      const linkAutz = (d.mensagem && typeof d.mensagem === 'string' && d.mensagem.startsWith('http'))
+        ? d.mensagem : null;
       return jsonResp({
         success: true,
         precisaAutorizacao: true,
         linkAutorizacao: linkAutz,
-        mensagem: `Cliente precisa abrir o link de autorização UY3 antes de simular.`,
+        mensagem: 'Cliente precisa abrir o link de autorização UY3 antes de simular.',
+        _httpStatus: httpStatus,
+        _raw: d
+      }, 200, req);
+    }
+
+    // 400 Bad Request: cliente ja tem contrato OU CPF invalido OU outro erro
+    if (httpStatus === 400) {
+      const msgErr = d.mensagem || d.message || d.error || 'Cliente já possui contrato ativo na UY3 ou outro impedimento';
+      const jaTemContrato = /contrato|j[áa].*possui|ativ/i.test(String(msgErr));
+      return jsonResp({
+        success: false,
+        autorizado: false,
+        bloqueado: true,
+        jaTemContrato,
+        mensagem: jaTemContrato
+          ? 'Cliente já possui contrato ativo na UY3 — não é possível simular novo.'
+          : `UY3 recusou: ${msgErr}`,
+        _httpStatus: httpStatus,
+        _raw: d
+      }, 200, req);
+    }
+
+    // 201 Created: cliente autorizado → retorna margem e produtos
+    // (Body exato a mapear quando recebermos um exemplo real)
+    if (httpStatus === 201 || (r.ok && d && Object.keys(d).length > 0)) {
+      // Tenta extrair campos comuns — propaga _raw pra UI mostrar o que tem
+      const margem = d.margem || d.margemDisponivel || d.valor_disponivel || d.available_margin || null;
+      const empregador = d.empregador || d.employer_name || d.razao_social || null;
+      const renda = d.renda || d.salario || d.salary || null;
+      const produtos = d.produtos || d.products || [];
+      return jsonResp({
+        success: true,
+        autorizado: true,
+        disponivel: true,
+        margem,
+        empregador,
+        renda,
+        produtos,
+        mensagem: margem ? `Cliente autorizado — margem R$ ${margem}` : 'Cliente autorizado — verificar dados retornados',
+        _httpStatus: httpStatus,
+        _raw: d,
+        ...d
+      }, 200, req);
+    }
+
+    // Outro status (500, etc) — propaga
+    return jsonResp({
+      success: false,
+      mensagem: `Handbank HTTP ${httpStatus}`,
+      _httpStatus: httpStatus,
+      _raw: d
+    }, 200, req);
+  }
+
+  // ─── AUTO-AUTORIZAR UY3 (sem mandar link pro cliente) ──────────
+  // Bate direto no api.uy3.com.br/v1/DataprevEmployee/ChallengeInfo com os
+  // dados que ja temos (nome, dataNasc, telefone, geo). Replica o que o
+  // portal autorizacao-clt.uy3.com.br faz quando o cliente preenche.
+  // Apos sucesso, re-chama iniciarConsultaCLT da Handbank pra puxar dados.
+  if (action === 'autorizarUY3') {
+    const cpf = String(body.cpf || '').replace(/\D/g, '');
+    const nome = String(body.nome || '').trim();
+    const dataNasc = String(body.dataNascimento || '').trim(); // YYYY-MM-DD
+    const telefone = String(body.telefone || '').replace(/\D/g, '');
+    if (!cpf || !nome || !dataNasc || !telefone) {
+      return jsonError('Faltam: cpf, nome, dataNascimento (YYYY-MM-DD), telefone', 400, req);
+    }
+    const lat = body.latitude || -23.52757315971176; // Sorocaba/SP default
+    const long = body.longitude || -47.47400538521915;
+    const params = new URLSearchParams({
+      phoneNumber: telefone,
+      registrationNumber: cpf,
+      name: nome,
+      birthDate: dataNasc,
+      latitude: String(lat),
+      longitude: String(long)
+    });
+    const url = `https://api.uy3.com.br/v1/DataprevEmployee/ChallengeInfo?${params}`;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'origin': 'https://autorizacao-clt.uy3.com.br',
+        'referer': 'https://autorizacao-clt.uy3.com.br/',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
+      }
+    });
+    const t = await r.text();
+    let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 500) }; }
+    return jsonResp({
+      success: r.ok,
+      _httpStatus: r.status,
+      _raw: d,
+      mensagem: r.ok
+        ? 'Challenge UY3 disparado — agora chame iniciarConsultaCLT pra ver se autorizou.'
+        : (d.error || d.message || `UY3 retornou HTTP ${r.status}`)
+    }, 200, req);
+  }
+
+  // ─── VERIFICAR AUTORIZACAO ─────────────────────────────────────
+  // Mesmo endpoint do iniciarConsultaCLT. Se cliente AINDA NAO autorizou,
+  // continua retornando 202 + URL. Se autorizou, retorna dados de margem
+  // (em algum formato a descobrir). Esta action interpreta a resposta:
+  //   - autorizado=false  -> ainda precisa cliente abrir o link UY3
+  //   - autorizado=true   -> retorna dados crus pra mapearmos
+  if (action === 'verificarAutorizacao') {
+    const cpf = String(body.cpf || '').replace(/\D/g, '');
+    if (!cpf || cpf.length !== 11) return jsonError('cpf invalido', 400, req);
+    const r = await hbCall('POST', '/uy3/simulacao_clt', {
+      banco_consulta: 'uy3', id: null, valor_solicitado: null, cpf, produtos: []
+    });
+    const d = r.data || {};
+    const aindaPrecisaAutz = !!(r.status === 202 && typeof d.mensagem === 'string' && d.mensagem.startsWith('http'));
+    if (aindaPrecisaAutz) {
+      return jsonResp({
+        success: true,
+        autorizado: false,
+        linkAutorizacao: d.mensagem,
+        mensagem: 'Cliente ainda não autorizou a consulta no UY3.',
         _httpStatus: r.status,
         _raw: d
       }, 200, req);
     }
-    // Resposta direta (sem precisar autorizar) — propaga como veio
     return jsonResp({
       success: r.ok,
+      autorizado: r.ok,
+      mensagem: r.ok ? 'Cliente autorizou! Verifique campos retornados.' : (d.error || d.mensagem || 'Erro consultando Handbank'),
       _httpStatus: r.status,
-      ...d,
-      _raw: d
+      _raw: d,
+      ...d
     }, 200, req);
   }
 
@@ -214,5 +339,5 @@ export default async function handler(req) {
     return jsonResp({ success: r.ok, httpStatus: r.status, data: r.data }, 200, req);
   }
 
-  return jsonError('Action invalida. Validas: login, status, iniciarConsultaCLT, raw', 400, req);
+  return jsonError('Action invalida. Validas: login, status, iniciarConsultaCLT, autorizarUY3, verificarAutorizacao, raw', 400, req);
 }
