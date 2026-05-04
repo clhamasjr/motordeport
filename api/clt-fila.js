@@ -401,6 +401,62 @@ async function processarMercantil(id, cpf, auth, secret) {
   }
 }
 
+// Banco HANDBANK / UY3 — bate em /uy3/simulacao_clt:
+//   202 → precisa cliente autorizar (link UY3)
+//   201 → autorizado, retorna margem/empregador
+//   400 → cliente ja tem contrato OU outro impedimento
+async function processarHandbank(id, cpf, auth, secret) {
+  await patchBanco(id, 'handbank', { status: 'processando' });
+  const r = await callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret);
+  const d = r.data || {};
+
+  // Cenario 1: precisa autorizacao (202)
+  if (d.precisaAutorizacao && d.linkAutorizacao) {
+    await patchBanco(id, 'handbank', {
+      status: 'bloqueado',
+      bloqueado: true,
+      precisaAutorizacao: true,
+      linkAutorizacao: d.linkAutorizacao,
+      mensagem: 'Cliente precisa autorizar UY3 (cadastro/selfie). Use "Autorizar UY3 automaticamente" no card.',
+      _raw_response: d
+    });
+    return;
+  }
+
+  // Cenario 2: cliente ja tem contrato OU outro impedimento (400)
+  if (d.bloqueado && d.jaTemContrato) {
+    await patchBanco(id, 'handbank', {
+      status: 'bloqueado',
+      bloqueado: true,
+      mensagem: d.mensagem || 'Cliente já possui contrato ativo na UY3'
+    });
+    return;
+  }
+
+  // Cenario 3: autorizado com margem (201)
+  if (d.autorizado && d.disponivel) {
+    await patchBanco(id, 'handbank', {
+      status: 'ok',
+      disponivel: true,
+      mensagem: d.mensagem || 'Cliente elegível — clique Digitar pra simular',
+      dados: {
+        margemDisponivel: d.margem,
+        empregador: d.empregador,
+        renda: d.renda
+      },
+      _raw_response: d
+    });
+    return;
+  }
+
+  // Outros (HTTP 500, erro env vars, etc)
+  await patchBanco(id, 'handbank', {
+    status: 'falha',
+    mensagem: d.mensagem || d.error || 'Erro consultando Handbank',
+    _raw_response: d
+  });
+}
+
 async function processarJoinBank(id, cpf, auth, secret) {
   await patchBanco(id, 'joinbank', { status: 'processando' });
 
@@ -619,6 +675,7 @@ export default async function handler(req) {
       v8_celcoin: { status: 'pending' },
       joinbank: { status: 'pending' },
       mercantil: { status: 'pending' },
+      handbank: { status: 'pending' },
       c6: { status: 'pending' }
     };
 
@@ -666,7 +723,7 @@ export default async function handler(req) {
     // o frontend fechar a janela. Cada um roda em paralelo (fetch sem await),
     // mas como o handler `processar` faz await ate terminar, o trabalho roda
     // ate o fim mesmo se o cliente desconectar.
-    const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'mercantil', 'c6'];
+    const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'mercantil', 'handbank', 'c6'];
     const baseUrl = APP_URL();
     for (const banco of bancos) {
       // Fire-and-forget mas COM internal-secret (evita 401 de chamadas internas)
@@ -833,8 +890,9 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       else if (banco === 'v8_celcoin') await processarV8(id, 'CELCOIN', row.cpf, auth, secret);
       else if (banco === 'joinbank') await processarJoinBank(id, row.cpf, auth, secret);
       else if (banco === 'mercantil') await processarMercantil(id, row.cpf, auth, secret);
+      else if (banco === 'handbank') await processarHandbank(id, row.cpf, auth, secret);
       else if (banco === 'c6') await processarC6(id, row.cpf, !!row.incluir_c6, auth, secret);
-      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, c6', 400, req);
+      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6', 400, req);
     } catch (e) {
       await patchBanco(id, banco, { status: 'falha', mensagem: 'Erro: ' + e.message });
       return jsonResp({ success: false, error: e.message }, 200, req);

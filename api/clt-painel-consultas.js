@@ -42,7 +42,7 @@ async function fetchConsultas(filtros = {}) {
 function contarBancosDisponiveis(bancos) {
   if (!bancos) return 0;
   let n = 0;
-  for (const k of ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'mercantil', 'c6']) {
+  for (const k of ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'mercantil', 'handbank', 'c6']) {
     if (bancos[k]?.disponivel === true) n++;
   }
   return n;
@@ -102,7 +102,7 @@ export default async function handler(req) {
     })).sort((a, b) => b.total - a.total);
 
     // Por banco — quantos clientes elegiveis em cada um
-    const porBanco = { presencabank: 0, multicorban: 0, v8_qi: 0, v8_celcoin: 0, joinbank: 0, mercantil: 0, c6: 0 };
+    const porBanco = { presencabank: 0, multicorban: 0, v8_qi: 0, v8_celcoin: 0, joinbank: 0, mercantil: 0, handbank: 0, c6: 0 };
     for (const c of consultas) {
       for (const k of Object.keys(porBanco)) {
         if (c.bancos?.[k]?.disponivel === true) porBanco[k]++;
