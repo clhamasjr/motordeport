@@ -117,9 +117,10 @@ export default async function handler(req) {
     const bancoIdBySlug = new Map((bancosDb||[]).map(b => [b.slug, b.id]));
     const convIdBySlug = new Map((convDb||[]).map(c => [c.slug, c.id]));
 
-    // ── 5) DELETE banco_convenio em massa ──
+    // ── 5) DELETE banco_convenio que NAO foi editado manualmente ──
+    // (preserva edicoes manuais e estado canonico atual)
     {
-      const url = `${SUPABASE_URL()}/rest/v1/gov_banco_convenio?id=gt.0`;
+      const url = `${SUPABASE_URL()}/rest/v1/gov_banco_convenio?editado_manual=eq.false`;
       const resp = await fetch(url, {
         method: 'DELETE',
         headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` }
@@ -130,7 +131,11 @@ export default async function handler(req) {
       }
     }
 
-    // ── 6) INSERT banco_convenio em batches de 50 ──
+    // ── 5b) Pega lista de pares (banco_id, convenio_id) ja protegidos ──
+    const { data: protegidosRaw } = await dbQuery('gov_banco_convenio', 'editado_manual=eq.true&select=banco_id,convenio_id');
+    const protegidos = new Set((protegidosRaw||[]).map(r => `${r.banco_id}-${r.convenio_id}`));
+
+    // ── 6) INSERT banco_convenio em batches de 50 (PULA pares protegidos) ──
     const todasRels = [];
     for (const c of seed.convenios || []) {
       const cid = convIdBySlug.get(c.slug);
@@ -138,6 +143,8 @@ export default async function handler(req) {
       for (const b of c.bancos || []) {
         const bid = bancoIdBySlug.get(b.slug);
         if (!bid) continue;
+        // PROTEGE: se par ja existe e foi editado manualmente, pula
+        if (protegidos.has(`${bid}-${cid}`)) continue;
         const ops = b.operacoes || {};
         const a = b.atributos || {};
         todasRels.push({

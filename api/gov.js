@@ -482,7 +482,7 @@ async function upsertBanco(body, req) {
   if (!body.nome) return jsonError('nome obrigatorio', 400, req);
   const slug = body.slug || slugify(body.nome);
   if (!slug) return jsonError('slug invalido', 400, req);
-  const data = { slug, nome: body.nome.trim() };
+  const data = { slug, nome: body.nome.trim(), editado_manual: true };
   if (body.observacoes !== undefined) data.observacoes = body.observacoes;
   if (body.ativo !== undefined) data.ativo = !!body.ativo;
   if (body.id) {
@@ -499,7 +499,7 @@ async function upsertBanco(body, req) {
 async function upsertConvenio(body, req) {
   if (!body.nome) return jsonError('nome obrigatorio', 400, req);
   const slug = body.slug || slugify(body.nome);
-  const data = { slug, nome: body.nome.trim() };
+  const data = { slug, nome: body.nome.trim(), editado_manual: true };
   if (body.uf !== undefined) data.uf = body.uf || null;
   if (body.estado_nome !== undefined) data.estado_nome = body.estado_nome || null;
   if (body.observacoes !== undefined) data.observacoes = body.observacoes;
@@ -532,6 +532,7 @@ async function upsertBancoConvenio(body, req) {
     data_corte: body.data_corte || null,
     valor_minimo: body.valor_minimo || null,
     qtd_contratos: body.qtd_contratos || null,
+    editado_manual: true,  // protegido contra Reseed
   };
   if (body.atributos && typeof body.atributos === 'object') data.atributos = body.atributos;
   if (Array.isArray(body.atributos_brutos)) data.atributos_brutos = body.atributos_brutos;
