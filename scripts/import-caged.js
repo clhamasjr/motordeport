@@ -55,8 +55,9 @@ if (!fs.existsSync(FILE)) {
 }
 
 const TABELA = 'clt_base_funcionarios';
-const BATCH_SIZE = 5000;       // CPFs por request UPSERT
-const FLUSH_THRESHOLD = 50000; // Quando o Map atingir N CPFs, flush
+const BATCH_SIZE = 1500;       // CPFs por request UPSERT (reduzido — tabela grande deixa upsert lento)
+const FLUSH_THRESHOLD = 30000; // Quando o Map atingir N CPFs, flush
+const STATE_FILE = process.argv[2] + '.import-state.json'; // resume offset por arquivo
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
@@ -216,15 +217,30 @@ async function flushMap(map) {
   while (i < linhas.length) {
     const slice = linhas.slice(i, i + BATCH_SIZE);
     let tentativas = 0;
-    while (tentativas < 3) {
+    let sucesso = false;
+    while (tentativas < 5 && !sucesso) {
       try {
         await upsertBatch(slice);
-        break;
+        sucesso = true;
       } catch (e) {
         tentativas++;
-        if (tentativas >= 3) throw e;
-        console.error(`   ⚠️ retry ${tentativas}/3:`, e.message.substring(0, 100));
-        await new Promise(r => setTimeout(r, 2000 * tentativas));
+        const msg = e.message || '';
+        // Timeout do Postgres (57014) — diminui o batch e tenta de novo
+        const isTimeout = msg.includes('57014') || msg.includes('canceling statement') || msg.includes('timeout');
+        if (tentativas >= 5) {
+          // Ultimo recurso: tenta linha-a-linha pra identificar a problemática
+          console.error(`   ❌ batch falhou apos 5 tentativas, tentando 1-a-1...`);
+          let okIndividual = 0;
+          for (const l of slice) {
+            try { await upsertBatch([l]); okIndividual++; } catch {}
+          }
+          console.error(`      ${okIndividual}/${slice.length} salvos individualmente`);
+          sucesso = true; // segue
+        } else {
+          const wait = isTimeout ? Math.min(15000, 3000 * tentativas) : 2000 * tentativas;
+          console.error(`   ⚠️ retry ${tentativas}/5 (${isTimeout ? 'timeout' : 'erro'}): aguardando ${wait/1000}s`);
+          await new Promise(r => setTimeout(r, wait));
+        }
       }
     }
     i += BATCH_SIZE;
