@@ -1955,6 +1955,26 @@ async function govAdminReseed(){
     if(btn){ btn.disabled = false; btn.textContent = '🔄 Reseed'; }
   }
 }
+async function prefAdminReseed(){
+  const btn = document.getElementById('btnPrefReseed');
+  const out = document.getElementById('prefReseedResult');
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Aplicando...'; }
+  if(out){ out.innerHTML = '<span style="color:var(--t3)">Carregando seed e populando (~400 convênios, aguarde)...</span>'; }
+  try{
+    const r = await apiFetch('/api/pref-seed', { method:'POST', body: JSON.stringify({action:'reseed'}) });
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error || 'Falha');
+    const s = d.stats || {};
+    if(out){
+      out.innerHTML = `<span style="color:var(--grn)">✓ Concluído em ${(d.duracao_ms/1000).toFixed(1)}s</span> · `
+        + `${s.bancos||0} bancos · ${s.convenios||0} convênios · ${s.banco_convenio||0} relações`;
+    }
+  }catch(e){
+    if(out){ out.innerHTML = `<span style="color:var(--red)">❌ ${esc(e.message)}</span>`; }
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '🔄 Reseed'; }
+  }
+}
 async function addU(){
   const n=document.getElementById("nN").value.trim(),
         u=document.getElementById("nU").value.trim().toLowerCase(),
@@ -8077,6 +8097,384 @@ function renderGovResultadoHolerite(r){
   h += '</div>';
 
   // ── Bancos que NÃO atendem ──
+  if(naoAtendem.length){
+    h += '<details style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px"><summary style="cursor:pointer;font-size:12px;color:var(--t3);font-weight:700">⛔ ' + naoAtendem.length + ' banco(s) NÃO atendem (clique pra ver motivo)</summary>';
+    h += '<div style="margin-top:10px;display:grid;gap:6px;font-size:12px">';
+    for(const b of naoAtendem){
+      h += `<div style="padding:8px 10px;background:var(--bg);border-radius:6px"><b>${esc(b.banco_nome)}</b> — <span style="color:var(--t3)">${esc(b.motivo||'')}</span></div>`;
+    }
+    h += '</div></details>';
+  }
+
+  return h;
+}
+
+// ══════════════════════════════════════════════════════════════
+// PREFEITURAS — F4 (mai/2026)
+// Catalogo de convenios municipais + Analise de holerite
+// Espelha 100% a logica de Governos, com filtro extra por municipio.
+// ══════════════════════════════════════════════════════════════
+let prefState = {
+  loadingCat: false, gruposCat: null, errCat: null,
+  carregouUmaVez: false,
+  filtroUf: '', filtroBusca: '', filtroTipo: '',
+  convenioAberto: null,
+  bancoExpandido: null,
+  arquivoBase64: null, arquivoNome: null, arquivoTipo: null, arquivoTamanho: 0,
+  loadingHol: false, errHol: null, resultadoHol: null,
+  convenioForcadoSlug: '',
+};
+
+async function prefCarregarConvenios(){
+  prefState.loadingCat = true; prefState.errCat = null; renderApp();
+  try{
+    const r = await apiFetch('/api/pref',{method:'POST',body:JSON.stringify({
+      action:'listConvenios', uf: prefState.filtroUf, busca: prefState.filtroBusca, tipo: prefState.filtroTipo
+    })});
+    if(r.status === 404){ throw new Error('Endpoint /api/pref nao existe — falta git push do api/pref.js'); }
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha');
+    prefState.gruposCat = d.grupos || [];
+  }catch(e){ prefState.errCat = e.message; }
+  prefState.loadingCat = false;
+  prefState.carregouUmaVez = true;
+  renderApp();
+}
+
+async function prefAbrirConvenio(slug){
+  prefState.convenioAberto = { loading: true };
+  renderApp();
+  try{
+    const r = await apiFetch('/api/pref',{method:'POST',body:JSON.stringify({action:'getConvenio', slug})});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha');
+    prefState.convenioAberto = { convenio: d.convenio, bancos: d.bancos };
+  }catch(e){
+    prefState.convenioAberto = { error: e.message };
+  }
+  prefState.bancoExpandido = null;
+  renderApp();
+}
+
+function prefFecharConvenio(){ prefState.convenioAberto = null; prefState.bancoExpandido = null; renderApp(); }
+
+function prefToggleBanco(id){
+  prefState.bancoExpandido = prefState.bancoExpandido === id ? null : id;
+  renderApp();
+}
+
+function prefLimparHolerite(){
+  prefState.arquivoBase64 = null; prefState.arquivoNome = null;
+  prefState.arquivoTipo = null; prefState.arquivoTamanho = 0;
+  prefState.resultadoHol = null; prefState.errHol = null;
+  renderApp();
+}
+
+async function prefOnArquivo(input){
+  const f = input.files && input.files[0];
+  if(!f){ return; }
+  if(f.size > 10*1024*1024){ alert('Arquivo > 10MB. Reduza ou comprima.'); return; }
+  const tipo = f.type;
+  const ok = tipo === 'application/pdf' || tipo.startsWith('image/');
+  if(!ok){ alert('Tipo nao suportado. Use PDF ou imagem (JPG/PNG/WEBP).'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    const b64 = String(dataUrl).split(',')[1] || '';
+    prefState.arquivoBase64 = b64;
+    prefState.arquivoNome = f.name;
+    prefState.arquivoTipo = tipo;
+    prefState.arquivoTamanho = f.size;
+    prefState.errHol = null; prefState.resultadoHol = null;
+    renderApp();
+  };
+  reader.onerror = () => { alert('Falha ao ler arquivo'); };
+  reader.readAsDataURL(f);
+}
+
+async function prefAnalisarHolerite(){
+  if(!prefState.arquivoBase64){ alert('Selecione um arquivo de holerite primeiro.'); return; }
+  prefState.loadingHol = true; prefState.errHol = null; prefState.resultadoHol = null; renderApp();
+  try{
+    const payload = {
+      action: 'analisarHolerite',
+      arquivo_base64: prefState.arquivoBase64,
+      arquivo_nome: prefState.arquivoNome,
+      arquivo_tipo: prefState.arquivoTipo,
+    };
+    if(prefState.convenioForcadoSlug) payload.convenio_slug = prefState.convenioForcadoSlug;
+    const r = await apiFetch('/api/pref',{method:'POST',body:JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha');
+    prefState.resultadoHol = d;
+  }catch(e){ prefState.errHol = e.message; }
+  prefState.loadingHol = false; renderApp();
+}
+
+// ── Render: Catalogo de Convenios (Prefeituras) ──────────────
+function renderPrefCatalogo(){
+  if(!prefState.carregouUmaVez && !prefState.loadingCat){
+    prefCarregarConvenios();
+  }
+  if(prefState.convenioAberto){
+    return renderPrefConvenioDetalhe();
+  }
+
+  let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
+  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">🏙️ Catálogo de Prefeituras</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Convênios municipais (prefeituras, institutos de previdência e cartões benefício). Escolha um para ver as regras operacionais e bancos.</div>';
+
+  const ufs = prefState.gruposCat ? prefState.gruposCat.map(g => g.uf).filter(u=>u && u!=='OUTROS') : [];
+  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">';
+  h += `<input class="form-input" placeholder="🔍 Buscar (cidade, instituto, ex: Sorocaba, IPREM, Campinas)..." value="${esc(prefState.filtroBusca)}" oninput="prefState.filtroBusca=this.value" onkeydown="if(event.key==='Enter')prefCarregarConvenios()" style="flex:2;min-width:240px">`;
+  h += `<select class="form-input" onchange="prefState.filtroUf=this.value;prefCarregarConvenios()" style="flex:0 0 130px"><option value="">Todos UFs</option>`;
+  for(const u of ufs){ h += `<option value="${u}" ${prefState.filtroUf===u?'selected':''}>${u}</option>`; }
+  h += `</select>`;
+  h += `<select class="form-input" onchange="prefState.filtroTipo=this.value;prefCarregarConvenios()" style="flex:0 0 180px">
+    <option value="">Todos tipos</option>
+    <option value="prefeitura" ${prefState.filtroTipo==='prefeitura'?'selected':''}>🏛️ Prefeitura</option>
+    <option value="instituto_previdencia" ${prefState.filtroTipo==='instituto_previdencia'?'selected':''}>📋 Instituto Prev.</option>
+    <option value="cartao_beneficio" ${prefState.filtroTipo==='cartao_beneficio'?'selected':''}>💳 Cartão Benefício</option>
+    <option value="outro" ${prefState.filtroTipo==='outro'?'selected':''}>❓ Outro</option>
+  </select>`;
+  h += `<button class="btn-acc" onclick="prefCarregarConvenios()">Aplicar</button>`;
+  h += '</div>';
+
+  if(prefState.loadingCat){
+    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando convênios de prefeitura...</div>';
+  } else if(prefState.errCat){
+    h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:12px">❌ ${esc(prefState.errCat)}</div>`;
+    h += `<div style="text-align:center"><button class="btn-acc" onclick="prefState.carregouUmaVez=false;prefCarregarConvenios()">🔄 Tentar de novo</button></div>`;
+  } else if(!prefState.gruposCat || prefState.gruposCat.length === 0){
+    h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum convênio encontrado.</div>';
+  } else {
+    const tipoIcon = (t) => t==='prefeitura'?'🏛️':t==='instituto_previdencia'?'📋':t==='cartao_beneficio'?'💳':'❓';
+    let totalConv = 0;
+    for(const g of prefState.gruposCat) totalConv += g.convenios.length;
+    h += `<div style="font-size:12px;color:var(--t3);margin-bottom:14px">${totalConv} convênio(s) em ${prefState.gruposCat.length} UF(s)</div>`;
+    for(const g of prefState.gruposCat){
+      h += `<div style="margin-bottom:18px">`;
+      h += `<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">${esc(g.uf||'?')} ${g.estado_nome?'— '+esc(g.estado_nome):''} <span style="color:var(--t2);font-weight:600;text-transform:none">(${g.convenios.length})</span></div>`;
+      h += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px">`;
+      for(const c of g.convenios){
+        h += `<div onclick="prefAbrirConvenio('${esc(c.slug)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--brd)'">`;
+        h += `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px"><div style="font-weight:700;font-size:14px;color:var(--t1);line-height:1.3;flex:1">${esc(c.nome)}</div><div style="font-size:14px">${tipoIcon(c.tipo)}</div></div>`;
+        if(c.municipio) h += `<div style="font-size:12px;color:var(--t2);margin-top:4px">📍 ${esc(c.municipio)}</div>`;
+        h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">${esc(c.sheet_origem||'')}</div>`;
+        h += `</div>`;
+      }
+      h += `</div></div>`;
+    }
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderPrefConvenioDetalhe(){
+  const x = prefState.convenioAberto;
+  let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
+  h += `<div style="margin-bottom:16px"><button class="btn" onclick="prefFecharConvenio()">← Voltar</button></div>`;
+
+  if(x.loading){ h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando...</div></div>'; return h; }
+  if(x.error){ h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">❌ ${esc(x.error)}</div></div>`; return h; }
+
+  const c = x.convenio;
+  const bancos = x.bancos || [];
+  const tipoLab = c.tipo==='prefeitura'?'🏛️ Prefeitura':c.tipo==='instituto_previdencia'?'📋 Instituto de Previdência':c.tipo==='cartao_beneficio'?'💳 Cartão Benefício':'❓ Outro';
+  h += `<div style="font-size:24px;font-weight:800;margin-bottom:4px">${esc(c.nome)}</div>`;
+  h += `<div style="font-size:12px;color:var(--t3);margin-bottom:6px">${c.uf?esc(c.uf):''} ${c.estado_nome?'— '+esc(c.estado_nome):''} ${c.municipio?'· 📍 '+esc(c.municipio):''} · ${tipoLab}</div>`;
+  h += `<div style="font-size:11px;color:var(--t3);margin-bottom:18px">Aba: ${esc(c.sheet_origem||'')}${c.atualizado_em?' · 📅 '+esc(c.atualizado_em):''}</div>`;
+
+  h += `<div style="margin-bottom:18px;padding:12px;background:rgba(34,211,238,.08);border:1px solid var(--cyan);border-radius:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">`;
+  h += `<span style="font-size:13px;flex:1;min-width:200px">📄 Tem o holerite do servidor? Suba para ver quais bancos atendem.</span>`;
+  h += `<button class="btn-acc btn-sm" onclick="prefState.convenioForcadoSlug='${esc(c.slug)}';setTab('prefHolerite')">📤 Analisar Holerite</button>`;
+  h += `</div>`;
+
+  if(bancos.length === 0){
+    h += '<div style="padding:30px;text-align:center;color:var(--t3)">Sem bancos cadastrados para este convênio.</div></div>'; return h;
+  }
+
+  h += `<div style="font-size:13px;color:var(--t2);margin-bottom:10px">${bancos.length} banco(s) operam este convênio:</div>`;
+  h += '<div style="display:grid;gap:10px">';
+  for(const b of bancos){
+    const ops = b.operacoes || {};
+    const opsStr = ['novo','refin','port','cartao'].filter(k=>ops[k]).map(k=>{
+      const lab = k==='cartao'?'Cartão':k.charAt(0).toUpperCase()+k.slice(1);
+      return `<span class="pill pill-grn" style="font-size:10px">${lab}</span>`;
+    }).join(' ');
+    const susp = b.suspenso ? '<span class="pill" style="background:rgba(239,68,68,.15);color:var(--red);font-size:10px">⛔ Suspenso</span>' : '';
+    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(1)}%</b></div>` : '';
+    const idade = (b.idade_min||b.idade_max) ? `<div><span style="color:var(--t3);font-size:10px">Idade</span> <b>${b.idade_min||'?'}-${b.idade_max||'?'}</b></div>` : '';
+    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2)}%</b></div>` : '';
+    const corte = b.data_corte ? `<div><span style="color:var(--t3);font-size:10px">Corte</span> <b>${esc(b.data_corte)}</b></div>` : '';
+    const expandido = prefState.bancoExpandido === b.id;
+
+    h += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;${b.suspenso?'opacity:.6':''}">`;
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px">`;
+    h += `<div style="font-weight:800;font-size:15px">${esc(b.banco_nome)} ${susp}</div>`;
+    h += `<div style="display:flex;gap:4px">${opsStr||'<span style="color:var(--t3);font-size:11px">— sem operações cadastradas</span>'}</div>`;
+    h += `</div>`;
+    h += `<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--t2)">${margem}${idade}${taxa}${corte}</div>`;
+
+    h += `<div style="margin-top:10px"><button class="btn btn-sm" onclick="prefToggleBanco(${b.id})">${expandido?'▾ Esconder detalhes':'▸ Ver todos os campos do roteiro'}</button></div>`;
+
+    if(expandido){
+      const brutos = b.atributos_brutos || [];
+      const porSecao = { principal:[], portabilidade:[], cartao:[], publico_alvo:[] };
+      for(const a of brutos){ (porSecao[a.secao]||porSecao.principal).push(a); }
+      h += '<div style="margin-top:12px;border-top:1px solid var(--brd);padding-top:12px">';
+      const secoes = [
+        ['principal','📋 Operação'],
+        ['portabilidade','🔄 Portabilidade'],
+        ['cartao','💳 Cartão Benefício'],
+        ['publico_alvo','👥 Público-Alvo'],
+      ];
+      for(const [k,lab] of secoes){
+        const items = porSecao[k] || [];
+        if(items.length===0) continue;
+        h += `<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;margin-bottom:6px">${lab}</div>`;
+        h += '<div style="display:grid;grid-template-columns:1fr;gap:6px;font-size:12px">';
+        for(const a of items){
+          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(a.valor)}</div></div>`;
+        }
+        h += '</div></div>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div></div>';
+  return h;
+}
+
+// ── Render: Análise de Holerite (Prefeituras) ────────────────
+function renderPrefHolerite(){
+  if(!prefState.carregouUmaVez && !prefState.loadingCat){ prefCarregarConvenios(); }
+
+  let h = '<div style="max-width:900px;margin:0 auto;padding:24px">';
+  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">📄 Análise de Holerite — Prefeituras</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Suba o holerite do servidor municipal (PDF ou foto). A IA extrai os dados, identifica o município/prefeitura e cruza com os bancos que operam.</div>';
+
+  h += '<div style="background:var(--card);border:2px dashed var(--brd);border-radius:12px;padding:24px;margin-bottom:18px;text-align:center">';
+  if(!prefState.arquivoBase64){
+    h += '<div style="font-size:14px;color:var(--t2);margin-bottom:10px">Arraste o arquivo aqui ou clique no botão</div>';
+    h += '<input type="file" id="prefHolFile" accept="application/pdf,image/*" style="display:none" onchange="prefOnArquivo(this)">';
+    h += '<button class="btn-acc" onclick="document.getElementById(\'prefHolFile\').click()">📎 Selecionar arquivo</button>';
+    h += '<div style="font-size:11px;color:var(--t3);margin-top:8px">PDF, JPG, PNG ou WEBP — máx 10MB</div>';
+  } else {
+    h += `<div style="font-size:14px;font-weight:700">📎 ${esc(prefState.arquivoNome)}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:4px">${(prefState.arquivoTamanho/1024).toFixed(0)} KB · ${esc(prefState.arquivoTipo)}</div>`;
+    h += `<div style="margin-top:10px"><button class="btn btn-sm" onclick="prefLimparHolerite()">🗑 Trocar arquivo</button></div>`;
+  }
+  h += '</div>';
+
+  h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;margin-bottom:18px">';
+  h += '<div style="font-size:12px;color:var(--t3);margin-bottom:8px">Convênio (opcional — se não escolher, a IA tenta detectar pelo holerite):</div>';
+  h += `<select class="form-input" onchange="prefState.convenioForcadoSlug=this.value" style="width:100%"><option value="">— Detectar automaticamente —</option>`;
+  if(prefState.gruposCat){
+    for(const g of prefState.gruposCat){
+      h += `<optgroup label="${esc(g.uf||'')} - ${esc(g.estado_nome||'')}">`;
+      for(const c of g.convenios){
+        const muni = c.municipio?` (${esc(c.municipio)})`:'';
+        h += `<option value="${esc(c.slug)}" ${prefState.convenioForcadoSlug===c.slug?'selected':''}>${esc(c.nome)}${muni}</option>`;
+      }
+      h += `</optgroup>`;
+    }
+  }
+  h += `</select>`;
+  h += '</div>';
+
+  h += '<div style="text-align:center;margin-bottom:20px">';
+  if(prefState.loadingHol){
+    h += '<button class="btn-acc" disabled style="padding:14px 32px;font-size:14px">⏳ Analisando com IA... (pode levar 10-30s)</button>';
+  } else {
+    h += `<button class="btn-acc" onclick="prefAnalisarHolerite()" ${prefState.arquivoBase64?'':'disabled'} style="padding:14px 32px;font-size:14px">🔍 Analisar Holerite</button>`;
+  }
+  h += '</div>';
+
+  if(prefState.errHol){
+    h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:16px">❌ ${esc(prefState.errHol)}</div>`;
+  }
+
+  if(prefState.resultadoHol){
+    h += renderPrefResultadoHolerite(prefState.resultadoHol);
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function renderPrefResultadoHolerite(r){
+  const d = r.dados_extraidos || {};
+  const c = r.convenio;
+  let h = '';
+
+  h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:16px;margin-bottom:16px">';
+  h += '<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;margin-bottom:10px">📊 Dados Extraídos</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;font-size:13px">';
+  const campos = [
+    ['Nome', d.nome], ['CPF', d.cpf], ['Matrícula', d.matricula],
+    ['Cargo', d.cargo], ['Órgão', d.orgao],
+    ['Município', d.municipio], ['UF', d.uf],
+    ['Data nasc.', d.data_nascimento], ['Idade', d.idade ? d.idade + ' anos' : null],
+    ['Competência', d.competencia],
+    ['Salário bruto', d.salario_bruto ? 'R$ '+Number(d.salario_bruto).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+    ['Salário líquido', d.salario_liquido ? 'R$ '+Number(d.salario_liquido).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+    ['Total descontos', d.total_descontos ? 'R$ '+Number(d.total_descontos).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+    ['Margem consig. disp.', d.margem_consignavel_disponivel ? 'R$ '+Number(d.margem_consignavel_disponivel).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+    ['Margem cartão disp.', d.margem_cartao_disponivel ? 'R$ '+Number(d.margem_cartao_disponivel).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+  ];
+  for(const [lab, v] of campos){
+    if(v === null || v === undefined || v === '') continue;
+    h += `<div><div style="color:var(--t3);font-size:10px;text-transform:uppercase">${lab}</div><div style="font-weight:600">${esc(String(v))}</div></div>`;
+  }
+  h += '</div>';
+  if(d.observacoes){
+    h += `<div style="margin-top:12px;padding:10px;background:rgba(245,194,66,.08);border-radius:8px;font-size:12px;color:var(--t2)"><b>Obs IA:</b> ${esc(d.observacoes)}</div>`;
+  }
+  h += '</div>';
+
+  if(c){
+    const conf = r.convenio_confianca || 'baixa';
+    const corConf = conf === 'alta' || conf === 'usuario' ? 'var(--grn)' : conf === 'media' ? 'var(--ylw)' : 'var(--red)';
+    h += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px;margin-bottom:16px">`;
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">`;
+    h += `<div><div style="font-size:11px;color:var(--t3);text-transform:uppercase">Convênio identificado</div><div style="font-size:16px;font-weight:800">${esc(c.nome)}</div><div style="font-size:11px;color:var(--t3)">${c.uf?esc(c.uf):''}${c.municipio?' · 📍 '+esc(c.municipio):''}</div></div>`;
+    h += `<span class="pill" style="background:${corConf}22;color:${corConf};font-size:10px">Confiança: ${esc(conf)}</span>`;
+    h += `</div></div>`;
+  } else {
+    h += `<div style="padding:14px;background:rgba(245,194,66,.1);border:1px solid var(--ylw);border-radius:10px;color:var(--ylw);margin-bottom:16px">⚠️ Convênio não identificado. Selecione manualmente acima e re-analise para ver os bancos que atendem.</div>`;
+  }
+
+  const atendem = r.bancos_atendem || [];
+  const naoAtendem = r.bancos_nao_atendem || [];
+
+  h += '<div style="background:var(--card);border:1px solid var(--grn);border-radius:12px;padding:16px;margin-bottom:14px">';
+  h += `<div style="font-size:13px;font-weight:800;color:var(--grn);margin-bottom:12px">✅ ${atendem.length} banco(s) atendem este servidor</div>`;
+  if(atendem.length === 0){
+    h += '<div style="color:var(--t3);font-size:12px">Nenhum banco do convênio atende com os dados extraídos.</div>';
+  } else {
+    h += '<div style="display:grid;gap:8px">';
+    for(const b of atendem){
+      const reg = b.regras || {};
+      const ops = ['opera_novo','opera_refin','opera_port','opera_cartao'].filter(k=>reg[k]).map(k=>{
+        const lab = ({opera_novo:'Novo',opera_refin:'Refin',opera_port:'Port',opera_cartao:'Cartão'})[k];
+        return `<span class="pill pill-grn" style="font-size:10px">${lab}</span>`;
+      }).join(' ');
+      h += '<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px">';
+      h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px"><div style="font-weight:700">${esc(b.banco_nome)}</div><div>${ops}</div></div>`;
+      const obs = b.observacoes || [];
+      if(obs.length){
+        h += '<ul style="margin:0;padding-left:18px;font-size:11px;color:var(--t2)">';
+        for(const o of obs){ h += `<li>${esc(o)}</li>`; }
+        h += '</ul>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+
   if(naoAtendem.length){
     h += '<details style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px"><summary style="cursor:pointer;font-size:12px;color:var(--t3);font-weight:700">⛔ ' + naoAtendem.length + ' banco(s) NÃO atendem (clique pra ver motivo)</summary>';
     h += '<div style="margin-top:10px;display:grid;gap:6px;font-size:12px">';
