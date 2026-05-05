@@ -7726,9 +7726,10 @@ function renderCltAdminMercantil() {
 // Catalogo de convenios + Analise de holerite via Claude
 // ══════════════════════════════════════════════════════════════
 let govState = {
-  // catalogo
+  // catalogo (3 niveis: estados -> convenios -> regras)
   loadingCat: false, gruposCat: null, errCat: null,
   carregouUmaVez: false,        // evita loop quando da erro
+  estadoSelecionado: null,     // UF selecionada (ex: 'SP'); null = lista de estados
   filtroUf: '', filtroBusca: '',
   convenioAberto: null,        // {convenio, bancos}
   bancoExpandido: null,        // id do banco com atributos brutos abertos
@@ -7737,6 +7738,9 @@ let govState = {
   loadingHol: false, errHol: null, resultadoHol: null,
   convenioForcadoSlug: '',     // se vazio, IA detecta
 };
+
+function govSelecionarEstado(uf){ govState.estadoSelecionado = uf; renderApp(); }
+function govVoltarEstados(){ govState.estadoSelecionado = null; govState.bancoExpandido = null; renderApp(); }
 
 async function govCarregarConvenios(){
   govState.loadingCat = true; govState.errCat = null; renderApp();
@@ -7840,62 +7844,110 @@ async function govAnalisarHolerite(){
   govState.loadingHol = false; renderApp();
 }
 
-// ── Render: Catalogo de Convenios ──────────────────────────────
+// ── Render: Catalogo de Convenios (3 niveis: Estados -> Convenios -> Regras) ──
 function renderGovCatalogo(){
   // Carrega so na 1a vez (carregouUmaVez impede loop em caso de erro)
   if(!govState.carregouUmaVez && !govState.loadingCat){
     govCarregarConvenios();
   }
+  // Nivel 3: detalhe do convenio com regras + bancos
+  if(govState.convenioAberto){ return renderGovConvenioDetalhe(); }
+  // Nivel 2: convenios de um estado
+  if(govState.estadoSelecionado){ return renderGovConveniosDoEstado(); }
+  // Nivel 1 (default): grid de estados
+  return renderGovEstados();
+}
 
-  // Tela de detalhe se houver convenio aberto
-  if(govState.convenioAberto){
-    return renderGovConvenioDetalhe();
-  }
-
+// ── Nivel 1: Grid de Estados ───────────────────────────────────
+function renderGovEstados(){
   let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
   h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">🏛️ Catálogo de Convênios</div>';
-  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Escolha o convênio para ver as informações operacionais e os bancos que operam.</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Selecione o estado para ver os convênios disponíveis.</div>';
 
-  // Filtros
-  const ufs = govState.gruposCat ? govState.gruposCat.map(g => g.uf).filter(u=>u && u!=='OUTROS') : [];
-  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">';
-  h += `<input class="form-input" placeholder="🔍 Buscar convênio (ex: TJMG, GOV PA, Bahia)..." value="${esc(govState.filtroBusca)}" oninput="govState.filtroBusca=this.value" onkeydown="if(event.key==='Enter')govCarregarConvenios()" style="flex:2;min-width:240px">`;
-  h += `<select class="form-input" onchange="govState.filtroUf=this.value;govCarregarConvenios()" style="flex:0 0 150px"><option value="">Todos UFs</option>`;
-  for(const u of ufs){ h += `<option value="${u}" ${govState.filtroUf===u?'selected':''}>${u}</option>`; }
-  h += `</select>`;
-  h += `<button class="btn-acc" onclick="govCarregarConvenios()">Aplicar</button>`;
+  // Busca rapida (atalho que pula direto pra um convenio se acertar nome)
+  h += '<div style="margin-bottom:18px">';
+  h += `<input class="form-input" placeholder="🔍 Buscar convênio direto (ex: TJMG, GOV PA, SPPREV)..." value="${esc(govState.filtroBusca)}" oninput="govState.filtroBusca=this.value" onkeydown="if(event.key==='Enter')govCarregarConvenios()" style="width:100%">`;
   h += '</div>';
 
   if(govState.loadingCat){
-    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando convênios...</div>';
-  } else if(govState.errCat){
+    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando...</div></div>'; return h;
+  }
+  if(govState.errCat){
     h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:12px">❌ ${esc(govState.errCat)}</div>`;
-    h += `<div style="text-align:center"><button class="btn-acc" onclick="govState.carregouUmaVez=false;govCarregarConvenios()">🔄 Tentar de novo</button></div>`;
-  } else if(!govState.gruposCat || govState.gruposCat.length === 0){
-    h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum convênio encontrado.</div>';
-  } else {
-    // Lista agrupada por UF
+    h += `<div style="text-align:center"><button class="btn-acc" onclick="govState.carregouUmaVez=false;govCarregarConvenios()">🔄 Tentar de novo</button></div></div>`; return h;
+  }
+  if(!govState.gruposCat || govState.gruposCat.length === 0){
+    h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum convênio encontrado.</div></div>'; return h;
+  }
+
+  // Se filtroBusca preenchido, mostra resultados rebatidos como cards de convenio
+  if(govState.filtroBusca && govState.filtroBusca.trim().length>=2){
+    const q = govState.filtroBusca.toLowerCase();
+    const matches = [];
     for(const g of govState.gruposCat){
-      h += `<div style="margin-bottom:18px">`;
-      h += `<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">${esc(g.uf||'?')} ${g.estado_nome?'— '+esc(g.estado_nome):''}</div>`;
-      h += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px">`;
       for(const c of g.convenios){
-        h += `<div onclick="govAbrirConvenio('${esc(c.slug)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--brd)'">`;
-        h += `<div style="font-weight:700;font-size:14px;color:var(--t1);line-height:1.3">${esc(c.nome)}</div>`;
-        h += `<div style="font-size:11px;color:var(--t3);margin-top:4px">${esc(c.sheet_origem||'')}</div>`;
+        if(c.nome.toLowerCase().includes(q) || (c.sheet_origem||'').toLowerCase().includes(q)){
+          matches.push({...c, _uf: g.uf, _estado: g.estado_nome});
+        }
+      }
+    }
+    h += `<div style="font-size:12px;color:var(--t3);margin-bottom:10px">${matches.length} resultado(s) para "${esc(govState.filtroBusca)}":</div>`;
+    if(matches.length===0){
+      h += '<div style="padding:30px;text-align:center;color:var(--t3)">Nada encontrado. Tente outro termo ou navegue por estado abaixo.</div>';
+    } else {
+      h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:24px">';
+      for(const c of matches){
+        h += `<div onclick="govAbrirConvenio('${esc(c.slug)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;cursor:pointer" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--brd)'">`;
+        h += `<div style="font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;margin-bottom:4px">${esc(c._uf||'?')} ${c._estado?'— '+esc(c._estado):''}</div>`;
+        h += `<div style="font-weight:700;font-size:14px;line-height:1.3">${esc(c.nome)}</div>`;
         h += `</div>`;
       }
-      h += `</div></div>`;
+      h += '</div>';
     }
+    h += '<div style="font-size:11px;color:var(--t3);text-transform:uppercase;font-weight:700;margin-bottom:10px;letter-spacing:.1em">— ou navegue por estado —</div>';
   }
-  h += '</div>';
+
+  // Grid de estados (sempre mostra)
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">';
+  for(const g of govState.gruposCat){
+    const uf = g.uf || 'OUTROS';
+    const qtd = (g.convenios||[]).length;
+    h += `<div onclick="govSelecionarEstado('${esc(uf)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:18px 14px;cursor:pointer;text-align:center;transition:all .15s" onmouseover="this.style.borderColor='var(--acc)';this.style.transform='translateY(-2px)'" onmouseout="this.style.borderColor='var(--brd)';this.style.transform='translateY(0)'">`;
+    h += `<div style="font-size:32px;font-weight:900;color:var(--acc);line-height:1">${esc(uf)}</div>`;
+    if(g.estado_nome) h += `<div style="font-size:11px;color:var(--t2);margin-top:6px;font-weight:600">${esc(g.estado_nome)}</div>`;
+    h += `<div style="font-size:10px;color:var(--t3);margin-top:6px">${qtd} convênio${qtd!==1?'s':''}</div>`;
+    h += `</div>`;
+  }
+  h += '</div></div>';
+  return h;
+}
+
+// ── Nivel 2: Convenios do Estado ───────────────────────────────
+function renderGovConveniosDoEstado(){
+  const uf = govState.estadoSelecionado;
+  const grupo = (govState.gruposCat||[]).find(g => (g.uf||'OUTROS') === uf);
+  let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
+  h += `<div style="margin-bottom:14px"><button class="btn" onclick="govVoltarEstados()">← Voltar pra estados</button></div>`;
+  h += `<div style="font-size:22px;font-weight:800;margin-bottom:4px">🏛️ ${esc(uf)} ${grupo&&grupo.estado_nome?'— '+esc(grupo.estado_nome):''}</div>`;
+  if(!grupo || !grupo.convenios || grupo.convenios.length === 0){
+    h += '<div style="padding:30px;text-align:center;color:var(--t3)">Nenhum convênio cadastrado neste estado.</div></div>'; return h;
+  }
+  h += `<div style="font-size:13px;color:var(--t2);margin-bottom:18px">${grupo.convenios.length} convênio(s) — clique pra ver as regras e bancos:</div>`;
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px">';
+  for(const c of grupo.convenios){
+    h += `<div onclick="govAbrirConvenio('${esc(c.slug)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--brd)'">`;
+    h += `<div style="font-weight:700;font-size:14px;color:var(--t1);line-height:1.3">${esc(c.nome)}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:4px">${esc(c.sheet_origem||'')}</div>`;
+    h += `</div>`;
+  }
+  h += '</div></div>';
   return h;
 }
 
 function renderGovConvenioDetalhe(){
   const x = govState.convenioAberto;
   let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
-  h += `<div style="margin-bottom:16px"><button class="btn" onclick="govFecharConvenio()">← Voltar</button></div>`;
+  h += `<div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="govFecharConvenio()">← Voltar pros convênios</button><button class="btn" onclick="govState.estadoSelecionado=null;govFecharConvenio()">🏛️ Pra estados</button></div>`;
 
   if(x.loading){ h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando...</div></div>'; return h; }
   if(x.error){ h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">❌ ${esc(x.error)}</div></div>`; return h; }
@@ -9550,7 +9602,6 @@ const MENU=[
         {k:'cltAdminMercantil',icon:'🔑',label:'Token Mercantil',needsRole:['gestor','admin']}
       ]}
     ]},
-  {product:'fgts',icon:'🏦',label:'FGTS',soon:true},
   {product:'gov',icon:'🏛️',label:'Governos',active:true,
     items:[
       {k:'govCatalogo',icon:'📚',label:'Catálogo de Convênios'},
