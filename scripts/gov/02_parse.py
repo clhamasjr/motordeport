@@ -45,6 +45,24 @@ def slugify(s):
 def detect_uf(sheet_name):
     """Detecta UF a partir do nome da aba."""
     s = sheet_name.upper()
+    # Overrides explicitos (abas que o regex auto nao identifica)
+    OVERRIDES_EXATOS = {
+        'GOV_SP_NOVO REFIN':'SP', 'GOV_SP_CARTÃO':'SP', 'GOV_SP_CARTÃO BENEFICIO':'SP',
+        'CB-TJSP':'SP', 'ASS. LEGISLATIVA':'SP',
+        'GOV_MG CARTÃO':'MG', 'TJMG':'MG', 'TJMG CARTÃO BENEFICIO':'MG',
+        'DPMG':'MG', 'MPMG':'MG',
+        'TJMA':'MA', 'TJPB':'PB', 'TJPI':'PI', 'TJSC':'SC', 'TJTO':'TO',
+        'TJAL CB':'AL', 'PGAM':'AM',
+        'TESOURO DO ESTADO ':'RS', 'INST PREV DO ESTADO':'RS',
+        'GOVSUL_PR':'PR', 'GOV_ES_CARTÃO BENEFICIO':'ES',
+        'CARTÃO BENEFICIO':'SC', 'CARTÃO BENEFÍCIO':'SC',  # nome genérico — Gov SC
+        'MINIST. PUBL. DISTRI. FED. TERR':'DF', 'MINIT. PUBL. MILITAR':'DF',
+        'SOCIEDADE':'DF', 'TJ DFT':'DF',
+        'UEPB':'PB',
+    }
+    if sheet_name in OVERRIDES_EXATOS: return OVERRIDES_EXATOS[sheet_name]
+    if sheet_name.strip() in OVERRIDES_EXATOS: return OVERRIDES_EXATOS[sheet_name.strip()]
+
     # padrao mais comum: "GOV XX" ou "TJ XX" ou "MP XX" etc
     for uf in UF_NAMES:
         if re.search(rf'\b{uf}\b', s):
