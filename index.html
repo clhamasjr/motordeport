@@ -1905,11 +1905,11 @@ function renderAdmin(){
     </div>`;
   }
   bankHtml+=`</div></div>`;
-  // ── Manutencao (governos reseed) ───────────────────────
+  // ── Manutencao (governos + prefeituras reseed) ─────────
   const manutHtml = `<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:22px;margin-top:24px">
     <div style="font-size:16px;font-weight:800;margin-bottom:6px">🛠️ Manutenção</div>
     <div style="font-size:12px;color:var(--t3);margin-bottom:16px">Operações administrativas pontuais.</div>
-    <div style="background:var(--sf);border:1px solid var(--brd);border-radius:10px;padding:14px">
+    <div style="background:var(--sf);border:1px solid var(--brd);border-radius:10px;padding:14px;margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
         <div>
           <div style="font-weight:700;font-size:13px">🏛️ Reseed Catálogo de Governos</div>
@@ -1918,6 +1918,16 @@ function renderAdmin(){
         <button class="btn-acc btn-sm" id="btnGovReseed" onclick="govAdminReseed()">🔄 Reseed</button>
       </div>
       <div id="govReseedResult" style="margin-top:10px;font-size:12px"></div>
+    </div>
+    <div style="background:var(--sf);border:1px solid var(--brd);border-radius:10px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-weight:700;font-size:13px">🏙️ Reseed Catálogo de Prefeituras</div>
+          <div style="font-size:11px;color:var(--t3);margin-top:2px">Recarrega convênios + bancos a partir do <code>/pref_seed.json</code> deployado. Use após atualizar a planilha de prefeituras (limpa relação banco × convênio e reimporta — ~400 convênios, pode levar 30-60s).</div>
+        </div>
+        <button class="btn-acc btn-sm" id="btnPrefReseed" onclick="prefAdminReseed()">🔄 Reseed</button>
+      </div>
+      <div id="prefReseedResult" style="margin-top:10px;font-size:12px"></div>
     </div>
   </div>`;
   // Dropdown de parceiros (agencias) pro form de criar usuario
@@ -7857,18 +7867,24 @@ function renderGovConvenioDetalhe(){
 
   const c = x.convenio;
   const bancos = x.bancos || [];
-  h += `<div style="font-size:24px;font-weight:800;margin-bottom:4px">${esc(c.nome)}</div>`;
-  h += `<div style="font-size:12px;color:var(--t3);margin-bottom:6px">${c.uf?esc(c.uf):''} ${c.estado_nome?'— '+esc(c.estado_nome):''} · Aba: ${esc(c.sheet_origem||'')}</div>`;
-  if(c.atualizado_em) h += `<div style="font-size:11px;color:var(--t3);margin-bottom:18px">📅 Atualizado em ${esc(c.atualizado_em)}</div>`;
 
-  // Atalho pra holerite com convenio pre-selecionado
-  h += `<div style="margin-bottom:18px;padding:12px;background:rgba(34,211,238,.08);border:1px solid var(--cyan);border-radius:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">`;
-  h += `<span style="font-size:13px;flex:1;min-width:200px">📄 Tem o holerite do cliente? Suba para ver quais bancos atendem.</span>`;
-  h += `<button class="btn-acc btn-sm" onclick="govState.convenioForcadoSlug='${esc(c.slug)}';setTab('govHolerite')">📤 Analisar Holerite</button>`;
+  // Cabecalho: nome + meta + botao discreto pra holerite no topo direito
+  h += `<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:18px">`;
+  h += `<div style="flex:1;min-width:240px">`;
+  h += `<div style="font-size:24px;font-weight:800;margin-bottom:4px">${esc(c.nome)}</div>`;
+  h += `<div style="font-size:12px;color:var(--t3)">${c.uf?esc(c.uf):''} ${c.estado_nome?'— '+esc(c.estado_nome):''} · Aba: ${esc(c.sheet_origem||'')}</div>`;
+  if(c.atualizado_em) h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">📅 Atualizado em ${esc(c.atualizado_em)}</div>`;
+  h += `</div>`;
+  h += `<button class="btn btn-sm" title="Subir holerite do cliente para verificar quais bancos atendem" onclick="govState.convenioForcadoSlug='${esc(c.slug)}';setTab('govHolerite')" style="white-space:nowrap">📄 Analisar holerite</button>`;
   h += `</div>`;
 
   if(bancos.length === 0){
-    h += '<div style="padding:30px;text-align:center;color:var(--t3)">Sem bancos cadastrados para este convênio.</div></div>'; return h;
+    h += `<div style="padding:24px;background:rgba(245,194,66,.08);border:1px solid var(--ylw);border-radius:10px;color:var(--ylw)">
+      <div style="font-weight:800;font-size:14px;margin-bottom:6px">⚠️ Catálogo ainda não foi populado</div>
+      <div style="font-size:12px;color:var(--t2);line-height:1.5">As 409 relações banco × convênio ainda não foram importadas.<br>
+      Admin: vá em <b>Admin → Usuários & Bancos</b>, role até <b>🛠️ Manutenção</b> e clique <b>🔄 Reseed</b>.</div>
+    </div></div>`;
+    return h;
   }
 
   h += `<div style="font-size:13px;color:var(--t2);margin-bottom:10px">${bancos.length} banco(s) operam este convênio:</div>`;
@@ -9126,6 +9142,11 @@ const MENU=[
     items:[
       {k:'govCatalogo',icon:'📚',label:'Catálogo de Convênios'},
       {k:'govHolerite',icon:'📄',label:'Análise de Holerite'}
+    ]},
+  {product:'pref',icon:'🏙️',label:'Prefeituras',active:true,
+    items:[
+      {k:'prefCatalogo',icon:'📚',label:'Catálogo de Convênios'},
+      {k:'prefHolerite',icon:'📄',label:'Análise de Holerite'}
     ]}
 ];
 // Item fica sempre no menu (fluxo uniforme), soh muda estado visual conforme role/data
@@ -9458,7 +9479,7 @@ try{renderJobsFloat()}catch{}
 if(!D){
   document.getElementById("headerActions").style.display="none";
   // Aba padrao = home se invalida
-  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite"].includes(S.tab))S.tab="home";
+  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite","prefCatalogo","prefHolerite"].includes(S.tab))S.tab="home";
   let content='';
   if(S.tab==="consulta")content=renderConsulta();
   else if(S.tab==="enquad")content=renderEnquadramento();
@@ -9482,6 +9503,8 @@ if(!D){
   else if(S.tab==="cltAdminMercantil"&&isGes)content=renderCltAdminMercantil();
   else if(S.tab==="govCatalogo")content=renderGovCatalogo();
   else if(S.tab==="govHolerite")content=renderGovHolerite();
+  else if(S.tab==="prefCatalogo")content=renderPrefCatalogo();
+  else if(S.tab==="prefHolerite")content=renderPrefHolerite();
   if(content){tabContent.innerHTML=content;return}
   // Sem data: tab 'bases' = tela de upload; tab 'home' (padrao) = home
   if(S.tab==="bases"){renderLanding(tabContent);return}
@@ -9524,6 +9547,8 @@ if(!D){
   else if(S.tab==="cltAdminMercantil"&&isGes)tcontent=renderCltAdminMercantil();
   else if(S.tab==="govCatalogo")tcontent=renderGovCatalogo();
   else if(S.tab==="govHolerite")tcontent=renderGovHolerite();
+  else if(S.tab==="prefCatalogo")tcontent=renderPrefCatalogo();
+  else if(S.tab==="prefHolerite")tcontent=renderPrefHolerite();
   if(tcontent){tabContent.innerHTML=tcontent;return}
 
   // ═══ DASHBOARD ═══
