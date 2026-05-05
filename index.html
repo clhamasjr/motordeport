@@ -5718,12 +5718,100 @@ function cltFecharDigitacao() {
   renderApp();
 }
 
+// Busca tabelas disponiveis no PresencaBank pra essa margem do cliente
+// (operador escolhe uma das tabelas pra digitar com type+tabelaId corretos)
+async function cltBuscarTabelasPB() {
+  const d = cltDigitState.dados;
+  const margem = cltDigitState.oferta?.elegibilidade?.margemDisponivel
+              || cltDigitState.oferta?.dados?.margemDisponivel
+              || cltDigitState.oferta?.elegibilidade?.margemBase;
+  if (!margem || margem <= 0) { alert('Margem não detectada na consulta. Re-faça a consulta antes.'); return; }
+  if (!d.cliente?.nome || !d.cliente?.cpf) { alert('Faltam nome ou CPF do cliente.'); return; }
+  cltDigitState.loadingTabelas = true; renderApp();
+  try {
+    const r = await fetch('/api/presencabank', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({
+        action: 'consultarTabelas',
+        cpf: d.cliente.cpf,
+        nome: d.cliente.nome,
+        valorParcela: margem,
+        ddd: d.cliente.ddd || '',
+        telefone: d.cliente.telefone || '',
+        dataNascimento: d.cliente.dataNascimento || '',
+        nomeMae: d.cliente.nomeMae || '',
+        email: d.cliente.email || '',
+        sexo: d.cliente.sexo || 'M',
+        cnpj: d.empregador?.cnpj || '',
+        matricula: d.empregador?.matricula || '',
+        cep: d.endereco?.cep || '',
+        logradouro: d.endereco?.logradouro || '',
+        numero: d.endereco?.numero || '',
+        complemento: d.endereco?.complemento || '',
+        bairro: d.endereco?.bairro || '',
+        cidade: d.endereco?.cidade || '',
+        uf: d.endereco?.uf || ''
+      })
+    });
+    const j = await r.json();
+    if (!j.success) throw new Error(j.error || j.mensagem || 'falha consultando tabelas');
+    cltDigitState.tabelas = j.tabelas || [];
+    if (cltDigitState.tabelas.length === 0) {
+      alert('Nenhuma tabela retornada pelo PresençaBank pra essa margem.');
+    }
+  } catch (e) {
+    alert('Erro buscando tabelas: ' + e.message);
+  }
+  cltDigitState.loadingTabelas = false;
+  renderApp();
+}
+
+function cltEscolherTabelaPB(idx) {
+  const t = cltDigitState.tabelas?.[idx];
+  if (!t) return;
+  cltDigitState.dados.proposta = {
+    ...(cltDigitState.dados.proposta || {}),
+    type: t.type,
+    tabelaId: t.tabelaId,
+    quantidadeParcelas: t.quantidadeParcelas,
+    valorParcela: t.valorParcela,
+    valorLiquido: t.valorLiquido,
+    valorSolicitado: t.valorSolicitado,
+    taxa: t.taxa,
+    cet: t.cet,
+    _tabelaSelecionadaIdx: idx
+  };
+  renderApp();
+}
+
 function cltDigitSet(secao, campo, valor) {
   if (!cltDigitState.dados[secao]) cltDigitState.dados[secao] = {};
   cltDigitState.dados[secao][campo] = valor;
 }
 
 async function cltSubmeterDigitacao() {
+  // Validacao especifica do PresencaBank — avisa antes de mandar pro backend
+  if (cltDigitState.banco === 'presencabank') {
+    const p = cltDigitState.dados.proposta || {};
+    const c = cltDigitState.dados.cliente || {};
+    const e = cltDigitState.dados.empregador || {};
+    const en = cltDigitState.dados.endereco || {};
+    const faltam = [];
+    if (!p.tabelaId || !p.type) faltam.push('Tabela (clique em "Buscar tabelas disponíveis" e escolha uma)');
+    if (!c.email) faltam.push('E-mail do cliente');
+    if (!c.dataNascimento) faltam.push('Data de nascimento');
+    if (!c.nomeMae) faltam.push('Nome da mãe');
+    if (!e.cnpj) faltam.push('CNPJ do empregador');
+    if (!e.matricula) faltam.push('Matrícula');
+    if (!e.valorRenda) faltam.push('Valor da renda');
+    if (!en.cep || !en.logradouro || !en.numero || !en.bairro || !en.cidade || !en.uf) faltam.push('Endereço completo (CEP, rua, número, bairro, cidade, UF)');
+    if (faltam.length) {
+      alert('⚠️ Campos faltando pra digitar PresençaBank:\n\n• ' + faltam.join('\n• '));
+      return;
+    }
+  }
+
   cltDigitState.loading = true; renderApp();
   try {
     const payload = {
@@ -5865,6 +5953,38 @@ function renderModalDigitacao() {
     h += '<div style="display:grid;grid-template-columns:1fr;gap:10px;margin-top:8px">';
     h += inp('empregador', 'valorRenda', 'Valor da Renda', 'number');
     h += '</div></div>';
+
+    // ── PRESENÇABANK: SELEÇÃO DE TABELA (obrigatório pra criar proposta) ──
+    h += '<div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:13px;font-weight:800;color:var(--t2)">💰 Tabela / Simulação <span style="color:var(--red)">*</span></div>';
+    h += `<button class="btn btn-sm" ${cltDigitState.loadingTabelas?'disabled':''} onclick="cltBuscarTabelasPB()">${cltDigitState.loadingTabelas?'⏳ Buscando...':'🔍 Buscar tabelas disponíveis'}</button>`;
+    h += '</div>';
+    const tabs = cltDigitState.tabelas || [];
+    const escolhidaIdx = d.proposta?._tabelaSelecionadaIdx;
+    if (tabs.length === 0 && !cltDigitState.loadingTabelas) {
+      h += '<div style="padding:14px;background:rgba(245,194,66,.08);border:1px solid var(--ylw);border-radius:8px;font-size:12px;color:var(--ylw)">⚠️ Clique em "Buscar tabelas disponíveis" pra simular as opções pra esta margem. Sem isso, não dá pra criar a proposta.</div>';
+    } else if (tabs.length > 0) {
+      h += '<div style="display:grid;gap:6px;max-height:280px;overflow-y:auto">';
+      for (let i = 0; i < tabs.length; i++) {
+        const t = tabs[i];
+        const ativo = escolhidaIdx === i;
+        const borderClr = ativo ? 'var(--grn)' : 'var(--brd)';
+        const bg = ativo ? 'rgba(34,197,94,.1)' : 'var(--card)';
+        h += `<div onclick="cltEscolherTabelaPB(${i})" style="cursor:pointer;padding:10px 12px;border:2px solid ${borderClr};background:${bg};border-radius:8px;display:grid;grid-template-columns:auto 1fr 1fr 1fr;gap:10px;align-items:center">`;
+        h += `<div style="font-size:18px">${ativo?'✅':'⚪'}</div>`;
+        h += `<div><div style="font-size:11px;color:var(--t3)">${(t.nome||t.type||'tabela')}</div><div style="font-size:13px;font-weight:700">${t.quantidadeParcelas}x R$ ${Number(t.valorParcela||0).toFixed(2)}</div></div>`;
+        h += `<div><div style="font-size:11px;color:var(--t3)">Liberado</div><div style="font-size:13px;font-weight:800;color:var(--grn)">R$ ${Number(t.valorLiquido||0).toFixed(2)}</div></div>`;
+        h += `<div><div style="font-size:11px;color:var(--t3)">Taxa</div><div style="font-size:12px;color:var(--t2)">${t.taxa?(Number(t.taxa)*100).toFixed(2)+'%':'-'}</div></div>`;
+        h += `</div>`;
+      }
+      h += '</div>';
+      if (escolhidaIdx != null) {
+        const t = tabs[escolhidaIdx];
+        h += `<div style="margin-top:8px;padding:8px 12px;background:rgba(34,197,94,.06);border-left:3px solid var(--grn);border-radius:6px;font-size:12px;color:var(--grn)">✓ Tabela selecionada: ${t.quantidadeParcelas}x R$ ${Number(t.valorParcela||0).toFixed(2)} → libera R$ ${Number(t.valorLiquido||0).toFixed(2)}</div>`;
+      } else {
+        h += '<div style="margin-top:8px;font-size:11px;color:var(--ylw)">⚠️ Clique numa tabela acima pra selecionar antes de criar a proposta.</div>';
+      }
+    }
+    h += '</div>';
   }
 
   // Bancário
@@ -5876,6 +5996,29 @@ function renderModalDigitacao() {
     ]);
     h += inp('bancario', 'pixKey', 'Chave PIX');
     h += '</div>';
+  } else if (banco === 'presencabank') {
+    h += '<div style="display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:8px">';
+    h += sel('bancario', 'formaCredito', 'Forma de Crédito', [
+      {v:'3',l:'PIX (recomendado)'},
+      {v:'2',l:'Conta Corrente'},
+      {v:'1',l:'Poupança'}
+    ]);
+    h += '</div>';
+    if (d.bancario?.formaCredito === '3' || !d.bancario?.formaCredito) {
+      h += '<div style="display:grid;grid-template-columns:1fr 2fr;gap:10px">';
+      h += sel('bancario', 'tipoChavePixId', 'Tipo Chave PIX', [
+        {v:'1',l:'CPF'},{v:'2',l:'E-mail'},{v:'3',l:'Telefone'},{v:'4',l:'Aleatória'}
+      ]);
+      h += inp('bancario', 'chavePix', 'Chave PIX');
+      h += '</div>';
+    } else {
+      h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px">';
+      h += inp('bancario', 'numeroBanco', 'Banco (cód)');
+      h += inp('bancario', 'numeroAgencia', 'Agência');
+      h += inp('bancario', 'numeroConta', 'Conta');
+      h += inp('bancario', 'digitoConta', 'Dígito');
+      h += '</div>';
+    }
   } else {
     h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px">';
     h += inp('bancario', 'numeroBanco', 'Banco (cód)');
