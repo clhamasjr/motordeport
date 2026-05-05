@@ -60,52 +60,54 @@ export default async function handler(req) {
     const seed = await r.json();
     const stats = { bancos: 0, convenios: 0, banco_convenio: 0 };
 
-    // ── 2) UPSERT bancos ──
-    // dbUpsert atualiza ou insere. Faz em batch de 50 (PostgREST aceita).
-    const bancosList = (seed.bancos_unicos || []).map(b => ({
+    // ── 2) Bancos: pega os ja existentes e SO insere os novos (preserva edits) ──
+    const { data: bancosExistentes } = await dbQuery('gov_bancos', 'select=slug&limit=1000');
+    const bancosExistentesSlugs = new Set((bancosExistentes||[]).map(b=>b.slug));
+    const bancosNovos = (seed.bancos_unicos || []).filter(b => !bancosExistentesSlugs.has(b.slug)).map(b => ({
       slug: b.slug, nome: b.nome
     }));
-    if (bancosList.length) {
-      // PostgREST upsert array
-      const url = `${SUPABASE_URL()}/rest/v1/gov_bancos?on_conflict=slug`;
+    if (bancosNovos.length) {
+      const url = `${SUPABASE_URL()}/rest/v1/gov_bancos`;
       const resp = await fetch(url, {
         method: 'POST',
         headers: {
           'apikey': SUPABASE_KEY(),
           'Authorization': `Bearer ${SUPABASE_KEY()}`,
           'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates,return=representation'
+          'Prefer': 'return=representation'
         },
-        body: JSON.stringify(bancosList)
+        body: JSON.stringify(bancosNovos)
       });
       if (!resp.ok) {
         const t = await resp.text();
-        return jsonError(`Erro upsert bancos: ${t.substring(0,300)}`, 500, req);
+        return jsonError(`Erro insert bancos novos: ${t.substring(0,300)}`, 500, req);
       }
       const arr = await resp.json();
       stats.bancos = Array.isArray(arr) ? arr.length : 0;
     }
 
-    // ── 3) UPSERT convenios ──
-    const conveniosList = (seed.convenios || []).map(c => ({
+    // ── 3) Convenios: pega os ja existentes e SO insere os novos ──
+    const { data: convExistentes } = await dbQuery('gov_convenios', 'select=slug&limit=1000');
+    const convExistentesSlugs = new Set((convExistentes||[]).map(c=>c.slug));
+    const conveniosNovos = (seed.convenios || []).filter(c => !convExistentesSlugs.has(c.slug)).map(c => ({
       slug: c.slug, nome: c.nome, uf: c.uf, estado_nome: c.estado_nome,
       sheet_origem: c.sheet, atualizado_em: seed.meta?.gerado_em || null
     }));
-    if (conveniosList.length) {
-      const url = `${SUPABASE_URL()}/rest/v1/gov_convenios?on_conflict=slug`;
+    if (conveniosNovos.length) {
+      const url = `${SUPABASE_URL()}/rest/v1/gov_convenios`;
       const resp = await fetch(url, {
         method: 'POST',
         headers: {
           'apikey': SUPABASE_KEY(),
           'Authorization': `Bearer ${SUPABASE_KEY()}`,
           'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates,return=representation'
+          'Prefer': 'return=representation'
         },
-        body: JSON.stringify(conveniosList)
+        body: JSON.stringify(conveniosNovos)
       });
       if (!resp.ok) {
         const t = await resp.text();
-        return jsonError(`Erro upsert convenios: ${t.substring(0,300)}`, 500, req);
+        return jsonError(`Erro insert convenios novos: ${t.substring(0,300)}`, 500, req);
       }
       const arr = await resp.json();
       stats.convenios = Array.isArray(arr) ? arr.length : 0;
