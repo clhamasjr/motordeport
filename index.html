@@ -762,6 +762,182 @@ function exportWppList(){
 // ══════ ENGINE ══════
 // Coeficientes de REFIN (nao entrada). Teto INSS = 1.85%. Taxas de 1.50% a 1.85% (96 meses).
 const COEFS=[{t:1.85,c:0.02299},{t:1.83,c:0.02360},{t:1.80,c:0.02451},{t:1.78,c:0.02250},{t:1.75,c:0.021985},{t:1.72,c:0.02175},{t:1.70,c:0.021604},{t:1.68,c:0.02145},{t:1.66,c:0.02130},{t:1.65,c:0.02123},{t:1.60,c:0.02046},{t:1.55,c:0.02009},{t:1.50,c:0.01973}];
+// COEFS estimados pra 108 meses (NOVA REGRA). Calculados via PRICE: c = i / (1 - (1+i)^-108).
+// Quando bancos publicarem tabelas oficiais, ajustar pelos valores reais.
+const COEFS_108=[{t:1.85,c:0.02153},{t:1.80,c:0.02112},{t:1.75,c:0.02071},{t:1.70,c:0.02031},{t:1.66,c:0.02000},{t:1.65,c:0.01992},{t:1.60,c:0.01952},{t:1.55,c:0.01913},{t:1.50,c:0.01874}];
+
+// ══════ NOVA REGRA INSS — ENQUADRAMENTO INTELIGENTE ══════
+// REGRA NOVA: margem global 40%. Cartão é OPCIONAL (RMC OU RCC, não os dois).
+//   - Sem cartão  → 40% pra empréstimo
+//   - Com 1 cartão → 35% emp + 5% cartão = 40% total
+// REGRA HOJE: 35% emp + 5% RMC + 5% RCC = até 45% comprometido
+//
+// CALCULADORIA: pra cliente excedido, soma 3 fontes de absorção:
+//   A) MARGEM LIVRE atual no emp (35%×benef - sumEmp)
+//   B) CANCELAR 1 cartão (liberta sumRmc ou sumRcc)
+//   C) REDUÇÃO via port/refin (parcela_atual − parcela_nova_pos_port_no_prazo_maximo)
+// Se A+B+C >= excedente → enquadra. Caso contrário → INVIAVEL (sem operação simples resolve).
+
+// Calcula redução máxima possível de parcela via port/refin pra UM contrato.
+// Estratégia: refinancia com taxa MAIS BAIXA do banco destino + prazo MÁXIMO permitido.
+// Retorna: { reducao, novaParc, banco, taxa, prazo } ou null se nao viavel.
+function calcReducaoPort(contrato, prazoMaxNovo) {
+  // contrato: {par, sal, cod, taxaOrig, pag, isInv, idade, bY, prazoRest, espN}
+  // Pra simplificar, usa coef da NOVA REGRA (108m) ou 96m conforme parametro.
+  if (!contrato || !contrato.par || !contrato.sal) return null;
+  // Pega a MENOR taxa disponivel nos bancos destino (1.50% ou 1.55% típico)
+  const taxaMin = 1.50;
+  const coef = _coefFor(taxaMin, prazoMaxNovo || 108);
+  if (!coef) return null;
+  // Nova parcela = saldo / vc_factor; vc = parcela_proposta / coef. Pra refinanciar SALDO no novo prazo: parcela = saldo * coef
+  const novaParc = contrato.sal * coef;
+  const reducao = (contrato.par || 0) - novaParc;
+  if (reducao <= 0) return null;
+  return { reducao, novaParc, taxa: taxaMin, prazo: prazoMaxNovo || 108 };
+}
+
+// Versão SIMPLES (sem contratos) — usada onde só temos sumEmp/RMC/RCC sem detalhe
+function calcEnquadramento(beneficio, sumEmp, sumRmc, sumRcc, opts) {
+  return calcEnquadramentoPlus(beneficio, sumEmp, sumRmc, sumRcc, [], opts);
+}
+
+// Versão COMPLETA: aceita lista de contratos pra calcular redução possível via port/refin
+function calcEnquadramentoPlus(beneficio, sumEmp, sumRmc, sumRcc, contratos, opts) {
+  opts = opts || {};
+  const tetoEmp35 = beneficio * 0.35;
+  const tetoCartao = beneficio * 0.05;
+  const tetoGlobal = beneficio * 0.40;
+  const sumTotal = sumEmp + sumRmc + sumRcc;
+  const excedente = Math.max(0, sumTotal - tetoGlobal);
+
+  // ── A) Margem livre EMP atual (não usada hoje)
+  const margemLivreEmp = Math.max(0, tetoEmp35 - sumEmp);
+
+  // ── B) Cancelar cartão (opções)
+  const cartoes = [];
+  if (sumRmc > 0) cartoes.push({ tipo: 'RMC', valor: sumRmc });
+  if (sumRcc > 0) cartoes.push({ tipo: 'RCC', valor: sumRcc });
+  cartoes.sort((a, b) => a.valor - b.valor); // menor primeiro (mais facil cancelar o pequeno)
+
+  // ── C) Redução via port/refin (pra cada contrato elegivel)
+  let reducaoTotal = 0;
+  const reducaoDetalhes = [];
+  if (Array.isArray(contratos) && contratos.length) {
+    for (const c of contratos) {
+      const r = calcReducaoPort(c, 108);
+      if (r) {
+        reducaoTotal += r.reducao;
+        reducaoDetalhes.push({ contrato: c.con || c.contrato, banco: c.cod || c.banco, ...r });
+      }
+    }
+    // Ordena maiores primeiro
+    reducaoDetalhes.sort((a, b) => b.reducao - a.reducao);
+  }
+
+  // ── Se já enquadra direto
+  if (sumTotal <= tetoGlobal && sumEmp <= tetoEmp35 && sumRmc <= tetoCartao && sumRcc <= tetoCartao) {
+    if (sumRmc > 0 && sumRcc > 0) {
+      return {
+        status: 'ENQUADRA_TROCAR_CARTAO',
+        detalhe: `Cabe em 40%. Cliente escolhe MANTER 1 cartão (RMC ou RCC). Eliminar o outro.`,
+        acao: 'cancelar 1 cartão',
+        excedente: 0, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
+        livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,
+        reducaoTotal, reducaoDetalhes
+      };
+    }
+    return {
+      status: 'ENQUADRA',
+      detalhe: `Já cabe no novo enquadramento de 40%.`,
+      acao: 'sem ajuste',
+      excedente: 0, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
+      livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,
+      reducaoTotal, reducaoDetalhes
+    };
+  }
+
+  // ── Procura COMBINAÇÃO ÓTIMA pra absorver o excedente
+  // Ordena estratégias da mais barata (1 op) pra mais cara (3 ops)
+  const estrategias = [];
+  // Estrat 1: só cancelar 1 cartão
+  for (const ct of cartoes) {
+    if (ct.valor >= excedente - 0.01) {
+      estrategias.push({ ops: 1, lista: [`cancelar ${ct.tipo} (R$ ${ct.valor.toFixed(2)})`], absorvido: ct.valor, status: 'VIA_CANCELA_CARTAO' });
+    }
+  }
+  // Estrat 2: só redução via port (1 contrato)
+  if (reducaoDetalhes.length) {
+    const r = reducaoDetalhes[0];
+    if (r.reducao >= excedente - 0.01) {
+      estrategias.push({ ops: 1, lista: [`port/refin contrato ${r.contrato || ''} (reduz parcela em R$ ${r.reducao.toFixed(2)})`], absorvido: r.reducao, status: 'VIA_PORT_REDUCAO' });
+    }
+  }
+  // Estrat 3: cancelar cartão + redução port (1 contrato) — combo
+  for (const ct of cartoes) {
+    for (const r of reducaoDetalhes) {
+      const absorvido = ct.valor + r.reducao;
+      if (absorvido >= excedente - 0.01) {
+        estrategias.push({
+          ops: 2,
+          lista: [`cancelar ${ct.tipo} (R$ ${ct.valor.toFixed(2)})`, `port/refin contrato ${r.contrato || ''} (reduz R$ ${r.reducao.toFixed(2)})`],
+          absorvido,
+          status: 'VIA_CARTAO_MAIS_PORT'
+        });
+      }
+    }
+  }
+  // Estrat 4: usar margem livre + cancelar cartão + redução
+  if (margemLivreEmp > 0) {
+    for (const ct of cartoes) {
+      for (const r of reducaoDetalhes) {
+        const absorvido = margemLivreEmp + ct.valor + r.reducao;
+        if (absorvido >= excedente - 0.01) {
+          estrategias.push({
+            ops: 3,
+            lista: [`usar margem livre (R$ ${margemLivreEmp.toFixed(2)})`, `cancelar ${ct.tipo} (R$ ${ct.valor.toFixed(2)})`, `port/refin contrato ${r.contrato || ''} (reduz R$ ${r.reducao.toFixed(2)})`],
+            absorvido,
+            status: 'VIA_MULTIPLO'
+          });
+        }
+      }
+    }
+  }
+  // Estrat 5: redução total via port (vários contratos)
+  if (reducaoTotal >= excedente - 0.01 && reducaoDetalhes.length > 1) {
+    estrategias.push({
+      ops: reducaoDetalhes.length,
+      lista: [`port/refin de ${reducaoDetalhes.length} contratos (reduz parcela total R$ ${reducaoTotal.toFixed(2)})`],
+      absorvido: reducaoTotal,
+      status: 'VIA_PORT_REDUCAO'
+    });
+  }
+
+  if (estrategias.length === 0) {
+    // Excede demais — calcula o quanto falta
+    const totalAbsorcaoPossivel = margemLivreEmp + Math.max(...cartoes.map(c => c.valor), 0) + reducaoTotal;
+    return {
+      status: 'INVIAVEL',
+      detalhe: `Excede em R$ ${excedente.toFixed(2)}. Absorção máxima possível: R$ ${totalAbsorcaoPossivel.toFixed(2)} (margem livre R$ ${margemLivreEmp.toFixed(2)} + cartão R$ ${Math.max(...cartoes.map(c => c.valor), 0).toFixed(2)} + redução R$ ${reducaoTotal.toFixed(2)}). Falta R$ ${(excedente - totalAbsorcaoPossivel).toFixed(2)}.`,
+      acao: 'inviável sem operação extra',
+      excedente, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
+      livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,
+      reducaoTotal, reducaoDetalhes
+    };
+  }
+
+  // Pega a estratégia com menos operações (mais simples)
+  estrategias.sort((a, b) => a.ops - b.ops);
+  const melhor = estrategias[0];
+  return {
+    status: melhor.status,
+    detalhe: `Excede em R$ ${excedente.toFixed(2)}. Solução: ${melhor.lista.join(' + ')}.`,
+    acao: melhor.lista.join(' + '),
+    excedente, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
+    livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,
+    reducaoTotal, reducaoDetalhes,
+    estrategia: melhor
+  };
+}
 // Daycoval REFIN PORT INSS (96 meses) — 11 tabelas oficiais (805990-806002). Usa pool proprio, nao COEFS global.
 const COEFS_DAY=[{t:1.85,c:0.02283},{t:1.80,c:0.02243},{t:1.77,c:0.02219},{t:1.74,c:0.02195},{t:1.71,c:0.02171},{t:1.68,c:0.02147},{t:1.66,c:0.02132},{t:1.62,c:0.02101},{t:1.60,c:0.02085},{t:1.58,c:0.02069},{t:1.56,c:0.02054}];
 // Faixas de REFIN por banco (taxa minima..maxima)
@@ -893,6 +1069,8 @@ function findFirst(H,ns){for(let nm of ns){let n=nm.toLowerCase().replace(/[^a-z
 function processar(data){
   if(!data||data.length<2)return null;let H=data[0].map(h=>h?String(h).trim():""),rows=data.slice(1);
   let cNm=findFirst(H,["Nome"]),cCP=findFirst(H,["CPF"]),cBn=findFirst(H,["Beneficio"]),cEs=findFirst(H,["Especie"]),cNs=findFirst(H,["Data Nascimento"]),cDI=findFirst(H,["DIB"]),cT1=findFirst(H,["Telefone1"]),cT2=findFirst(H,["Telefone2"]),cT3=findFirst(H,["Telefone3"]);
+  // Valor do benefício (renda) — pode vir como "Valor Beneficio", "Renda", "Salario" etc. Se ausente, derivamos depois via margem.
+  let cVB=findFirst(H,["Valor Beneficio","Valor Benefício","ValorBeneficio","Renda","Salario","Valor Renda","Vlr Beneficio","Vlr Renda"]);
   let cMg=findFirst(H,["Margem"]);
   let allTE=findAllPos(H,"Tipo Emprestimo"),allCon=findAllPos(H,"Contrato"),allCod=findAllPos(H,"Codigo"),allVE=findAllPos(H,"Valor Emprestimo"),allMC=findAllPos(H,"Margem Cartao"),allVP=findAllPos(H,"Valor Parcela"),allPr=findAllPos(H,"Prazo"),allSQ=findAllPos(H,"Saldo Quitacao"),allTx=findAllPos(H,"Taxa");
   let cardBlocks=[];for(let te of allTE){let mc=allMC.find(m=>m>te&&m<te+8);if(mc!==undefined)cardBlocks.push({te,mc})}
@@ -909,6 +1087,8 @@ function processar(data){
   for(let row of rows){
     let nome=g(row,cNm),cpf=g(row,cCP);if(!nome&&!cpf)continue;
     let ben=g(row,cBn),esp=g(row,cEs),t1=g(row,cT1),t2=g(row,cT2),t3=g(row,cT3);
+    // Valor do benefício direto da planilha (se houver coluna)
+    let valorBeneficio=cVB>=0?gv(row,cVB):0;
     let eN=pEN(esp),isInv=ESP_INV.includes(eN),isAux=ESP_AUX.includes(eN)||String(esp).toUpperCase().includes("AUXIL"),ai=cAge(gr(row,cNs)),idade=ai?ai.age:null,bY=cBY(gr(row,cDI));
     if(isAux)continue;
     let tRmc=rmcB?g(row,rmcB.tipo):"",cRmc=rmcB?pC(gr(row,rmcB.cod)??""):"",vRmc=rmcB?gv(row,rmcB.val):0;
@@ -932,7 +1112,8 @@ function processar(data){
     // Add to rmcAll: clients with card (for saque complementar) OR with margin (for new card)
     if(temCartao||margem>0){
       rmcAll.push({nome,cpf,ben,esp,t1,t2,t3,tRmc,cRmc:realRmc?cRmc:"",vRmc:Math.round(vRmc*100)/100,tRcc,cRcc:realRcc?cRcc:"",vRcc:Math.round(vRcc*100)/100,
-        mrgCart:Math.round(margem*100)/100,mrgCartNova:margemCartNova,mrgEmpNova:margemEmpNova,temRmc:!!realRmc,temRcc:!!realRcc,temCartao});
+        mrgCart:Math.round(margem*100)/100,mrgCartNova:margemCartNova,mrgEmpNova:margemEmpNova,temRmc:!!realRmc,temRcc:!!realRcc,temCartao,
+        valorBeneficio:Math.round(valorBeneficio*100)/100});
     }
     for(let lb of lbs){
       let con=g(row,lb.cc),par=gv(row,lb.cp),sal=gv(row,lb.cs);let[rest,tot,pag]=lb.cz!=null?pP(row[lb.cz]):[0,0,0];let cod=lb.ck!=null?pC(gr(row,lb.ck)??""):"";
@@ -942,7 +1123,7 @@ function processar(data){
       // testarTodos retorna TODAS as opcoes viaveis (QUALI, FACTA, BRB, ...) ordenadas pela prioridade
       let todosDest=testarTodos(par,sal,pag,cod,isInv,idade,bY,rest,eN,con,txOrig);
       let res=todosDest.length?todosDest[0]:null; // melhor (primeira)
-      let reg={nome,cpf,ben,esp,con,cod,par:Math.round(par*100)/100,sal:Math.round(sal*100)/100,prazo:`${rest}/${tot}`,pag,idade:idade??"-",isInv,is1p:i1,taxaOrig:txOrig,
+      let reg={nome,cpf,ben,esp,con,cod,par:Math.round(par*100)/100,sal:Math.round(sal*100)/100,prazo:`${rest}/${tot}`,pag,idade:idade??"-",isInv,is1p:i1,taxaOrig:txOrig,valorBeneficio:Math.round(valorBeneficio*100)/100,
         dest:res?res.banco:"-",troco:res?Math.round(res.troco*100)/100:0,vc:res?Math.round(res.vc*100)/100:0,taxa:res?res.taxa:"-",ok:!!res,
         destinos:todosDest.map(d=>({banco:d.banco,troco:Math.round(d.troco*100)/100,vc:Math.round(d.vc*100)/100,taxa:d.taxa})),
         t1,t2,t3};
@@ -957,7 +1138,7 @@ function processar(data){
 }
 
 // ══════ STATE ══════
-let S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel",crmFilter:"",crmQ:"",fTaxa:"",fTrocoMin:0,fTrocoMax:0,fBanco:"",fMargemMin:0,fMargemMax:0,fCartao:"",fMargemEmpMin:0,fMargemEmpMax:0,fIdadeMin:0,fIdadeMax:0,f1p:"",fInv:"",fVCmin:0,fVCmax:0,fParMin:0,fParMax:0,fSalMin:0,fSalMax:0,fPagasMin:0,fPagasMax:0};
+let S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel",crmFilter:"",crmQ:"",fTaxa:"",fTrocoMin:0,fTrocoMax:0,fBanco:"",fMargemMin:0,fMargemMax:0,fMargemPctMin:0,fMargemPctMax:0,fCartao:"",fMargemEmpMin:0,fMargemEmpMax:0,fIdadeMin:0,fIdadeMax:0,f1p:"",fInv:"",fVCmin:0,fVCmax:0,fParMin:0,fParMax:0,fSalMin:0,fSalMax:0,fPagasMin:0,fPagasMax:0,fEnquad:""};
 // Setters de filtros dos Elegiveis
 function setFBanco(v){S.fBanco=v||"";S.pg=0;renderApp()}
 function setFTaxa(v){S.fTaxa=v||"";S.pg=0;renderApp()}
@@ -967,6 +1148,8 @@ function _pI(v){let n=parseInt(String(v||"").replace(/\D/g,""),10);return isNaN(
 function setFTrocoMin(v){S.fTrocoMin=_pN(v);S.pg=0;renderApp()}
 function setFTrocoMax(v){S.fTrocoMax=_pN(v);S.pg=0;renderApp()}
 function setFMargemMin(v){S.fMargemMin=_pN(v);S.pg=0;renderApp()}
+function setFMargemPctMin(v){S.fMargemPctMin=_pN(v);S.pg=0;renderApp()}
+function setFMargemPctMax(v){S.fMargemPctMax=_pN(v);S.pg=0;renderApp()}
 function setFMargemMax(v){S.fMargemMax=_pN(v);S.pg=0;renderApp()}
 function setFMargemEmpMin(v){S.fMargemEmpMin=_pN(v);S.pg=0;renderApp()}
 function setFMargemEmpMax(v){S.fMargemEmpMax=_pN(v);S.pg=0;renderApp()}
@@ -975,6 +1158,7 @@ function setFIdadeMin(v){S.fIdadeMin=_pI(v);S.pg=0;renderApp()}
 function setFIdadeMax(v){S.fIdadeMax=_pI(v);S.pg=0;renderApp()}
 function setF1p(v){S.f1p=v||"";S.pg=0;renderApp()}
 function setFInv(v){S.fInv=v||"";S.pg=0;renderApp()}
+function setFEnquad(v){S.fEnquad=v||"";S.pg=0;renderApp()}
 function setFVCmin(v){S.fVCmin=_pN(v);S.pg=0;renderApp()}
 function setFVCmax(v){S.fVCmax=_pN(v);S.pg=0;renderApp()}
 function setFParMin(v){S.fParMin=_pN(v);S.pg=0;renderApp()}
@@ -983,7 +1167,7 @@ function setFSalMin(v){S.fSalMin=_pN(v);S.pg=0;renderApp()}
 function setFSalMax(v){S.fSalMax=_pN(v);S.pg=0;renderApp()}
 function setFPagasMin(v){S.fPagasMin=_pI(v);S.pg=0;renderApp()}
 function setFPagasMax(v){S.fPagasMax=_pI(v);S.pg=0;renderApp()}
-function limparFiltrosEleg(){S.fBanco="";S.fTaxa="";S.fTrocoMin=0;S.fTrocoMax=0;S.fMargemMin=0;S.fMargemMax=0;S.fMargemEmpMin=0;S.fMargemEmpMax=0;S.fCartao="";S.fIdadeMin=0;S.fIdadeMax=0;S.f1p="";S.fInv="";S.fVCmin=0;S.fVCmax=0;S.fParMin=0;S.fParMax=0;S.fSalMin=0;S.fSalMax=0;S.fPagasMin=0;S.fPagasMax=0;S.q="";S.pg=0;renderApp()}
+function limparFiltrosEleg(){S.fBanco="";S.fTaxa="";S.fTrocoMin=0;S.fTrocoMax=0;S.fMargemMin=0;S.fMargemMax=0;S.fMargemPctMin=0;S.fMargemPctMax=0;S.fMargemEmpMin=0;S.fMargemEmpMax=0;S.fCartao="";S.fIdadeMin=0;S.fIdadeMax=0;S.f1p="";S.fInv="";S.fVCmin=0;S.fVCmax=0;S.fParMin=0;S.fParMax=0;S.fSalMin=0;S.fSalMax=0;S.fPagasMin=0;S.fPagasMax=0;S.fEnquad="";S.q="";S.pg=0;renderApp()}
 // Selecionar TODOS os clientes do filtro atual (nao so da pagina)
 function selAllFiltrados(){
   if(!window._lastFiltEleg||!window._lastFiltEleg.length){alert("Nenhum resultado no filtro atual");return}
@@ -1721,10 +1905,46 @@ function renderAdmin(){
     </div>`;
   }
   bankHtml+=`</div></div>`;
+  // ── Manutencao (governos reseed) ───────────────────────
+  const manutHtml = `<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:22px;margin-top:24px">
+    <div style="font-size:16px;font-weight:800;margin-bottom:6px">🛠️ Manutenção</div>
+    <div style="font-size:12px;color:var(--t3);margin-bottom:16px">Operações administrativas pontuais.</div>
+    <div style="background:var(--sf);border:1px solid var(--brd);border-radius:10px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-weight:700;font-size:13px">🏛️ Reseed Catálogo de Governos</div>
+          <div style="font-size:11px;color:var(--t3);margin-top:2px">Recarrega convênios + bancos a partir do <code>/gov_seed.json</code> deployado. Use após atualizar a planilha (limpa relação banco × convênio e reimporta).</div>
+        </div>
+        <button class="btn-acc btn-sm" id="btnGovReseed" onclick="govAdminReseed()">🔄 Reseed</button>
+      </div>
+      <div id="govReseedResult" style="margin-top:10px;font-size:12px"></div>
+    </div>
+  </div>`;
   // Dropdown de parceiros (agencias) pro form de criar usuario
   const parceirosOpts=parceiros.filter(p=>p.active!==false).map(p=>`<option value="${p.id}">🏢 ${esc(p.nome)}</option>`).join('');
   return`<div class="admin-panel fi">${parceirosHtml}<div style="font-size:16px;font-weight:800;margin-bottom:16px">👥 Usuários & Hierarquia</div>${statsHtml}<table class="users-table"><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Parceiro</th><th>Códigos</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table>
-  <div class="add-user-form" style="margin-top:14px"><div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="nN"></div><div class="form-group"><label class="form-label">Login</label><input class="form-input" id="nU"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" id="nP" type="password"></div><div class="form-group"><label class="form-label">Perfil</label><select class="form-input" id="nR" onchange="document.getElementById('nParceiroWrap').style.display=this.value==='admin'?'none':'flex'"><option value="operador">Vendedor</option><option value="gestor">Gestor</option><option value="admin">Admin</option></select></div><div class="form-group" id="nParceiroWrap"><label class="form-label">Parceiro</label><select class="form-input" id="nParceiro"><option value="">— Sem parceiro —</option>${parceirosOpts}</select></div><button class="btn-acc" style="height:36px;padding:0 20px;font-size:11px" onclick="addU()">+ Add</button></div><div class="login-error" id="aErr" style="text-align:left;margin-top:8px"></div></div>${bankHtml}`}
+  <div class="add-user-form" style="margin-top:14px"><div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="nN"></div><div class="form-group"><label class="form-label">Login</label><input class="form-input" id="nU"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" id="nP" type="password"></div><div class="form-group"><label class="form-label">Perfil</label><select class="form-input" id="nR" onchange="document.getElementById('nParceiroWrap').style.display=this.value==='admin'?'none':'flex'"><option value="operador">Vendedor</option><option value="gestor">Gestor</option><option value="admin">Admin</option></select></div><div class="form-group" id="nParceiroWrap"><label class="form-label">Parceiro</label><select class="form-input" id="nParceiro"><option value="">— Sem parceiro —</option>${parceirosOpts}</select></div><button class="btn-acc" style="height:36px;padding:0 20px;font-size:11px" onclick="addU()">+ Add</button></div><div class="login-error" id="aErr" style="text-align:left;margin-top:8px"></div></div>${bankHtml}${manutHtml}`}
+
+async function govAdminReseed(){
+  const btn = document.getElementById('btnGovReseed');
+  const out = document.getElementById('govReseedResult');
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Aplicando...'; }
+  if(out){ out.innerHTML = '<span style="color:var(--t3)">Carregando seed e populando...</span>'; }
+  try{
+    const r = await apiFetch('/api/gov-seed', { method:'POST', body: JSON.stringify({action:'reseed'}) });
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error || 'Falha');
+    const s = d.stats || {};
+    if(out){
+      out.innerHTML = `<span style="color:var(--grn)">✓ Concluído em ${(d.duracao_ms/1000).toFixed(1)}s</span> · `
+        + `${s.bancos||0} bancos · ${s.convenios||0} convênios · ${s.banco_convenio||0} relações`;
+    }
+  }catch(e){
+    if(out){ out.innerHTML = `<span style="color:var(--red)">❌ ${esc(e.message)}</span>`; }
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '🔄 Reseed'; }
+  }
+}
 async function addU(){
   const n=document.getElementById("nN").value.trim(),
         u=document.getElementById("nU").value.trim().toLowerCase(),
@@ -4817,11 +5037,34 @@ function _filaToResult(fila) {
     manual: true,
     portalUrl: mc6.portalUrl || 'https://meu.bancomercantil.com.br/login',
     aguardandoManual: mc6.status === 'manual_aguardando',
+    bloqueado: mc6.status === 'bloqueado',
+    precisaAutorizacao: mc6.precisaAutorizacao === true,
+    operacaoId: mc6.operacaoId,
+    nomeCliente: mc6.nomeCliente,
     disponivel: mc6.status === 'ok' && mc6.disponivel === true,
     processando: mc6F.processando,
     detalhes: mc6.detalhes || null,
     falhou: mc6.status === 'falha',
     mensagem: msgDefault(mc6, mc6.status === 'manual_aguardando' ? 'manual_aguardando' : mc6.status)
+  });
+
+  // Handbank / UY3 — auto-autorizacao + link manual fallback
+  const hb = b.handbank || { status: 'pending' };
+  const hbF = _statusToFlags(hb.status);
+  ofertas.push({
+    banco: 'handbank', label: 'Handbank · UY3',
+    disponivel: hb.status === 'ok' && hb.disponivel === true,
+    bloqueado: hb.status === 'bloqueado',
+    precisaAutorizacao: hb.precisaAutorizacao === true,
+    linkAutorizacao: hb.linkAutorizacao,
+    processando: hbF.processando,
+    elegibilidade: hb.dados ? {
+      margemDisponivel: hb.dados.margemDisponivel,
+      empregador: hb.dados.empregador,
+      renda: hb.dados.renda
+    } : null,
+    falhou: hb.status === 'falha',
+    mensagem: msgDefault(hb, hb.status)
   });
 
   // C6
@@ -5107,6 +5350,9 @@ async function rodarConsultaCLT(opts) {
         { banco: 'presencabank', label: 'PresençaBank', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
         { banco: 'v8', provider: 'QI', label: 'V8 (QI Tech)', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
         { banco: 'v8', provider: 'CELCOIN', label: 'V8 (CELCOIN)', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
+        { banco: 'joinbank', label: 'QualiBanking', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
+        { banco: 'mercantil', label: 'Mercantil', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
+        { banco: 'handbank', label: 'Handbank · UY3', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
         { banco: 'c6', label: 'C6 Bank', disponivel: false, processando: true, mensagem: 'Aguardando início...' }
       ],
       mensagem: 'Consultando os bancos em paralelo...'
@@ -5162,7 +5408,7 @@ async function _pollingFila(filaId) {
           const elapsedMs = Date.now() - inicio;
           if (elapsedMs > 20000) {
             const bancos = d.fila.bancos || {};
-            for (const bancoKey of ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'c6']) {
+            for (const bancoKey of ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'mercantil', 'handbank', 'c6']) {
               const bk = bancos[bancoKey];
               if (!bk) continue;
               const isPending = bk.status === 'pending';
@@ -6249,13 +6495,14 @@ function renderCltConsulta() {
     const r = it.result || {};
     // Monta indicadores por banco (4 pontinhos)
     const ofs = r.ofertas || [];
-    const indicadores = ['presencabank','v8_qi','v8_celcoin','joinbank','mercantil','c6'].map(key => {
+    const indicadores = ['presencabank','v8_qi','v8_celcoin','joinbank','mercantil','handbank','c6'].map(key => {
       let o;
       if (key === 'presencabank') o = ofs.find(x => x.banco === 'presencabank');
       else if (key === 'v8_qi') o = ofs.find(x => x.banco === 'v8' && x.provider === 'QI');
       else if (key === 'v8_celcoin') o = ofs.find(x => x.banco === 'v8' && x.provider === 'CELCOIN');
       else if (key === 'joinbank') o = ofs.find(x => x.banco === 'joinbank');
       else if (key === 'mercantil') o = ofs.find(x => x.banco === 'mercantil');
+      else if (key === 'handbank') o = ofs.find(x => x.banco === 'handbank');
       else if (key === 'c6') o = ofs.find(x => x.banco === 'c6');
       if (!o) return { key, st: 'pending' };
       if (o.disponivel) return { key, st: 'ok' };
@@ -6310,7 +6557,7 @@ function renderCltConsulta() {
       // Mini-indicadores por banco (visual de progresso)
       let indicHtml = '';
       if (Array.isArray(c.indicadores)) {
-        const labelMap = { presencabank: 'PB', v8_qi: 'QI', v8_celcoin: 'CC', joinbank: 'JB', mercantil: 'MC', c6: 'C6' };
+        const labelMap = { presencabank: 'PB', v8_qi: 'QI', v8_celcoin: 'CC', joinbank: 'JB', mercantil: 'MC', handbank: 'HB', c6: 'C6' };
         const colorMap = {
           ok: 'background:rgba(34,197,94,.18);color:var(--grn)',
           proc: 'background:rgba(59,130,246,.18);color:var(--acc);animation:pulse 1.5s infinite',
@@ -7444,6 +7691,383 @@ function renderCltAdminMercantil() {
   return h;
 }
 
+// ══════════════════════════════════════════════════════════════
+// GOVERNOS — F3 (mai/2026)
+// Catalogo de convenios + Analise de holerite via Claude
+// ══════════════════════════════════════════════════════════════
+let govState = {
+  // catalogo
+  loadingCat: false, gruposCat: null, errCat: null,
+  filtroUf: '', filtroBusca: '',
+  convenioAberto: null,        // {convenio, bancos}
+  bancoExpandido: null,        // id do banco com atributos brutos abertos
+  // holerite
+  arquivoBase64: null, arquivoNome: null, arquivoTipo: null, arquivoTamanho: 0,
+  loadingHol: false, errHol: null, resultadoHol: null,
+  convenioForcadoSlug: '',     // se vazio, IA detecta
+};
+
+async function govCarregarConvenios(){
+  govState.loadingCat = true; govState.errCat = null; renderApp();
+  try{
+    const r = await apiFetch('/api/gov',{method:'POST',body:JSON.stringify({
+      action:'listConvenios', uf: govState.filtroUf, busca: govState.filtroBusca
+    })});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha');
+    govState.gruposCat = d.grupos || [];
+  }catch(e){ govState.errCat = e.message; }
+  govState.loadingCat = false; renderApp();
+}
+
+async function govAbrirConvenio(slug){
+  govState.convenioAberto = { loading: true };
+  renderApp();
+  try{
+    const r = await apiFetch('/api/gov',{method:'POST',body:JSON.stringify({action:'getConvenio', slug})});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha');
+    govState.convenioAberto = { convenio: d.convenio, bancos: d.bancos };
+  }catch(e){
+    govState.convenioAberto = { error: e.message };
+  }
+  govState.bancoExpandido = null;
+  renderApp();
+}
+
+function govFecharConvenio(){ govState.convenioAberto = null; govState.bancoExpandido = null; renderApp(); }
+
+function govToggleBanco(id){
+  govState.bancoExpandido = govState.bancoExpandido === id ? null : id;
+  renderApp();
+}
+
+function govLimparHolerite(){
+  govState.arquivoBase64 = null; govState.arquivoNome = null;
+  govState.arquivoTipo = null; govState.arquivoTamanho = 0;
+  govState.resultadoHol = null; govState.errHol = null;
+  renderApp();
+}
+
+async function govOnArquivo(input){
+  const f = input.files && input.files[0];
+  if(!f){ return; }
+  if(f.size > 10*1024*1024){ alert('Arquivo > 10MB. Reduza ou comprima.'); return; }
+  const tipo = f.type;
+  const ok = tipo === 'application/pdf' || tipo.startsWith('image/');
+  if(!ok){ alert('Tipo nao suportado. Use PDF ou imagem (JPG/PNG/WEBP).'); return; }
+  // converte pra base64
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    const b64 = String(dataUrl).split(',')[1] || '';
+    govState.arquivoBase64 = b64;
+    govState.arquivoNome = f.name;
+    govState.arquivoTipo = tipo;
+    govState.arquivoTamanho = f.size;
+    govState.errHol = null; govState.resultadoHol = null;
+    renderApp();
+  };
+  reader.onerror = () => { alert('Falha ao ler arquivo'); };
+  reader.readAsDataURL(f);
+}
+
+async function govAnalisarHolerite(){
+  if(!govState.arquivoBase64){ alert('Selecione um arquivo de holerite primeiro.'); return; }
+  govState.loadingHol = true; govState.errHol = null; govState.resultadoHol = null; renderApp();
+  try{
+    const payload = {
+      action: 'analisarHolerite',
+      arquivo_base64: govState.arquivoBase64,
+      arquivo_nome: govState.arquivoNome,
+      arquivo_tipo: govState.arquivoTipo,
+    };
+    if(govState.convenioForcadoSlug) payload.convenio_slug = govState.convenioForcadoSlug;
+    const r = await apiFetch('/api/gov',{method:'POST',body:JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha');
+    govState.resultadoHol = d;
+  }catch(e){ govState.errHol = e.message; }
+  govState.loadingHol = false; renderApp();
+}
+
+// ── Render: Catalogo de Convenios ──────────────────────────────
+function renderGovCatalogo(){
+  // Carrega na 1a vez
+  if(govState.gruposCat === null && !govState.loadingCat){
+    govCarregarConvenios();
+  }
+
+  // Tela de detalhe se houver convenio aberto
+  if(govState.convenioAberto){
+    return renderGovConvenioDetalhe();
+  }
+
+  let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
+  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">🏛️ Catálogo de Convênios</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Escolha o convênio para ver as informações operacionais e os bancos que operam.</div>';
+
+  // Filtros
+  const ufs = govState.gruposCat ? govState.gruposCat.map(g => g.uf).filter(u=>u && u!=='OUTROS') : [];
+  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">';
+  h += `<input class="form-input" placeholder="🔍 Buscar convênio (ex: TJMG, GOV PA, Bahia)..." value="${esc(govState.filtroBusca)}" oninput="govState.filtroBusca=this.value" onkeydown="if(event.key==='Enter')govCarregarConvenios()" style="flex:2;min-width:240px">`;
+  h += `<select class="form-input" onchange="govState.filtroUf=this.value;govCarregarConvenios()" style="flex:0 0 150px"><option value="">Todos UFs</option>`;
+  for(const u of ufs){ h += `<option value="${u}" ${govState.filtroUf===u?'selected':''}>${u}</option>`; }
+  h += `</select>`;
+  h += `<button class="btn-acc" onclick="govCarregarConvenios()">Aplicar</button>`;
+  h += '</div>';
+
+  if(govState.loadingCat){
+    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando convênios...</div>';
+  } else if(govState.errCat){
+    h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">❌ ${esc(govState.errCat)}</div>`;
+  } else if(!govState.gruposCat || govState.gruposCat.length === 0){
+    h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum convênio encontrado.</div>';
+  } else {
+    // Lista agrupada por UF
+    for(const g of govState.gruposCat){
+      h += `<div style="margin-bottom:18px">`;
+      h += `<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">${esc(g.uf||'?')} ${g.estado_nome?'— '+esc(g.estado_nome):''}</div>`;
+      h += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px">`;
+      for(const c of g.convenios){
+        h += `<div onclick="govAbrirConvenio('${esc(c.slug)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--brd)'">`;
+        h += `<div style="font-weight:700;font-size:14px;color:var(--t1);line-height:1.3">${esc(c.nome)}</div>`;
+        h += `<div style="font-size:11px;color:var(--t3);margin-top:4px">${esc(c.sheet_origem||'')}</div>`;
+        h += `</div>`;
+      }
+      h += `</div></div>`;
+    }
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderGovConvenioDetalhe(){
+  const x = govState.convenioAberto;
+  let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
+  h += `<div style="margin-bottom:16px"><button class="btn" onclick="govFecharConvenio()">← Voltar</button></div>`;
+
+  if(x.loading){ h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando...</div></div>'; return h; }
+  if(x.error){ h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">❌ ${esc(x.error)}</div></div>`; return h; }
+
+  const c = x.convenio;
+  const bancos = x.bancos || [];
+  h += `<div style="font-size:24px;font-weight:800;margin-bottom:4px">${esc(c.nome)}</div>`;
+  h += `<div style="font-size:12px;color:var(--t3);margin-bottom:6px">${c.uf?esc(c.uf):''} ${c.estado_nome?'— '+esc(c.estado_nome):''} · Aba: ${esc(c.sheet_origem||'')}</div>`;
+  if(c.atualizado_em) h += `<div style="font-size:11px;color:var(--t3);margin-bottom:18px">📅 Atualizado em ${esc(c.atualizado_em)}</div>`;
+
+  // Atalho pra holerite com convenio pre-selecionado
+  h += `<div style="margin-bottom:18px;padding:12px;background:rgba(34,211,238,.08);border:1px solid var(--cyan);border-radius:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">`;
+  h += `<span style="font-size:13px;flex:1;min-width:200px">📄 Tem o holerite do cliente? Suba para ver quais bancos atendem.</span>`;
+  h += `<button class="btn-acc btn-sm" onclick="govState.convenioForcadoSlug='${esc(c.slug)}';setTab('govHolerite')">📤 Analisar Holerite</button>`;
+  h += `</div>`;
+
+  if(bancos.length === 0){
+    h += '<div style="padding:30px;text-align:center;color:var(--t3)">Sem bancos cadastrados para este convênio.</div></div>'; return h;
+  }
+
+  h += `<div style="font-size:13px;color:var(--t2);margin-bottom:10px">${bancos.length} banco(s) operam este convênio:</div>`;
+  h += '<div style="display:grid;gap:10px">';
+  for(const b of bancos){
+    const ops = b.operacoes || {};
+    const opsStr = ['novo','refin','port','cartao'].filter(k=>ops[k]).map(k=>{
+      const lab = k==='cartao'?'Cartão':k.charAt(0).toUpperCase()+k.slice(1);
+      return `<span class="pill pill-grn" style="font-size:10px">${lab}</span>`;
+    }).join(' ');
+    const susp = b.suspenso ? '<span class="pill" style="background:rgba(239,68,68,.15);color:var(--red);font-size:10px">⛔ Suspenso</span>' : '';
+    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(1)}%</b></div>` : '';
+    const idade = (b.idade_min||b.idade_max) ? `<div><span style="color:var(--t3);font-size:10px">Idade</span> <b>${b.idade_min||'?'}-${b.idade_max||'?'}</b></div>` : '';
+    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2)}%</b></div>` : '';
+    const corte = b.data_corte ? `<div><span style="color:var(--t3);font-size:10px">Corte</span> <b>${esc(b.data_corte)}</b></div>` : '';
+    const expandido = govState.bancoExpandido === b.id;
+
+    h += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;${b.suspenso?'opacity:.6':''}">`;
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px">`;
+    h += `<div style="font-weight:800;font-size:15px">${esc(b.banco_nome)} ${susp}</div>`;
+    h += `<div style="display:flex;gap:4px">${opsStr||'<span style="color:var(--t3);font-size:11px">— sem operações cadastradas</span>'}</div>`;
+    h += `</div>`;
+    h += `<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--t2)">${margem}${idade}${taxa}${corte}</div>`;
+
+    h += `<div style="margin-top:10px"><button class="btn btn-sm" onclick="govToggleBanco(${b.id})">${expandido?'▾ Esconder detalhes':'▸ Ver todos os campos do roteiro'}</button></div>`;
+
+    if(expandido){
+      const brutos = b.atributos_brutos || [];
+      // agrupa por secao
+      const porSecao = { principal:[], portabilidade:[], cartao:[], publico_alvo:[] };
+      for(const a of brutos){ (porSecao[a.secao]||porSecao.principal).push(a); }
+      h += '<div style="margin-top:12px;border-top:1px solid var(--brd);padding-top:12px">';
+      const secoes = [
+        ['principal','📋 Operação'],
+        ['portabilidade','🔄 Portabilidade'],
+        ['cartao','💳 Cartão Benefício'],
+        ['publico_alvo','👥 Público-Alvo'],
+      ];
+      for(const [k,lab] of secoes){
+        const items = porSecao[k] || [];
+        if(items.length===0) continue;
+        h += `<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;margin-bottom:6px">${lab}</div>`;
+        h += '<div style="display:grid;grid-template-columns:1fr;gap:6px;font-size:12px">';
+        for(const a of items){
+          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(a.valor)}</div></div>`;
+        }
+        h += '</div></div>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div></div>';
+  return h;
+}
+
+// ── Render: Análise de Holerite ────────────────────────────────
+function renderGovHolerite(){
+  // carrega convenios pra dropdown se nao tiver
+  if(govState.gruposCat === null && !govState.loadingCat){ govCarregarConvenios(); }
+
+  let h = '<div style="max-width:900px;margin:0 auto;padding:24px">';
+  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">📄 Análise de Holerite</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Suba o holerite do cliente (PDF ou foto). A IA extrai os dados e cruza com a base de bancos para mostrar quais atendem.</div>';
+
+  // Upload
+  h += '<div style="background:var(--card);border:2px dashed var(--brd);border-radius:12px;padding:24px;margin-bottom:18px;text-align:center">';
+  if(!govState.arquivoBase64){
+    h += '<div style="font-size:14px;color:var(--t2);margin-bottom:10px">Arraste o arquivo aqui ou clique no botão</div>';
+    h += '<input type="file" id="govHolFile" accept="application/pdf,image/*" style="display:none" onchange="govOnArquivo(this)">';
+    h += '<button class="btn-acc" onclick="document.getElementById(\'govHolFile\').click()">📎 Selecionar arquivo</button>';
+    h += '<div style="font-size:11px;color:var(--t3);margin-top:8px">PDF, JPG, PNG ou WEBP — máx 10MB</div>';
+  } else {
+    h += `<div style="font-size:14px;font-weight:700">📎 ${esc(govState.arquivoNome)}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:4px">${(govState.arquivoTamanho/1024).toFixed(0)} KB · ${esc(govState.arquivoTipo)}</div>`;
+    h += `<div style="margin-top:10px"><button class="btn btn-sm" onclick="govLimparHolerite()">🗑 Trocar arquivo</button></div>`;
+  }
+  h += '</div>';
+
+  // Convenio (opcional - forçar)
+  h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;margin-bottom:18px">';
+  h += '<div style="font-size:12px;color:var(--t3);margin-bottom:8px">Convênio (opcional — se não escolher, a IA tenta detectar pelo holerite):</div>';
+  h += `<select class="form-input" onchange="govState.convenioForcadoSlug=this.value" style="width:100%"><option value="">— Detectar automaticamente —</option>`;
+  if(govState.gruposCat){
+    for(const g of govState.gruposCat){
+      h += `<optgroup label="${esc(g.uf||'')} - ${esc(g.estado_nome||'')}">`;
+      for(const c of g.convenios){
+        h += `<option value="${esc(c.slug)}" ${govState.convenioForcadoSlug===c.slug?'selected':''}>${esc(c.nome)}</option>`;
+      }
+      h += `</optgroup>`;
+    }
+  }
+  h += `</select>`;
+  h += '</div>';
+
+  // Botão analisar
+  h += '<div style="text-align:center;margin-bottom:20px">';
+  if(govState.loadingHol){
+    h += '<button class="btn-acc" disabled style="padding:14px 32px;font-size:14px">⏳ Analisando com IA... (pode levar 10-30s)</button>';
+  } else {
+    h += `<button class="btn-acc" onclick="govAnalisarHolerite()" ${govState.arquivoBase64?'':'disabled'} style="padding:14px 32px;font-size:14px">🔍 Analisar Holerite</button>`;
+  }
+  h += '</div>';
+
+  // Erro
+  if(govState.errHol){
+    h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:16px">❌ ${esc(govState.errHol)}</div>`;
+  }
+
+  // Resultado
+  if(govState.resultadoHol){
+    h += renderGovResultadoHolerite(govState.resultadoHol);
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function renderGovResultadoHolerite(r){
+  const d = r.dados_extraidos || {};
+  const c = r.convenio;
+  let h = '';
+
+  // ── Bloco Dados Extraidos ──
+  h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:16px;margin-bottom:16px">';
+  h += '<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;margin-bottom:10px">📊 Dados Extraídos</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;font-size:13px">';
+  const campos = [
+    ['Nome', d.nome], ['CPF', d.cpf], ['Matrícula', d.matricula],
+    ['Cargo', d.cargo], ['Órgão', d.orgao], ['UF', d.uf],
+    ['Data nasc.', d.data_nascimento], ['Idade', d.idade ? d.idade + ' anos' : null],
+    ['Competência', d.competencia],
+    ['Salário bruto', d.salario_bruto ? 'R$ '+Number(d.salario_bruto).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+    ['Salário líquido', d.salario_liquido ? 'R$ '+Number(d.salario_liquido).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+    ['Total descontos', d.total_descontos ? 'R$ '+Number(d.total_descontos).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+    ['Margem consig. disp.', d.margem_consignavel_disponivel ? 'R$ '+Number(d.margem_consignavel_disponivel).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+    ['Margem cartão disp.', d.margem_cartao_disponivel ? 'R$ '+Number(d.margem_cartao_disponivel).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+  ];
+  for(const [lab, v] of campos){
+    if(v === null || v === undefined || v === '') continue;
+    h += `<div><div style="color:var(--t3);font-size:10px;text-transform:uppercase">${lab}</div><div style="font-weight:600">${esc(String(v))}</div></div>`;
+  }
+  h += '</div>';
+  if(d.observacoes){
+    h += `<div style="margin-top:12px;padding:10px;background:rgba(245,194,66,.08);border-radius:8px;font-size:12px;color:var(--t2)"><b>Obs IA:</b> ${esc(d.observacoes)}</div>`;
+  }
+  h += '</div>';
+
+  // ── Convenio sugerido ──
+  if(c){
+    const conf = r.convenio_confianca || 'baixa';
+    const corConf = conf === 'alta' || conf === 'usuario' ? 'var(--grn)' : conf === 'media' ? 'var(--ylw)' : 'var(--red)';
+    h += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px;margin-bottom:16px">`;
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">`;
+    h += `<div><div style="font-size:11px;color:var(--t3);text-transform:uppercase">Convênio identificado</div><div style="font-size:16px;font-weight:800">${esc(c.nome)}</div><div style="font-size:11px;color:var(--t3)">${c.uf?esc(c.uf):''}</div></div>`;
+    h += `<span class="pill" style="background:${corConf}22;color:${corConf};font-size:10px">Confiança: ${esc(conf)}</span>`;
+    h += `</div></div>`;
+  } else {
+    h += `<div style="padding:14px;background:rgba(245,194,66,.1);border:1px solid var(--ylw);border-radius:10px;color:var(--ylw);margin-bottom:16px">⚠️ Convênio não identificado. Selecione manualmente acima e re-analise para ver os bancos que atendem.</div>`;
+  }
+
+  // ── Bancos que atendem ──
+  const atendem = r.bancos_atendem || [];
+  const naoAtendem = r.bancos_nao_atendem || [];
+
+  h += '<div style="background:var(--card);border:1px solid var(--grn);border-radius:12px;padding:16px;margin-bottom:14px">';
+  h += `<div style="font-size:13px;font-weight:800;color:var(--grn);margin-bottom:12px">✅ ${atendem.length} banco(s) atendem este cliente</div>`;
+  if(atendem.length === 0){
+    h += '<div style="color:var(--t3);font-size:12px">Nenhum banco do convênio atende com os dados extraídos.</div>';
+  } else {
+    h += '<div style="display:grid;gap:8px">';
+    for(const b of atendem){
+      const reg = b.regras || {};
+      const ops = ['opera_novo','opera_refin','opera_port','opera_cartao'].filter(k=>reg[k]).map(k=>{
+        const lab = ({opera_novo:'Novo',opera_refin:'Refin',opera_port:'Port',opera_cartao:'Cartão'})[k];
+        return `<span class="pill pill-grn" style="font-size:10px">${lab}</span>`;
+      }).join(' ');
+      h += '<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px">';
+      h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px"><div style="font-weight:700">${esc(b.banco_nome)}</div><div>${ops}</div></div>`;
+      const obs = b.observacoes || [];
+      if(obs.length){
+        h += '<ul style="margin:0;padding-left:18px;font-size:11px;color:var(--t2)">';
+        for(const o of obs){ h += `<li>${esc(o)}</li>`; }
+        h += '</ul>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // ── Bancos que NÃO atendem ──
+  if(naoAtendem.length){
+    h += '<details style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px"><summary style="cursor:pointer;font-size:12px;color:var(--t3);font-weight:700">⛔ ' + naoAtendem.length + ' banco(s) NÃO atendem (clique pra ver motivo)</summary>';
+    h += '<div style="margin-top:10px;display:grid;gap:6px;font-size:12px">';
+    for(const b of naoAtendem){
+      h += `<div style="padding:8px 10px;background:var(--bg);border-radius:6px"><b>${esc(b.banco_nome)}</b> — <span style="color:var(--t3)">${esc(b.motivo||'')}</span></div>`;
+    }
+    h += '</div></details>';
+  }
+
+  return h;
+}
+
 function renderConsulta() {
   let html = '';
   // Search bar
@@ -7784,7 +8408,518 @@ if(oportunidades.length){
     }
   }
   return html;
-}  
+}
+
+// ══════ ENQUADRAMENTO NOVA REGRA INSS (40% global / 108m / sem RMC&RCC) ══════
+// Estado da simulação local — reseta quando recarrega página.
+let enquadState = {
+  beneficio: 0,
+  contratos: [],          // [{banco, parcela, saldo, taxa, prazoRest, tipo: 'emp'|'rmc'|'rcc'}]
+  taxaSimul: 1.85,        // taxa que o vendedor quer testar
+  prefilledFromCpf: null, // se autopreencheu via consulta unitária
+};
+
+// Coef PRICE genérico — usado quando taxa não está nas tabelas (96m ou 108m)
+function _priceCoef(taxaPct, n) {
+  const i = (taxaPct || 0) / 100;
+  if (i <= 0 || n <= 0) return 0;
+  return i / (1 - Math.pow(1 + i, -n));
+}
+function _coefFor(taxaPct, n) {
+  const tbl = n === 108 ? COEFS_108 : COEFS;
+  const exact = tbl.find(c => Math.abs(c.t - taxaPct) < 0.001);
+  if (exact) return exact.c;
+  return _priceCoef(taxaPct, n);
+}
+
+function enquadAddContrato() {
+  enquadState.contratos.push({ banco: '', parcela: 0, saldo: 0, taxa: 1.66, prazoRest: 96, tipo: 'emp' });
+  renderApp();
+}
+function enquadDelContrato(i) {
+  enquadState.contratos.splice(i, 1);
+  renderApp();
+}
+function enquadSetField(i, field, val) {
+  if (!enquadState.contratos[i]) return;
+  if (['parcela', 'saldo', 'taxa'].includes(field)) {
+    enquadState.contratos[i][field] = parseFloat(String(val).replace(/[^\d.,-]/g, '').replace(',', '.')) || 0;
+  } else if (field === 'prazoRest') {
+    enquadState.contratos[i][field] = parseInt(val, 10) || 0;
+  } else {
+    enquadState.contratos[i][field] = val;
+  }
+  renderApp();
+}
+function enquadSetBeneficio(v) {
+  enquadState.beneficio = parseFloat(String(v).replace(/[^\d.,-]/g, '').replace(',', '.')) || 0;
+  renderApp();
+}
+function enquadSetTaxa(v) {
+  enquadState.taxaSimul = parseFloat(String(v).replace(',', '.')) || 1.85;
+  renderApp();
+}
+function enquadLimpar() {
+  enquadState = { beneficio: 0, contratos: [], taxaSimul: 1.85, prefilledFromCpf: null };
+  renderApp();
+}
+// Importa contratos da Consulta Unitária aberta no momento
+function enquadImportarConsulta() {
+  const r = (typeof consultaState !== 'undefined' && consultaState && consultaState.result) ? consultaState.result : null;
+  if (!r) { alert('Nenhuma consulta unitária aberta. Vá em 🔍 Consulta Unitária e consulte um CPF antes.'); return; }
+  const ben = r.beneficiario || {};
+  const benefVal = parseFloat(String(r.margem?.valor_beneficio || ben.valor_beneficio || '0').replace(/\./g, '').replace(',', '.')) || 0;
+  enquadState.beneficio = benefVal;
+  enquadState.contratos = [];
+  for (const ct of (r.contratos || [])) {
+    const par = parseFloat(String(ct.parcela || '0').replace(/\./g, '').replace(',', '.')) || 0;
+    const sal = parseFloat(String(ct.saldo || ct.saldo_quitacao || '0').replace(/\./g, '').replace(',', '.')) || 0;
+    const tx = parseFloat(String(ct.taxa || '0').replace(',', '.')) || 0;
+    const total = parseInt(ct.prazo_original || '0') || 0;
+    const rest = parseInt(ct.prazo || ct.prazo_restante || '0') || 0;
+    if (par <= 0) continue;
+    enquadState.contratos.push({
+      banco: String(ct.banco_nome || ct.banco_codigo || ct.codigo || '').slice(0, 30),
+      parcela: par, saldo: sal, taxa: tx, prazoRest: rest, prazoOriginal: total, tipo: 'emp'
+    });
+  }
+  // Adiciona linhas RMC/RCC se a margem indicar reserva
+  const mrgRmc = parseFloat(String(r.margem?.rmc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+  const mrgRcc = parseFloat(String(r.margem?.rcc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+  if (mrgRmc > 0) enquadState.contratos.push({ banco: 'CARTÃO RMC', parcela: mrgRmc, saldo: 0, taxa: 0, prazoRest: 0, tipo: 'rmc' });
+  if (mrgRcc > 0) enquadState.contratos.push({ banco: 'CARTÃO RCC', parcela: mrgRcc, saldo: 0, taxa: 0, prazoRest: 0, tipo: 'rcc' });
+  enquadState.prefilledFromCpf = ben.cpf || ben.nome || 'consulta';
+  renderApp();
+}
+
+// ── Renderização ──
+function renderEnquadramento() {
+  const cs = enquadState;
+  const benef = cs.beneficio || 0;
+  const taxa = cs.taxaSimul || 1.85;
+  const fmt = v => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const pct = v => (Number(v) || 0).toFixed(2) + '%';
+
+  // Soma de parcelas por tipo
+  const sumEmp = cs.contratos.filter(c => c.tipo === 'emp').reduce((s, c) => s + (c.parcela || 0), 0);
+  const sumRmc = cs.contratos.filter(c => c.tipo === 'rmc').reduce((s, c) => s + (c.parcela || 0), 0);
+  const sumRcc = cs.contratos.filter(c => c.tipo === 'rcc').reduce((s, c) => s + (c.parcela || 0), 0);
+  const sumTotal = sumEmp + sumRmc + sumRcc;
+
+  // Cenário ATUAL (35% emp + 5% RMC + 5% RCC, 96m)
+  const tetoEmp = benef * 0.35;
+  const tetoRmc = benef * 0.05;
+  const tetoRcc = benef * 0.05;
+  const livreEmp = Math.max(0, tetoEmp - sumEmp);
+  const livreRmc = Math.max(0, tetoRmc - sumRmc);
+  const livreRcc = Math.max(0, tetoRcc - sumRcc);
+  const coef96 = _coefFor(taxa, 96);
+  const vcLivreEmp_atual = livreEmp / (coef96 || 1); // valor que poderia tomar com a margem livre
+
+  // Cenário NOVO (40% global, 108m, sem RMC/RCC — TUDO entra no 40%)
+  const tetoGlobal = benef * 0.40;
+  const livreGlobal = Math.max(0, tetoGlobal - sumTotal);
+  const coef108 = _coefFor(taxa, 108);
+  const vcLivreEmp_novo = livreGlobal / (coef108 || 1);
+
+  // Diferença / oportunidade
+  const ganhoMargem = livreGlobal - livreEmp;
+  const ganhoVlrContr = vcLivreEmp_novo - vcLivreEmp_atual;
+  const refinTotalAtual = cs.contratos.filter(c => c.tipo === 'emp' && c.saldo > 0).reduce((s, c) => s + c.saldo, 0);
+
+  let html = `<div class="fi" style="max-width:1200px;margin:0 auto;padding:0 8px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.1em;font-weight:700">Simulador</div>
+        <div style="font-size:24px;font-weight:800;color:var(--t1);margin-top:2px">🔮 Enquadramento Nova Regra INSS</div>
+        <div style="font-size:13px;color:var(--t2);margin-top:4px">Compare o cenário atual (35%+5%+5% / 96m) com o cenário novo (40% global / 108m)</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-acc" onclick="enquadImportarConsulta()" title="Pré-preenche com dados do CPF aberto na Consulta Unitária">📥 Importar da Consulta</button>
+        <button class="btn" onclick="enquadAddContrato()">➕ Adicionar Contrato</button>
+        <button class="btn btn-red btn-sm" onclick="if(confirm('Limpar tudo?'))enquadLimpar()">🗑 Limpar</button>
+      </div>
+    </div>`;
+
+  if (cs.prefilledFromCpf) {
+    html += `<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:8px;padding:8px 14px;margin-bottom:14px;font-size:12px;color:var(--grn)">📋 Dados pré-preenchidos da Consulta Unitária (${esc(cs.prefilledFromCpf)})</div>`;
+  }
+
+  // Inputs base
+  html += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:16px;margin-bottom:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px">
+    <div>
+      <label style="font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase">Valor do Benefício</label>
+      <input type="number" step="50" value="${cs.beneficio || ''}" onchange="enquadSetBeneficio(this.value)" placeholder="0,00" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--brd);background:var(--bg);color:var(--t1);font-size:14px;font-weight:700;margin-top:4px">
+    </div>
+    <div>
+      <label style="font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase">Taxa Referência</label>
+      <select onchange="enquadSetTaxa(this.value)" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--brd);background:var(--bg);color:var(--t1);font-size:14px;font-weight:700;margin-top:4px">
+        ${[1.50, 1.55, 1.60, 1.66, 1.70, 1.75, 1.80, 1.85].map(t => `<option value="${t}" ${cs.taxaSimul === t ? 'selected' : ''}>${pct(t)}</option>`).join('')}
+      </select>
+    </div>
+    <div>
+      <label style="font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase">Coef 96m</label>
+      <div style="padding:10px;border:1px solid var(--brd);border-radius:8px;background:var(--bg);color:var(--t2);font-size:13px;font-family:monospace;margin-top:4px">${coef96.toFixed(5)}</div>
+    </div>
+    <div>
+      <label style="font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase">Coef 108m <span style="color:var(--ylw);font-weight:600;font-size:9px">(estimado)</span></label>
+      <div style="padding:10px;border:1px solid var(--brd);border-radius:8px;background:var(--bg);color:var(--t2);font-size:13px;font-family:monospace;margin-top:4px">${coef108.toFixed(5)}</div>
+    </div>
+  </div>`;
+
+  // Tabela de contratos
+  html += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px;margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;color:var(--t1);margin-bottom:10px">📋 Contratos / Cartões do Cliente</div>`;
+  if (!cs.contratos.length) {
+    html += `<div style="text-align:center;padding:24px;color:var(--t3);font-size:13px">Nenhum contrato adicionado. Clique em <b style="color:var(--acc)">➕ Adicionar Contrato</b> ou <b style="color:var(--acc)">📥 Importar da Consulta</b>.</div>`;
+  } else {
+    html += `<div class="table-wrap"><table style="width:100%"><thead><tr>
+      <th style="font-size:10px">TIPO</th>
+      <th style="font-size:10px">BANCO</th>
+      <th class="right" style="font-size:10px">PARCELA</th>
+      <th class="right" style="font-size:10px">SALDO</th>
+      <th class="right" style="font-size:10px">TAXA</th>
+      <th class="right" style="font-size:10px">PRAZO REST</th>
+      <th></th>
+    </tr></thead><tbody>`;
+    cs.contratos.forEach((c, i) => {
+      const tipoColor = c.tipo === 'rmc' ? 'var(--pur)' : c.tipo === 'rcc' ? 'var(--pnk)' : 'var(--acc)';
+      html += `<tr>
+        <td><select onchange="enquadSetField(${i},'tipo',this.value)" style="background:var(--bg);border:1px solid var(--brd);color:${tipoColor};padding:4px 8px;border-radius:5px;font-size:11px;font-weight:700">
+          <option value="emp" ${c.tipo === 'emp' ? 'selected' : ''}>EMP</option>
+          <option value="rmc" ${c.tipo === 'rmc' ? 'selected' : ''}>RMC</option>
+          <option value="rcc" ${c.tipo === 'rcc' ? 'selected' : ''}>RCC</option>
+        </select></td>
+        <td><input type="text" value="${esc(c.banco || '')}" onchange="enquadSetField(${i},'banco',this.value)" placeholder="Banco" style="width:120px;background:var(--bg);border:1px solid var(--brd);color:var(--t1);padding:4px 8px;border-radius:5px;font-size:11px"></td>
+        <td><input type="number" step="0.01" value="${c.parcela || ''}" onchange="enquadSetField(${i},'parcela',this.value)" style="width:90px;background:var(--bg);border:1px solid var(--brd);color:var(--t1);padding:4px 8px;border-radius:5px;font-size:11px;text-align:right"></td>
+        <td><input type="number" step="100" value="${c.saldo || ''}" onchange="enquadSetField(${i},'saldo',this.value)" style="width:100px;background:var(--bg);border:1px solid var(--brd);color:var(--t1);padding:4px 8px;border-radius:5px;font-size:11px;text-align:right"></td>
+        <td><input type="number" step="0.01" value="${c.taxa || ''}" onchange="enquadSetField(${i},'taxa',this.value)" style="width:60px;background:var(--bg);border:1px solid var(--brd);color:var(--t1);padding:4px 8px;border-radius:5px;font-size:11px;text-align:right"></td>
+        <td><input type="number" step="1" value="${c.prazoRest || ''}" onchange="enquadSetField(${i},'prazoRest',this.value)" style="width:60px;background:var(--bg);border:1px solid var(--brd);color:var(--t1);padding:4px 8px;border-radius:5px;font-size:11px;text-align:right"></td>
+        <td><button class="btn btn-red btn-sm" onclick="enquadDelContrato(${i})" style="padding:4px 8px;font-size:11px">✕</button></td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+  html += `</div>`;
+
+  // ── Cenários lado a lado ──
+  html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">`;
+
+  // ATUAL
+  html += `<div style="background:linear-gradient(135deg,rgba(110,119,133,.08),rgba(110,119,133,.02));border:1px solid var(--brd);border-radius:12px;padding:18px">
+    <div style="font-size:11px;color:var(--t3);text-transform:uppercase;font-weight:700;letter-spacing:.05em">Cenário Atual (Hoje)</div>
+    <div style="font-size:18px;font-weight:800;color:var(--t1);margin-top:4px">35% + 5% RMC + 5% RCC / 96m</div>
+    <div style="margin-top:14px;display:grid;gap:8px">
+      <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--brd);padding-bottom:6px"><span style="color:var(--t2);font-size:12px">Teto Empréstimo (35%)</span><span class="mono" style="font-weight:700">${fmt(tetoEmp)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2);font-size:12px">Comprometido</span><span class="mono">${fmt(sumEmp)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--grn);font-size:12px;font-weight:700">Margem livre EMP</span><span class="mono" style="color:var(--grn);font-weight:800">${fmt(livreEmp)}</span></div>
+      <div style="display:flex;justify-content:space-between;border-top:1px solid var(--brd);padding-top:6px;margin-top:4px"><span style="color:var(--t2);font-size:12px">Teto RMC (5%)</span><span class="mono">${fmt(tetoRmc)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2);font-size:12px">Comprometido RMC</span><span class="mono">${fmt(sumRmc)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--pur);font-size:12px;font-weight:700">Margem livre RMC</span><span class="mono" style="color:var(--pur);font-weight:800">${fmt(livreRmc)}</span></div>
+      <div style="display:flex;justify-content:space-between;border-top:1px solid var(--brd);padding-top:6px;margin-top:4px"><span style="color:var(--t2);font-size:12px">Teto RCC (5%)</span><span class="mono">${fmt(tetoRcc)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2);font-size:12px">Comprometido RCC</span><span class="mono">${fmt(sumRcc)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--pnk);font-size:12px;font-weight:700">Margem livre RCC</span><span class="mono" style="color:var(--pnk);font-weight:800">${fmt(livreRcc)}</span></div>
+      <div style="border-top:1px solid var(--brd);padding-top:8px;margin-top:6px;background:rgba(255,255,255,.02);padding:8px;border-radius:6px">
+        <div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Vlr emprestimo NOVO possivel</div>
+        <div style="font-size:18px;font-weight:800;color:var(--ylw);font-family:monospace;margin-top:2px">${fmt(vcLivreEmp_atual)}</div>
+        <div style="font-size:10px;color:var(--t3);margin-top:2px">a ${pct(taxa)} em 96m</div>
+      </div>
+    </div>
+  </div>`;
+
+  // NOVO
+  html += `<div style="background:linear-gradient(135deg,rgba(34,197,94,.10),rgba(79,142,247,.04));border:2px solid var(--grn);border-radius:12px;padding:18px;position:relative">
+    <div style="position:absolute;top:10px;right:14px;background:var(--grn);color:#000;font-size:9px;padding:3px 8px;border-radius:4px;font-weight:800">NOVO</div>
+    <div style="font-size:11px;color:var(--grn);text-transform:uppercase;font-weight:700;letter-spacing:.05em">Cenário Nova Regra</div>
+    <div style="font-size:18px;font-weight:800;color:var(--t1);margin-top:4px">40% Global / 108m / sem RMC RCC</div>
+    <div style="margin-top:14px;display:grid;gap:8px">
+      <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--brd);padding-bottom:6px"><span style="color:var(--t2);font-size:12px">Teto Global (40%)</span><span class="mono" style="font-weight:700">${fmt(tetoGlobal)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2);font-size:12px">Total comprometido (EMP+RMC+RCC)</span><span class="mono">${fmt(sumTotal)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--grn);font-size:13px;font-weight:700">Margem livre (única)</span><span class="mono" style="color:var(--grn);font-weight:800;font-size:14px">${fmt(livreGlobal)}</span></div>
+      <div style="background:rgba(255,255,255,.02);padding:8px;border-radius:6px;margin-top:8px">
+        <div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Vlr emprestimo NOVO possivel</div>
+        <div style="font-size:22px;font-weight:800;color:var(--grn);font-family:monospace;margin-top:2px">${fmt(vcLivreEmp_novo)}</div>
+        <div style="font-size:10px;color:var(--t3);margin-top:2px">a ${pct(taxa)} em 108m</div>
+      </div>
+      <div style="font-size:10px;color:var(--ylw);background:rgba(245,194,66,.06);border:1px solid rgba(245,194,66,.2);border-radius:6px;padding:6px 10px;margin-top:6px">
+        ⚠ Coef 108m calculado via PRICE (estimativa). Ao publicar tabela oficial dos bancos, ajusto pra valores reais.
+      </div>
+    </div>
+  </div>`;
+
+  html += `</div>`;
+
+  // ── Análise / Oportunidade ──
+  if (benef > 0 && cs.contratos.length > 0) {
+    const ganhoPct = livreEmp > 0 ? ((ganhoMargem / livreEmp) * 100) : (livreGlobal > 0 ? Infinity : 0);
+    html += `<div style="background:linear-gradient(135deg,rgba(167,139,250,.08),rgba(236,72,153,.04));border:1px solid rgba(167,139,250,.3);border-radius:12px;padding:18px;margin-bottom:16px">
+      <div style="font-size:13px;color:var(--pur);font-weight:800;letter-spacing:.05em;text-transform:uppercase;margin-bottom:14px">⚡ Análise Comparativa</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">
+        <div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Ganho de margem</div><div style="font-size:20px;font-weight:800;color:${ganhoMargem >= 0 ? 'var(--grn)' : 'var(--red)'};font-family:monospace">${ganhoMargem >= 0 ? '+' : ''}${fmt(ganhoMargem)}</div><div style="font-size:10px;color:var(--t3)">${isFinite(ganhoPct) ? '+' + ganhoPct.toFixed(0) + '% vs hoje' : ''}</div></div>
+        <div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Valor a tomar A MAIS</div><div style="font-size:20px;font-weight:800;color:${ganhoVlrContr >= 0 ? 'var(--grn)' : 'var(--red)'};font-family:monospace">${ganhoVlrContr >= 0 ? '+' : ''}${fmt(ganhoVlrContr)}</div><div style="font-size:10px;color:var(--t3)">contrato novo</div></div>
+        <div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Saldo total port</div><div style="font-size:20px;font-weight:800;color:var(--ylw);font-family:monospace">${fmt(refinTotalAtual)}</div><div style="font-size:10px;color:var(--t3)">${cs.contratos.filter(c => c.tipo === 'emp' && c.saldo > 0).length} contrato(s)</div></div>
+        <div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">RMC + RCC reservado</div><div style="font-size:20px;font-weight:800;color:var(--pnk);font-family:monospace">${fmt(sumRmc + sumRcc)}</div><div style="font-size:10px;color:var(--t3)">vai pra 40% global</div></div>
+      </div>
+      <div style="margin-top:14px;font-size:12px;color:var(--t1);line-height:1.6">
+        <b style="color:var(--pur)">📌 Recomendação:</b><br>
+        ${ganhoMargem > 100 ? `• Cliente <b style="color:var(--grn)">SOBE de margem</b> em ${fmt(ganhoMargem)} → libera novo empréstimo, refin ou saque complementar.<br>` : ''}
+        ${refinTotalAtual > 0 ? `• Refin/Port dos contratos atuais (saldo total ${fmt(refinTotalAtual)}) deve render melhor com prazo 108m.<br>` : ''}
+        ${(sumRmc + sumRcc) > 0 ? `• ${fmt(sumRmc + sumRcc)} de RMC/RCC migram para o pool de 40% — pode renegociar/encerrar cartões.<br>` : ''}
+        ${livreGlobal <= 0 ? `• ⚠ Cliente ${livreGlobal < 0 ? '<b style=\"color:var(--red)\">EXTRAPOLA</b>' : '<b style=\"color:var(--ylw)\">esgota</b>'} a margem nova (40%) — só sobra refin de contratos existentes.<br>` : ''}
+      </div>
+    </div>`;
+  }
+
+  return html;
+}
+
+// ══════ ENQUADRAMENTO EM LOTE — analisa toda a base XLSX importada ══════
+// Pra cada CPF, soma todas as parcelas (EMP + RMC + RCC), pega o benefício
+// (do XLSX ou deriva da margem), e calcula:
+//   - Cenário ATUAL: 35% emp + 5% RMC + 5% RCC / 96m
+//   - Cenário NOVO: 40% global / 108m
+// Determina se cliente "ENQUADRA", "EXTRAPOLA" ou "SOBRA" no novo.
+let enquadLoteState = { taxa: 1.85, filtroStatus: 'all', sortBy: 'ganho', sortDir: 'desc' };
+
+function setEnquadLoteTaxa(v) { enquadLoteState.taxa = parseFloat(v) || 1.85; renderApp(); }
+function setEnquadLoteFiltro(v) { enquadLoteState.filtroStatus = v || 'all'; renderApp(); }
+function setEnquadLoteSort(col) {
+  if (enquadLoteState.sortBy === col) enquadLoteState.sortDir = enquadLoteState.sortDir === 'desc' ? 'asc' : 'desc';
+  else { enquadLoteState.sortBy = col; enquadLoteState.sortDir = 'desc'; }
+  renderApp();
+}
+
+// Agrega contratos+RMC+RCC por CPF -> retorna array de {cpf, nome, beneficio, sumEmp, sumRmc, sumRcc, ...}
+function enquadAggregaBase(D) {
+  if (!D || !D.analise) return [];
+  const map = {};
+  // 1) Soma parcelas EMP por CPF (todos os contratos da analise)
+  for (const r of D.analise) {
+    if (!r.cpf) continue;
+    if (!map[r.cpf]) {
+      map[r.cpf] = {
+        cpf: r.cpf, nome: r.nome || '', ben: r.ben || '',
+        beneficio: r.valorBeneficio || 0,
+        sumEmp: 0, sumRmc: 0, sumRcc: 0,
+        nContratos: 0, saldoTotal: 0, especie: r.esp || '', idade: r.idade
+      };
+    }
+    const c = map[r.cpf];
+    if ((r.par || 0) > 0) { c.sumEmp += r.par; c.nContratos++; c.saldoTotal += (r.sal || 0); }
+    if ((r.valorBeneficio || 0) > c.beneficio) c.beneficio = r.valorBeneficio;
+  }
+  // 2) Soma RMC/RCC por CPF (do rmcRcc da base)
+  if (Array.isArray(D.rmcRcc)) {
+    for (const r of D.rmcRcc) {
+      if (!r.cpf || !map[r.cpf]) {
+        // CPF tem só RMC/RCC, sem contrato — adiciona linha
+        if (r.cpf) map[r.cpf] = {
+          cpf: r.cpf, nome: r.nome || '', ben: r.ben || '',
+          beneficio: r.valorBeneficio || 0,
+          sumEmp: 0, sumRmc: 0, sumRcc: 0,
+          nContratos: 0, saldoTotal: 0, especie: r.esp || ''
+        };
+      }
+      if (!map[r.cpf]) continue;
+      const c = map[r.cpf];
+      if ((r.vRmc || 0) > 0) c.sumRmc += r.vRmc;
+      if ((r.vRcc || 0) > 0) c.sumRcc += r.vRcc;
+      if (!c.beneficio && r.valorBeneficio) c.beneficio = r.valorBeneficio;
+    }
+  }
+  return Object.values(map);
+}
+
+function renderEnquadramentoLote() {
+  const D = S.data;
+  if (!D) {
+    return `<div class="fi" style="text-align:center;padding:60px;color:var(--t2)">
+      <div style="font-size:42px;margin-bottom:12px">📥</div>
+      <div style="font-size:16px;font-weight:700;color:var(--t1)">Carregue uma base primeiro</div>
+      <div style="font-size:13px;margin-top:6px">Vá em <b>Importar Base</b> e suba seu XLSX. Depois volte aqui pra simular o enquadramento de toda a base na nova regra.</div>
+      <button class="btn btn-acc" style="margin-top:16px" onclick="setTab('bases')">📥 Ir pra Importar Base</button>
+    </div>`;
+  }
+  const taxa = enquadLoteState.taxa;
+  const coef96 = _coefFor(taxa, 96);
+  const coef108 = _coefFor(taxa, 108);
+  const fmt = v => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtN = v => (Number(v) || 0).toLocaleString('pt-BR');
+
+  const agg = enquadAggregaBase(D);
+  // Calcula cenários por linha
+  const linhas = agg.map(c => {
+    let benef = c.beneficio || 0;
+    // Se não tem benefício no XLSX, deriva: parcelas EMP / 0.35 (assume cliente bateu o teto). Conservador.
+    if (!benef && c.sumEmp > 0) benef = c.sumEmp / 0.35;
+    const tetoEmp = benef * 0.35;
+    const tetoRmc = benef * 0.05;
+    const tetoRcc = benef * 0.05;
+    const tetoGlobal = benef * 0.40;
+    const sumTotal = c.sumEmp + c.sumRmc + c.sumRcc;
+    const livreEmpAtual = Math.max(0, tetoEmp - c.sumEmp);
+    const livreRmcAtual = Math.max(0, tetoRmc - c.sumRmc);
+    const livreRccAtual = Math.max(0, tetoRcc - c.sumRcc);
+    const livreNovo = tetoGlobal - sumTotal; // pode ser negativo (extrapola)
+    const ganho = livreNovo - livreEmpAtual;
+    const vcNovo = livreNovo > 0 ? livreNovo / coef108 : 0;
+    const vcAtual = livreEmpAtual / coef96;
+    let status = 'ENQUADRA';
+    if (livreNovo < 0) status = 'EXTRAPOLA';
+    else if (livreNovo > 200) status = 'SOBRA';
+    return { ...c, benef, tetoEmp, tetoGlobal, sumTotal, livreEmpAtual, livreNovo, ganho, vcNovo, vcAtual, status };
+  });
+
+  // Filtro e sort
+  let filtered = linhas;
+  if (enquadLoteState.filtroStatus !== 'all') {
+    filtered = filtered.filter(l => l.status === enquadLoteState.filtroStatus);
+  }
+  const col = enquadLoteState.sortBy;
+  const dir = enquadLoteState.sortDir === 'desc' ? -1 : 1;
+  filtered.sort((a, b) => {
+    const va = a[col], vb = b[col];
+    if (typeof va === 'string') return (va < vb ? -1 : va > vb ? 1 : 0) * dir;
+    return ((va || 0) - (vb || 0)) * dir;
+  });
+
+  // Stats agregados
+  const total = linhas.length;
+  const enquadram = linhas.filter(l => l.status === 'ENQUADRA').length;
+  const sobra = linhas.filter(l => l.status === 'SOBRA').length;
+  const extrapolam = linhas.filter(l => l.status === 'EXTRAPOLA').length;
+  const ganhoTotal = linhas.reduce((s, l) => s + Math.max(0, l.ganho), 0);
+  const vcNovoTotal = linhas.reduce((s, l) => s + (l.vcNovo || 0), 0);
+  const semBenef = linhas.filter(l => !l.beneficio).length;
+
+  let html = `<div class="fi" style="max-width:1400px;margin:0 auto;padding:0 8px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.1em;font-weight:700">Simulação em Lote</div>
+        <div style="font-size:24px;font-weight:800;color:var(--t1);margin-top:2px">🔮 Enquadramento da Base — Nova Regra</div>
+        <div style="font-size:13px;color:var(--t2);margin-top:4px">${fmtN(total)} clientes da base "<b>${esc(S.fname || '')}</b>" — simulação no novo cenário (40% / 108m)</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <label style="font-size:11px;color:var(--t3);font-weight:700">TAXA REF
+          <select onchange="setEnquadLoteTaxa(this.value)" style="margin-left:6px;background:var(--bg);border:1px solid var(--brd);color:var(--t1);padding:6px 10px;border-radius:6px;font-size:12px;font-weight:700">
+            ${[1.50, 1.55, 1.60, 1.66, 1.70, 1.75, 1.80, 1.85].map(t => `<option value="${t}" ${taxa === t ? 'selected' : ''}>${t.toFixed(2)}%</option>`).join('')}
+          </select>
+        </label>
+        <button class="btn btn-grn btn-sm" onclick="exportEnquadLote()">↓ Exportar XLSX</button>
+      </div>
+    </div>`;
+
+  // KPIs
+  html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:16px">
+    <div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:12px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Total clientes</div><div style="font-size:22px;font-weight:800;color:var(--t1);margin-top:2px">${fmtN(total)}</div></div>
+    <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:10px;padding:12px;cursor:pointer" onclick="setEnquadLoteFiltro('ENQUADRA')"><div style="font-size:10px;color:var(--grn);text-transform:uppercase;font-weight:700">✅ Enquadram</div><div style="font-size:22px;font-weight:800;color:var(--grn);margin-top:2px">${fmtN(enquadram)}</div><div style="font-size:10px;color:var(--t3)">cabem em 40%</div></div>
+    <div style="background:rgba(79,142,247,.08);border:1px solid rgba(79,142,247,.25);border-radius:10px;padding:12px;cursor:pointer" onclick="setEnquadLoteFiltro('SOBRA')"><div style="font-size:10px;color:var(--acc);text-transform:uppercase;font-weight:700">💰 Sobra margem</div><div style="font-size:22px;font-weight:800;color:var(--acc);margin-top:2px">${fmtN(sobra)}</div><div style="font-size:10px;color:var(--t3)">oportunidade nova</div></div>
+    <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:10px;padding:12px;cursor:pointer" onclick="setEnquadLoteFiltro('EXTRAPOLA')"><div style="font-size:10px;color:var(--red);text-transform:uppercase;font-weight:700">⚠ Extrapolam</div><div style="font-size:22px;font-weight:800;color:var(--red);margin-top:2px">${fmtN(extrapolam)}</div><div style="font-size:10px;color:var(--t3)">não cabem nem em 40%</div></div>
+    <div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:12px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Ganho total margem</div><div style="font-size:18px;font-weight:800;color:var(--ylw);margin-top:2px;font-family:monospace">${fmt(ganhoTotal)}</div></div>
+    <div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:12px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">VC novo total</div><div style="font-size:18px;font-weight:800;color:var(--grn);margin-top:2px;font-family:monospace">${fmt(vcNovoTotal)}</div></div>
+  </div>`;
+
+  if (semBenef > 0) {
+    html += `<div style="background:rgba(245,194,66,.08);border:1px solid rgba(245,194,66,.25);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--ylw)">
+      ⚠ ${fmtN(semBenef)} cliente(s) sem coluna "Valor Benefício" no XLSX. Pra esses, o sistema deriva benefício a partir das parcelas atuais (assume que bateu o teto de 35%) — pode subestimar a oportunidade real. Pra precisão, garanta que o XLSX tem coluna <code style="background:var(--bg);padding:2px 6px;border-radius:4px">Valor Beneficio</code>.
+    </div>`;
+  }
+
+  // Filtro de status (visual)
+  const ftrs = [
+    { v: 'all', l: 'Todos' },
+    { v: 'ENQUADRA', l: '✅ Enquadram' },
+    { v: 'SOBRA', l: '💰 Sobra' },
+    { v: 'EXTRAPOLA', l: '⚠ Extrapolam' }
+  ];
+  html += `<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+    ${ftrs.map(f => `<button class="btn btn-sm" style="${enquadLoteState.filtroStatus === f.v ? 'border-color:var(--acc);color:var(--acc);background:rgba(79,142,247,.06)' : ''}" onclick="setEnquadLoteFiltro('${f.v}')">${f.l}</button>`).join('')}
+  </div>`;
+
+  // Tabela
+  const sortIcon = (col) => enquadLoteState.sortBy === col ? (enquadLoteState.sortDir === 'desc' ? ' ▼' : ' ▲') : '';
+  html += `<div class="table-wrap"><div class="table-scroll"><table><thead><tr>
+    <th onclick="setEnquadLoteSort('nome')" style="cursor:pointer">NOME${sortIcon('nome')}</th>
+    <th onclick="setEnquadLoteSort('cpf')" style="cursor:pointer">CPF${sortIcon('cpf')}</th>
+    <th class="right" onclick="setEnquadLoteSort('benef')" style="cursor:pointer">BENEFÍCIO${sortIcon('benef')}</th>
+    <th class="right" onclick="setEnquadLoteSort('sumEmp')" style="cursor:pointer">PARC EMP${sortIcon('sumEmp')}</th>
+    <th class="right" onclick="setEnquadLoteSort('sumRmc')" style="cursor:pointer">RMC${sortIcon('sumRmc')}</th>
+    <th class="right" onclick="setEnquadLoteSort('sumRcc')" style="cursor:pointer">RCC${sortIcon('sumRcc')}</th>
+    <th class="right" onclick="setEnquadLoteSort('sumTotal')" style="cursor:pointer">TOTAL${sortIcon('sumTotal')}</th>
+    <th class="right" onclick="setEnquadLoteSort('livreEmpAtual')" style="cursor:pointer">LIVRE 35%${sortIcon('livreEmpAtual')}</th>
+    <th class="right" onclick="setEnquadLoteSort('livreNovo')" style="cursor:pointer">LIVRE 40%${sortIcon('livreNovo')}</th>
+    <th class="right" onclick="setEnquadLoteSort('ganho')" style="cursor:pointer">GANHO${sortIcon('ganho')}</th>
+    <th class="right" onclick="setEnquadLoteSort('vcNovo')" style="cursor:pointer">VC NOVO${sortIcon('vcNovo')}</th>
+    <th onclick="setEnquadLoteSort('status')" style="cursor:pointer">STATUS${sortIcon('status')}</th>
+  </tr></thead><tbody>`;
+
+  const PER_LOCAL = 200;
+  const items = filtered.slice(0, PER_LOCAL);
+  for (const l of items) {
+    const stColor = l.status === 'ENQUADRA' ? 'var(--grn)' : l.status === 'SOBRA' ? 'var(--acc)' : 'var(--red)';
+    const stBadge = `<span class="pill" style="background:${l.status === 'ENQUADRA' ? 'rgba(34,197,94,.15)' : l.status === 'SOBRA' ? 'rgba(79,142,247,.15)' : 'rgba(239,68,68,.15)'};color:${stColor};font-size:10px;font-weight:700">${l.status}</span>`;
+    const ganhoColor = l.ganho > 0 ? 'var(--grn)' : l.ganho < 0 ? 'var(--red)' : 'var(--t3)';
+    html += `<tr class="rh">
+      <td style="font-size:12px">${esc(l.nome)}</td>
+      <td class="mono" style="font-size:11px">${esc(l.cpf)}</td>
+      <td class="right mono" style="color:${l.beneficio ? 'var(--t1)' : 'var(--ylw)'}">${fmt(l.benef)}${!l.beneficio ? '<span style="font-size:9px;color:var(--ylw)" title="derivado das parcelas">*</span>' : ''}</td>
+      <td class="right mono" style="font-size:11px">${fmt(l.sumEmp)}</td>
+      <td class="right mono" style="font-size:11px;color:${l.sumRmc > 0 ? 'var(--pur)' : 'var(--t3)'}">${l.sumRmc > 0 ? fmt(l.sumRmc) : '—'}</td>
+      <td class="right mono" style="font-size:11px;color:${l.sumRcc > 0 ? 'var(--pnk)' : 'var(--t3)'}">${l.sumRcc > 0 ? fmt(l.sumRcc) : '—'}</td>
+      <td class="right mono" style="font-weight:700">${fmt(l.sumTotal)}</td>
+      <td class="right mono" style="color:${l.livreEmpAtual > 0 ? 'var(--t2)' : 'var(--t3)'}">${fmt(l.livreEmpAtual)}</td>
+      <td class="right mono" style="color:${l.livreNovo > 0 ? 'var(--grn)' : 'var(--red)'};font-weight:700">${fmt(l.livreNovo)}</td>
+      <td class="right mono" style="color:${ganhoColor};font-weight:700">${l.ganho >= 0 ? '+' : ''}${fmt(l.ganho)}</td>
+      <td class="right mono" style="color:var(--grn)">${l.vcNovo > 0 ? fmt(l.vcNovo) : '—'}</td>
+      <td>${stBadge}</td>
+    </tr>`;
+  }
+  if (!items.length) html += `<tr><td colspan="12" style="padding:40px;text-align:center;color:var(--t3)">Nenhum cliente neste filtro</td></tr>`;
+  html += `</tbody></table></div>`;
+  if (filtered.length > PER_LOCAL) {
+    html += `<div style="padding:10px;text-align:center;font-size:11px;color:var(--t3)">Mostrando ${PER_LOCAL} de ${fmtN(filtered.length)} — exporta XLSX pra ver tudo</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+// Exporta a tabela de enquadramento em XLSX
+function exportEnquadLote() {
+  const D = S.data;
+  if (!D) { alert('Sem base carregada'); return; }
+  const taxa = enquadLoteState.taxa;
+  const coef96 = _coefFor(taxa, 96);
+  const coef108 = _coefFor(taxa, 108);
+  const agg = enquadAggregaBase(D);
+  const rows = agg.map(c => {
+    let benef = c.beneficio || 0;
+    if (!benef && c.sumEmp > 0) benef = c.sumEmp / 0.35;
+    const tetoEmp = benef * 0.35, tetoGlobal = benef * 0.40;
+    const sumTotal = c.sumEmp + c.sumRmc + c.sumRcc;
+    const livreEmpAtual = Math.max(0, tetoEmp - c.sumEmp);
+    const livreNovo = tetoGlobal - sumTotal;
+    const ganho = livreNovo - livreEmpAtual;
+    const vcNovo = livreNovo > 0 ? livreNovo / coef108 : 0;
+    const vcAtual = livreEmpAtual / coef96;
+    let status = 'ENQUADRA';
+    if (livreNovo < 0) status = 'EXTRAPOLA';
+    else if (livreNovo > 200) status = 'SOBRA';
+    return {
+      Nome: c.nome, CPF: c.cpf, Beneficio: c.ben, Especie: c.especie,
+      'Vlr Beneficio': benef, 'Beneficio Derivado': c.beneficio ? 'NAO' : 'SIM',
+      'Parc EMP': c.sumEmp, RMC: c.sumRmc, RCC: c.sumRcc, 'Total Comprometido': sumTotal,
+      'Teto 35%': tetoEmp, 'Livre 35%': livreEmpAtual, 'VC Atual (96m)': vcAtual,
+      'Teto 40%': tetoGlobal, 'Livre 40%': livreNovo, 'VC Novo (108m)': vcNovo,
+      'Ganho Margem': ganho, Status: status,
+      'N Contratos': c.nContratos, 'Saldo Total': c.saldoTotal
+    };
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Enquadramento');
+  const ts = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  XLSX.writeFile(wb, `flowforce_enquadramento_${ts}.xlsx`);
+  showToast?.(`✓ ${rows.length} linhas exportadas`, 'success');
+}
 
 // ══════ GESTAO (Painel Admin) ══════
 let gestaoData=null;let gestaoLoading=false;
@@ -7923,7 +9058,8 @@ const MENU=[
   {product:'inss',icon:'🟣',label:'INSS',active:true,
     // Items diretos do produto (sem virar sub-grupo)
     items:[
-      {k:'consulta',icon:'🔍',label:'Consulta Unitária'}
+      {k:'consulta',icon:'🔍',label:'Consulta Unitária'},
+      {k:'enquad',icon:'🔮',label:'Enquadramento (40%)'}
     ],
     groups:[
       {group:'Análise em Lote',icon:'📊',items:[
@@ -7931,7 +9067,8 @@ const MENU=[
         {k:'dash',icon:'📈',label:'Dashboard',needsData:true,needsRole:['gestor','admin']},
         {k:'an',icon:'📋',label:'Análise',needsData:true,needsRole:['gestor','admin']},
         {k:'el',icon:'✅',label:'Elegíveis',needsData:true,needsRole:['gestor','admin']},
-        {k:'mp',icon:'🗺️',label:'Mapa',needsData:true,needsRole:['gestor','admin']}
+        {k:'mp',icon:'🗺️',label:'Mapa',needsData:true,needsRole:['gestor','admin']},
+        {k:'enquadLote',icon:'🔮',label:'Enquadramento Lote',needsData:true,needsRole:['gestor','admin']}
       ]},
       {group:'Higienização',icon:'🧼',items:[
         {k:'rc',icon:'💳',label:'RMC/RCC',needsData:true,needsRole:['gestor','admin']},
@@ -7980,7 +9117,11 @@ const MENU=[
       ]}
     ]},
   {product:'fgts',icon:'🏦',label:'FGTS',soon:true},
-  {product:'gov',icon:'🏛️',label:'Governos',soon:true}
+  {product:'gov',icon:'🏛️',label:'Governos',active:true,
+    items:[
+      {k:'govCatalogo',icon:'📚',label:'Catálogo de Convênios'},
+      {k:'govHolerite',icon:'📄',label:'Análise de Holerite'}
+    ]}
 ];
 // Item fica sempre no menu (fluxo uniforme), soh muda estado visual conforme role/data
 function _canSeeItem(it){
@@ -8312,9 +9453,11 @@ try{renderJobsFloat()}catch{}
 if(!D){
   document.getElementById("headerActions").style.display="none";
   // Aba padrao = home se invalida
-  if(!["home","bases","consulta","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp"].includes(S.tab))S.tab="home";
+  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite"].includes(S.tab))S.tab="home";
   let content='';
   if(S.tab==="consulta")content=renderConsulta();
+  else if(S.tab==="enquad")content=renderEnquadramento();
+  else if(S.tab==="enquadLote")content=renderEnquadramentoLote();
   else if(S.tab==="est")content=renderEsteira();
   else if(S.tab==="camp")content=renderCampanhas();
   else if(S.tab==="disp")content=renderDisparador();
@@ -8332,6 +9475,8 @@ if(!D){
   else if(S.tab==="cltWpp")content=renderCltWpp();
   else if(S.tab==="cltPainel")content=renderCltPainel();
   else if(S.tab==="cltAdminMercantil"&&isGes)content=renderCltAdminMercantil();
+  else if(S.tab==="govCatalogo")content=renderGovCatalogo();
+  else if(S.tab==="govHolerite")content=renderGovHolerite();
   if(content){tabContent.innerHTML=content;return}
   // Sem data: tab 'bases' = tela de upload; tab 'home' (padrao) = home
   if(S.tab==="bases"){renderLanding(tabContent);return}
@@ -8353,6 +9498,8 @@ if(!D){
   let tcontent='';
   if(S.tab==="admin")tcontent=renderAdmin();
   else if(S.tab==="consulta")tcontent=renderConsulta();
+  else if(S.tab==="enquad")tcontent=renderEnquadramento();
+  else if(S.tab==="enquadLote")tcontent=renderEnquadramentoLote();
   else if(S.tab==="camp")tcontent=renderCampanhas();
   else if(S.tab==="disp")tcontent=renderDisparador();
   else if(S.tab==="wpp")tcontent=renderWhatsApp();
@@ -8370,6 +9517,8 @@ if(!D){
   else if(S.tab==="cltWpp")tcontent=renderCltWpp();
   else if(S.tab==="cltPainel")tcontent=renderCltPainel();
   else if(S.tab==="cltAdminMercantil"&&isGes)tcontent=renderCltAdminMercantil();
+  else if(S.tab==="govCatalogo")tcontent=renderGovCatalogo();
+  else if(S.tab==="govHolerite")tcontent=renderGovHolerite();
   if(tcontent){tabContent.innerHTML=tcontent;return}
 
   // ═══ DASHBOARD ═══
@@ -8449,16 +9598,52 @@ if(!D){
     if(S.fPagasMax>0)filtered=filtered.filter(r=>(r.pag||0)<=S.fPagasMax);
     if(S.fMargemMin>0)filtered=filtered.filter(r=>{const x=rmcByCpf[r.cpf];return x&&(x.mrgCart||0)>=S.fMargemMin});
     if(S.fMargemMax>0)filtered=filtered.filter(r=>{const x=rmcByCpf[r.cpf];return x&&(x.mrgCart||0)<=S.fMargemMax});
+    // Margem em % do beneficio: usa valorBeneficio se disponivel; senao deriva via parcela/0.35
+    if(S.fMargemPctMin>0||S.fMargemPctMax>0){
+      filtered=filtered.filter(rr=>{
+        const x=rmcByCpf[rr.cpf];if(!x)return false;
+        const benef=x.valorBeneficio||(rr.par>0?rr.par/0.35:0);
+        if(!benef)return false;
+        const pct=(x.mrgCart||0)/benef*100;
+        if(S.fMargemPctMin>0&&pct<S.fMargemPctMin)return false;
+        if(S.fMargemPctMax>0&&pct>S.fMargemPctMax)return false;
+        return true;
+      });
+    }
     if(S.fMargemEmpMin>0)filtered=filtered.filter(r=>{const x=rmcByCpf[r.cpf];return x&&(x.mrgEmpNova||0)>=S.fMargemEmpMin});
     if(S.fMargemEmpMax>0)filtered=filtered.filter(r=>{const x=rmcByCpf[r.cpf];return x&&(x.mrgEmpNova||0)<=S.fMargemEmpMax});
     if(S.fCartao==="sem")filtered=filtered.filter(r=>{const x=rmcByCpf[r.cpf];return !x||!x.temCartao});
     else if(S.fCartao==="com")filtered=filtered.filter(r=>{const x=rmcByCpf[r.cpf];return x&&x.temCartao});
+    else if(S.fCartao==="sem_rmc")filtered=filtered.filter(r=>{const x=rmcByCpf[r.cpf];return !x||!x.temRmc});
+    else if(S.fCartao==="sem_rcc")filtered=filtered.filter(r=>{const x=rmcByCpf[r.cpf];return !x||!x.temRcc});
+    // "Sem RMC OU sem RCC" = cliente tem NO MÁXIMO 1 cartão (ja conforme nova regra)
+    else if(S.fCartao==="sem_rmc_ou_rcc")filtered=filtered.filter(r=>{const x=rmcByCpf[r.cpf];return !x||!x.temRmc||!x.temRcc});
+    else if(S.fCartao==="com_rmc")filtered=filtered.filter(r=>{const x=rmcByCpf[r.cpf];return x&&x.temRmc});
+    else if(S.fCartao==="com_rcc")filtered=filtered.filter(r=>{const x=rmcByCpf[r.cpf];return x&&x.temRcc});
     if(S.fIdadeMin>0)filtered=filtered.filter(r=>{const a=(typeof r.idade==="number")?r.idade:parseInt(r.idade,10);return !isNaN(a)&&a>=S.fIdadeMin});
     if(S.fIdadeMax>0)filtered=filtered.filter(r=>{const a=(typeof r.idade==="number")?r.idade:parseInt(r.idade,10);return !isNaN(a)&&a<=S.fIdadeMax});
     if(S.f1p==="sim")filtered=filtered.filter(r=>!!r.is1p);
     else if(S.f1p==="nao")filtered=filtered.filter(r=>!r.is1p);
     if(S.fInv==="sim")filtered=filtered.filter(r=>!!r.isInv);
     else if(S.fInv==="nao")filtered=filtered.filter(r=>!r.isInv);
+    // Filtro por STATUS de ENQUADRAMENTO (nova regra 40% global) — calculadoria INTELIGENTE
+    if(S.fEnquad){
+      const enqByCpf={};
+      for(const cpf of new Set(filtered.map(r=>r.cpf))){
+        const x=rmcByCpf[cpf];
+        if(!x){enqByCpf[cpf]={status:'SEM_DADOS'};continue}
+        const contratosCpf=(D.analise||[]).filter(c=>c.cpf===cpf);
+        const sumEmp=contratosCpf.reduce((s,c)=>s+(c.par||0),0);
+        const benef=x.valorBeneficio||(sumEmp>0?sumEmp/0.35:0);
+        if(!benef){enqByCpf[cpf]={status:'SEM_DADOS'};continue}
+        // Passa contratos pra calculadoria considerar redução via port/refin
+        enqByCpf[cpf]=calcEnquadramentoPlus(benef,sumEmp,x.vRmc||0,x.vRcc||0,contratosCpf);
+      }
+      filtered=filtered.filter(r=>{
+        const e=enqByCpf[r.cpf]||{status:''};
+        return e.status===S.fEnquad;
+      });
+    }
     // Sort
     if(S.sort.c){const sc=S.sort.c,sd=S.sort.d;filtered=[...filtered].sort((a,b)=>{let va=a[sc],vb=b[sc];if(typeof va==="string"){va=va.toLowerCase();vb=String(vb||"").toLowerCase()}return(va<vb?-1:va>vb?1:0)*(sd==="asc"?1:-1)})}
     let items=filtered.slice(S.pg*PER,(S.pg+1)*PER);
@@ -8468,7 +9653,7 @@ if(!D){
     let cCart=D.elegiveis.filter(e=>{let r=rmcMap[e.cpf];return r&&!r.temCartao&&r.mrgCart>0}).length;
     // Contadores por banco (da expansao bruta)
     let bancoCount={};for(const e of expand)bancoCount[e.dest]=(bancoCount[e.dest]||0)+1;
-    const filtroAtivo=!!(S.fBanco||S.fTaxa||S.fTrocoMin>0||S.fTrocoMax>0||S.fVCmin>0||S.fVCmax>0||S.fParMin>0||S.fParMax>0||S.fSalMin>0||S.fSalMax>0||S.fPagasMin>0||S.fPagasMax>0||S.fMargemMin>0||S.fMargemMax>0||S.fMargemEmpMin>0||S.fMargemEmpMax>0||S.fCartao||S.fIdadeMin>0||S.fIdadeMax>0||S.f1p||S.fInv||S.q);
+    const filtroAtivo=!!(S.fBanco||S.fTaxa||S.fTrocoMin>0||S.fTrocoMax>0||S.fVCmin>0||S.fVCmax>0||S.fParMin>0||S.fParMax>0||S.fSalMin>0||S.fSalMax>0||S.fPagasMin>0||S.fPagasMax>0||S.fMargemMin>0||S.fMargemMax>0||S.fMargemPctMin>0||S.fMargemPctMax>0||S.fMargemEmpMin>0||S.fMargemEmpMax>0||S.fCartao||S.fIdadeMin>0||S.fIdadeMax>0||S.f1p||S.fInv||S.fEnquad||S.q);
     html+=`<div class="search-bar">
       <input type="text" placeholder="Buscar nome/CPF/contrato..." value="${esc(S.q)}" oninput="setQ(this.value)" style="min-width:180px">
       <div style="display:flex;gap:4px;align-items:center;background:var(--card);border:1px solid var(--brd);border-radius:6px;padding:3px">
@@ -8476,7 +9661,6 @@ if(!D){
         <button class="btn btn-sm" style="font-size:9px;border:none;padding:3px 8px;color:var(--grn)" onclick="toggleSelAll()">☑ Todos</button>
         <button class="btn btn-sm" style="font-size:9px;border:none;padding:3px 8px;color:var(--red)" onclick="selNone()">✕</button>
       </div>
-      <button class="btn" style="padding:6px 14px;font-size:10px;border-color:var(--org);color:var(--org)" onclick="batchIN100()">🔍 IN100 Lote (${selected.size})</button>
       <button class="btn-cart" onclick="addSelectedToCart()">🛒 Carrinho (${selected.size})</button>
       <span style="flex:1"></span>
       <button class="btn btn-grn" style="padding:6px 14px;font-size:10px" onclick="exportElegiveisFiltrados()" title="Exporta XLSX com os ${filtered.length} registros do filtro atual${selected.size>0?' (ou só os '+selected.size+' selecionados)':''}">↓ Exportar ${selected.size>0?'Selecionados ('+selected.size+')':'Filtrados ('+filtered.length+')'}</button>
@@ -8508,10 +9692,21 @@ if(!D){
       ].join("");
       const cliente=[
         rng("Margem R$",S.fMargemMin,S.fMargemMax,"setFMargemMin","setFMargemMax",10),
+        rng("Margem % do salário",S.fMargemPctMin,S.fMargemPctMax,"setFMargemPctMin","setFMargemPctMax",1,100),
         rng("Pot. emp. novo R$",S.fMargemEmpMin,S.fMargemEmpMax,"setFMargemEmpMin","setFMargemEmpMax",500),
-        sel("Cartão",S.fCartao,"setFCartao",[{v:"",l:"Qualquer"},{v:"sem",l:"Sem cartão"},{v:"com",l:"Com cartão"}]),
+        sel("Cartão",S.fCartao,"setFCartao",[{v:"",l:"Qualquer"},{v:"sem",l:"Sem nenhum cartão"},{v:"sem_rmc",l:"Sem RMC"},{v:"sem_rcc",l:"Sem RCC"},{v:"sem_rmc_ou_rcc",l:"Sem RMC ou RCC (no máx 1)"},{v:"com",l:"Com algum cartão"},{v:"com_rmc",l:"Com RMC"},{v:"com_rcc",l:"Com RCC"}]),
         rng("Idade",S.fIdadeMin,S.fIdadeMax,"setFIdadeMin","setFIdadeMax",1,120),
-        sel("Invalidez",S.fInv,"setFInv",[{v:"",l:"Todos"},{v:"sim",l:"Só invalidez"},{v:"nao",l:"Sem invalidez"}])
+        sel("Invalidez",S.fInv,"setFInv",[{v:"",l:"Todos"},{v:"sim",l:"Só invalidez"},{v:"nao",l:"Sem invalidez"}]),
+        sel("Enquadramento Nova Regra",S.fEnquad,"setFEnquad",[
+          {v:"",l:"Todos"},
+          {v:"ENQUADRA",l:"✅ Já enquadra (40%)"},
+          {v:"ENQUADRA_TROCAR_CARTAO",l:"✅ Cabe trocando cartão"},
+          {v:"VIA_CANCELA_CARTAO",l:"💳 Cancelar 1 cartão resolve"},
+          {v:"VIA_PORT_REDUCAO",l:"🔄 Port/refin reduz parcela e enquadra"},
+          {v:"VIA_CARTAO_MAIS_PORT",l:"🔀 Cancelar cartão + port resolve"},
+          {v:"VIA_MULTIPLO",l:"⚙️ Margem livre + cartão + port"},
+          {v:"INVIAVEL",l:"⚠ Inviável (excedente alto)"}
+        ])
       ].join("");
       return `<div style="background:linear-gradient(135deg,rgba(236,72,153,.06),rgba(59,130,246,.03));padding:14px;border-radius:12px;border:1px solid var(--pnk);margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap">
