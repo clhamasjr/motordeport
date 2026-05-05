@@ -7964,10 +7964,19 @@ function renderGovConvenioDetalhe(){
   h += `<button class="btn-acc btn-sm" onclick="govState.convenioForcadoSlug='${esc(c.slug)}';setTab('govHolerite')">📤 Analisar Holerite</button>`;
   h += `</div>`;
 
+  const isAdm = CU && (CU.role==='admin'||CU.role==='gestor');
+
   if(bancos.length === 0){
-    h += '<div style="padding:30px;text-align:center;color:var(--t3)">Sem bancos cadastrados para este convênio.</div></div>'; return h;
+    h += '<div style="padding:30px;text-align:center;color:var(--t3)">Sem bancos cadastrados para este convênio.</div>';
+    if(isAdm){
+      h += `<div style="text-align:center;margin-top:14px"><button class="btn-acc" onclick="govNovoBanco(${c.id})">➕ Adicionar banco</button></div>`;
+    }
+    h += '</div>'; return h;
   }
-  h += `<div style="font-size:13px;color:var(--t2);margin-bottom:10px">${bancos.length} banco(s) operam este convênio:</div>`;
+  h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:10px">`;
+  h += `<div style="font-size:13px;color:var(--t2)">${bancos.length} banco(s) operam este convênio:</div>`;
+  if(isAdm) h += `<button class="btn-acc btn-sm" onclick="govNovoBanco(${c.id})">➕ Adicionar banco</button>`;
+  h += `</div>`;
   h += '<div style="display:grid;gap:10px">';
   for(const b of bancos){
     const ops = b.operacoes || {};
@@ -7976,9 +7985,9 @@ function renderGovConvenioDetalhe(){
       return `<span class="pill pill-grn" style="font-size:10px">${lab}</span>`;
     }).join(' ');
     const susp = b.suspenso ? '<span class="pill" style="background:rgba(239,68,68,.15);color:var(--red);font-size:10px">⛔ Suspenso</span>' : '';
-    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(1)}%</b></div>` : '';
+    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(2).replace('.',',')}%</b></div>` : '';
     const idade = (b.idade_min||b.idade_max) ? `<div><span style="color:var(--t3);font-size:10px">Idade</span> <b>${b.idade_min||'?'}-${b.idade_max||'?'}</b></div>` : '';
-    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2)}%</b></div>` : '';
+    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2).replace('.',',')}%</b></div>` : '';
     const corte = b.data_corte ? `<div><span style="color:var(--t3);font-size:10px">Corte</span> <b>${esc(b.data_corte)}</b></div>` : '';
     const expandido = govState.bancoExpandido === b.id;
     h += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;${b.suspenso?'opacity:.6':''}">`;
@@ -7987,7 +7996,13 @@ function renderGovConvenioDetalhe(){
     h += `<div style="display:flex;gap:4px">${opsStr||'<span style="color:var(--t3);font-size:11px">— sem operações cadastradas</span>'}</div>`;
     h += `</div>`;
     h += `<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--t2)">${margem}${idade}${taxa}${corte}</div>`;
-    h += `<div style="margin-top:10px"><button class="btn btn-sm" onclick="govToggleBanco(${b.id})">${expandido?'▾ Esconder detalhes':'▸ Ver todos os campos do roteiro'}</button></div>`;
+    h += `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">`;
+    h += `<button class="btn btn-sm" onclick="govToggleBanco(${b.id})">${expandido?'▾ Esconder detalhes':'▸ Ver todos os campos do roteiro'}</button>`;
+    if(isAdm){
+      h += `<button class="btn btn-sm" style="border-color:var(--cyan);color:var(--cyan)" onclick='govEditarBanco(${JSON.stringify(b).replace(/'/g,"&#39;")}, ${c.id})'>✏️ Editar</button>`;
+      h += `<button class="btn btn-red btn-sm" onclick="govExcluirBanco(${b.id}, '${esc(b.banco_nome)}')">🗑</button>`;
+    }
+    h += `</div>`;
     if(expandido){
       const brutos = b.atributos_brutos || [];
       const porSecao = { principal:[], portabilidade:[], cartao:[], publico_alvo:[] };
@@ -8008,11 +8023,207 @@ function renderGovConvenioDetalhe(){
     }
     h += '</div>';
   }
+  // Modal de edicao (admin)
+  if(govState.editandoBanco){ h += renderGovEditarBancoModal(); }
   h += '</div></div>';
   return h;
 }
 
+// ── Modal/funcoes de edicao de banco (admin) ──────────────────
+let govBancosCache = null;
+async function govCarregarBancosCache(){
+  if(govBancosCache) return govBancosCache;
+  try{
+    const r = await apiFetch('/api/gov',{method:'POST',body:JSON.stringify({action:'listBancos'})});
+    const d = await r.json();
+    if(d.ok) govBancosCache = d.bancos || [];
+  }catch{}
+  return govBancosCache || [];
+}
+
+async function govNovoBanco(convenioId){
+  await govCarregarBancosCache();
+  govState.editandoBanco = {
+    _novo: true, convenio_id: convenioId, banco_id: '',
+    opera_novo:false, opera_refin:false, opera_port:false, opera_cartao:false,
+    suspenso:false,
+    margem_utilizavel:'', idade_min:'', idade_max:'', taxa_minima_port:'',
+    data_corte:'', valor_minimo:'', qtd_contratos:'',
+  };
+  renderApp();
+}
+
+async function govEditarBanco(b, convenioId){
+  await govCarregarBancosCache();
+  govState.editandoBanco = {
+    id: b.id, _novo: false, convenio_id: convenioId,
+    banco_id: b.banco_id,
+    opera_novo: !!(b.operacoes&&b.operacoes.novo),
+    opera_refin:!!(b.operacoes&&b.operacoes.refin),
+    opera_port:!!(b.operacoes&&b.operacoes.port),
+    opera_cartao:!!(b.operacoes&&b.operacoes.cartao),
+    suspenso: !!b.suspenso,
+    margem_utilizavel: b.margem_utilizavel===null?'':b.margem_utilizavel,
+    idade_min: b.idade_min===null?'':b.idade_min,
+    idade_max: b.idade_max===null?'':b.idade_max,
+    taxa_minima_port: b.taxa_minima_port===null?'':b.taxa_minima_port,
+    data_corte: b.data_corte||'', valor_minimo: b.valor_minimo||'', qtd_contratos: b.qtd_contratos||'',
+    atributos: b.atributos||{}, atributos_brutos: b.atributos_brutos||[],
+  };
+  renderApp();
+}
+
+function govFecharEdicao(){ govState.editandoBanco = null; renderApp(); }
+
+async function govSalvarBanco(){
+  const e = govState.editandoBanco; if(!e) return;
+  for(const k of ['opera_novo','opera_refin','opera_port','opera_cartao','suspenso']){
+    const el = document.getElementById('govEd_'+k); if(el) e[k] = el.checked;
+  }
+  for(const k of ['margem_utilizavel','idade_min','idade_max','taxa_minima_port','data_corte','valor_minimo','qtd_contratos']){
+    const el = document.getElementById('govEd_'+k); if(el) e[k] = el.value;
+  }
+  let bancoId = e.banco_id;
+  if(e._novo){
+    const novoNomeEl = document.getElementById('govEd_banco_novo_nome');
+    const novoNome = novoNomeEl?novoNomeEl.value.trim():'';
+    const selectEl = document.getElementById('govEd_banco_id');
+    bancoId = selectEl ? selectEl.value : '';
+    if(novoNome){
+      try{
+        const r = await apiFetch('/api/gov',{method:'POST',body:JSON.stringify({action:'upsertBanco', nome: novoNome})});
+        const d = await r.json();
+        if(!d.ok) throw new Error(d.error||'Falha ao criar banco');
+        bancoId = d.banco.id;
+        govBancosCache = null;
+      }catch(err){ alert('Erro ao criar banco: '+err.message); return; }
+    }
+    if(!bancoId){ alert('Selecione um banco existente OU digite o nome de um novo'); return; }
+    e.banco_id = bancoId;
+  }
+  const payload = { action:'upsertBancoConvenio', ...e };
+  delete payload._novo;
+  try{
+    const r = await apiFetch('/api/gov',{method:'POST',body:JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha ao salvar');
+    govState.editandoBanco = null;
+    if(govState.convenioAberto && govState.convenioAberto.convenio){
+      govAbrirConvenio(govState.convenioAberto.convenio.slug);
+    } else { renderApp(); }
+  }catch(err){ alert('Erro: '+err.message); }
+}
+
+async function govExcluirBanco(id, nome){
+  if(!confirm(`Excluir o banco "${nome}" deste convênio?`)) return;
+  try{
+    const r = await apiFetch('/api/gov',{method:'POST',body:JSON.stringify({action:'deleteBancoConvenio', id})});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha');
+    if(govState.convenioAberto && govState.convenioAberto.convenio){
+      govAbrirConvenio(govState.convenioAberto.convenio.slug);
+    }
+  }catch(err){ alert('Erro: '+err.message); }
+}
+
+function renderGovEditarBancoModal(){
+  const e = govState.editandoBanco;
+  const bancos = govBancosCache || [];
+  let h = `<div onclick="if(event.target===this)govFecharEdicao()" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px">`;
+  h += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:24px;max-width:600px;width:100%;max-height:90vh;overflow-y:auto">`;
+  h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">`;
+  h += `<div style="font-size:18px;font-weight:800">${e._novo?'➕ Adicionar Banco':'✏️ Editar Banco'}</div>`;
+  h += `<button class="btn btn-sm" onclick="govFecharEdicao()">✕</button></div>`;
+  if(e._novo){
+    h += `<div style="margin-bottom:14px">`;
+    h += `<label style="font-size:11px;color:var(--t3);text-transform:uppercase;font-weight:700">Banco existente</label>`;
+    h += `<select class="form-input" id="govEd_banco_id" style="width:100%;margin-top:4px"><option value="">— selecione ou digite novo abaixo —</option>`;
+    for(const b of bancos){ h += `<option value="${b.id}">${esc(b.nome)}</option>`; }
+    h += `</select>`;
+    h += `<div style="margin-top:10px"><label style="font-size:11px;color:var(--t3);text-transform:uppercase;font-weight:700">OU novo banco (digite o nome)</label>`;
+    h += `<input class="form-input" id="govEd_banco_novo_nome" placeholder="Nome do novo banco" style="width:100%;margin-top:4px"></div></div>`;
+  } else {
+    const bancoNome = (bancos.find(x=>x.id===e.banco_id)||{}).nome || '?';
+    h += `<div style="margin-bottom:14px;padding:10px;background:var(--bg);border-radius:8px;font-size:13px">Banco: <b>${esc(bancoNome)}</b></div>`;
+  }
+  h += `<div style="margin-bottom:14px"><label style="font-size:11px;color:var(--t3);text-transform:uppercase;font-weight:700;display:block;margin-bottom:6px">Operações</label>`;
+  h += `<div style="display:flex;gap:14px;flex-wrap:wrap">`;
+  for(const [k,lab] of [['opera_novo','Novo'],['opera_refin','Refin'],['opera_port','Port'],['opera_cartao','Cartão']]){
+    h += `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px"><input type="checkbox" id="govEd_${k}" ${e[k]?'checked':''}>${lab}</label>`;
+  }
+  h += `</div></div>`;
+  h += `<div style="margin-bottom:14px"><label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px"><input type="checkbox" id="govEd_suspenso" ${e.suspenso?'checked':''}><span style="font-weight:700">⛔ Suspenso</span></label></div>`;
+  h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">`;
+  for(const [k,lab,ph] of [
+    ['margem_utilizavel','Margem (decimal, ex 0.35)','0.35'],
+    ['taxa_minima_port','Taxa Port (decimal, ex 0.0185)','0.0185'],
+    ['idade_min','Idade mín','21'],
+    ['idade_max','Idade máx','75'],
+    ['data_corte','Data de corte','Dia 02'],
+    ['valor_minimo','Valor mínimo','R$ 250'],
+  ]){
+    h += `<div><label style="font-size:11px;color:var(--t3);text-transform:uppercase;font-weight:700">${lab}</label>`;
+    h += `<input class="form-input" id="govEd_${k}" value="${esc(String(e[k]==null?'':e[k]))}" placeholder="${ph}" style="width:100%;margin-top:4px"></div>`;
+  }
+  h += `</div>`;
+  h += `<div style="margin-bottom:18px"><label style="font-size:11px;color:var(--t3);text-transform:uppercase;font-weight:700">Qtde contratos</label>`;
+  h += `<input class="form-input" id="govEd_qtd_contratos" value="${esc(String(e.qtd_contratos||''))}" placeholder="Livre / 10 contratos / margem" style="width:100%;margin-top:4px"></div>`;
+  h += `<div style="display:flex;gap:8px;justify-content:flex-end">`;
+  h += `<button class="btn" onclick="govFecharEdicao()">Cancelar</button>`;
+  h += `<button class="btn-acc" onclick="govSalvarBanco()">💾 Salvar</button>`;
+  h += `</div></div></div>`;
+  return h;
+}
+
 // ── Render: Análise de Holerite ────────────────────────────────
+function govLimparHolerite(){
+  govState.arquivoBase64 = null; govState.arquivoNome = null;
+  govState.arquivoTipo = null; govState.arquivoTamanho = 0;
+  govState.resultadoHol = null; govState.errHol = null;
+  renderApp();
+}
+
+async function govOnArquivo(input){
+  const f = input.files && input.files[0];
+  if(!f){ return; }
+  if(f.size > 10*1024*1024){ alert('Arquivo > 10MB. Reduza ou comprima.'); return; }
+  const tipo = f.type;
+  const ok = tipo === 'application/pdf' || tipo.startsWith('image/');
+  if(!ok){ alert('Tipo nao suportado. Use PDF ou imagem (JPG/PNG/WEBP).'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    const b64 = String(dataUrl).split(',')[1] || '';
+    govState.arquivoBase64 = b64;
+    govState.arquivoNome = f.name;
+    govState.arquivoTipo = tipo;
+    govState.arquivoTamanho = f.size;
+    govState.errHol = null; govState.resultadoHol = null;
+    renderApp();
+  };
+  reader.onerror = () => { alert('Falha ao ler arquivo'); };
+  reader.readAsDataURL(f);
+}
+
+async function govAnalisarHolerite(){
+  if(!govState.arquivoBase64){ alert('Selecione um arquivo de holerite primeiro.'); return; }
+  govState.loadingHol = true; govState.errHol = null; govState.resultadoHol = null; renderApp();
+  try{
+    const payload = {
+      action: 'analisarHolerite',
+      arquivo_base64: govState.arquivoBase64,
+      arquivo_nome: govState.arquivoNome,
+      arquivo_tipo: govState.arquivoTipo,
+    };
+    if(govState.convenioForcadoSlug) payload.convenio_slug = govState.convenioForcadoSlug;
+    const r = await apiFetch('/api/gov',{method:'POST',body:JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha');
+    govState.resultadoHol = d;
+  }catch(e){ govState.errHol = e.message; }
+  govState.loadingHol = false; renderApp();
+}
+
 function renderGovHolerite(){
   // carrega convenios pra dropdown so na 1a vez (carregouUmaVez impede loop em caso de erro)
   if(!govState.carregouUmaVez && !govState.loadingCat){ govCarregarConvenios(); }
@@ -8464,6 +8675,54 @@ function renderPrefConvenioDetalhe(){
 }
 
 // ── Render: Análise de Holerite (Prefeituras) ────────────────
+function prefLimparHolerite(){
+  prefState.arquivoBase64 = null; prefState.arquivoNome = null;
+  prefState.arquivoTipo = null; prefState.arquivoTamanho = 0;
+  prefState.resultadoHol = null; prefState.errHol = null;
+  renderApp();
+}
+
+async function prefOnArquivo(input){
+  const f = input.files && input.files[0];
+  if(!f){ return; }
+  if(f.size > 10*1024*1024){ alert('Arquivo > 10MB. Reduza ou comprima.'); return; }
+  const tipo = f.type;
+  const ok = tipo === 'application/pdf' || tipo.startsWith('image/');
+  if(!ok){ alert('Tipo nao suportado. Use PDF ou imagem (JPG/PNG/WEBP).'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    const b64 = String(dataUrl).split(',')[1] || '';
+    prefState.arquivoBase64 = b64;
+    prefState.arquivoNome = f.name;
+    prefState.arquivoTipo = tipo;
+    prefState.arquivoTamanho = f.size;
+    prefState.errHol = null; prefState.resultadoHol = null;
+    renderApp();
+  };
+  reader.onerror = () => { alert('Falha ao ler arquivo'); };
+  reader.readAsDataURL(f);
+}
+
+async function prefAnalisarHolerite(){
+  if(!prefState.arquivoBase64){ alert('Selecione um arquivo de holerite primeiro.'); return; }
+  prefState.loadingHol = true; prefState.errHol = null; prefState.resultadoHol = null; renderApp();
+  try{
+    const payload = {
+      action: 'analisarHolerite',
+      arquivo_base64: prefState.arquivoBase64,
+      arquivo_nome: prefState.arquivoNome,
+      arquivo_tipo: prefState.arquivoTipo,
+    };
+    if(prefState.convenioForcadoSlug) payload.convenio_slug = prefState.convenioForcadoSlug;
+    const r = await apiFetch('/api/pref',{method:'POST',body:JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha');
+    prefState.resultadoHol = d;
+  }catch(e){ prefState.errHol = e.message; }
+  prefState.loadingHol = false; renderApp();
+}
+
 function renderPrefHolerite(){
   if(!prefState.carregouUmaVez && !prefState.loadingCat){ prefCarregarConvenios(); }
 
