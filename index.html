@@ -8884,6 +8884,7 @@ let fedState = {
   convenioAberto: null,
   bancoExpandido: null,
   arquivoBase64: null, arquivoNome: null, arquivoTipo: null, arquivoTamanho: 0,
+  extratoBase64: null, extratoNome: null, extratoTipo: null, extratoTamanho: 0,
   loadingHol: false, errHol: null, resultadoHol: null,
   convenioForcadoSlug: '',
 };
@@ -8933,7 +8934,14 @@ function fedLimparHolerite(){
   renderApp();
 }
 
-async function fedOnArquivo(input){
+function fedLimparExtrato(){
+  fedState.extratoBase64 = null; fedState.extratoNome = null;
+  fedState.extratoTipo = null; fedState.extratoTamanho = 0;
+  fedState.resultadoHol = null; fedState.errHol = null;
+  renderApp();
+}
+
+async function fedOnArquivo(input, alvo){
   const f = input.files && input.files[0];
   if(!f){ return; }
   if(f.size > 10*1024*1024){ alert('Arquivo > 10MB. Reduza ou comprima.'); return; }
@@ -8944,10 +8952,17 @@ async function fedOnArquivo(input){
   reader.onload = () => {
     const dataUrl = reader.result;
     const b64 = String(dataUrl).split(',')[1] || '';
-    fedState.arquivoBase64 = b64;
-    fedState.arquivoNome = f.name;
-    fedState.arquivoTipo = tipo;
-    fedState.arquivoTamanho = f.size;
+    if(alvo === 'extrato'){
+      fedState.extratoBase64 = b64;
+      fedState.extratoNome = f.name;
+      fedState.extratoTipo = tipo;
+      fedState.extratoTamanho = f.size;
+    } else {
+      fedState.arquivoBase64 = b64;
+      fedState.arquivoNome = f.name;
+      fedState.arquivoTipo = tipo;
+      fedState.arquivoTamanho = f.size;
+    }
     fedState.errHol = null; fedState.resultadoHol = null;
     renderApp();
   };
@@ -8965,6 +8980,11 @@ async function fedAnalisarHolerite(){
       arquivo_nome: fedState.arquivoNome,
       arquivo_tipo: fedState.arquivoTipo,
     };
+    if(fedState.extratoBase64){
+      payload.extrato_base64 = fedState.extratoBase64;
+      payload.extrato_nome = fedState.extratoNome;
+      payload.extrato_tipo = fedState.extratoTipo;
+    }
     if(fedState.convenioForcadoSlug) payload.convenio_slug = fedState.convenioForcadoSlug;
     const r = await apiFetch('/api/fed',{method:'POST',body:JSON.stringify(payload)});
     const d = await r.json();
@@ -9126,18 +9146,35 @@ function renderFedHolerite(){
 
   let h = '<div style="max-width:900px;margin:0 auto;padding:24px">';
   h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">📄 Análise de Contracheque — Federal</div>';
-  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Suba o contracheque do servidor federal civil (SIAPE/SERPRO) ou militar (Marinha/Exército/Aeronáutica). A IA identifica o convênio e cruza com os bancos que operam.</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Suba o contracheque do servidor (obrigatório) e o extrato de consignação do SIGEPE (opcional, mas necessário pra simular portabilidade contrato-a-contrato). A IA identifica o convênio, cruza com os bancos e calcula a port de cada contrato.</div>';
 
-  h += '<div style="background:var(--card);border:2px dashed var(--brd);border-radius:12px;padding:24px;margin-bottom:18px;text-align:center">';
+  // ── Upload 1: contracheque (obrigatorio) ──
+  h += '<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">1. Contracheque (obrigatório)</div>';
+  h += '<div style="background:var(--card);border:2px dashed var(--brd);border-radius:12px;padding:20px;margin-bottom:14px;text-align:center">';
   if(!fedState.arquivoBase64){
-    h += '<div style="font-size:14px;color:var(--t2);margin-bottom:10px">Arraste o arquivo aqui ou clique no botão</div>';
-    h += '<input type="file" id="fedHolFile" accept="application/pdf,image/*" style="display:none" onchange="fedOnArquivo(this)">';
-    h += '<button class="btn-acc" onclick="document.getElementById(\'fedHolFile\').click()">📎 Selecionar arquivo</button>';
-    h += '<div style="font-size:11px;color:var(--t3);margin-top:8px">PDF, JPG, PNG ou WEBP — máx 10MB</div>';
+    h += '<div style="font-size:13px;color:var(--t2);margin-bottom:8px">Holerite/contracheque do servidor (PDF ou imagem)</div>';
+    h += '<input type="file" id="fedHolFile" accept="application/pdf,image/*" style="display:none" onchange="fedOnArquivo(this,\'contracheque\')">';
+    h += '<button class="btn-acc btn-sm" onclick="document.getElementById(\'fedHolFile\').click()">📎 Selecionar contracheque</button>';
+    h += '<div style="font-size:11px;color:var(--t3);margin-top:6px">PDF, JPG, PNG ou WEBP — máx 10MB</div>';
   } else {
     h += `<div style="font-size:14px;font-weight:700">📎 ${esc(fedState.arquivoNome)}</div>`;
     h += `<div style="font-size:11px;color:var(--t3);margin-top:4px">${(fedState.arquivoTamanho/1024).toFixed(0)} KB · ${esc(fedState.arquivoTipo)}</div>`;
-    h += `<div style="margin-top:10px"><button class="btn btn-sm" onclick="fedLimparHolerite()">🗑 Trocar arquivo</button></div>`;
+    h += `<div style="margin-top:10px"><button class="btn btn-sm" onclick="fedLimparHolerite()">🗑 Trocar</button></div>`;
+  }
+  h += '</div>';
+
+  // ── Upload 2: extrato de consignacao (opcional, habilita simulacao de port) ──
+  h += '<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">2. Extrato de Consignação <span style="color:var(--t2);font-weight:600;text-transform:none">(opcional — habilita simulação de port contrato-a-contrato)</span></div>';
+  h += '<div style="background:var(--card);border:2px dashed var(--brd);border-radius:12px;padding:20px;margin-bottom:18px;text-align:center">';
+  if(!fedState.extratoBase64){
+    h += '<div style="font-size:13px;color:var(--t2);margin-bottom:8px">Extrato de Consignações Vigentes (SIGEPE / portal do servidor)</div>';
+    h += '<input type="file" id="fedExtFile" accept="application/pdf,image/*" style="display:none" onchange="fedOnArquivo(this,\'extrato\')">';
+    h += '<button class="btn btn-sm" onclick="document.getElementById(\'fedExtFile\').click()">📎 Selecionar extrato</button>';
+    h += '<div style="font-size:11px;color:var(--t3);margin-top:6px">Sem o extrato, a análise mostra só os bancos compatíveis (sem simular port contrato-a-contrato).</div>';
+  } else {
+    h += `<div style="font-size:14px;font-weight:700">📎 ${esc(fedState.extratoNome)}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:4px">${(fedState.extratoTamanho/1024).toFixed(0)} KB · ${esc(fedState.extratoTipo)}</div>`;
+    h += `<div style="margin-top:10px"><button class="btn btn-sm" onclick="fedLimparExtrato()">🗑 Trocar</button></div>`;
   }
   h += '</div>';
 
@@ -9250,12 +9287,87 @@ function renderFedResultadoHolerite(r){
   h += '</div>';
 
   if(naoAtendem.length){
-    h += '<details style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px"><summary style="cursor:pointer;font-size:12px;color:var(--t3);font-weight:700">⛔ ' + naoAtendem.length + ' banco(s) NÃO atendem (clique pra ver motivo)</summary>';
+    h += '<details style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px;margin-bottom:14px"><summary style="cursor:pointer;font-size:12px;color:var(--t3);font-weight:700">⛔ ' + naoAtendem.length + ' banco(s) NÃO atendem (clique pra ver motivo)</summary>';
     h += '<div style="margin-top:10px;display:grid;gap:6px;font-size:12px">';
     for(const b of naoAtendem){
       h += `<div style="padding:8px 10px;background:var(--bg);border-radius:6px"><b>${esc(b.banco_nome)}</b> — <span style="color:var(--t3)">${esc(b.motivo||'')}</span></div>`;
     }
     h += '</div></details>';
+  }
+
+  // ── Contratos extraidos do extrato + simulacao de port ──
+  const contratos = (d.contratos_ativos || []);
+  const simulacao = r.simulacao_port || [];
+  if(contratos.length || d.extrato_erro){
+    h += '<div style="background:var(--card);border:1px solid var(--cyan);border-radius:12px;padding:16px;margin-bottom:14px">';
+    h += '<div style="font-size:13px;font-weight:800;color:var(--cyan);margin-bottom:6px">📋 Extrato de Consignação</div>';
+    if(d.extrato_erro){
+      h += `<div style="padding:10px;background:rgba(239,68,68,.1);border-radius:6px;color:var(--red);font-size:12px;margin-bottom:10px">⚠ Erro ao ler extrato: ${esc(d.extrato_erro)}</div>`;
+    }
+    if(contratos.length){
+      const emp = contratos.filter(c=>c.tipo==='emprestimo');
+      const rmc = contratos.filter(c=>c.tipo==='rmc');
+      const rcc = contratos.filter(c=>c.tipo==='rcc');
+      const fmt = (n) => n!=null && n!=='' ? 'R$ '+Number(n).toLocaleString('pt-BR',{minimumFractionDigits:2}) : '—';
+      h += `<div style="font-size:12px;color:var(--t2);margin-bottom:10px">${contratos.length} contrato(s) ativos: <b>${emp.length}</b> empréstimo · <b>${rmc.length}</b> cartão consig. (RMC) · <b>${rcc.length}</b> cartão benefício (RCC)</div>`;
+      // Tabela de contratos
+      h += '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+      h += '<thead><tr style="text-align:left;color:var(--t3);font-size:10px;text-transform:uppercase"><th style="padding:6px 8px;border-bottom:1px solid var(--brd)">Tipo</th><th style="padding:6px 8px;border-bottom:1px solid var(--brd)">Banco</th><th style="padding:6px 8px;border-bottom:1px solid var(--brd)">Contrato</th><th style="padding:6px 8px;border-bottom:1px solid var(--brd);text-align:right">Parcela</th><th style="padding:6px 8px;border-bottom:1px solid var(--brd);text-align:center">Pagas/Total</th><th style="padding:6px 8px;border-bottom:1px solid var(--brd);text-align:right">Saldo est.</th><th style="padding:6px 8px;border-bottom:1px solid var(--brd)">Fim</th></tr></thead><tbody>';
+      const tipoIcon = (t) => t==='emprestimo'?'💰':t==='rmc'?'💳':t==='rcc'?'🎟️':'❓';
+      const tipoLab  = (t) => t==='emprestimo'?'Empréstimo':t==='rmc'?'RMC':t==='rcc'?'RCC':(t||'—');
+      for(const c of contratos){
+        h += `<tr><td style="padding:6px 8px;border-bottom:1px dashed var(--brd)">${tipoIcon(c.tipo)} ${tipoLab(c.tipo)}</td>`;
+        h += `<td style="padding:6px 8px;border-bottom:1px dashed var(--brd);font-weight:600">${esc(c.banco_extrato||'—')}</td>`;
+        h += `<td style="padding:6px 8px;border-bottom:1px dashed var(--brd);font-family:monospace;font-size:11px">${esc(c.numero||'—')}</td>`;
+        h += `<td style="padding:6px 8px;border-bottom:1px dashed var(--brd);text-align:right">${fmt(c.parcela_valor)}</td>`;
+        h += `<td style="padding:6px 8px;border-bottom:1px dashed var(--brd);text-align:center">${c.parcelas_pagas||0}/${c.parcelas_totais||0}</td>`;
+        h += `<td style="padding:6px 8px;border-bottom:1px dashed var(--brd);text-align:right">${fmt(c.saldo_estimado)}</td>`;
+        h += `<td style="padding:6px 8px;border-bottom:1px dashed var(--brd);font-size:11px;color:var(--t3)">${esc((c.fim||'').slice(0,7))}</td></tr>`;
+      }
+      h += '</tbody></table></div>';
+      h += '<div style="margin-top:8px;font-size:10px;color:var(--t3)">⚠ Saldo estimado = parcela × parcelas restantes (sem juros — é o teto). O saldo real depende da taxa contratada.</div>';
+    }
+    h += '</div>';
+  }
+
+  // ── Simulacao de portabilidade contrato-a-contrato ──
+  if(simulacao && simulacao.length){
+    h += '<div style="background:var(--card);border:1px solid var(--ylw);border-radius:12px;padding:16px;margin-bottom:14px">';
+    h += '<div style="font-size:13px;font-weight:800;color:var(--ylw);margin-bottom:6px">🔄 Simulação de Portabilidade — contrato a contrato</div>';
+    h += '<div style="font-size:11px;color:var(--t3);margin-bottom:12px">Para cada empréstimo, mostramos os bancos do convênio que recebem port (top 5 por taxa). Nova parcela = saldo estimado × taxa / (1 − (1+taxa)^−prazo).</div>';
+    const fmt = (n) => n!=null && n!=='' ? 'R$ '+Number(n).toLocaleString('pt-BR',{minimumFractionDigits:2}) : '—';
+    for(const s of simulacao){
+      const ct = s.contrato || {};
+      h += '<div style="border:1px solid var(--brd);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--bg)">';
+      h += `<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">`;
+      h += `<div><b>💰 ${esc(ct.banco_origem||'?')}</b> · <span style="color:var(--t3)">${esc(ct.numero||'')}</span></div>`;
+      h += `<div style="font-size:12px;color:var(--t2)">Parcela atual: <b>${fmt(ct.parcela_valor)}</b> · ${ct.parcelas_pagas||0}/${ct.parcelas_totais||0} pagas · saldo est. <b>${fmt(ct.saldo_estimado)}</b></div>`;
+      h += `</div>`;
+      if(s.qtd_atendem === 0){
+        h += '<div style="font-size:12px;color:var(--t3);padding:8px;background:rgba(239,68,68,.06);border-radius:6px">Nenhum banco do convênio recebe port deste contrato (verifique parcelas pagas mínimas).</div>';
+      } else {
+        h += '<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="text-align:left;color:var(--t3);font-size:10px;text-transform:uppercase"><th style="padding:4px 6px">Banco destino</th><th style="padding:4px 6px;text-align:right">Taxa min</th><th style="padding:4px 6px;text-align:right">Nova parcela</th><th style="padding:4px 6px;text-align:right">Economia est.</th><th style="padding:4px 6px"></th></tr></thead><tbody>';
+        for(const sg of s.sugestoes_top){
+          const corLin = sg.atende ? '' : 'opacity:.45';
+          const taxaTxt = sg.taxa_minima_port ? (sg.taxa_minima_port*100).toFixed(2).replace('.',',')+'% a.m.' : '—';
+          const econ = sg.economia_total_estimada;
+          const econTxt = econ ? (econ>0 ? '<span style="color:var(--grn)">↓ '+fmt(econ)+'</span>' : '<span style="color:var(--red)">↑ '+fmt(-econ)+'</span>') : '—';
+          h += `<tr style="${corLin}">`;
+          h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);font-weight:600">${esc(sg.banco_nome)}</td>`;
+          h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);text-align:right">${taxaTxt}</td>`;
+          h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);text-align:right">${fmt(sg.parcela_estimada_nova)}</td>`;
+          h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);text-align:right">${econTxt}</td>`;
+          h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);font-size:10px;color:var(--t3)">${sg.atende?'✓':'⛔ '+esc((sg.motivos_bloqueio||[]).join('; '))}</td>`;
+          h += `</tr>`;
+        }
+        h += '</tbody></table>';
+        if(s.total_sugestoes > s.sugestoes_top.length){
+          h += `<div style="font-size:10px;color:var(--t3);margin-top:6px">+ ${s.total_sugestoes - s.sugestoes_top.length} outros bancos do convênio (não exibidos no top 5).</div>`;
+        }
+      }
+      h += '</div>';
+    }
+    h += '</div>';
   }
 
   return h;

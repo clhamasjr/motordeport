@@ -134,7 +134,8 @@ async function listBancos(body, req) {
 // ── analisarHolerite ────────────────────────────────────────────
 async function analisarHolerite(body, req, auth) {
   const t0 = Date.now();
-  const { arquivo_base64, arquivo_nome, arquivo_tipo } = body;
+  const { arquivo_base64, arquivo_nome, arquivo_tipo,
+          extrato_base64, extrato_nome, extrato_tipo } = body;
   if (!arquivo_base64) return jsonError('arquivo_base64 obrigatorio', 400, req);
   if (!arquivo_tipo) return jsonError('arquivo_tipo obrigatorio', 400, req);
 
@@ -147,6 +148,21 @@ async function analisarHolerite(body, req, auth) {
   const tamanhoBytes = Math.floor((arquivo_base64.length * 3) / 4);
   if (tamanhoBytes > MAX_FILE_BYTES) {
     return jsonError(`Arquivo muito grande: ${(tamanhoBytes/1024/1024).toFixed(1)}MB. Maximo: 10MB.`, 400, req);
+  }
+
+  // Validacao do extrato (se fornecido)
+  let extratoTipo = null;
+  if (extrato_base64) {
+    extratoTipo = String(extrato_tipo || 'application/pdf').toLowerCase();
+    const eExtPdf = extratoTipo === 'application/pdf';
+    const eExtImg = ['image/jpeg','image/jpg','image/png','image/webp','image/gif'].includes(extratoTipo);
+    if (!eExtPdf && !eExtImg) {
+      return jsonError(`Tipo do extrato nao suportado: ${extrato_tipo}. Use PDF ou imagem.`, 400, req);
+    }
+    const tExt = Math.floor((extrato_base64.length * 3) / 4);
+    if (tExt > MAX_FILE_BYTES) {
+      return jsonError(`Extrato muito grande: ${(tExt/1024/1024).toFixed(1)}MB. Maximo: 10MB.`, 400, req);
+    }
   }
 
   const insertResp = await dbInsert('fed_holerite_analises', {
@@ -162,7 +178,12 @@ async function analisarHolerite(body, req, auth) {
   const analiseId = insertResp.data.id;
 
   try {
-    const dadosExtraidos = await extrairDadosHolerite(arquivo_base64, tipo);
+    // Extracao do contracheque + (em paralelo) extracao dos contratos do extrato
+    const [dadosExtraidos, contratosExtraidos] = await Promise.all([
+      extrairDadosHolerite(arquivo_base64, tipo),
+      extrato_base64 ? extrairContratosExtrato(extrato_base64, extratoTipo) : Promise.resolve({ ok: true, contratos: [], info: null }),
+    ]);
+
     if (!dadosExtraidos.ok) {
       await dbUpdate('fed_holerite_analises', { id: analiseId }, {
         status: 'erro',
@@ -172,6 +193,20 @@ async function analisarHolerite(body, req, auth) {
       return jsonError(`Falha na extracao: ${dadosExtraidos.erro}`, 500, req);
     }
     const dados = dadosExtraidos.dados;
+
+    // Anexa extrato no JSON dos dados extraidos
+    if (extrato_base64) {
+      dados.extrato_arquivo_nome = extrato_nome || null;
+      dados.extrato_info = contratosExtraidos.ok ? (contratosExtraidos.info || {}) : null;
+      dados.contratos_ativos = contratosExtraidos.ok ? (contratosExtraidos.contratos || []) : [];
+      dados.extrato_erro = contratosExtraidos.ok ? null : contratosExtraidos.erro;
+      // Dados pessoais do extrato podem complementar quando o contracheque nao traz
+      const inf = dados.extrato_info || {};
+      if (!dados.cpf && inf.cpf) dados.cpf = inf.cpf;
+      if (!dados.matricula && inf.matricula) dados.matricula = inf.matricula;
+      if (!dados.nome && inf.nome) dados.nome = inf.nome;
+      if (!dados.orgao && inf.orgao) dados.orgao = inf.orgao;
+    }
 
     let convenio = null, confianca = 'baixa';
     if (body.convenio_id || body.convenio_slug) {
@@ -195,9 +230,15 @@ async function analisarHolerite(body, req, auth) {
         );
       }
       if (r.data && r.data.length > 0) {
-        // Para SIAPE, prioriza o convenio "novo_refin" (mais comum) quando ha multiplos
+        // Quando ha extrato com contratos, prioriza convenio que opera PORTABILIDADE
+        const temContratos = (dados.contratos_ativos || []).filter(c => c.tipo === 'emprestimo').length > 0;
         const sorted = r.data.slice().sort((a, b) => {
-          const score = (t) => t === 'novo_refin' ? 0 : t === 'completo' ? 1 : t === 'portabilidade' ? 2 : 3;
+          const score = (t) => {
+            if (temContratos) {
+              return t === 'portabilidade' ? 0 : t === 'completo' ? 1 : t === 'novo_refin' ? 2 : 3;
+            }
+            return t === 'novo_refin' ? 0 : t === 'completo' ? 1 : t === 'portabilidade' ? 2 : 3;
+          };
           return score(a.operacao_tipo) - score(b.operacao_tipo);
         });
         convenio = sorted[0];
@@ -205,11 +246,24 @@ async function analisarHolerite(body, req, auth) {
       }
     }
 
-    let bancosAtendem = [], bancosNaoAtendem = [];
+    let bancosAtendem = [], bancosNaoAtendem = [], simulacaoPort = [];
     if (convenio) {
       const cruzamento = await cruzarHoleriteComBancos(convenio.id, dados);
       bancosAtendem = cruzamento.atendem;
       bancosNaoAtendem = cruzamento.nao_atendem;
+
+      // Se tem contratos do extrato, simula portabilidade contrato-a-contrato
+      const contratosEmprestimo = (dados.contratos_ativos || []).filter(c => c.tipo === 'emprestimo');
+      if (contratosEmprestimo.length > 0) {
+        // Usa convenios SIAPE-Portabilidade especificamente quando o convenio escolhido for SIAPE
+        let convenioPortId = convenio.id;
+        if (convenio.orgao === 'SIAPE' && convenio.operacao_tipo !== 'portabilidade') {
+          const r = await dbQuery('fed_convenios',
+            `orgao=eq.SIAPE&operacao_tipo=eq.portabilidade&limit=1`, { single: true });
+          if (r.data) convenioPortId = r.data.id;
+        }
+        simulacaoPort = await simularPortabilidade(convenioPortId, contratosEmprestimo);
+      }
     }
 
     await dbUpdate('fed_holerite_analises', { id: analiseId }, {
@@ -230,6 +284,7 @@ async function analisarHolerite(body, req, auth) {
       convenio_confianca: confianca,
       bancos_atendem: bancosAtendem,
       bancos_nao_atendem: bancosNaoAtendem,
+      simulacao_port: simulacaoPort,
       duracao_ms: Date.now() - t0,
     }, 200, req);
   } catch (e) {
@@ -334,6 +389,209 @@ Estrutura esperada:
   } catch (e) {
     return { ok: false, erro: `Falha de rede: ${e.message}` };
   }
+}
+
+// ── Extracao do EXTRATO DE CONSIGNACOES VIGENTES ────────────────
+// Extrato federal/militar lista contratos ativos: empréstimo, RMC (cartão crédito) e RCC (cartão benefício).
+// Cada contrato tem: numero, rubrica (codigo+banco), parcela X/Y, valor parcela, inicio, fim.
+async function extrairContratosExtrato(base64, tipo) {
+  const ehPdf = tipo === 'application/pdf';
+  const tipoMidia = ehPdf ? 'document' : 'image';
+  const mediaType = ehPdf ? 'application/pdf'
+    : (tipo === 'image/jpg' ? 'image/jpeg' : tipo);
+
+  const systemPrompt = `Voce e especialista em ler EXTRATO DE CONSIGNACOES VIGENTES de servidores publicos federais e militares brasileiros (SIGEPE, SIAPE, Forcas Armadas, Polícias Militares, etc.).
+
+O extrato lista os contratos consignados ativos do servidor, geralmente em ate 3 secoes:
+1. "Demonstrativo de uso da margem / Novo Contrato e Renovacao" → EMPRESTIMOS consignados
+2. "Demonstrativo de uso da margem - Amortizacao de Despesas / Saques com Cartao de Credito" → RMC (cartao consignado)
+3. "Demonstrativo de uso da margem - Cartao Consignado de Beneficio" → RCC (cartao beneficio)
+
+CADA LINHA DE CONTRATO TEM:
+- Numero do Contrato (ex: 15706907, 1500825738, 25019966188241)
+- Rubrica (formato: "<codigo> - <DESCRICAO> - <BANCO>", ex: "34114 - EMPREST BCO OFICIAL - BRB CFI" ou "34193 - EMPREST BCO PRIVADOS - DAYBCO")
+- Sequencia, Prioridade Transacao, Data/Hora
+- Parcela no formato "X/Y" (X = parcelas pagas, Y = total) ex: 22/96, 05/96
+- Valor da Parcela (R$)
+- Inicio (MM/AAAA) e Fim (MM/AAAA)
+
+REGRAS:
+- Extraia o nome do BANCO da rubrica (sigla legivel: DAYBCO=Daycoval, BRB CFI=BRB, BANRISUL=Banrisul, INTERME=Intermedium/Inter, CLICKBANK=ClickBank, BMG, ITAU, PAN, FACTA, SAFRA, etc.)
+- "tipo" do contrato: "emprestimo" (rubricas com "EMPREST"), "rmc" (rubricas "AMORT CARTAO CREDITO"), "rcc" (rubricas "AMORT CARTAO BENEFICIO" ou "CARTAO BENEFICIO")
+- Calcule "parcelas_pagas" e "parcelas_totais" a partir do "X/Y" (numeros)
+- "parcelas_restantes" = parcelas_totais - parcelas_pagas
+- "saldo_estimado" = parcela * parcelas_restantes (estimativa simples sem juros, util pra simular port)
+- Datas: formato YYYY-MM-DD (use dia 01 para inicio/fim no formato MM/AAAA)
+- Se nao conseguir extrair um campo, use null
+
+INFO_GERAL: tente extrair tambem (no topo do extrato): cpf (so digitos), matricula, nome (do servidor), orgao (texto completo).
+
+RESPONDA APENAS COM JSON VALIDO, SEM TEXTO ADICIONAL, SEM MARKDOWN, SEM \`\`\`.
+
+Estrutura esperada:
+{
+  "info": {
+    "cpf": "string|null",
+    "matricula": "string|null",
+    "nome": "string|null",
+    "orgao": "string|null",
+    "data_emissao": "YYYY-MM-DD|null",
+    "margem_total_facultativa_disponivel": "number|null",
+    "margem_total_cartao_disponivel": "number|null",
+    "margem_total_cb_disponivel": "number|null"
+  },
+  "contratos": [
+    {
+      "numero": "string",
+      "rubrica_codigo": "string",
+      "rubrica_descricao": "string",
+      "banco_extrato": "string (sigla legivel: ex: 'Daycoval', 'BRB', 'Intermedium')",
+      "tipo": "emprestimo|rmc|rcc",
+      "parcela_valor": "number",
+      "parcelas_pagas": "number",
+      "parcelas_totais": "number",
+      "parcelas_restantes": "number",
+      "saldo_estimado": "number",
+      "inicio": "YYYY-MM-DD|null",
+      "fim": "YYYY-MM-DD|null"
+    }
+  ]
+}`;
+
+  const userContent = [
+    {
+      type: tipoMidia,
+      source: { type: 'base64', media_type: mediaType, data: base64 }
+    },
+    {
+      type: 'text',
+      text: 'Extraia os contratos consignados ativos deste extrato em JSON conforme as instrucoes do system prompt.'
+    }
+  ];
+
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': CLAUDE_KEY(),
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 4000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userContent }]
+      })
+    });
+    const txt = await r.text();
+    let d; try { d = JSON.parse(txt); } catch { return { ok: false, erro: `Resposta nao-JSON da API: ${txt.substring(0,300)}` }; }
+    if (!r.ok) return { ok: false, erro: `Anthropic ${r.status}: ${d.error?.message || txt.substring(0,300)}` };
+    const text = d.content?.filter(c => c.type === 'text').map(c => c.text).join('\n') || '';
+    if (!text) return { ok: false, erro: 'Resposta vazia da IA (extrato)' };
+    let clean = text.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/, '').trim();
+    let dados;
+    try { dados = JSON.parse(clean); }
+    catch (e) { return { ok: false, erro: `JSON invalido da IA (extrato): ${e.message}. Resposta: ${clean.substring(0,300)}` }; }
+    return {
+      ok: true,
+      info: dados.info || null,
+      contratos: Array.isArray(dados.contratos) ? dados.contratos : []
+    };
+  } catch (e) {
+    return { ok: false, erro: `Falha de rede (extrato): ${e.message}` };
+  }
+}
+
+// ── Simulacao de PORTABILIDADE contrato-a-contrato ─────────────
+// Para cada contrato de emprestimo, sugere os bancos do convenio que podem
+// receber a port: aplica regras (suspenso, opera_port, idade, parcelas pagas
+// minimas, taxa minima do banco). Calcula nova parcela aproximada usando
+// taxa_minima_port do banco destino e prazo restante do contrato.
+async function simularPortabilidade(convenioId, contratos) {
+  if (!Array.isArray(contratos) || contratos.length === 0) return [];
+  const { data: rels, error } = await dbQuery(
+    'fed_banco_convenio',
+    `convenio_id=eq.${convenioId}&suspenso=eq.false&opera_port=eq.true&select=*,fed_bancos(slug,nome)`
+  );
+  if (error || !rels || rels.length === 0) return [];
+
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/\p{Diacritic}/gu, '').trim();
+
+  const result = [];
+  for (const c of contratos) {
+    const contratoBancoNorm = norm(c.banco_extrato);
+    const parcela = Number(c.parcela_valor) || 0;
+    const restantes = Number(c.parcelas_restantes) || 0;
+    const pagas = Number(c.parcelas_pagas) || 0;
+    const saldo = Number(c.saldo_estimado) || (parcela * restantes);
+
+    const sugestoes = [];
+    for (const r of rels) {
+      const bancoNome = r.fed_bancos?.nome || '';
+      const bancoNomeNorm = norm(bancoNome);
+      // banco origem nao pode portar pra ele mesmo (vira refin de carteira, nao port)
+      const ehMesmoBanco = contratoBancoNorm && bancoNomeNorm.includes(contratoBancoNorm.split(/\s+/)[0]);
+      if (ehMesmoBanco) continue;
+
+      const motivos = [];
+      // parcelas minimas pagas (varia por banco — heuristica: 12 padrao, ja explicito em atributos)
+      const minParcelasTxt = (r.atributos?.port_min_parcelas_pagas || '');
+      const matchParcelas = String(minParcelasTxt).match(/(\d{1,3})\s*pa(g|rcelas)/i);
+      const minParcelas = matchParcelas ? parseInt(matchParcelas[1], 10) : null;
+      if (minParcelas !== null && pagas < minParcelas) {
+        motivos.push(`Banco exige ${minParcelas} parcelas pagas, contrato tem so ${pagas}`);
+      }
+
+      const taxa = Number(r.taxa_minima_port) || null;
+      let parcelaNova = null, economia = null;
+      if (taxa && restantes > 0 && saldo > 0) {
+        // PMT = PV * i / (1 - (1+i)^-n)
+        const i = taxa;
+        const n = restantes;
+        const denom = 1 - Math.pow(1 + i, -n);
+        if (denom > 0) {
+          parcelaNova = saldo * i / denom;
+          economia = (parcela - parcelaNova) * restantes;
+        }
+      }
+
+      sugestoes.push({
+        banco_id: r.banco_id,
+        banco_slug: r.fed_bancos?.slug,
+        banco_nome: bancoNome,
+        taxa_minima_port: taxa,
+        parcela_estimada_nova: parcelaNova ? Number(parcelaNova.toFixed(2)) : null,
+        economia_total_estimada: economia ? Number(economia.toFixed(2)) : null,
+        motivos_bloqueio: motivos,
+        atende: motivos.length === 0,
+      });
+    }
+    // Ordena: atende primeiro, depois por taxa
+    sugestoes.sort((a, b) => {
+      if (a.atende !== b.atende) return a.atende ? -1 : 1;
+      const ta = a.taxa_minima_port || 999;
+      const tb = b.taxa_minima_port || 999;
+      return ta - tb;
+    });
+
+    result.push({
+      contrato: {
+        numero: c.numero,
+        banco_origem: c.banco_extrato,
+        parcela_valor: parcela,
+        parcelas_pagas: pagas,
+        parcelas_totais: c.parcelas_totais,
+        parcelas_restantes: restantes,
+        saldo_estimado: saldo,
+        fim: c.fim,
+      },
+      sugestoes_top: sugestoes.slice(0, 5),
+      total_sugestoes: sugestoes.length,
+      qtd_atendem: sugestoes.filter(s => s.atende).length,
+    });
+  }
+  return result;
 }
 
 async function cruzarHoleriteComBancos(convenioId, dados) {
