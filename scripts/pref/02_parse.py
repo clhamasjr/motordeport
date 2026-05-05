@@ -75,29 +75,11 @@ def clean_text(s):
     n = ''.join(c for c in n if not unicodedata.combining(c))
     return n.strip()
 
-# ── Detecta tipo de aba (pref / instituto / cb) ──
+# ── Tipo eh classificado no Postgres pela funcao pref_classify_tipo() ──
+# (chamada por pref_load_from_seed). Aqui retornamos 'pendente' — o banco
+# determina o tipo final baseado em regras consistentes (sheet_origem + nome).
 def detect_tipo(sheet_name):
-    s = clean_text(sheet_name).upper()
-    if re.search(r'\bCB\b|CART[ÃA]O|CART\.?\s*BEN[EF]', s):
-        return 'cartao_beneficio'
-    # institutos de previdencia
-    inst_keywords = ['PREV','IPM','IPS','IPSEM','IPMDC','IPC','IPVV','IPAMV','IPREM','IPREJUN',
-                     'IPREVILLE','IPREVGUARULHOS','IPREMU','IPSERV','MAPRO','JFPREV','PROCON',
-                     'TRT','MACAEPREV','TEREPREV','SEPREM','EMBUPREV','CAMPREV','FUNPREV',
-                     'CARAGUAPREV','CMT','CMC','PREVIBAM','MARINGAPREV','MARINGÁPREV','FOZPREV',
-                     'CAIXA','ASCMC','HSPM','AHM','OMSS','SAME','ISSEM','ISSM','ISSA','SJRPPREV',
-                     'MAPRO','DEMAE','DAERP','CODAU','COMCAP','PREVMOC','DIVIPREV','PREVCEL',
-                     'PREVIPALMAS','MANAUSPREV','MACAPA PREV','MACAPAPREV','GURUPI PREV','PREVIBANERJ',
-                     'IGEPREV','IPASG','IPREMB','CAMPREV','ITAJAÍ','TANGARÁ DA SERRA','CACERES',
-                     'CALDASPREV','PREVCAL','IPAM','CUIABAPREV','VALPARAISO',
-                     'CAXIASPREV','PROCURADORIA','CEARÁ-MIRIAM','CAUCAIA',
-                     'INST','PREV','JFPREV','DEMAE','DEPMSA','CODAU','OMSS']
-    for k in inst_keywords:
-        if k in s and 'PREF' not in s.split()[0]:
-            return 'instituto_previdencia'
-    if s.startswith('PREF') or 'PREFEITURA' in s:
-        return 'prefeitura'
-    return 'outro'
+    return 'pendente'
 
 # ── Extrai municipio do nome da aba ──
 def extract_municipio(sheet_name):

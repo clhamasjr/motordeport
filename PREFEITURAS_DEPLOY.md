@@ -188,9 +188,33 @@ Parceiro sobe holerite (PDF/imagem)
 | Total bancos | ~44 | ~38 |
 | Granularidade | Por estado/órgão (ex: TJMG, GOV PA) | Por município (ex: PREF SOROCABA, IPREM CAMPINAS) |
 | Detecção de UF | Por nome da aba (regex) | Por **contexto** — abas separadoras (1x1) marcam início de cada UF na ordem |
-| Campo extra | — | `municipio`, `tipo` (prefeitura/instituto/CB/outro) |
+| Campo extra | — | `municipio`, `tipo` (prefeitura/instituto/CB) |
 | Identificação no holerite | Por nome do órgão | Por **município + UF** primeiro (mais preciso), fallback por nome |
+| Camadas de navegação UI | 3 (Estado → Convênio → Detalhes) | 4 (Estado → Cidade → Convênio → Detalhes) |
 | Tamanho seed | ~2.5 MB | ~5.7 MB |
+
+## 🧭 UI: Drill-down em camadas
+
+**Prefeituras** (4 camadas, com breadcrumb):
+1. **Estados** — grid com 27 UFs, mostra count de cidades e convênios
+2. **Cidades** (dentro do estado) — grid com badges por tipo (🏛️ prefeitura, 📋 instituto, 💳 cartão)
+3. **Convênios** (dentro da cidade) — lista vertical priorizando prefeitura > instituto > cartão
+4. **Detalhes** — bancos + regras + atalho para análise de holerite
+
+**Governos** (3 camadas):
+1. **Estados** — grid de UFs
+2. **Convênios** (dentro do estado)
+3. **Detalhes** — bancos + regras
+
+## 🏷️ Classificação automática de tipo
+
+A função SQL `pref_classify_tipo(nome, sheet_origem)` classifica os convênios baseado em prioridade:
+1. **Cartão Benefício**: sheet contém `CB`/`CART.BENF`/`CARTÃO`, ou nome começa com `POLÍTICA DE CARTÃO`
+2. **Instituto Previdência**: sheet contém `PREV`/`IPM`/`IPS`/`IPC`/`IPSEM`/`IPMDC`/`IPVV`/`IPAMV`/`IPREM`/`HSPM`/`AHM`/etc, ou nome contém `INSTITUTO`/`PREVIDÊNCIA`/`AUTARQUIA`/`TRIBUNAL`/`CÂMARA`
+3. **Prefeitura**: nome começa com `PREF`/`PREFEITURA`/`MUNICÍPIO`
+4. **Default**: prefeitura
+
+Usada automaticamente em `pref_load_from_seed()` — qualquer re-seed mantém a classificação correta.
 
 ---
 
