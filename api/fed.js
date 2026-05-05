@@ -503,11 +503,27 @@ Estrutura esperada:
   }
 }
 
-// ── Simulacao de PORTABILIDADE contrato-a-contrato ─────────────
-// Para cada contrato de emprestimo, sugere os bancos do convenio que podem
-// receber a port: aplica regras (suspenso, opera_port, idade, parcelas pagas
-// minimas, taxa minima do banco). Calcula nova parcela aproximada usando
-// taxa_minima_port do banco destino e prazo restante do contrato.
+// ── Simulacao de PORTABILIDADE com TROCO ───────────────────────
+// Modelo:
+//  1) Assume taxa de mercado vigente do contrato origem = 1,80% a.m. (TAXA_ORIGEM_PADRAO)
+//  2) Calcula SALDO DEVEDOR REAL = PMT * (1-(1+i_origem)^-n_restantes) / i_origem
+//  3) Para cada banco destino: REFIN DE PORT mantendo a mesma parcela atual
+//     no PRAZO ORIGINAL (parcelas_totais), com a TAXA do banco destino.
+//     - Novo PV (capital financiado) = PMT_atual * (1-(1+i_dest)^-n_total) / i_dest
+//     - TROCO = Novo PV - Saldo devedor atual
+//     - Quando troco > 0 → cliente recebe na conta apos quitacao
+//     - Quando troco <= 0 → port nao gera troco (so reduzir parcela ou prazo)
+//  4) Tambem calcula PORT PURA (mantem prazo restante, taxa nova) → reducao
+//     mensal de parcela e economia total.
+const TAXA_ORIGEM_PADRAO = 0.018; // 1,80% a.m. (assumida pra calcular saldo devedor)
+
+// Saldo devedor: PV de uma anuidade postecipada. PMT * (1 - (1+i)^-n) / i
+function calcularSaldoDevedor(pmt, n, i) {
+  if (!pmt || !n || !i) return null;
+  if (i <= 0) return pmt * n;
+  return pmt * (1 - Math.pow(1 + i, -n)) / i;
+}
+
 async function simularPortabilidade(convenioId, contratos) {
   if (!Array.isArray(contratos) || contratos.length === 0) return [];
   const { data: rels, error } = await dbQuery(
@@ -523,19 +539,20 @@ async function simularPortabilidade(convenioId, contratos) {
     const contratoBancoNorm = norm(c.banco_extrato);
     const parcela = Number(c.parcela_valor) || 0;
     const restantes = Number(c.parcelas_restantes) || 0;
+    const totais = Number(c.parcelas_totais) || 0;
     const pagas = Number(c.parcelas_pagas) || 0;
-    const saldo = Number(c.saldo_estimado) || (parcela * restantes);
+
+    // SALDO DEVEDOR REAL com taxa origem 1,80% a.m.
+    const saldoDevedor = calcularSaldoDevedor(parcela, restantes, TAXA_ORIGEM_PADRAO);
 
     const sugestoes = [];
     for (const r of rels) {
       const bancoNome = r.fed_bancos?.nome || '';
       const bancoNomeNorm = norm(bancoNome);
-      // banco origem nao pode portar pra ele mesmo (vira refin de carteira, nao port)
       const ehMesmoBanco = contratoBancoNorm && bancoNomeNorm.includes(contratoBancoNorm.split(/\s+/)[0]);
       if (ehMesmoBanco) continue;
 
       const motivos = [];
-      // parcelas minimas pagas (varia por banco — heuristica: 12 padrao, ja explicito em atributos)
       const minParcelasTxt = (r.atributos?.port_min_parcelas_pagas || '');
       const matchParcelas = String(minParcelasTxt).match(/(\d{1,3})\s*pa(g|rcelas)/i);
       const minParcelas = matchParcelas ? parseInt(matchParcelas[1], 10) : null;
@@ -544,15 +561,27 @@ async function simularPortabilidade(convenioId, contratos) {
       }
 
       const taxa = Number(r.taxa_minima_port) || null;
-      let parcelaNova = null, economia = null;
-      if (taxa && restantes > 0 && saldo > 0) {
-        // PMT = PV * i / (1 - (1+i)^-n)
-        const i = taxa;
-        const n = restantes;
-        const denom = 1 - Math.pow(1 + i, -n);
+
+      // Cenario A — PORT PURA: mesma parcela escolhida pelo cliente, prazo restante, taxa nova
+      // Reduz a parcela mensal mantendo o prazo. Nao gera troco.
+      let parcelaNovaPort = null, economiaPort = null;
+      if (taxa && restantes > 0 && saldoDevedor > 0) {
+        const denom = 1 - Math.pow(1 + taxa, -restantes);
         if (denom > 0) {
-          parcelaNova = saldo * i / denom;
-          economia = (parcela - parcelaNova) * restantes;
+          parcelaNovaPort = saldoDevedor * taxa / denom;
+          economiaPort = (parcela - parcelaNovaPort) * restantes;
+        }
+      }
+
+      // Cenario B — REFIN DE PORT (TROCO): mantem a parcela atual e expande
+      // de volta ao prazo total original. Capital financiado fica maior →
+      // diferenca pro saldo devedor = troco pago ao cliente.
+      let novoPV = null, troco = null;
+      if (taxa && totais > 0 && parcela > 0) {
+        const denomT = 1 - Math.pow(1 + taxa, -totais);
+        if (denomT > 0) {
+          novoPV = parcela * denomT / taxa;
+          if (saldoDevedor != null) troco = novoPV - saldoDevedor;
         }
       }
 
@@ -561,15 +590,22 @@ async function simularPortabilidade(convenioId, contratos) {
         banco_slug: r.fed_bancos?.slug,
         banco_nome: bancoNome,
         taxa_minima_port: taxa,
-        parcela_estimada_nova: parcelaNova ? Number(parcelaNova.toFixed(2)) : null,
-        economia_total_estimada: economia ? Number(economia.toFixed(2)) : null,
+        // Port pura (reduz parcela, mantem prazo restante)
+        parcela_port_pura: parcelaNovaPort ? Number(parcelaNovaPort.toFixed(2)) : null,
+        economia_port_pura: economiaPort ? Number(economiaPort.toFixed(2)) : null,
+        // Refin de port com troco (mantem parcela, prazo total)
+        novo_pv_refin: novoPV ? Number(novoPV.toFixed(2)) : null,
+        troco_estimado: troco != null ? Number(troco.toFixed(2)) : null,
         motivos_bloqueio: motivos,
         atende: motivos.length === 0,
       });
     }
-    // Ordena: atende primeiro, depois por taxa
+    // Ordena: atende primeiro, depois maior troco, depois menor taxa
     sugestoes.sort((a, b) => {
       if (a.atende !== b.atende) return a.atende ? -1 : 1;
+      const tra = a.troco_estimado != null ? a.troco_estimado : -1e9;
+      const trb = b.troco_estimado != null ? b.troco_estimado : -1e9;
+      if (tra !== trb) return trb - tra;
       const ta = a.taxa_minima_port || 999;
       const tb = b.taxa_minima_port || 999;
       return ta - tb;
@@ -581,9 +617,11 @@ async function simularPortabilidade(convenioId, contratos) {
         banco_origem: c.banco_extrato,
         parcela_valor: parcela,
         parcelas_pagas: pagas,
-        parcelas_totais: c.parcelas_totais,
+        parcelas_totais: totais,
         parcelas_restantes: restantes,
-        saldo_estimado: saldo,
+        saldo_estimado_sem_juros: Number(c.saldo_estimado) || (parcela * restantes),
+        saldo_devedor_estimado: saldoDevedor ? Number(saldoDevedor.toFixed(2)) : null,
+        taxa_origem_assumida: TAXA_ORIGEM_PADRAO,
         fim: c.fim,
       },
       sugestoes_top: sugestoes.slice(0, 5),

@@ -9333,30 +9333,45 @@ function renderFedResultadoHolerite(r){
   // ── Simulacao de portabilidade contrato-a-contrato ──
   if(simulacao && simulacao.length){
     h += '<div style="background:var(--card);border:1px solid var(--ylw);border-radius:12px;padding:16px;margin-bottom:14px">';
-    h += '<div style="font-size:13px;font-weight:800;color:var(--ylw);margin-bottom:6px">🔄 Simulação de Portabilidade — contrato a contrato</div>';
-    h += '<div style="font-size:11px;color:var(--t3);margin-bottom:12px">Para cada empréstimo, mostramos os bancos do convênio que recebem port (top 5 por taxa). Nova parcela = saldo estimado × taxa / (1 − (1+taxa)^−prazo).</div>';
+    h += '<div style="font-size:13px;font-weight:800;color:var(--ylw);margin-bottom:6px">🔄 Simulação de Portabilidade + Troco — contrato a contrato</div>';
+    h += '<div style="font-size:11px;color:var(--t3);margin-bottom:12px">Saldo devedor calculado assumindo <b>taxa atual de 1,80% a.m.</b> no contrato origem. <b>Troco</b> = capital financiável pelo banco destino (mantendo a parcela atual e o prazo total original) menos o saldo devedor de hoje. Top 5 bancos por troco.</div>';
     const fmt = (n) => n!=null && n!=='' ? 'R$ '+Number(n).toLocaleString('pt-BR',{minimumFractionDigits:2}) : '—';
     for(const s of simulacao){
       const ct = s.contrato || {};
       h += '<div style="border:1px solid var(--brd);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--bg)">';
       h += `<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">`;
       h += `<div><b>💰 ${esc(ct.banco_origem||'?')}</b> · <span style="color:var(--t3)">${esc(ct.numero||'')}</span></div>`;
-      h += `<div style="font-size:12px;color:var(--t2)">Parcela atual: <b>${fmt(ct.parcela_valor)}</b> · ${ct.parcelas_pagas||0}/${ct.parcelas_totais||0} pagas · saldo est. <b>${fmt(ct.saldo_estimado)}</b></div>`;
+      h += `<div style="font-size:12px;color:var(--t2)">Parcela atual: <b>${fmt(ct.parcela_valor)}</b> · ${ct.parcelas_pagas||0}/${ct.parcelas_totais||0} pagas · <span title="Saldo devedor real assumindo 1,80% a.m. no contrato origem">saldo devedor (1,80%): <b>${fmt(ct.saldo_devedor_estimado)}</b></span></div>`;
       h += `</div>`;
       if(s.qtd_atendem === 0){
         h += '<div style="font-size:12px;color:var(--t3);padding:8px;background:rgba(239,68,68,.06);border-radius:6px">Nenhum banco do convênio recebe port deste contrato (verifique parcelas pagas mínimas).</div>';
       } else {
-        h += '<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="text-align:left;color:var(--t3);font-size:10px;text-transform:uppercase"><th style="padding:4px 6px">Banco destino</th><th style="padding:4px 6px;text-align:right">Taxa min</th><th style="padding:4px 6px;text-align:right">Nova parcela</th><th style="padding:4px 6px;text-align:right">Economia est.</th><th style="padding:4px 6px"></th></tr></thead><tbody>';
+        h += '<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="text-align:left;color:var(--t3);font-size:10px;text-transform:uppercase">';
+        h += '<th style="padding:4px 6px">Banco destino</th>';
+        h += '<th style="padding:4px 6px;text-align:right">Taxa</th>';
+        h += '<th style="padding:4px 6px;text-align:right" title="Capital que o banco destino financia mantendo a parcela atual no prazo total original">Novo PV</th>';
+        h += '<th style="padding:4px 6px;text-align:right" title="Troco = Novo PV − Saldo devedor. Sai pra conta do cliente">💵 Troco</th>';
+        h += '<th style="padding:4px 6px;text-align:right" title="Alternativa: port pura, mantém prazo restante e reduz a parcela mensal">Port pura<br>(parcela)</th>';
+        h += '<th style="padding:4px 6px"></th>';
+        h += '</tr></thead><tbody>';
         for(const sg of s.sugestoes_top){
           const corLin = sg.atende ? '' : 'opacity:.45';
-          const taxaTxt = sg.taxa_minima_port ? (sg.taxa_minima_port*100).toFixed(2).replace('.',',')+'% a.m.' : '—';
-          const econ = sg.economia_total_estimada;
-          const econTxt = econ ? (econ>0 ? '<span style="color:var(--grn)">↓ '+fmt(econ)+'</span>' : '<span style="color:var(--red)">↑ '+fmt(-econ)+'</span>') : '—';
+          const taxaTxt = sg.taxa_minima_port ? (sg.taxa_minima_port*100).toFixed(2).replace('.',',')+'%' : '—';
+          const tr = sg.troco_estimado;
+          const trocoTxt = tr != null
+            ? (tr > 0 ? '<span style="color:var(--grn);font-weight:700">+ '+fmt(tr)+'</span>'
+                      : '<span style="color:var(--red)">'+fmt(tr)+'</span>')
+            : '—';
+          const ppura = sg.parcela_port_pura;
+          const ppuraTxt = ppura != null && ct.parcela_valor
+            ? `${fmt(ppura)} <span style="color:var(--grn);font-size:10px">(↓${fmt(ct.parcela_valor - ppura)})</span>`
+            : '—';
           h += `<tr style="${corLin}">`;
           h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);font-weight:600">${esc(sg.banco_nome)}</td>`;
           h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);text-align:right">${taxaTxt}</td>`;
-          h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);text-align:right">${fmt(sg.parcela_estimada_nova)}</td>`;
-          h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);text-align:right">${econTxt}</td>`;
+          h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);text-align:right">${fmt(sg.novo_pv_refin)}</td>`;
+          h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);text-align:right">${trocoTxt}</td>`;
+          h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);text-align:right">${ppuraTxt}</td>`;
           h += `<td style="padding:6px;border-bottom:1px dashed var(--brd);font-size:10px;color:var(--t3)">${sg.atende?'✓':'⛔ '+esc((sg.motivos_bloqueio||[]).join('; '))}</td>`;
           h += `</tr>`;
         }
@@ -9367,6 +9382,7 @@ function renderFedResultadoHolerite(r){
       }
       h += '</div>';
     }
+    h += '<div style="font-size:10px;color:var(--t3);margin-top:6px">⚠ Taxa origem assumida: <b>1,80% a.m.</b>. Se a taxa real do contrato origem for diferente, o saldo devedor (e o troco) muda. IOF, seguro e tarifas não estão incluídos no troco bruto.</div>';
     h += '</div>';
   }
 
@@ -9478,6 +9494,71 @@ function renderConsulta() {
     html += '<div class="kpi"><div class="kpi-label">RMC</div><div class="kpi-value" style="color:var(--pur)">R$ ' + esc(mrg.rmc || '0,00') + '</div></div>';
     html += '<div class="kpi"><div class="kpi-label">RCC</div><div class="kpi-value" style="color:var(--pnk)">R$ ' + esc(mrg.rcc || '0,00') + '</div></div>';
     html += '</div>';
+
+    // ══ ENQUADRAMENTO NA NOVA REGRA (40% global, cartão opcional) ══
+    {
+      const _benefV = parseFloat(String(ben.valor || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      const _sumEmp = parseFloat(String(mrg.parcelas || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      const _sumRmc = parseFloat(String(mrg.rmc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      const _sumRcc = parseFloat(String(mrg.rcc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      // Constrói lista de contratos pra cálculo de redução via port
+      const _contratosCalc = (r.contratos || []).map(ct => ({
+        con: ct.contrato || '',
+        cod: String(ct.banco_codigo || '').padStart(3, '0'),
+        par: parseFloat(String(ct.parcela || '0').replace(/\./g, '').replace(',', '.')) || 0,
+        sal: parseFloat(String(ct.saldo || ct.saldo_quitacao || '0').replace(/\./g, '').replace(',', '.')) || 0,
+        taxaOrig: parseFloat(String(ct.taxa || '0').replace(',', '.')) || 0
+      }));
+      if (_benefV > 0) {
+        const enq = calcEnquadramentoPlus(_benefV, _sumEmp, _sumRmc, _sumRcc, _contratosCalc);
+        const stMap = {
+          ENQUADRA: { cor: 'var(--grn)', icon: '✅', titulo: 'JÁ ENQUADRA NA NOVA REGRA', luz: 'rgba(34,197,94,.10)' },
+          ENQUADRA_TROCAR_CARTAO: { cor: 'var(--grn)', icon: '✅', titulo: 'ENQUADRA — basta escolher 1 cartão', luz: 'rgba(34,197,94,.08)' },
+          VIA_CANCELA_CARTAO: { cor: 'var(--pur)', icon: '💳', titulo: 'CANCELAR 1 CARTÃO RESOLVE', luz: 'rgba(167,139,250,.08)' },
+          VIA_PORT_REDUCAO: { cor: 'var(--cyan)', icon: '🔄', titulo: 'PORT/REFIN REDUZ E ENQUADRA', luz: 'rgba(6,182,212,.08)' },
+          VIA_CARTAO_MAIS_PORT: { cor: 'var(--ylw)', icon: '🔀', titulo: 'CANCELAR CARTÃO + PORT RESOLVE', luz: 'rgba(245,194,66,.08)' },
+          VIA_MULTIPLO: { cor: 'var(--org)', icon: '⚙️', titulo: 'MARGEM + CARTÃO + PORT', luz: 'rgba(249,115,22,.08)' },
+          INVIAVEL: { cor: 'var(--red)', icon: '⚠', titulo: 'INVIÁVEL — EXCEDENTE ALTO', luz: 'rgba(239,68,68,.08)' }
+        };
+        const meta = stMap[enq.status] || { cor: 'var(--t2)', icon: '❓', titulo: enq.status, luz: 'rgba(255,255,255,.04)' };
+        const fmt = v => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const sumTotal = _sumEmp + _sumRmc + _sumRcc;
+        const pctTotal = (_benefV > 0 ? (sumTotal / _benefV * 100) : 0).toFixed(1);
+        html += `<div style="background:linear-gradient(135deg,${meta.luz},rgba(255,255,255,.02));border:2px solid ${meta.cor};border-radius:14px;padding:18px;margin-bottom:20px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:12px">
+            <div>
+              <div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.1em;font-weight:700">🔮 Enquadramento Nova Regra (40% global)</div>
+              <div style="font-size:18px;font-weight:800;color:${meta.cor};margin-top:4px">${meta.icon} ${meta.titulo}</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Comprometimento atual</div>
+              <div style="font-size:20px;font-weight:800;color:${pctTotal > 40 ? 'var(--red)' : 'var(--grn)'};font-family:monospace">${pctTotal}% / 40%</div>
+              <div style="font-size:11px;color:var(--t3);margin-top:2px">${fmt(sumTotal)} de ${fmt(_benefV * 0.40)}</div>
+            </div>
+          </div>
+          <div style="font-size:13px;color:var(--t1);background:var(--bg);border-radius:8px;padding:10px 14px;line-height:1.5">${esc(enq.detalhe)}</div>`;
+        // Detalhe quantitativo
+        if (enq.excedente > 0 || enq.reducaoTotal > 0) {
+          html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:12px">`;
+          if (enq.excedente > 0) html += `<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Excedente</div><div style="font-size:14px;font-weight:800;color:var(--red);font-family:monospace">${fmt(enq.excedente)}</div></div>`;
+          if (enq.livreEmpAtual > 0) html += `<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Margem livre</div><div style="font-size:14px;font-weight:800;color:var(--grn);font-family:monospace">${fmt(enq.livreEmpAtual)}</div></div>`;
+          if (_sumRmc > 0) html += `<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Cancelar RMC</div><div style="font-size:14px;font-weight:800;color:var(--pur);font-family:monospace">${fmt(_sumRmc)}</div></div>`;
+          if (_sumRcc > 0) html += `<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Cancelar RCC</div><div style="font-size:14px;font-weight:800;color:var(--pnk);font-family:monospace">${fmt(_sumRcc)}</div></div>`;
+          if (enq.reducaoTotal > 0) html += `<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Redução via port</div><div style="font-size:14px;font-weight:800;color:var(--cyan);font-family:monospace">${fmt(enq.reducaoTotal)}</div></div>`;
+          html += `</div>`;
+        }
+        // Detalhe por contrato (top 3 maiores reduções)
+        if (Array.isArray(enq.reducaoDetalhes) && enq.reducaoDetalhes.length > 0 && enq.excedente > 0) {
+          html += `<details style="margin-top:10px"><summary style="cursor:pointer;font-size:11px;color:var(--t2);font-weight:600">▸ Ver redução possível por contrato (${enq.reducaoDetalhes.length})</summary><div style="margin-top:8px;font-size:11px">`;
+          enq.reducaoDetalhes.slice(0, 5).forEach(d => {
+            html += `<div style="padding:6px 10px;background:var(--bg);border-radius:6px;margin-top:4px;display:flex;justify-content:space-between"><span style="color:var(--t2)">${esc(d.contrato || '?')} (${esc(d.banco || '?')})</span><span class="mono" style="color:var(--cyan);font-weight:700">−${fmt(d.reducao)} → R$${d.novaParc.toFixed(2)} a ${d.taxa}% em ${d.prazo}m</span></div>`;
+          });
+          html += `</div></details>`;
+        }
+        html += `</div>`;
+      }
+    }
+
 // ══ OPORTUNIDADES ══
 // Regras de valor minimo (descartar oportunidades residuais sem valor real)
 const MIN_MRG_EMP=50;        // margem minima R$ 50/mes pra considerar emprestimo novo
