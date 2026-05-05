@@ -1632,6 +1632,30 @@ export default async function handler(req) {
       if (Array.isArray(conversa.ofertas) && conversa.ofertas.length > 0) {
         contextParts.push('\n═══ OFERTAS JÁ SIMULADAS (cliente já viu essas) ═══');
         const ofertasComDetalhe = conversa.ofertas.filter(o => o.disponivel && o.detalhes?.valorLiquido);
+
+        // 🚨 BLOCO CRITICO: nenhuma oferta com valor real.
+        // Sem isso, Claude tende a alucinar valores tipo "R$ 4.500 em 24x R$ 280".
+        if (ofertasComDetalhe.length === 0) {
+          const temProcessando = conversa.ofertas.some(o => o.processando || o.mensagem?.includes('processando') || o.mensagem?.includes('CONSENT_APPROVED'));
+          const temBloqueado = conversa.ofertas.some(o => o.bloqueado);
+          contextParts.push('\n🚨🚨🚨 ATENÇÃO MÁXIMA — NENHUMA OFERTA TEM VALOR REAL DISPONIVEL 🚨🚨🚨');
+          contextParts.push('PROIBIDO ABSOLUTO apresentar QUALQUER valor (R$) ou parcela (Nx). NUNCA invente números.');
+          contextParts.push('Status real dos bancos:');
+          for (const o of conversa.ofertas.slice(0, 8)) {
+            const lab = (o.banco || '').toUpperCase() + (o.provider ? '/' + o.provider : '');
+            contextParts.push(`  • ${lab}: ${o.processando ? 'PROCESSANDO' : (o.bloqueado ? 'BLOQUEADO' : (o.disponivel ? 'ELEGIVEL SEM VALOR AINDA' : 'SEM OFERTA'))} — ${(o.mensagem||'').substring(0, 100)}`);
+          }
+          if (temProcessando) {
+            contextParts.push('\n👉 RESPOSTA OBRIGATÓRIA: "Tô finalizando a consulta nos bancos parceiros, leva mais uns minutinhos. Te aviso assim que tiver o valor exato pra você 🔍"');
+          } else if (temBloqueado) {
+            contextParts.push('\n👉 RESPOSTA OBRIGATÓRIA: "Pra avançar, alguns bancos pedem uma autorização rápida (selfie). Quer que eu envie o link?" — e dispare [ACAO:GERAR_AUTORIZACAO_C6] se cliente topar.');
+          } else {
+            contextParts.push('\n👉 RESPOSTA OBRIGATÓRIA: "Olha, [Nome], no momento não consegui aprovar oferta pra você nos bancos parceiros. Isso costuma mudar em 30-60 dias quando o banco atualiza a margem. Posso te avisar se aparecer alguma novidade?"');
+          }
+          contextParts.push('NUNCA, JAMAIS, EM HIPÓTESE ALGUMA gere "R$ 4.500" / "24x" / "valor liberado" / "parcela de R$ X" sem valor real do contexto.');
+          contextParts.push('═══ FIM DO BLOCO CRITICO ═══\n');
+        }
+
         for (const o of ofertasComDetalhe.slice(0, 5)) {
           const d = o.detalhes;
           const vl = Number(d.valorLiquido || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
@@ -1712,7 +1736,48 @@ export default async function handler(req) {
         return jsonResp({ error: 'claude_no_response', detail: cr.error }, 500, req);
       }
 
-      const { clean: cleanReply, actions, fase, dados } = parseResponse(reply);
+      let { clean: cleanReply, actions, fase, dados } = parseResponse(reply);
+
+      // ─── 🚨 GUARDRAIL ANTI-ALUCINAÇÃO ──────────────────────────
+      // Se Claude apresentou valores R$/parcelas mas não há oferta real
+      // disponivel:true && detalhes.valorLiquido, SUBSTITUI por mensagem
+      // segura. Caso real visto: cliente sem oferta nenhuma recebeu
+      // "Libera R$ 4.500 em 24x de R$ 280" inventado pelo Claude.
+      const temOfertaReal = Array.isArray(conversa.ofertas)
+        && conversa.ofertas.some(o => o.disponivel === true && o.detalhes?.valorLiquido > 0);
+      const temPadraoValor = /R\$\s*[\d\.,]+/i.test(cleanReply || '')
+        || /\d+\s*x\s*(de\s*)?R\$/i.test(cleanReply || '')
+        || /\d+\s*parcelas?\s*(de\s*)?R\$/i.test(cleanReply || '');
+
+      if (temPadraoValor && !temOfertaReal) {
+        // Detecta intenção da mensagem original pra escolher fallback adequado
+        const temProcessando = Array.isArray(conversa.ofertas)
+          && conversa.ofertas.some(o => o.processando || /processando|consent_approved/i.test(o.mensagem || ''));
+        const temBloqueado = Array.isArray(conversa.ofertas)
+          && conversa.ofertas.some(o => o.bloqueado);
+        const primeiroNome = (conversa.nome || '').split(' ')[0];
+        const saudacao = primeiroNome ? `${primeiroNome}, ` : '';
+
+        let mensagemSegura;
+        if (temProcessando) {
+          mensagemSegura = `${saudacao}tô finalizando a consulta nos bancos parceiros, leva mais uns minutinhos. Te aviso assim que tiver o valor exato pra você 🔍`;
+        } else if (temBloqueado) {
+          mensagemSegura = `${saudacao}pra avançar, alguns bancos pedem uma autorização rápida via selfie. Quer que eu envie o link?`;
+        } else {
+          mensagemSegura = `${saudacao}olha, no momento não consegui aprovar oferta nos bancos parceiros. Isso costuma mudar em 30-60 dias quando o banco atualiza a margem disponível. Posso te avisar se aparecer alguma novidade pra você?`;
+        }
+
+        await logEvento(conversa.id, telefone, 'guardrail_alucinacao_detectada', {
+          original: (cleanReply || '').substring(0, 300),
+          substituido_por: mensagemSegura.substring(0, 300),
+          motivo: 'valores_R$_sem_oferta_real_disponivel',
+          ofertas_status: (conversa.ofertas || []).map(o => ({ banco: o.banco, provider: o.provider, disponivel: o.disponivel, processando: o.processando, bloqueado: o.bloqueado }))
+        });
+        cleanReply = mensagemSegura;
+        // NAO executa actions de fechamento (COLETAR_DADOS/INCLUIR_PROPOSTA)
+        // se o Claude tentou fechar uma oferta inventada
+        actions = actions.filter(a => !['COLETAR_DADOS', 'INCLUIR_PROPOSTA', 'RESIMULAR'].includes(a));
+      }
 
       // ─── Persiste ───
       const patchConversa = {};
