@@ -402,25 +402,57 @@ async function processarMercantil(id, cpf, auth, secret) {
 }
 
 // Banco HANDBANK / UY3 — bate em /uy3/simulacao_clt:
-//   202 → precisa cliente autorizar (link UY3)
-//   201 → autorizado, retorna margem/empregador
+//   202 → precisa autorizar. Se temos nome+dataNasc+telefone do cliente,
+//          AUTO-AUTORIZA chamando ChallengeInfo da UY3 e re-consulta.
+//   201 → autorizado, retorna { cnpj, matricula, valor_margem, mensagem }
 //   400 → cliente ja tem contrato OU outro impedimento
 async function processarHandbank(id, cpf, auth, secret) {
   await patchBanco(id, 'handbank', { status: 'processando' });
-  const r = await callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret);
-  const d = r.data || {};
+  let r = await callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret);
+  let d = r.data || {};
 
   // Cenario 1: precisa autorizacao (202)
   if (d.precisaAutorizacao && d.linkAutorizacao) {
-    await patchBanco(id, 'handbank', {
-      status: 'bloqueado',
-      bloqueado: true,
-      precisaAutorizacao: true,
-      linkAutorizacao: d.linkAutorizacao,
-      mensagem: 'Cliente precisa autorizar UY3 (cadastro/selfie). Use "Autorizar UY3 automaticamente" no card.',
-      _raw_response: d
-    });
-    return;
+    // Tenta auto-autorizar se temos os dados necessarios (nome + dataNasc + telefone)
+    const cli = await aguardarCliente(id, 6000);
+    const tel = cli?.telefones?.[0]?.completo;
+    if (cli?.nome && cli?.dataNascimento && tel) {
+      const dataIso = String(cli.dataNascimento).includes('-') ? cli.dataNascimento : ddMmYyToIso(cli.dataNascimento);
+      const autzR = await callApi('/api/handbank', {
+        action: 'autorizarUY3',
+        cpf, nome: cli.nome, dataNascimento: dataIso, telefone: tel
+      }, auth, secret).catch(() => ({ ok: false }));
+
+      if (autzR.ok && autzR.data?.success) {
+        // Re-consulta apos autorizacao — agora pode vir 201 (autorizado)
+        await new Promise(r => setTimeout(r, 1500));
+        r = await callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret);
+        d = r.data || {};
+        // continua pro cenario 3 abaixo se virou autorizado
+      } else {
+        // Auto-autz falhou — deixa link manual
+        await patchBanco(id, 'handbank', {
+          status: 'bloqueado',
+          bloqueado: true,
+          precisaAutorizacao: true,
+          linkAutorizacao: d.linkAutorizacao,
+          mensagem: 'Auto-autorização UY3 falhou. Use o link manual no card.',
+          _raw_response: d
+        });
+        return;
+      }
+    } else {
+      // Sem dados pra auto-autorizar — fica em bloqueado com link
+      await patchBanco(id, 'handbank', {
+        status: 'bloqueado',
+        bloqueado: true,
+        precisaAutorizacao: true,
+        linkAutorizacao: d.linkAutorizacao,
+        mensagem: 'Cliente precisa autorizar UY3. Faltam dados (nome/data/telefone) pra autorização automática.',
+        _raw_response: d
+      });
+      return;
+    }
   }
 
   // Cenario 2: cliente ja tem contrato OU outro impedimento (400)
@@ -435,14 +467,22 @@ async function processarHandbank(id, cpf, auth, secret) {
 
   // Cenario 3: autorizado com margem (201)
   if (d.autorizado && d.disponivel) {
+    const margemNum = typeof d.margem === 'number' ? d.margem : Number(d.margem) || 0;
     await patchBanco(id, 'handbank', {
       status: 'ok',
       disponivel: true,
-      mensagem: d.mensagem || 'Cliente elegível — clique Digitar pra simular',
+      precisaAutorizacao: false,
+      bloqueado: false,
+      linkAutorizacao: null,
+      mensagem: margemNum > 0
+        ? `Cliente elegível — margem R$ ${margemNum.toFixed(2)}`
+        : 'Cliente elegível mas sem margem disponível',
       dados: {
-        margemDisponivel: d.margem,
-        empregador: d.empregador,
-        renda: d.renda
+        margemDisponivel: margemNum,
+        empregadorCnpj: d.empregadorCnpj || null,
+        matricula: d.matricula || null,
+        empregador: d.empregador || null,
+        renda: d.renda || null
       },
       _raw_response: d
     });

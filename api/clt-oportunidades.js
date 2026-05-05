@@ -418,16 +418,21 @@ export default async function handler(req) {
         mensagem: 'Cliente precisa autorizar a consulta UY3 (cadastro com selfie). Clique pra enviar link via WhatsApp.'
       });
     } else if (hbData.autorizado === true && hbData.disponivel) {
+      const hbMargemNum = typeof hbData.margem === 'number' ? hbData.margem : Number(hbData.margem) || 0;
       ofertas.push({
         banco: 'handbank', label: 'Handbank · UY3',
         disponivel: true,
         elegibilidade: {
-          margemDisponivel: hbData.margem,
+          margemDisponivel: hbMargemNum,
           empregador: hbData.empregador,
+          empregadorCnpj: hbData.empregadorCnpj,
+          matricula: hbData.matricula,
           renda: hbData.renda
         },
         dados: hbData,
-        mensagem: hbData.mensagem || 'Cliente autorizado — clique Digitar pra simular.'
+        mensagem: hbMargemNum > 0
+          ? `Cliente elegível — margem R$ ${hbMargemNum.toFixed(2)}`
+          : (hbData.mensagem || 'Cliente elegível mas sem margem disponível')
       });
     } else if (hbData.bloqueado && hbData.jaTemContrato) {
       ofertas.push({

@@ -236,12 +236,14 @@ export default async function handler(req) {
       }, 200, req);
     }
 
-    // 201 Created: cliente autorizado → retorna margem e produtos
-    // (Body exato a mapear quando recebermos um exemplo real)
+    // 201 Created: cliente autorizado → retorna margem e dados
+    // Estrutura real do response: { cnpj, matricula, valor_margem, mensagem, http_code }
     if (httpStatus === 201 || (r.ok && d && Object.keys(d).length > 0)) {
-      // Tenta extrair campos comuns — propaga _raw pra UI mostrar o que tem
-      const margem = d.margem || d.margemDisponivel || d.valor_disponivel || d.available_margin || null;
-      const empregador = d.empregador || d.employer_name || d.razao_social || null;
+      const margem = (typeof d.valor_margem === 'number' ? d.valor_margem : null)
+        ?? d.margem ?? d.margemDisponivel ?? d.valor_disponivel ?? d.available_margin ?? null;
+      const empregadorCnpj = d.cnpj || d.empregador_cnpj || null;
+      const matricula = d.matricula || null;
+      const empregadorNome = d.empregador || d.employer_name || d.razao_social || null;
       const renda = d.renda || d.salario || d.salary || null;
       const produtos = d.produtos || d.products || [];
       return jsonResp({
@@ -249,10 +251,14 @@ export default async function handler(req) {
         autorizado: true,
         disponivel: true,
         margem,
-        empregador,
+        empregadorCnpj,
+        matricula,
+        empregador: empregadorNome,
         renda,
         produtos,
-        mensagem: margem ? `Cliente autorizado — margem R$ ${margem}` : 'Cliente autorizado — verificar dados retornados',
+        mensagem: (margem != null && margem > 0)
+          ? `Cliente elegível — margem R$ ${Number(margem).toFixed(2)}`
+          : (margem === 0 ? 'Cliente elegível mas sem margem disponível' : 'Cliente autorizado — sem dados de margem'),
         _httpStatus: httpStatus,
         _raw: d,
         ...d
