@@ -111,13 +111,23 @@ function dataMaior(a, b) {
   return a > b ? a : b;
 }
 
-// Validar data ISO (YYYY-MM-DD) com ano razoavel
+// Validar data ISO (YYYY-MM-DD) com ano razoavel + EXISTE NO CALENDARIO
+// (CAGED tem 2024-09-31, 2024-02-30, etc — datas que nao existem). Postgres
+// rejeita o batch inteiro se 1 linha tiver data invalida, entao filtramos aqui.
 function dataValida(s) {
   if (!s) return null;
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return null;
   const ano = parseInt(m[1]);
+  const mes = parseInt(m[2]);
+  const dia = parseInt(m[3]);
   if (ano < 1900 || ano > 2030) return null;
+  if (mes < 1 || mes > 12) return null;
+  if (dia < 1 || dia > 31) return null;
+  // Validacao real: cria Date UTC e checa se Y/M/D batem (rejeita 2024-09-31, 2023-02-29 etc)
+  const d = new Date(Date.UTC(ano, mes - 1, dia));
+  if (isNaN(d.getTime())) return null;
+  if (d.getUTCFullYear() !== ano || d.getUTCMonth() + 1 !== mes || d.getUTCDate() !== dia) return null;
   return s;
 }
 
