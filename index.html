@@ -7776,6 +7776,21 @@ function govToggleBanco(id){
   renderApp();
 }
 
+// Formata valores: 0.0125 -> "1,25%". Funciona em valor isolado OU dentro de texto livre.
+function govFmtPct(v){
+  if(v===null||v===undefined||v==='') return '';
+  if(typeof v==='number'){
+    if(v>0&&v<1) return (v*100).toFixed(2).replace('.',',')+'%';
+    return String(v).replace('.',',');
+  }
+  // Texto livre: detecta decimais 0.xxx ou 0,xxx (entre 0 e 1) e converte
+  return String(v).replace(/\b0[.,]\d{2,5}\b/g, (m)=>{
+    const f=parseFloat(m.replace(',','.'));
+    if(!isNaN(f)&&f>0&&f<1) return (f*100).toFixed(2).replace('.',',')+'%';
+    return m;
+  });
+}
+
 function govLimparHolerite(){
   govState.arquivoBase64 = null; govState.arquivoNome = null;
   govState.arquivoTipo = null; govState.arquivoTamanho = 0;
@@ -7916,9 +7931,9 @@ function renderGovConvenioDetalhe(){
       return `<span class="pill pill-grn" style="font-size:10px">${lab}</span>`;
     }).join(' ');
     const susp = b.suspenso ? '<span class="pill" style="background:rgba(239,68,68,.15);color:var(--red);font-size:10px">⛔ Suspenso</span>' : '';
-    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(1)}%</b></div>` : '';
+    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(2).replace('.',',')}%</b></div>` : '';
     const idade = (b.idade_min||b.idade_max) ? `<div><span style="color:var(--t3);font-size:10px">Idade</span> <b>${b.idade_min||'?'}-${b.idade_max||'?'}</b></div>` : '';
-    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2)}%</b></div>` : '';
+    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2).replace('.',',')}%</b></div>` : '';
     const corte = b.data_corte ? `<div><span style="color:var(--t3);font-size:10px">Corte</span> <b>${esc(b.data_corte)}</b></div>` : '';
     const expandido = govState.bancoExpandido === b.id;
 
@@ -7949,7 +7964,7 @@ function renderGovConvenioDetalhe(){
         h += `<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;margin-bottom:6px">${lab}</div>`;
         h += '<div style="display:grid;grid-template-columns:1fr;gap:6px;font-size:12px">';
         for(const a of items){
-          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(a.valor)}</div></div>`;
+          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(govFmtPct(a.valor))}</div></div>`;
         }
         h += '</div></div>';
       }
@@ -8303,9 +8318,9 @@ function renderPrefConvenioDetalhe(){
       return `<span class="pill pill-grn" style="font-size:10px">${lab}</span>`;
     }).join(' ');
     const susp = b.suspenso ? '<span class="pill" style="background:rgba(239,68,68,.15);color:var(--red);font-size:10px">⛔ Suspenso</span>' : '';
-    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(1)}%</b></div>` : '';
+    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(2).replace('.',',')}%</b></div>` : '';
     const idade = (b.idade_min||b.idade_max) ? `<div><span style="color:var(--t3);font-size:10px">Idade</span> <b>${b.idade_min||'?'}-${b.idade_max||'?'}</b></div>` : '';
-    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2)}%</b></div>` : '';
+    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2).replace('.',',')}%</b></div>` : '';
     const corte = b.data_corte ? `<div><span style="color:var(--t3);font-size:10px">Corte</span> <b>${esc(b.data_corte)}</b></div>` : '';
     const expandido = prefState.bancoExpandido === b.id;
 
@@ -8335,7 +8350,7 @@ function renderPrefConvenioDetalhe(){
         h += `<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;margin-bottom:6px">${lab}</div>`;
         h += '<div style="display:grid;grid-template-columns:1fr;gap:6px;font-size:12px">';
         for(const a of items){
-          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(a.valor)}</div></div>`;
+          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(govFmtPct(a.valor))}</div></div>`;
         }
         h += '</div></div>';
       }
