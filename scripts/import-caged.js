@@ -247,33 +247,64 @@ async function flushMap(map) {
   }
 }
 
+// Salva/carrega state pra retomar de onde parou
+function carregarState() {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+      return s.linhaAtual || 0;
+    }
+  } catch {}
+  return 0;
+}
+function salvarState(linhaAtual) {
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ linhaAtual, ts: Date.now() }));
+  } catch {}
+}
+
 // ─── Loop principal ──────────────────────────────────────────────
 async function main() {
   const tamanhoBytes = fs.statSync(FILE).size;
   console.log(`📂 ${FILE}`);
   console.log(`   ${(tamanhoBytes / 1024 / 1024 / 1024).toFixed(2)} GB`);
+
+  const offsetInicial = carregarState();
+  if (offsetInicial > 0) {
+    console.log(`📍 Retomando do offset ${offsetInicial.toLocaleString('pt-BR')} (state file)`);
+    console.log(`   (pra começar do zero, apague: ${STATE_FILE})`);
+  }
   console.log(`🚀 Iniciando import — destino: ${TABELA}\n`);
 
   const stream = fs.createReadStream(FILE);
-  // CAGED usa Latin-1/Windows-1252 — Node nao tem direto, usamos TextDecoder
-  // por chunk apos split de linha (binary). Mas pra simplificar e ser rapido,
-  // vamos ler como latin1 e converter manual usando TextDecoder.
   stream.setEncoding('latin1');
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
-  const cpfs = new Map(); // cpf → registro deduplicado
+  const cpfs = new Map();
   let totalLinhas = 0;
   let pulado = 0;
   let totalUpsert = 0;
   let cabecalho = true;
   let inicio = Date.now();
   let ultimoLog = Date.now();
+  let avisoPulou = false;
 
   for await (const linha of rl) {
     totalLinhas++;
-    if (cabecalho) { cabecalho = false; continue; } // pula 1a linha
+    if (cabecalho) { cabecalho = false; continue; }
 
-    // Latin-1 → UTF-8 reinterpretation
+    // Skip rapido até atingir offset (pula sem parsear — ~10x mais rapido)
+    if (totalLinhas <= offsetInicial) {
+      if (totalLinhas % 500000 === 0) {
+        console.log(`   ⏩ pulando ${totalLinhas.toLocaleString('pt-BR')} / ${offsetInicial.toLocaleString('pt-BR')}`);
+      }
+      continue;
+    }
+    if (!avisoPulou && offsetInicial > 0) {
+      console.log(`   ✅ chegou no offset, processando a partir daqui`);
+      avisoPulou = true;
+    }
+
     const utf8 = Buffer.from(linha, 'latin1').toString('utf8');
     const parts = utf8.split('|');
     if (parts.length < 30) { pulado++; continue; }
@@ -284,36 +315,38 @@ async function main() {
     const existente = cpfs.get(reg.cpf);
     cpfs.set(reg.cpf, maisRecente(existente, reg));
 
-    // Flush periodicamente
     if (cpfs.size >= FLUSH_THRESHOLD) {
       const t1 = Date.now();
       await flushMap(cpfs);
       totalUpsert += cpfs.size;
       cpfs.clear();
-      console.log(`   💾 flush: +${FLUSH_THRESHOLD} CPFs (${(Date.now()-t1)/1000}s) | total upsert: ${totalUpsert.toLocaleString('pt-BR')}`);
+      salvarState(totalLinhas); // grava progresso
+      console.log(`   💾 flush: +${FLUSH_THRESHOLD} CPFs (${((Date.now()-t1)/1000).toFixed(1)}s) | total upsert: ${totalUpsert.toLocaleString('pt-BR')} | linha ${totalLinhas.toLocaleString('pt-BR')}`);
     }
 
-    // Log de progresso a cada 30s
     if (Date.now() - ultimoLog > 30000) {
       const elapsed = (Date.now() - inicio) / 1000;
-      const linhasPorSeg = totalLinhas / elapsed;
-      console.log(`   📊 ${totalLinhas.toLocaleString('pt-BR')} linhas lidas | ${cpfs.size.toLocaleString('pt-BR')} no buffer | ${linhasPorSeg.toFixed(0)} l/s | pulados: ${pulado.toLocaleString('pt-BR')}`);
+      const linhasPorSeg = (totalLinhas - offsetInicial) / elapsed;
+      console.log(`   📊 ${totalLinhas.toLocaleString('pt-BR')} linhas | ${cpfs.size.toLocaleString('pt-BR')} buffer | ${linhasPorSeg.toFixed(0)} l/s | pulados: ${pulado.toLocaleString('pt-BR')}`);
       ultimoLog = Date.now();
     }
   }
 
-  // Flush final
   if (cpfs.size > 0) {
     console.log(`\n   💾 flush final: ${cpfs.size.toLocaleString('pt-BR')} CPFs restantes...`);
     await flushMap(cpfs);
     totalUpsert += cpfs.size;
+    salvarState(totalLinhas);
   }
 
   const totalSeg = (Date.now() - inicio) / 1000;
   console.log(`\n✅ CONCLUÍDO em ${(totalSeg/60).toFixed(1)} minutos`);
   console.log(`   ${totalLinhas.toLocaleString('pt-BR')} linhas processadas`);
   console.log(`   ${pulado.toLocaleString('pt-BR')} linhas puladas (CPF inválido / formato ruim)`);
-  console.log(`   ${totalUpsert.toLocaleString('pt-BR')} CPFs upsertados (deduplicados pelo último estado)`);
+  console.log(`   ${totalUpsert.toLocaleString('pt-BR')} CPFs upsertados`);
+
+  // Limpa state file ao concluir com sucesso
+  try { if (fs.existsSync(STATE_FILE)) fs.unlinkSync(STATE_FILE); } catch {}
 }
 
 main().catch(e => {
