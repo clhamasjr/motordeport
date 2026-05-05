@@ -708,6 +708,14 @@ export default async function handler(req) {
 
     if (Object.keys(clienteInicial).length === 0) clienteInicial = null;
 
+    // Origem do registro: 'lote' (higienizacao em lote) muda o criada_por_nome
+    // pra "Higienizacao Lote · <user>". Default 'unitaria' usa nome do user.
+    const origem = body.origem === 'lote' ? 'lote' : 'unitaria';
+    const nomeOperador = user?.nome || user?.username || 'Sistema';
+    const criadaPorNome = origem === 'lote'
+      ? `Higienização Lote · ${nomeOperador}`
+      : nomeOperador;
+
     const { data: row, error } = await dbInsert('clt_consultas_fila', {
       cpf, nome_manual: nomeManual, incluir_c6: incluirC6,
       status_geral: 'processando',
@@ -715,7 +723,7 @@ export default async function handler(req) {
       cliente: clienteInicial,
       iniciado_em: new Date().toISOString(),
       criada_por_user_id: user?.id || null,
-      criada_por_nome: user?.nome || user?.username || null
+      criada_por_nome: criadaPorNome
     });
     if (error) return jsonError('Erro criando fila: ' + error, 500, req);
 

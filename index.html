@@ -1919,15 +1919,25 @@ function renderAdmin(){
       </div>
       <div id="govReseedResult" style="margin-top:10px;font-size:12px"></div>
     </div>
-    <div style="background:var(--sf);border:1px solid var(--brd);border-radius:10px;padding:14px">
+    <div style="background:var(--sf);border:1px solid var(--brd);border-radius:10px;padding:14px;margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
         <div>
           <div style="font-weight:700;font-size:13px">🏙️ Reseed Catálogo de Prefeituras</div>
-          <div style="font-size:11px;color:var(--t3);margin-top:2px">Recarrega convênios + bancos a partir do <code>/pref_seed.json</code> deployado. Use após atualizar a planilha de prefeituras (limpa relação banco × convênio e reimporta — ~400 convênios, pode levar 30-60s).</div>
+          <div style="font-size:11px;color:var(--t3);margin-top:2px">Recarrega convênios + bancos a partir do <code>/pref_seed.json</code> deployado. Use após atualizar a planilha de prefeituras (limpa relação banco × convênio e reimporta — ~400 convênios).</div>
         </div>
         <button class="btn-acc btn-sm" id="btnPrefReseed" onclick="prefAdminReseed()">🔄 Reseed</button>
       </div>
       <div id="prefReseedResult" style="margin-top:10px;font-size:12px"></div>
+    </div>
+    <div style="background:var(--sf);border:1px solid var(--brd);border-radius:10px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-weight:700;font-size:13px">🇧🇷 Reseed Catálogo Federal (SIAPE / Forças Armadas)</div>
+          <div style="font-size:11px;color:var(--t3);margin-top:2px">Recarrega convênios + bancos a partir do <code>/fed_seed.json</code> deployado. Inclui SIAPE (Novo/Refin, Portabilidade, Cartão Consignado, Cartão Benefício), SERPRO, Marinha, Exército e Aeronáutica.</div>
+        </div>
+        <button class="btn-acc btn-sm" id="btnFedReseed" onclick="fedAdminReseed()">🔄 Reseed</button>
+      </div>
+      <div id="fedReseedResult" style="margin-top:10px;font-size:12px"></div>
     </div>
   </div>`;
   // Dropdown de parceiros (agencias) pro form de criar usuario
@@ -1959,9 +1969,29 @@ async function prefAdminReseed(){
   const btn = document.getElementById('btnPrefReseed');
   const out = document.getElementById('prefReseedResult');
   if(btn){ btn.disabled = true; btn.textContent = '⏳ Aplicando...'; }
-  if(out){ out.innerHTML = '<span style="color:var(--t3)">Carregando seed e populando (~400 convênios, aguarde)...</span>'; }
+  if(out){ out.innerHTML = '<span style="color:var(--t3)">Carregando seed e populando (aguarde — pode demorar)...</span>'; }
   try{
     const r = await apiFetch('/api/pref-seed', { method:'POST', body: JSON.stringify({action:'reseed'}) });
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error || 'Falha');
+    const s = d.stats || {};
+    if(out){
+      out.innerHTML = `<span style="color:var(--grn)">✓ Concluído em ${(d.duracao_ms/1000).toFixed(1)}s</span> · `
+        + `${s.bancos||0} bancos · ${s.convenios||0} convênios · ${s.banco_convenio||0} relações`;
+    }
+  }catch(e){
+    if(out){ out.innerHTML = `<span style="color:var(--red)">❌ ${esc(e.message)}</span>`; }
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '🔄 Reseed'; }
+  }
+}
+async function fedAdminReseed(){
+  const btn = document.getElementById('btnFedReseed');
+  const out = document.getElementById('fedReseedResult');
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Aplicando...'; }
+  if(out){ out.innerHTML = '<span style="color:var(--t3)">Carregando seed federal e populando...</span>'; }
+  try{
+    const r = await apiFetch('/api/fed-seed', { method:'POST', body: JSON.stringify({action:'reseed'}) });
     const d = await r.json();
     if(!d.ok) throw new Error(d.error || 'Falha');
     const s = d.stats || {};
@@ -6627,35 +6657,49 @@ function renderCltConsulta() {
   h += '</div>';
   return h;
 }
-// ─── Higienização em Lote CLT (por banco) ────────────────────
+// ─── Higienização em Lote CLT (TODOS os 8 bancos via clt-fila criar) ──
+// Cada CPF do lote vira 1 linha em clt_consultas_fila e o backend dispara
+// os 8 processadores em paralelo (PB, MC, V8 QI, V8 CELCOIN, JoinBank,
+// Mercantil, Handbank, C6). Persistente, aparece no Painel de Consultas,
+// enriquece clt_clientes pra reuso futuro.
 let cltBatchState = {
-  banco: 'c6',          // 'c6' | 'presencabank' | 'joinbank'
   running: false,
-  items: [],            // [{cpf, nome?, telefone?, status, result}]
+  items: [],            // [{cpf, nome?, dataNascimento?, sexo?, telefone?, filaId?, status, fila?}]
   done: 0,
   total: 0,
-  aborted: false
+  aborted: false,
+  pollHandle: null
 };
 
-function cltBatchSetBanco(b) { cltBatchState.banco = b; cltBatchState.items = []; cltBatchState.done = 0; cltBatchState.total = 0; renderApp(); }
-
-function _parseBatchInput(raw, banco) {
+// CSV flexivel: aceita "cpf" sozinho ou "cpf;nome;dataNasc;sexo;telefone"
+// (ordem fixa, separador ; , ou tab). Pula linhas vazias/headers.
+function _parseBatchInput(raw) {
   const lines = raw.split(/\n/).map(l => l.trim()).filter(Boolean);
   const out = [];
   for (const line of lines) {
-    // C6 só precisa CPF. PB e JB precisam CPF + Nome + Telefone (CSV: cpf;nome;telefone OU cpf,nome,telefone)
-    const parts = line.split(/[;,\t]/).map(s => s.trim()).filter(Boolean);
-    if (banco === 'c6') {
-      const cpf = normalizeCPF(parts[0] || line);
-      if (cpf) out.push({ cpf });
-    } else {
-      // Pra PB/JB precisa de 3 campos
-      if (parts.length < 3) continue; // pula linhas inválidas
-      const cpf = normalizeCPF(parts[0]);
-      const nome = parts[1];
-      const telefone = (parts[2] || '').replace(/\D/g, '');
-      if (cpf && nome && telefone.length >= 10) out.push({ cpf, nome, telefone });
+    // Pula linhas tipicas de cabecalho
+    if (/^cpf[;,\t]/i.test(line)) continue;
+    const parts = line.split(/[;,\t]/).map(s => s.trim());
+    const cpf = normalizeCPF(parts[0] || line);
+    if (!cpf) continue;
+    const item = { cpf };
+    if (parts[1]) item.nome = parts[1];
+    if (parts[2]) {
+      // Aceita DD/MM/AAAA ou AAAA-MM-DD
+      const m1 = parts[2].match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      const m2 = parts[2].match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m1) item.dataNascimento = `${m1[3]}-${m1[2]}-${m1[1]}`;
+      else if (m2) item.dataNascimento = parts[2];
     }
+    if (parts[3]) {
+      const s = parts[3].toUpperCase();
+      if (s.startsWith('M') || s.startsWith('F')) item.sexo = s[0];
+    }
+    if (parts[4]) {
+      const tel = parts[4].replace(/\D/g, '');
+      if (tel.length >= 10) item.telefone = tel;
+    }
+    out.push(item);
   }
   // Dedupe por CPF
   const seen = new Set();
@@ -6664,82 +6708,120 @@ function _parseBatchInput(raw, banco) {
 
 async function rodarBatchCLT() {
   const raw = document.getElementById('cltBatchInput').value || '';
-  const items = _parseBatchInput(raw, cltBatchState.banco);
+  const items = _parseBatchInput(raw);
 
   if (items.length === 0) {
-    alert(cltBatchState.banco === 'c6'
-      ? 'Cole pelo menos 1 CPF válido (1 por linha)'
-      : 'Cole pelo menos 1 linha com CPF;Nome;Telefone (separados por ; ou ,)');
+    alert('Cole pelo menos 1 CPF válido (1 por linha). Formato livre: "cpf" ou "cpf;nome;data;sexo;tel".');
     return;
   }
-  if (items.length > 500) {
-    if (!confirm(`Você colou ${items.length} linhas. Vai demorar ~${Math.ceil(items.length * 2 / 60)} minutos. Continuar?`)) return;
+  if (items.length > 300) {
+    if (!confirm(`${items.length} CPFs vai disparar muitos jobs. Continuar?`)) return;
   }
 
   cltBatchState.running = true;
   cltBatchState.aborted = false;
-  cltBatchState.items = items.map(it => ({ ...it, status: 'pending', result: null }));
+  cltBatchState.items = items.map(it => ({ ...it, status: 'pending', filaId: null, fila: null }));
   cltBatchState.done = 0;
   cltBatchState.total = items.length;
   renderApp();
 
-  const h = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() };
+  const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() };
+  const PARALLELISM = 5; // dispara 5 criar() em paralelo, sem sobrecarregar
 
-  for (let i = 0; i < cltBatchState.items.length; i++) {
-    if (cltBatchState.aborted) break;
-    const it = cltBatchState.items[i];
+  // Helper: cria fila pra 1 item
+  async function criarFila(item) {
+    if (cltBatchState.aborted) return;
+    item.status = 'criando';
     try {
-      let payload, endpoint;
-      if (cltBatchState.banco === 'c6') {
-        endpoint = '/api/c6';
-        payload = { action: 'oferta', cpf: it.cpf };
-      } else if (cltBatchState.banco === 'presencabank') {
-        endpoint = '/api/presencabank';
-        payload = { action: 'fluxoCompleto', cpf: it.cpf, nome: it.nome, telefone: it.telefone };
-      } else if (cltBatchState.banco === 'joinbank') {
-        endpoint = '/api/joinbank';
-        payload = { action: 'cltCreateSimulation', providerCode: '950002',
-          borrower: { identity: it.cpf, name: it.nome, phone: it.telefone } };
-      } else if (cltBatchState.banco === 'v8') {
-        endpoint = '/api/v8';
-        payload = {
-          action: 'consultarPorCPF',
-          cpf: it.cpf
-        };
-        // V8 batch usa só consultarPorCPF (verifica se já tem termo + status)
-        // Pra criar termo novo, usar Consulta Unitária
+      const body = { action: 'criar', cpf: item.cpf, incluirC6: true, origem: 'lote' };
+      if (item.nome) body.nome = item.nome;
+      if (item.dataNascimento) body.dataNascimento = item.dataNascimento;
+      if (item.sexo) body.sexo = item.sexo;
+      const r = await fetch('/api/clt-fila', { method: 'POST', headers, body: JSON.stringify(body) }).then(r => r.json());
+      if (r.success && r.id) {
+        item.filaId = r.id;
+        item.status = 'processando';
+      } else {
+        item.status = 'erro';
+        item.erro = r.error || 'falha ao criar';
       }
-      const r = await fetch(endpoint, { method: 'POST', headers: h, body: JSON.stringify(payload) }).then(r => r.json());
-      it.status = 'done';
-      it.result = r;
     } catch (e) {
-      it.status = 'error';
-      it.result = { error: e.message };
+      item.status = 'erro';
+      item.erro = e.message;
     }
-    cltBatchState.done = i + 1;
-    if ((i + 1) % 3 === 0 || i + 1 === cltBatchState.items.length) renderApp();
-    // Rate limit por banco
-    const delay = cltBatchState.banco === 'presencabank' ? 2200 : 1200; // PB tem rate limit 30 req/min
-    if (i + 1 < cltBatchState.items.length && !cltBatchState.aborted) {
-      await new Promise(r => setTimeout(r, delay));
-    }
+    cltBatchState.done++;
   }
 
+  // Dispara em janelas de PARALLELISM
+  for (let i = 0; i < cltBatchState.items.length; i += PARALLELISM) {
+    if (cltBatchState.aborted) break;
+    const slice = cltBatchState.items.slice(i, i + PARALLELISM);
+    await Promise.all(slice.map(criarFila));
+    renderApp();
+  }
+
+  // Dispara polling pra acompanhar status dos bancos pra cada item
+  cltBatchState.pollHandle = setInterval(() => _polarBatchCLT(), 4000);
   cltBatchState.running = false;
+  renderApp();
+}
+
+// Polling: a cada 4s busca status atualizado das filas em processamento
+async function _polarBatchCLT() {
+  const ids = cltBatchState.items
+    .filter(it => it.filaId && it.status === 'processando')
+    .map(it => it.filaId);
+  if (ids.length === 0) {
+    if (cltBatchState.pollHandle) { clearInterval(cltBatchState.pollHandle); cltBatchState.pollHandle = null; }
+    return;
+  }
+  const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() };
+  // Faz status individual (evita race condition no listar) — 5 paralelos
+  for (let i = 0; i < ids.length; i += 5) {
+    const slice = ids.slice(i, i + 5);
+    await Promise.all(slice.map(async (id) => {
+      try {
+        const r = await fetch('/api/clt-fila', {
+          method: 'POST', headers,
+          body: JSON.stringify({ action: 'status', id })
+        }).then(r => r.json());
+        if (r.success && r.fila) {
+          const item = cltBatchState.items.find(it => it.filaId === id);
+          if (item) {
+            item.fila = r.fila;
+            if (r.fila.status_geral === 'concluido') item.status = 'concluido';
+          }
+        }
+      } catch {}
+    }));
+  }
   renderApp();
 }
 
 function abortarBatchCLT() {
   cltBatchState.aborted = true;
+  if (cltBatchState.pollHandle) { clearInterval(cltBatchState.pollHandle); cltBatchState.pollHandle = null; }
 }
 
-function _batchTemOferta(it, banco) {
-  if (it.status !== 'done' || !it.result) return false;
-  if (banco === 'c6') return !!(it.result.temOferta && it.result.oferta);
-  if (banco === 'presencabank') return !!(it.result.success && it.result.melhorTabela);
-  if (banco === 'joinbank') return !!(it.result.success && it.result.temVinculo);
-  if (banco === 'v8') return !!(it.result.encontrado && it.result.status === 'SUCCESS');
-  return false;
+// Conta bancos com oferta disponivel pro item (depois do polling pegar fila)
+function _batchTotalOk(item) {
+  const b = item.fila?.bancos || {};
+  let n = 0;
+  for (const k of ['presencabank','v8_qi','v8_celcoin','joinbank','mercantil','handbank','c6']) {
+    if (b[k]?.disponivel === true) n++;
+  }
+  return n;
+}
+
+// Atalho pra abrir esse item no Painel de Consultas (selecionada)
+function cltBatchAbrirNoPainel(filaId) {
+  if (!filaId) return;
+  cltConsultaState.selecionadaId = filaId;
+  cltConsultaState.filaId = filaId;
+  try { localStorage.setItem('clt_fila_atual', filaId); } catch {}
+  S.tab = 'cltConsulta';
+  renderApp();
+  setTimeout(() => selecionarConsulta(filaId), 100);
 }
 
 // ─── ESTEIRA CLT (todos os 4 bancos) ──────────────────────────
@@ -6906,122 +6988,110 @@ function exportBatchCLT() {
 }
 
 function renderCltBatch() {
-  let h = '<div style="max-width:1200px;margin:0 auto;padding:24px">';
+  let h = '<div style="max-width:1400px;margin:0 auto;padding:24px">';
   h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">📥 CLT — Higienização em Lote</div>';
-  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Escolha o banco e cole os dados pra higienizar em lote.</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Cole CPFs e o sistema consulta TODOS os bancos automaticamente. Resultado fica no Painel de Consultas.</div>';
 
   const st = cltBatchState;
+  const temItens = st.items.length > 0;
 
-  // Seletor de banco
-  h += '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
-  const bancos = [
-    { k: 'c6', label: '🏦 C6 Bank', desc: 'só CPF', cor: 'var(--cyan)' },
-    { k: 'presencabank', label: '🏦 PresençaBank', desc: 'CPF + Nome + Telefone', cor: 'var(--grn)' },
-    { k: 'v8', label: '🏦 V8 Sistema', desc: 'CPF + Nome + Tel + Sexo + DataNasc + Email', cor: 'var(--ylw)' }
-  ];
-  for (const b of bancos) {
-    const active = st.banco === b.k;
-    h += `<button onclick="cltBatchSetBanco('${b.k}')" style="flex:1;padding:14px;border-radius:10px;border:2px solid ${active?b.cor:'var(--brd)'};background:${active?'rgba(255,255,255,.03)':'var(--card)'};cursor:pointer;color:var(--t1);text-align:left">`;
-    h += `<div style="font-size:14px;font-weight:800;color:${active?b.cor:'var(--t1)'}">${b.label}</div>`;
-    h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">Input: ${b.desc}</div>`;
-    h += `</button>`;
-  }
-  h += '</div>';
-
-  if (!st.running && st.items.length === 0) {
-    // Tela inicial: textarea (placeholder muda por banco)
-    const placeholder = st.banco === 'c6'
-      ? '12345678900\n98765432100\n11122233344'
-      : '12345678900;João da Silva;15999111111\n98765432100;Maria Santos;11988887777';
-    const labelTxt = st.banco === 'c6'
-      ? 'Lista de CPFs (um por linha, máx 500)'
-      : 'Lista CPF;Nome;Telefone (uma linha por cliente, separadores: ; ou ,)';
-
+  if (!temItens) {
+    // Tela inicial
     h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:20px">';
-    h += `<label style="font-size:12px;color:var(--t2);font-weight:700;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:8px">${labelTxt}</label>`;
-    h += `<textarea id="cltBatchInput" class="form-input" style="width:100%;min-height:200px;font-family:monospace;font-size:13px" placeholder="${placeholder}"></textarea>`;
+    h += '<label style="font-size:12px;color:var(--t2);font-weight:700;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:8px">Lista de CPFs (1 por linha, máx 300)</label>';
+    h += '<div style="font-size:11px;color:var(--t3);margin-bottom:8px">Formato simples: <code style="background:var(--sf);padding:2px 6px;border-radius:4px">12345678900</code></div>';
+    h += '<div style="font-size:11px;color:var(--t3);margin-bottom:8px">Formato completo (opcional, mais rápido): <code style="background:var(--sf);padding:2px 6px;border-radius:4px">cpf;nome;data_nasc;sexo;telefone</code> — separadores: ;, ou tab</div>';
+    h += '<textarea id="cltBatchInput" class="form-input" style="width:100%;min-height:240px;font-family:monospace;font-size:13px" placeholder="12345678900\n98765432100;Maria Silva;15/03/1985;F;15999998888\n11122233344"></textarea>';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">';
-    const ratemsg = st.banco === 'presencabank' ? '~2.2s por CPF (rate limit 30 req/min)' : '~1.2s por CPF';
-    h += `<div style="font-size:11px;color:var(--t3)">⏱️ ${ratemsg}</div>`;
+    h += '<div style="font-size:11px;color:var(--t3)">⏱️ ~5-15s por CPF (8 bancos em paralelo). Roda em background — pode fechar a aba.</div>';
     h += '<button class="btn-acc" onclick="rodarBatchCLT()" style="padding:10px 24px">🚀 Rodar Higienização</button>';
     h += '</div></div>';
   } else {
-    const temOferta = st.items.filter(i => _batchTemOferta(i, st.banco)).length;
-    const semOferta = st.items.filter(i => i.status === 'done' && !_batchTemOferta(i, st.banco)).length;
-    const erros = st.items.filter(i => i.status === 'error').length;
-    const pct = st.total ? Math.round((st.done / st.total) * 100) : 0;
+    // Tela de progresso
+    const concluidos = st.items.filter(i => i.status === 'concluido').length;
+    const processando = st.items.filter(i => i.status === 'processando' || i.status === 'criando').length;
+    const erros = st.items.filter(i => i.status === 'erro').length;
+    const comOferta = st.items.filter(i => i.fila && _batchTotalOk(i) > 0).length;
+    const semOferta = st.items.filter(i => i.status === 'concluido' && _batchTotalOk(i) === 0).length;
+    const pct = st.total ? Math.round((concluidos / st.total) * 100) : 0;
 
     h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:20px;margin-bottom:16px">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
-    h += `<div style="font-size:15px;font-weight:800">${st.running ? '⏳ Processando' : '✅ Concluído'}: ${st.done} / ${st.total} <span style="color:var(--t3);font-weight:600">— ${st.banco.toUpperCase()}</span></div>`;
+    const tituloProgresso = processando > 0 ? '⏳ Processando' : (st.aborted ? '⏹ Abortado' : '✅ Concluído');
+    h += `<div style="font-size:15px;font-weight:800">${tituloProgresso}: ${concluidos} / ${st.total}</div>`;
     h += '<div style="display:flex;gap:8px">';
-    if (st.running) {
-      h += '<button class="btn btn-sm btn-red" onclick="abortarBatchCLT()">⏹ Parar</button>';
+    if (processando > 0) {
+      h += '<button class="btn btn-sm btn-red" onclick="abortarBatchCLT()">⏹ Parar polling</button>';
     } else {
-      h += '<button class="btn btn-sm" onclick="exportBatchCLT()">📥 Exportar CSV</button>';
-      h += '<button class="btn btn-sm" onclick="cltBatchState.items=[];cltBatchState.done=0;cltBatchState.total=0;renderApp()">🔄 Nova Lista</button>';
+      h += '<button class="btn btn-sm" onclick="cltBatchState.items=[];cltBatchState.done=0;cltBatchState.total=0;if(cltBatchState.pollHandle){clearInterval(cltBatchState.pollHandle);cltBatchState.pollHandle=null}renderApp()">🔄 Nova Lista</button>';
     }
     h += '</div></div>';
 
     h += `<div style="background:var(--sf);height:8px;border-radius:4px;overflow:hidden;margin-bottom:14px"><div style="background:linear-gradient(90deg,var(--acc),var(--cyan));height:100%;width:${pct}%;transition:width .3s"></div></div>`;
 
-    h += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">';
+    h += '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">';
     h += `<div style="padding:12px;background:var(--sf);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">TOTAL</div><div style="font-size:20px;font-weight:800">${st.total}</div></div>`;
-    h += `<div style="padding:12px;background:rgba(34,197,94,.08);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">COM OFERTA</div><div style="font-size:20px;font-weight:800;color:var(--grn)">${temOferta}</div></div>`;
+    h += `<div style="padding:12px;background:rgba(59,130,246,.08);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">PROCESSANDO</div><div style="font-size:20px;font-weight:800;color:var(--acc)">${processando}</div></div>`;
+    h += `<div style="padding:12px;background:rgba(34,197,94,.08);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">COM OFERTA</div><div style="font-size:20px;font-weight:800;color:var(--grn)">${comOferta}</div></div>`;
     h += `<div style="padding:12px;background:rgba(156,163,175,.08);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">SEM OFERTA</div><div style="font-size:20px;font-weight:800;color:var(--t2)">${semOferta}</div></div>`;
     h += `<div style="padding:12px;background:rgba(239,68,68,.08);border-radius:8px;text-align:center"><div style="font-size:10px;color:var(--t3)">ERROS</div><div style="font-size:20px;font-weight:800;color:var(--red)">${erros}</div></div>`;
-    h += '</div>';
-    h += '</div>';
+    h += '</div></div>';
 
-    // Tabela
+    // Tabela com 1 linha por CPF e indicadores dos 8 bancos (mini-pílulas)
     h += '<div class="table-wrap"><div class="table-scroll"><table>';
-    if (st.banco === 'c6') {
-      h += '<thead><tr><th>CPF</th><th>Status</th><th class="right">Valor</th><th class="right">Parcelas</th><th class="right">Seguro Sug.</th></tr></thead><tbody>';
-      for (const it of st.items) {
-        let badge, valor = '-', parcs = '-', seg = '-';
-        if (it.status === 'pending') badge = '<span class="pill pill-default">aguardando</span>';
-        else if (it.status === 'error') badge = '<span class="pill pill-red">erro</span>';
-        else if (_batchTemOferta(it, 'c6')) {
-          badge = '<span class="pill pill-grn">TEM OFERTA</span>';
-          const o = it.result.oferta;
-          valor = 'R$ ' + (o.valorCliente || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
-          parcs = o.qtdParcelas + 'x R$ ' + (o.valorParcela || 0).toFixed(2);
-          seg = 'R$ ' + (o.valorSeguroSugerido || 0).toFixed(2);
-        } else badge = '<span class="pill pill-default">sem oferta</span>';
-        h += `<tr><td class="mono">${it.cpf}</td><td>${badge}</td><td class="right mono">${valor}</td><td class="right mono">${parcs}</td><td class="right mono">${seg}</td></tr>`;
-      }
-    } else if (st.banco === 'presencabank') {
-      h += '<thead><tr><th>CPF</th><th>Nome</th><th>Status</th><th>Empregador</th><th class="right">Margem</th><th class="right">Melhor Valor</th></tr></thead><tbody>';
-      for (const it of st.items) {
-        let badge, emp = '-', marg = '-', val = '-';
-        if (it.status === 'pending') badge = '<span class="pill pill-default">aguardando</span>';
-        else if (it.status === 'error') badge = '<span class="pill pill-red">erro</span>';
-        else if (_batchTemOferta(it, 'presencabank')) {
-          badge = '<span class="pill pill-grn">DISPONÍVEL</span>';
-          emp = (it.result.vinculo?.empregador || '').substring(0, 30);
-          marg = 'R$ ' + (it.result.margemDisponivel || 0).toFixed(2);
-          val = 'R$ ' + (it.result.melhorTabela?.valorLiquido || 0).toFixed(2);
-        } else {
-          badge = `<span class="pill pill-default">${it.result?.etapa || 'sem oferta'}</span>`;
-        }
-        h += `<tr><td class="mono">${it.cpf}</td><td>${(it.nome||'').substring(0,20)}</td><td>${badge}</td><td>${emp}</td><td class="right mono">${marg}</td><td class="right mono">${val}</td></tr>`;
-      }
-    } else {
-      h += '<thead><tr><th>CPF</th><th>Nome</th><th>Status</th><th>Empregador</th><th class="right">Margem</th></tr></thead><tbody>';
-      for (const it of st.items) {
-        let badge, emp = '-', marg = '-';
-        if (it.status === 'pending') badge = '<span class="pill pill-default">aguardando</span>';
-        else if (it.status === 'error') badge = '<span class="pill pill-red">erro</span>';
-        else if (_batchTemOferta(it, 'joinbank')) {
-          badge = '<span class="pill pill-grn">DISPONÍVEL</span>';
-          const e = it.result.employmentRelationships?.[0];
-          emp = (e?.employerName || '').substring(0, 30);
-          marg = 'R$ ' + (e?.availableMarginValue || 0).toFixed(2);
-        } else badge = '<span class="pill pill-default">sem vínculo</span>';
-        h += `<tr><td class="mono">${it.cpf}</td><td>${(it.nome||'').substring(0,20)}</td><td>${badge}</td><td>${emp}</td><td class="right mono">${marg}</td></tr>`;
-      }
+    h += '<thead><tr><th>CPF</th><th>Nome</th><th>Status</th><th>PB</th><th>QI</th><th>CC</th><th>JB</th><th>MC</th><th>HB</th><th>C6</th><th>Total</th><th>Ação</th></tr></thead><tbody>';
+    const mini = (st) => {
+      const colors = {
+        ok: 'background:rgba(34,197,94,.18);color:var(--grn)',
+        proc: 'background:rgba(59,130,246,.18);color:var(--acc)',
+        bloq: 'background:rgba(245,194,66,.15);color:var(--ylw)',
+        falha: 'background:rgba(239,68,68,.12);color:var(--red)',
+        pend: 'background:rgba(156,163,175,.12);color:var(--t3)'
+      };
+      const cor = colors[st] || colors.pend;
+      const icon = st === 'ok' ? '✓' : st === 'proc' ? '⏳' : st === 'bloq' ? '🔒' : st === 'falha' ? '✕' : '·';
+      return `<span style="${cor};padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700">${icon}</span>`;
+    };
+    const status2mini = (b) => {
+      if (!b || b.status === 'pending') return 'pend';
+      if (b.disponivel === true) return 'ok';
+      if (b.status === 'processando') return 'proc';
+      if (b.status === 'bloqueado' || b.bloqueado) return 'bloq';
+      if (b.status === 'falha') return 'falha';
+      return 'pend';
+    };
+    for (const it of st.items) {
+      const fila = it.fila;
+      const b = fila?.bancos || {};
+      let badgeStatus;
+      if (it.status === 'pending') badgeStatus = '<span class="pill pill-default">aguardando</span>';
+      else if (it.status === 'criando') badgeStatus = '<span class="pill" style="background:rgba(59,130,246,.15);color:var(--acc)">criando...</span>';
+      else if (it.status === 'erro') badgeStatus = `<span class="pill pill-red" title="${it.erro||''}">erro</span>`;
+      else if (it.status === 'concluido') badgeStatus = '<span class="pill pill-grn">concluído</span>';
+      else badgeStatus = '<span class="pill" style="background:rgba(59,130,246,.15);color:var(--acc)">processando</span>';
+      const total = fila ? _batchTotalOk(it) : 0;
+      const totalCor = total > 0 ? 'var(--grn)' : 'var(--t3)';
+      const acao = it.filaId
+        ? `<button class="btn btn-sm" style="font-size:10px;padding:3px 8px" onclick="cltBatchAbrirNoPainel('${it.filaId}')">👁️ Ver</button>`
+        : '-';
+      h += `<tr>`;
+      h += `<td class="mono" style="font-size:11px">${it.cpf}</td>`;
+      h += `<td style="font-size:11px">${(fila?.cliente?.nome || it.nome || '').substring(0, 25)}</td>`;
+      h += `<td>${badgeStatus}</td>`;
+      h += `<td>${mini(status2mini(b.presencabank))}</td>`;
+      h += `<td>${mini(status2mini(b.v8_qi))}</td>`;
+      h += `<td>${mini(status2mini(b.v8_celcoin))}</td>`;
+      h += `<td>${mini(status2mini(b.joinbank))}</td>`;
+      h += `<td>${mini(status2mini(b.mercantil))}</td>`;
+      h += `<td>${mini(status2mini(b.handbank))}</td>`;
+      h += `<td>${mini(status2mini(b.c6))}</td>`;
+      h += `<td style="text-align:center;font-weight:800;color:${totalCor}">${total}</td>`;
+      h += `<td>${acao}</td>`;
+      h += `</tr>`;
     }
     h += '</tbody></table></div></div>';
+
+    h += '<div style="margin-top:12px;font-size:11px;color:var(--t3)">📊 Os resultados ficam salvos no <a onclick="S.tab=\'cltPainel\';renderApp()" style="color:var(--acc);cursor:pointer;text-decoration:underline">Painel de Consultas</a> mesmo se você fechar essa aba.</div>';
   }
 
   h += '</div>';
@@ -7726,37 +7796,34 @@ function renderCltAdminMercantil() {
 // Catalogo de convenios + Analise de holerite via Claude
 // ══════════════════════════════════════════════════════════════
 let govState = {
-  // catalogo (3 niveis: estados -> convenios -> regras)
-  loadingCat: false, gruposCat: null, errCat: null,
-  carregouUmaVez: false,        // evita loop quando da erro
-  estadoSelecionado: null,     // UF selecionada (ex: 'SP'); null = lista de estados
-  filtroUf: '', filtroBusca: '',
-  convenioAberto: null,        // {convenio, bancos}
-  bancoExpandido: null,        // id do banco com atributos brutos abertos
-  // holerite
+  loadingCat: false, todosConvenios: null, errCat: null,
+  carregouUmaVez: false,
+  filtroBusca: '',
+  ufAberta: null,             // ex: 'SP' (camada 2 ativa)
+  convenioAberto: null,       // {convenio, bancos} (camada 3 ativa)
+  bancoExpandido: null,
   arquivoBase64: null, arquivoNome: null, arquivoTipo: null, arquivoTamanho: 0,
   loadingHol: false, errHol: null, resultadoHol: null,
-  convenioForcadoSlug: '',     // se vazio, IA detecta
+  convenioForcadoSlug: '',
 };
-
-function govSelecionarEstado(uf){ govState.estadoSelecionado = uf; renderApp(); }
-function govVoltarEstados(){ govState.estadoSelecionado = null; govState.bancoExpandido = null; renderApp(); }
 
 async function govCarregarConvenios(){
   govState.loadingCat = true; govState.errCat = null; renderApp();
   try{
-    const r = await apiFetch('/api/gov',{method:'POST',body:JSON.stringify({
-      action:'listConvenios', uf: govState.filtroUf, busca: govState.filtroBusca
-    })});
+    // Carrega todos de uma vez; filtro/agrupamento eh client-side
+    const r = await apiFetch('/api/gov',{method:'POST',body:JSON.stringify({action:'listConvenios'})});
     if(r.status === 404){ throw new Error('Endpoint /api/gov nao existe no servidor — falta fazer git push do api/gov.js'); }
     const d = await r.json();
     if(!d.ok) throw new Error(d.error||'Falha');
-    govState.gruposCat = d.grupos || [];
+    govState.todosConvenios = d.convenios || [];
   }catch(e){ govState.errCat = e.message; }
   govState.loadingCat = false;
   govState.carregouUmaVez = true;
   renderApp();
 }
+
+function govAbrirUf(uf){ govState.ufAberta = uf; govState.convenioAberto = null; renderApp(); }
+function govVoltarParaUfs(){ govState.ufAberta = null; govState.convenioAberto = null; renderApp(); }
 
 async function govAbrirConvenio(slug){
   govState.convenioAberto = { loading: true };
@@ -7766,9 +7833,7 @@ async function govAbrirConvenio(slug){
     const d = await r.json();
     if(!d.ok) throw new Error(d.error||'Falha');
     govState.convenioAberto = { convenio: d.convenio, bancos: d.bancos };
-  }catch(e){
-    govState.convenioAberto = { error: e.message };
-  }
+  }catch(e){ govState.convenioAberto = { error: e.message }; }
   govState.bancoExpandido = null;
   renderApp();
 }
@@ -7780,164 +7845,91 @@ function govToggleBanco(id){
   renderApp();
 }
 
-// Formata valores: 0.0125 -> "1,25%". Funciona em valor isolado OU dentro de texto livre.
-function govFmtPct(v){
-  if(v===null||v===undefined||v==='') return '';
-  if(typeof v==='number'){
-    if(v>0&&v<1) return (v*100).toFixed(2).replace('.',',')+'%';
-    return String(v).replace('.',',');
-  }
-  // Texto livre: detecta decimais 0.xxx ou 0,xxx (entre 0 e 1) e converte
-  return String(v).replace(/\b0[.,]\d{2,5}\b/g, (m)=>{
-    const f=parseFloat(m.replace(',','.'));
-    if(!isNaN(f)&&f>0&&f<1) return (f*100).toFixed(2).replace('.',',')+'%';
-    return m;
+function govAgruparPorUf(){
+  const lista = govState.todosConvenios || [];
+  const norm = s => (s||'').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  const q = norm(govState.filtroBusca || '').trim();
+  const filtrados = lista.filter(c => {
+    if(!q) return true;
+    return norm(c.nome).includes(q) || norm(c.sheet_origem||'').includes(q) || norm(c.uf||'').includes(q);
   });
-}
-
-function govLimparHolerite(){
-  govState.arquivoBase64 = null; govState.arquivoNome = null;
-  govState.arquivoTipo = null; govState.arquivoTamanho = 0;
-  govState.resultadoHol = null; govState.errHol = null;
-  renderApp();
-}
-
-async function govOnArquivo(input){
-  const f = input.files && input.files[0];
-  if(!f){ return; }
-  if(f.size > 10*1024*1024){ alert('Arquivo > 10MB. Reduza ou comprima.'); return; }
-  const tipo = f.type;
-  const ok = tipo === 'application/pdf' || tipo.startsWith('image/');
-  if(!ok){ alert('Tipo nao suportado. Use PDF ou imagem (JPG/PNG/WEBP).'); return; }
-  // converte pra base64
-  const reader = new FileReader();
-  reader.onload = () => {
-    const dataUrl = reader.result;
-    const b64 = String(dataUrl).split(',')[1] || '';
-    govState.arquivoBase64 = b64;
-    govState.arquivoNome = f.name;
-    govState.arquivoTipo = tipo;
-    govState.arquivoTamanho = f.size;
-    govState.errHol = null; govState.resultadoHol = null;
-    renderApp();
-  };
-  reader.onerror = () => { alert('Falha ao ler arquivo'); };
-  reader.readAsDataURL(f);
-}
-
-async function govAnalisarHolerite(){
-  if(!govState.arquivoBase64){ alert('Selecione um arquivo de holerite primeiro.'); return; }
-  govState.loadingHol = true; govState.errHol = null; govState.resultadoHol = null; renderApp();
-  try{
-    const payload = {
-      action: 'analisarHolerite',
-      arquivo_base64: govState.arquivoBase64,
-      arquivo_nome: govState.arquivoNome,
-      arquivo_tipo: govState.arquivoTipo,
-    };
-    if(govState.convenioForcadoSlug) payload.convenio_slug = govState.convenioForcadoSlug;
-    const r = await apiFetch('/api/gov',{method:'POST',body:JSON.stringify(payload)});
-    const d = await r.json();
-    if(!d.ok) throw new Error(d.error||'Falha');
-    govState.resultadoHol = d;
-  }catch(e){ govState.errHol = e.message; }
-  govState.loadingHol = false; renderApp();
-}
-
-// ── Render: Catalogo de Convenios (3 niveis: Estados -> Convenios -> Regras) ──
-function renderGovCatalogo(){
-  // Carrega so na 1a vez (carregouUmaVez impede loop em caso de erro)
-  if(!govState.carregouUmaVez && !govState.loadingCat){
-    govCarregarConvenios();
+  const ufs = {};
+  for(const c of filtrados){
+    const uf = c.uf || 'OUTROS';
+    if(!ufs[uf]) ufs[uf] = { uf, estado_nome: c.estado_nome, convenios: [] };
+    ufs[uf].convenios.push(c);
   }
-  // Nivel 3: detalhe do convenio com regras + bancos
-  if(govState.convenioAberto){ return renderGovConvenioDetalhe(); }
-  // Nivel 2: convenios de um estado
-  if(govState.estadoSelecionado){ return renderGovConveniosDoEstado(); }
-  // Nivel 1 (default): grid de estados
+  return Object.values(ufs).sort((a,b)=>(a.uf||'ZZ').localeCompare(b.uf||'ZZ'));
+}
+
+function _govHeaderBusca(){
+  return `<div style="margin-bottom:18px"><input class="form-input" placeholder="🔍 Buscar (TJ, governo, ministério, ex: TJMG, GOV PA, Bahia)..." value="${esc(govState.filtroBusca)}" oninput="govState.filtroBusca=this.value;renderApp()" style="width:100%"></div>`;
+}
+
+// Render: Catalogo (3 camadas: Estado -> Convenio -> Detalhe)
+function renderGovCatalogo(){
+  if(!govState.carregouUmaVez && !govState.loadingCat){ govCarregarConvenios(); }
+  if(govState.convenioAberto) return renderGovConvenioDetalhe();
+  if(govState.ufAberta) return renderGovUfConvenios();
   return renderGovEstados();
 }
 
-// ── Nivel 1: Grid de Estados ───────────────────────────────────
+// Camada 1: lista de Estados
 function renderGovEstados(){
   let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
-  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">🏛️ Catálogo de Convênios</div>';
-  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Selecione o estado para ver os convênios disponíveis.</div>';
+  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">🏛️ Catálogo de Governos</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Convênios estaduais (governos, tribunais, autarquias). Escolha um estado para ver os convênios disponíveis.</div>';
+  h += _govHeaderBusca();
 
-  // Busca rapida (atalho que pula direto pra um convenio se acertar nome)
-  h += '<div style="margin-bottom:18px">';
-  h += `<input class="form-input" placeholder="🔍 Buscar convênio direto (ex: TJMG, GOV PA, SPPREV)..." value="${esc(govState.filtroBusca)}" oninput="govState.filtroBusca=this.value" onkeydown="if(event.key==='Enter')govCarregarConvenios()" style="width:100%">`;
-  h += '</div>';
-
-  if(govState.loadingCat){
-    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando...</div></div>'; return h;
-  }
+  if(govState.loadingCat){ h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando…</div></div>'; return h; }
   if(govState.errCat){
     h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:12px">❌ ${esc(govState.errCat)}</div>`;
-    h += `<div style="text-align:center"><button class="btn-acc" onclick="govState.carregouUmaVez=false;govCarregarConvenios()">🔄 Tentar de novo</button></div></div>`; return h;
+    h += `<div style="text-align:center"><button class="btn-acc" onclick="govState.carregouUmaVez=false;govCarregarConvenios()">🔄 Tentar de novo</button></div></div>`;
+    return h;
   }
-  if(!govState.gruposCat || govState.gruposCat.length === 0){
+  const ufs = govAgruparPorUf();
+  if(ufs.length === 0){
     h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum convênio encontrado.</div></div>'; return h;
   }
-
-  // Se filtroBusca preenchido, mostra resultados rebatidos como cards de convenio
-  if(govState.filtroBusca && govState.filtroBusca.trim().length>=2){
-    const q = govState.filtroBusca.toLowerCase();
-    const matches = [];
-    for(const g of govState.gruposCat){
-      for(const c of g.convenios){
-        if(c.nome.toLowerCase().includes(q) || (c.sheet_origem||'').toLowerCase().includes(q)){
-          matches.push({...c, _uf: g.uf, _estado: g.estado_nome});
-        }
-      }
-    }
-    h += `<div style="font-size:12px;color:var(--t3);margin-bottom:10px">${matches.length} resultado(s) para "${esc(govState.filtroBusca)}":</div>`;
-    if(matches.length===0){
-      h += '<div style="padding:30px;text-align:center;color:var(--t3)">Nada encontrado. Tente outro termo ou navegue por estado abaixo.</div>';
-    } else {
-      h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:24px">';
-      for(const c of matches){
-        h += `<div onclick="govAbrirConvenio('${esc(c.slug)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;cursor:pointer" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--brd)'">`;
-        h += `<div style="font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;margin-bottom:4px">${esc(c._uf||'?')} ${c._estado?'— '+esc(c._estado):''}</div>`;
-        h += `<div style="font-weight:700;font-size:14px;line-height:1.3">${esc(c.nome)}</div>`;
-        h += `</div>`;
-      }
-      h += '</div>';
-    }
-    h += '<div style="font-size:11px;color:var(--t3);text-transform:uppercase;font-weight:700;margin-bottom:10px;letter-spacing:.1em">— ou navegue por estado —</div>';
-  }
-
-  // Grid de estados (sempre mostra)
-  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">';
-  for(const g of govState.gruposCat){
-    const uf = g.uf || 'OUTROS';
-    const qtd = (g.convenios||[]).length;
-    h += `<div onclick="govSelecionarEstado('${esc(uf)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:18px 14px;cursor:pointer;text-align:center;transition:all .15s" onmouseover="this.style.borderColor='var(--acc)';this.style.transform='translateY(-2px)'" onmouseout="this.style.borderColor='var(--brd)';this.style.transform='translateY(0)'">`;
-    h += `<div style="font-size:32px;font-weight:900;color:var(--acc);line-height:1">${esc(uf)}</div>`;
-    if(g.estado_nome) h += `<div style="font-size:11px;color:var(--t2);margin-top:6px;font-weight:600">${esc(g.estado_nome)}</div>`;
-    h += `<div style="font-size:10px;color:var(--t3);margin-top:6px">${qtd} convênio${qtd!==1?'s':''}</div>`;
+  const totalConv = ufs.reduce((s,u)=>s+u.convenios.length,0);
+  h += `<div style="font-size:12px;color:var(--t3);margin-bottom:14px">${ufs.length} estado(s)/região(ões) · ${totalConv} convênio(s)</div>`;
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">';
+  for(const u of ufs){
+    h += `<div onclick="govAbrirUf('${esc(u.uf)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:18px;cursor:pointer;transition:all .15s" onmouseover="this.style.borderColor='var(--acc)';this.style.transform='translateY(-2px)'" onmouseout="this.style.borderColor='var(--brd)';this.style.transform='translateY(0)'">`;
+    h += `<div style="font-size:28px;font-weight:900;color:var(--acc);line-height:1">${esc(u.uf)}</div>`;
+    h += `<div style="font-size:13px;color:var(--t2);margin-top:4px">${esc(u.estado_nome||'')}</div>`;
+    h += `<div style="font-size:12px;color:var(--t3);margin-top:8px">📋 ${u.convenios.length} convênio(s)</div>`;
     h += `</div>`;
   }
   h += '</div></div>';
   return h;
 }
 
-// ── Nivel 2: Convenios do Estado ───────────────────────────────
-function renderGovConveniosDoEstado(){
-  const uf = govState.estadoSelecionado;
-  const grupo = (govState.gruposCat||[]).find(g => (g.uf||'OUTROS') === uf);
+// Camada 2: lista de Convenios dentro do Estado
+function renderGovUfConvenios(){
+  const uf = govState.ufAberta;
+  const ufs = govAgruparPorUf();
+  const grupo = ufs.find(g => g.uf === uf);
   let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
-  h += `<div style="margin-bottom:14px"><button class="btn" onclick="govVoltarEstados()">← Voltar pra estados</button></div>`;
-  h += `<div style="font-size:22px;font-weight:800;margin-bottom:4px">🏛️ ${esc(uf)} ${grupo&&grupo.estado_nome?'— '+esc(grupo.estado_nome):''}</div>`;
-  if(!grupo || !grupo.convenios || grupo.convenios.length === 0){
-    h += '<div style="padding:30px;text-align:center;color:var(--t3)">Nenhum convênio cadastrado neste estado.</div></div>'; return h;
+  h += `<div style="margin-bottom:14px;display:flex;gap:8px;align-items:center;font-size:12px;color:var(--t3);flex-wrap:wrap">
+    <a onclick="govVoltarParaUfs()" style="cursor:pointer;color:var(--acc)">🏛️ Estados</a>
+    <span>›</span>
+    <span style="color:var(--t1);font-weight:700">${esc(uf)}${grupo&&grupo.estado_nome?' · '+esc(grupo.estado_nome):''}</span>
+  </div>`;
+  h += `<div style="font-size:22px;font-weight:800;margin-bottom:6px">${esc(grupo?grupo.estado_nome:uf)} <span style="color:var(--t3);font-weight:400;font-size:14px">(${esc(uf)})</span></div>`;
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Escolha um convênio para ver as regras operacionais e bancos.</div>';
+
+  if(!grupo || grupo.convenios.length===0){
+    h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum convênio encontrado.</div></div>'; return h;
   }
-  h += `<div style="font-size:13px;color:var(--t2);margin-bottom:18px">${grupo.convenios.length} convênio(s) — clique pra ver as regras e bancos:</div>`;
-  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px">';
-  for(const c of grupo.convenios){
-    h += `<div onclick="govAbrirConvenio('${esc(c.slug)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--brd)'">`;
-    h += `<div style="font-weight:700;font-size:14px;color:var(--t1);line-height:1.3">${esc(c.nome)}</div>`;
-    h += `<div style="font-size:11px;color:var(--t3);margin-top:4px">${esc(c.sheet_origem||'')}</div>`;
+  const sorted = grupo.convenios.slice().sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+  h += `<div style="font-size:12px;color:var(--t3);margin-bottom:14px">${sorted.length} convênio(s)</div>`;
+  h += '<div style="display:grid;gap:10px">';
+  for(const c of sorted){
+    h += `<div onclick="govAbrirConvenio('${esc(c.slug)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--brd)'">`;
+    h += `<div style="flex:1;min-width:240px"><div style="font-weight:700;font-size:14px;color:var(--t1)">${esc(c.nome)}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">${esc(c.sheet_origem||'')}</div></div>`;
+    h += `<button class="btn-acc btn-sm">Ver regras →</button>`;
     h += `</div>`;
   }
   h += '</div></div>';
@@ -7947,33 +7939,34 @@ function renderGovConveniosDoEstado(){
 function renderGovConvenioDetalhe(){
   const x = govState.convenioAberto;
   let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
-  h += `<div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="govFecharConvenio()">← Voltar pros convênios</button><button class="btn" onclick="govState.estadoSelecionado=null;govFecharConvenio()">🏛️ Pra estados</button></div>`;
-
-  if(x.loading){ h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando...</div></div>'; return h; }
+  const c = x && x.convenio;
+  if(c){
+    h += `<div style="margin-bottom:14px;display:flex;gap:8px;align-items:center;font-size:12px;color:var(--t3);flex-wrap:wrap">
+      <a onclick="govVoltarParaUfs()" style="cursor:pointer;color:var(--acc)">🏛️ Estados</a>
+      <span>›</span>
+      <a onclick="govFecharConvenio()" style="cursor:pointer;color:var(--acc)">${esc(c.uf||'')}</a>
+      <span>›</span>
+      <span style="color:var(--t1);font-weight:700">${esc(c.nome)}</span>
+    </div>`;
+  } else {
+    h += `<div style="margin-bottom:16px"><button class="btn" onclick="govFecharConvenio()">← Voltar</button></div>`;
+  }
+  if(x.loading){ h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando…</div></div>'; return h; }
   if(x.error){ h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">❌ ${esc(x.error)}</div></div>`; return h; }
 
-  const c = x.convenio;
   const bancos = x.bancos || [];
-
-  // Cabecalho: nome + meta + botao discreto pra holerite no topo direito
-  h += `<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:18px">`;
-  h += `<div style="flex:1;min-width:240px">`;
   h += `<div style="font-size:24px;font-weight:800;margin-bottom:4px">${esc(c.nome)}</div>`;
-  h += `<div style="font-size:12px;color:var(--t3)">${c.uf?esc(c.uf):''} ${c.estado_nome?'— '+esc(c.estado_nome):''} · Aba: ${esc(c.sheet_origem||'')}</div>`;
-  if(c.atualizado_em) h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">📅 Atualizado em ${esc(c.atualizado_em)}</div>`;
-  h += `</div>`;
-  h += `<button class="btn btn-sm" title="Subir holerite do cliente para verificar quais bancos atendem" onclick="govState.convenioForcadoSlug='${esc(c.slug)}';setTab('govHolerite')" style="white-space:nowrap">📄 Analisar holerite</button>`;
+  h += `<div style="font-size:12px;color:var(--t3);margin-bottom:6px">${c.uf?esc(c.uf):''} ${c.estado_nome?'— '+esc(c.estado_nome):''} · Aba: ${esc(c.sheet_origem||'')}</div>`;
+  if(c.atualizado_em) h += `<div style="font-size:11px;color:var(--t3);margin-bottom:18px">📅 Atualizado em ${esc(c.atualizado_em)}</div>`;
+
+  h += `<div style="margin-bottom:18px;padding:12px;background:rgba(34,211,238,.08);border:1px solid var(--cyan);border-radius:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">`;
+  h += `<span style="font-size:13px;flex:1;min-width:200px">📄 Tem o holerite do cliente? Suba para ver quais bancos atendem.</span>`;
+  h += `<button class="btn-acc btn-sm" onclick="govState.convenioForcadoSlug='${esc(c.slug)}';setTab('govHolerite')">📤 Analisar Holerite</button>`;
   h += `</div>`;
 
   if(bancos.length === 0){
-    h += `<div style="padding:24px;background:rgba(245,194,66,.08);border:1px solid var(--ylw);border-radius:10px;color:var(--ylw)">
-      <div style="font-weight:800;font-size:14px;margin-bottom:6px">⚠️ Catálogo ainda não foi populado</div>
-      <div style="font-size:12px;color:var(--t2);line-height:1.5">As 409 relações banco × convênio ainda não foram importadas.<br>
-      Admin: vá em <b>Admin → Usuários & Bancos</b>, role até <b>🛠️ Manutenção</b> e clique <b>🔄 Reseed</b>.</div>
-    </div></div>`;
-    return h;
+    h += '<div style="padding:30px;text-align:center;color:var(--t3)">Sem bancos cadastrados para este convênio.</div></div>'; return h;
   }
-
   h += `<div style="font-size:13px;color:var(--t2);margin-bottom:10px">${bancos.length} banco(s) operam este convênio:</div>`;
   h += '<div style="display:grid;gap:10px">';
   for(const b of bancos){
@@ -7983,40 +7976,31 @@ function renderGovConvenioDetalhe(){
       return `<span class="pill pill-grn" style="font-size:10px">${lab}</span>`;
     }).join(' ');
     const susp = b.suspenso ? '<span class="pill" style="background:rgba(239,68,68,.15);color:var(--red);font-size:10px">⛔ Suspenso</span>' : '';
-    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(2).replace('.',',')}%</b></div>` : '';
+    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(1)}%</b></div>` : '';
     const idade = (b.idade_min||b.idade_max) ? `<div><span style="color:var(--t3);font-size:10px">Idade</span> <b>${b.idade_min||'?'}-${b.idade_max||'?'}</b></div>` : '';
-    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2).replace('.',',')}%</b></div>` : '';
+    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2)}%</b></div>` : '';
     const corte = b.data_corte ? `<div><span style="color:var(--t3);font-size:10px">Corte</span> <b>${esc(b.data_corte)}</b></div>` : '';
     const expandido = govState.bancoExpandido === b.id;
-
     h += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;${b.suspenso?'opacity:.6':''}">`;
     h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px">`;
     h += `<div style="font-weight:800;font-size:15px">${esc(b.banco_nome)} ${susp}</div>`;
     h += `<div style="display:flex;gap:4px">${opsStr||'<span style="color:var(--t3);font-size:11px">— sem operações cadastradas</span>'}</div>`;
     h += `</div>`;
     h += `<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--t2)">${margem}${idade}${taxa}${corte}</div>`;
-
     h += `<div style="margin-top:10px"><button class="btn btn-sm" onclick="govToggleBanco(${b.id})">${expandido?'▾ Esconder detalhes':'▸ Ver todos os campos do roteiro'}</button></div>`;
-
     if(expandido){
       const brutos = b.atributos_brutos || [];
-      // agrupa por secao
       const porSecao = { principal:[], portabilidade:[], cartao:[], publico_alvo:[] };
       for(const a of brutos){ (porSecao[a.secao]||porSecao.principal).push(a); }
       h += '<div style="margin-top:12px;border-top:1px solid var(--brd);padding-top:12px">';
-      const secoes = [
-        ['principal','📋 Operação'],
-        ['portabilidade','🔄 Portabilidade'],
-        ['cartao','💳 Cartão Benefício'],
-        ['publico_alvo','👥 Público-Alvo'],
-      ];
+      const secoes = [['principal','📋 Operação'],['portabilidade','🔄 Portabilidade'],['cartao','💳 Cartão Benefício'],['publico_alvo','👥 Público-Alvo']];
       for(const [k,lab] of secoes){
         const items = porSecao[k] || [];
         if(items.length===0) continue;
         h += `<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;margin-bottom:6px">${lab}</div>`;
         h += '<div style="display:grid;grid-template-columns:1fr;gap:6px;font-size:12px">';
         for(const a of items){
-          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(govFmtPct(a.valor))}</div></div>`;
+          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(a.valor)}</div></div>`;
         }
         h += '</div></div>';
       }
@@ -8055,8 +8039,15 @@ function renderGovHolerite(){
   h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;margin-bottom:18px">';
   h += '<div style="font-size:12px;color:var(--t3);margin-bottom:8px">Convênio (opcional — se não escolher, a IA tenta detectar pelo holerite):</div>';
   h += `<select class="form-input" onchange="govState.convenioForcadoSlug=this.value" style="width:100%"><option value="">— Detectar automaticamente —</option>`;
-  if(govState.gruposCat){
-    for(const g of govState.gruposCat){
+  if(govState.todosConvenios){
+    const grupos = {};
+    for(const c of govState.todosConvenios){
+      const uf = c.uf || 'OUTROS';
+      if(!grupos[uf]) grupos[uf] = { uf, estado_nome: c.estado_nome, convenios: [] };
+      grupos[uf].convenios.push(c);
+    }
+    const lista = Object.values(grupos).sort((a,b)=>(a.uf||'ZZ').localeCompare(b.uf||'ZZ'));
+    for(const g of lista){
       h += `<optgroup label="${esc(g.uf||'')} - ${esc(g.estado_nome||'')}">`;
       for(const c of g.convenios){
         h += `<option value="${esc(c.slug)}" ${govState.convenioForcadoSlug===c.slug?'selected':''}>${esc(c.nome)}</option>`;
@@ -8070,7 +8061,7 @@ function renderGovHolerite(){
   // Botão analisar
   h += '<div style="text-align:center;margin-bottom:20px">';
   if(govState.loadingHol){
-    h += '<button class="btn-acc" disabled style="padding:14px 32px;font-size:14px">⏳ Analisando com IA... (pode levar 10-30s)</button>';
+    h += '<button class="btn-acc" disabled style="padding:14px 32px;font-size:14px">⏳ Analisando com IA...</button>';
   } else {
     h += `<button class="btn-acc" onclick="govAnalisarHolerite()" ${govState.arquivoBase64?'':'disabled'} style="padding:14px 32px;font-size:14px">🔍 Analisar Holerite</button>`;
   }
@@ -8182,10 +8173,12 @@ function renderGovResultadoHolerite(r){
 // Espelha 100% a logica de Governos, com filtro extra por municipio.
 // ══════════════════════════════════════════════════════════════
 let prefState = {
-  loadingCat: false, gruposCat: null, errCat: null,
+  loadingCat: false, todosConvenios: null, errCat: null,
   carregouUmaVez: false,
-  filtroUf: '', filtroBusca: '', filtroTipo: '',
-  convenioAberto: null,
+  filtroBusca: '', filtroTipo: '',
+  ufAberta: null,            // ex: 'SP' (camada 2 ativa)
+  cidadeAberta: null,        // ex: 'SOROCABA' (camada 3 ativa)
+  convenioAberto: null,      // {convenio, bancos} (camada 4 ativa)
   bancoExpandido: null,
   arquivoBase64: null, arquivoNome: null, arquivoTipo: null, arquivoTamanho: 0,
   loadingHol: false, errHol: null, resultadoHol: null,
@@ -8195,18 +8188,22 @@ let prefState = {
 async function prefCarregarConvenios(){
   prefState.loadingCat = true; prefState.errCat = null; renderApp();
   try{
-    const r = await apiFetch('/api/pref',{method:'POST',body:JSON.stringify({
-      action:'listConvenios', uf: prefState.filtroUf, busca: prefState.filtroBusca, tipo: prefState.filtroTipo
-    })});
+    // Carrega TODOS de uma vez (sem filtro server-side); filtro/agrupamento eh client-side
+    const r = await apiFetch('/api/pref',{method:'POST',body:JSON.stringify({action:'listConvenios'})});
     if(r.status === 404){ throw new Error('Endpoint /api/pref nao existe — falta git push do api/pref.js'); }
     const d = await r.json();
     if(!d.ok) throw new Error(d.error||'Falha');
-    prefState.gruposCat = d.grupos || [];
+    prefState.todosConvenios = d.convenios || [];
   }catch(e){ prefState.errCat = e.message; }
   prefState.loadingCat = false;
   prefState.carregouUmaVez = true;
   renderApp();
 }
+
+function prefAbrirUf(uf){ prefState.ufAberta = uf; prefState.cidadeAberta = null; prefState.convenioAberto = null; renderApp(); }
+function prefVoltarParaUfs(){ prefState.ufAberta = null; prefState.cidadeAberta = null; prefState.convenioAberto = null; renderApp(); }
+function prefAbrirCidade(municipio){ prefState.cidadeAberta = municipio; prefState.convenioAberto = null; renderApp(); }
+function prefVoltarParaCidades(){ prefState.cidadeAberta = null; prefState.convenioAberto = null; renderApp(); }
 
 async function prefAbrirConvenio(slug){
   prefState.convenioAberto = { loading: true };
@@ -8216,9 +8213,7 @@ async function prefAbrirConvenio(slug){
     const d = await r.json();
     if(!d.ok) throw new Error(d.error||'Falha');
     prefState.convenioAberto = { convenio: d.convenio, bancos: d.bancos };
-  }catch(e){
-    prefState.convenioAberto = { error: e.message };
-  }
+  }catch(e){ prefState.convenioAberto = { error: e.message }; }
   prefState.bancoExpandido = null;
   renderApp();
 }
@@ -8230,126 +8225,189 @@ function prefToggleBanco(id){
   renderApp();
 }
 
-function prefLimparHolerite(){
-  prefState.arquivoBase64 = null; prefState.arquivoNome = null;
-  prefState.arquivoTipo = null; prefState.arquivoTamanho = 0;
-  prefState.resultadoHol = null; prefState.errHol = null;
-  renderApp();
+// ── Helpers de agrupamento (UF -> Cidade -> Convenios) ────────
+function prefAgruparPorUfCidade(){
+  const lista = prefState.todosConvenios || [];
+  const norm = s => (s||'').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  const q = norm(prefState.filtroBusca || '').trim();
+  const tFilter = prefState.filtroTipo || '';
+  const filtrados = lista.filter(c => {
+    if(tFilter && c.tipo !== tFilter) return false;
+    if(!q) return true;
+    return norm(c.nome).includes(q) || norm(c.municipio||'').includes(q)
+        || norm(c.sheet_origem||'').includes(q) || norm(c.uf||'').includes(q);
+  });
+  const ufs = {};
+  for(const c of filtrados){
+    const uf = c.uf || 'OUTROS';
+    if(!ufs[uf]) ufs[uf] = { uf, estado_nome: c.estado_nome, cidades:{}, total:0 };
+    const muni = (c.municipio||'(sem cidade)').toString();
+    if(!ufs[uf].cidades[muni]) ufs[uf].cidades[muni] = { municipio: muni, convenios:[] };
+    ufs[uf].cidades[muni].convenios.push(c);
+    ufs[uf].total++;
+  }
+  return Object.values(ufs).sort((a,b)=>(a.uf||'ZZ').localeCompare(b.uf||'ZZ'));
 }
 
-async function prefOnArquivo(input){
-  const f = input.files && input.files[0];
-  if(!f){ return; }
-  if(f.size > 10*1024*1024){ alert('Arquivo > 10MB. Reduza ou comprima.'); return; }
-  const tipo = f.type;
-  const ok = tipo === 'application/pdf' || tipo.startsWith('image/');
-  if(!ok){ alert('Tipo nao suportado. Use PDF ou imagem (JPG/PNG/WEBP).'); return; }
-  const reader = new FileReader();
-  reader.onload = () => {
-    const dataUrl = reader.result;
-    const b64 = String(dataUrl).split(',')[1] || '';
-    prefState.arquivoBase64 = b64;
-    prefState.arquivoNome = f.name;
-    prefState.arquivoTipo = tipo;
-    prefState.arquivoTamanho = f.size;
-    prefState.errHol = null; prefState.resultadoHol = null;
-    renderApp();
-  };
-  reader.onerror = () => { alert('Falha ao ler arquivo'); };
-  reader.readAsDataURL(f);
-}
+function _prefTipoIcon(t){ return t==='prefeitura'?'🏛️':t==='instituto_previdencia'?'📋':t==='cartao_beneficio'?'💳':'🏙️'; }
+function _prefTipoLabel(t){ return t==='prefeitura'?'Prefeitura':t==='instituto_previdencia'?'Instituto de Previdência':t==='cartao_beneficio'?'Cartão Benefício':'Convênio'; }
 
-async function prefAnalisarHolerite(){
-  if(!prefState.arquivoBase64){ alert('Selecione um arquivo de holerite primeiro.'); return; }
-  prefState.loadingHol = true; prefState.errHol = null; prefState.resultadoHol = null; renderApp();
-  try{
-    const payload = {
-      action: 'analisarHolerite',
-      arquivo_base64: prefState.arquivoBase64,
-      arquivo_nome: prefState.arquivoNome,
-      arquivo_tipo: prefState.arquivoTipo,
-    };
-    if(prefState.convenioForcadoSlug) payload.convenio_slug = prefState.convenioForcadoSlug;
-    const r = await apiFetch('/api/pref',{method:'POST',body:JSON.stringify(payload)});
-    const d = await r.json();
-    if(!d.ok) throw new Error(d.error||'Falha');
-    prefState.resultadoHol = d;
-  }catch(e){ prefState.errHol = e.message; }
-  prefState.loadingHol = false; renderApp();
-}
-
-// ── Render: Catalogo de Convenios (Prefeituras) ──────────────
+// ── Render: Catalogo (3 camadas: Estado -> Cidade -> Convenio -> Detalhe) ──
 function renderPrefCatalogo(){
-  if(!prefState.carregouUmaVez && !prefState.loadingCat){
-    prefCarregarConvenios();
-  }
-  if(prefState.convenioAberto){
-    return renderPrefConvenioDetalhe();
-  }
+  if(!prefState.carregouUmaVez && !prefState.loadingCat){ prefCarregarConvenios(); }
+  if(prefState.convenioAberto) return renderPrefConvenioDetalhe();
+  if(prefState.cidadeAberta) return renderPrefCidadeConvenios();
+  if(prefState.ufAberta) return renderPrefUfCidades();
+  return renderPrefEstados();
+}
 
-  let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
-  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">🏙️ Catálogo de Prefeituras</div>';
-  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Convênios municipais (prefeituras, institutos de previdência e cartões benefício). Escolha um para ver as regras operacionais e bancos.</div>';
-
-  const ufs = prefState.gruposCat ? prefState.gruposCat.map(g => g.uf).filter(u=>u && u!=='OUTROS') : [];
-  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">';
-  h += `<input class="form-input" placeholder="🔍 Buscar (cidade, instituto, ex: Sorocaba, IPREM, Campinas)..." value="${esc(prefState.filtroBusca)}" oninput="prefState.filtroBusca=this.value" onkeydown="if(event.key==='Enter')prefCarregarConvenios()" style="flex:2;min-width:240px">`;
-  h += `<select class="form-input" onchange="prefState.filtroUf=this.value;prefCarregarConvenios()" style="flex:0 0 130px"><option value="">Todos UFs</option>`;
-  for(const u of ufs){ h += `<option value="${u}" ${prefState.filtroUf===u?'selected':''}>${u}</option>`; }
-  h += `</select>`;
-  h += `<select class="form-input" onchange="prefState.filtroTipo=this.value;prefCarregarConvenios()" style="flex:0 0 180px">
-    <option value="">Todos tipos</option>
+// Header com filtros (busca + tipo) — aparece em todas as camadas
+function _prefHeaderFiltros(){
+  let h = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;align-items:center">';
+  h += `<input class="form-input" placeholder="🔍 Buscar (cidade, instituto, ex: Sorocaba, IPREM, Campinas)..." value="${esc(prefState.filtroBusca)}" oninput="prefState.filtroBusca=this.value;renderApp()" style="flex:2;min-width:240px">`;
+  h += `<select class="form-input" onchange="prefState.filtroTipo=this.value;renderApp()" style="flex:0 0 200px">
+    <option value="">Todos os tipos</option>
     <option value="prefeitura" ${prefState.filtroTipo==='prefeitura'?'selected':''}>🏛️ Prefeitura</option>
     <option value="instituto_previdencia" ${prefState.filtroTipo==='instituto_previdencia'?'selected':''}>📋 Instituto Prev.</option>
     <option value="cartao_beneficio" ${prefState.filtroTipo==='cartao_beneficio'?'selected':''}>💳 Cartão Benefício</option>
-    <option value="outro" ${prefState.filtroTipo==='outro'?'selected':''}>❓ Outro</option>
   </select>`;
-  h += `<button class="btn-acc" onclick="prefCarregarConvenios()">Aplicar</button>`;
   h += '</div>';
+  return h;
+}
 
-  if(prefState.loadingCat){
-    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando convênios de prefeitura...</div>';
-  } else if(prefState.errCat){
+// Camada 1: lista de Estados (UFs)
+function renderPrefEstados(){
+  let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
+  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">🏙️ Catálogo de Prefeituras</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Escolha um estado para ver as cidades disponíveis.</div>';
+  h += _prefHeaderFiltros();
+
+  if(prefState.loadingCat){ h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando…</div></div>'; return h; }
+  if(prefState.errCat){
     h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:12px">❌ ${esc(prefState.errCat)}</div>`;
-    h += `<div style="text-align:center"><button class="btn-acc" onclick="prefState.carregouUmaVez=false;prefCarregarConvenios()">🔄 Tentar de novo</button></div>`;
-  } else if(!prefState.gruposCat || prefState.gruposCat.length === 0){
-    h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum convênio encontrado.</div>';
-  } else {
-    const tipoIcon = (t) => t==='prefeitura'?'🏛️':t==='instituto_previdencia'?'📋':t==='cartao_beneficio'?'💳':'❓';
-    let totalConv = 0;
-    for(const g of prefState.gruposCat) totalConv += g.convenios.length;
-    h += `<div style="font-size:12px;color:var(--t3);margin-bottom:14px">${totalConv} convênio(s) em ${prefState.gruposCat.length} UF(s)</div>`;
-    for(const g of prefState.gruposCat){
-      h += `<div style="margin-bottom:18px">`;
-      h += `<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">${esc(g.uf||'?')} ${g.estado_nome?'— '+esc(g.estado_nome):''} <span style="color:var(--t2);font-weight:600;text-transform:none">(${g.convenios.length})</span></div>`;
-      h += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px">`;
-      for(const c of g.convenios){
-        h += `<div onclick="prefAbrirConvenio('${esc(c.slug)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--brd)'">`;
-        h += `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px"><div style="font-weight:700;font-size:14px;color:var(--t1);line-height:1.3;flex:1">${esc(c.nome)}</div><div style="font-size:14px">${tipoIcon(c.tipo)}</div></div>`;
-        if(c.municipio) h += `<div style="font-size:12px;color:var(--t2);margin-top:4px">📍 ${esc(c.municipio)}</div>`;
-        h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">${esc(c.sheet_origem||'')}</div>`;
-        h += `</div>`;
-      }
-      h += `</div></div>`;
-    }
+    h += `<div style="text-align:center"><button class="btn-acc" onclick="prefState.carregouUmaVez=false;prefCarregarConvenios()">🔄 Tentar de novo</button></div></div>`;
+    return h;
   }
-  h += '</div>';
+  const ufs = prefAgruparPorUfCidade();
+  if(ufs.length === 0){
+    h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum convênio encontrado.</div></div>'; return h;
+  }
+  const totalConv = ufs.reduce((s,u)=>s+u.total,0);
+  const totalCid = ufs.reduce((s,u)=>s+Object.keys(u.cidades).length,0);
+  h += `<div style="font-size:12px;color:var(--t3);margin-bottom:14px">${ufs.length} estado(s) · ${totalCid} cidade(s) · ${totalConv} convênio(s)</div>`;
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">';
+  for(const u of ufs){
+    const ncid = Object.keys(u.cidades).length;
+    h += `<div onclick="prefAbrirUf('${esc(u.uf)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:18px;cursor:pointer;transition:all .15s" onmouseover="this.style.borderColor='var(--acc)';this.style.transform='translateY(-2px)'" onmouseout="this.style.borderColor='var(--brd)';this.style.transform='translateY(0)'">`;
+    h += `<div style="font-size:28px;font-weight:900;color:var(--acc);line-height:1">${esc(u.uf)}</div>`;
+    h += `<div style="font-size:13px;color:var(--t2);margin-top:4px">${esc(u.estado_nome||'')}</div>`;
+    h += `<div style="font-size:12px;color:var(--t3);margin-top:8px">📍 ${ncid} cidade(s) · ${u.total} convênio(s)</div>`;
+    h += `</div>`;
+  }
+  h += '</div></div>';
+  return h;
+}
+
+// Camada 2: lista de Cidades dentro do Estado
+function renderPrefUfCidades(){
+  const uf = prefState.ufAberta;
+  const ufs = prefAgruparPorUfCidade();
+  const grupo = ufs.find(g => g.uf === uf);
+  let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
+  h += `<div style="margin-bottom:14px;display:flex;gap:8px;align-items:center;font-size:12px;color:var(--t3)">
+    <a onclick="prefVoltarParaUfs()" style="cursor:pointer;color:var(--acc)">🏙️ Estados</a>
+    <span>›</span>
+    <span style="color:var(--t1);font-weight:700">${esc(uf)}${grupo&&grupo.estado_nome?' · '+esc(grupo.estado_nome):''}</span>
+  </div>`;
+  h += `<div style="font-size:22px;font-weight:800;margin-bottom:6px">${esc(grupo?grupo.estado_nome:uf)} <span style="color:var(--t3);font-weight:400;font-size:14px">(${esc(uf)})</span></div>`;
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Escolha uma cidade para ver os convênios disponíveis.</div>';
+  h += _prefHeaderFiltros();
+
+  if(!grupo || Object.keys(grupo.cidades).length===0){
+    h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhuma cidade encontrada com esse filtro.</div></div>'; return h;
+  }
+  const cidades = Object.values(grupo.cidades).sort((a,b)=>a.municipio.localeCompare(b.municipio,'pt-BR'));
+  h += `<div style="font-size:12px;color:var(--t3);margin-bottom:14px">${cidades.length} cidade(s) com ${grupo.total} convênio(s)</div>`;
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">';
+  for(const cid of cidades){
+    const tipos = {};
+    for(const c of cid.convenios){ tipos[c.tipo] = (tipos[c.tipo]||0)+1; }
+    let badges = '';
+    if(tipos.prefeitura) badges += `<span class="pill" style="background:rgba(34,211,238,.15);color:var(--cyan);font-size:10px">🏛️ ${tipos.prefeitura}</span> `;
+    if(tipos.instituto_previdencia) badges += `<span class="pill" style="background:rgba(245,194,66,.15);color:var(--ylw);font-size:10px">📋 ${tipos.instituto_previdencia}</span> `;
+    if(tipos.cartao_beneficio) badges += `<span class="pill" style="background:rgba(34,197,94,.15);color:var(--grn);font-size:10px">💳 ${tipos.cartao_beneficio}</span> `;
+    h += `<div onclick="prefAbrirCidade('${esc(cid.municipio).replace(/'/g,"\\'")}')" style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--brd)'">`;
+    h += `<div style="font-weight:800;font-size:15px;color:var(--t1)">📍 ${esc(cid.municipio)}</div>`;
+    h += `<div style="font-size:12px;color:var(--t3);margin:6px 0">${cid.convenios.length} convênio(s)</div>`;
+    h += `<div style="display:flex;gap:4px;flex-wrap:wrap">${badges}</div>`;
+    h += `</div>`;
+  }
+  h += '</div></div>';
+  return h;
+}
+
+// Camada 3: lista de Convenios dentro da Cidade
+function renderPrefCidadeConvenios(){
+  const uf = prefState.ufAberta;
+  const cidade = prefState.cidadeAberta;
+  const ufs = prefAgruparPorUfCidade();
+  const grupo = ufs.find(g => g.uf === uf);
+  const cid = grupo && grupo.cidades[cidade];
+  let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
+  h += `<div style="margin-bottom:14px;display:flex;gap:8px;align-items:center;font-size:12px;color:var(--t3);flex-wrap:wrap">
+    <a onclick="prefVoltarParaUfs()" style="cursor:pointer;color:var(--acc)">🏙️ Estados</a>
+    <span>›</span>
+    <a onclick="prefVoltarParaCidades()" style="cursor:pointer;color:var(--acc)">${esc(uf)}</a>
+    <span>›</span>
+    <span style="color:var(--t1);font-weight:700">📍 ${esc(cidade)}</span>
+  </div>`;
+  h += `<div style="font-size:22px;font-weight:800;margin-bottom:6px">📍 ${esc(cidade)}</div>`;
+  h += `<div style="font-size:13px;color:var(--t2);margin-bottom:20px">${esc(uf)}${grupo&&grupo.estado_nome?' · '+esc(grupo.estado_nome):''} — escolha um convênio para ver as regras operacionais e bancos.</div>`;
+
+  if(!cid || cid.convenios.length===0){
+    h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum convênio encontrado.</div></div>'; return h;
+  }
+  // Agrupa por tipo (prefeitura primeiro, depois instituto, depois CB)
+  const ord = {'prefeitura':0,'instituto_previdencia':1,'cartao_beneficio':2,'outro':3};
+  const sorted = cid.convenios.slice().sort((a,b)=>(ord[a.tipo]??9)-(ord[b.tipo]??9) || a.nome.localeCompare(b.nome,'pt-BR'));
+  h += '<div style="display:grid;gap:10px">';
+  for(const c of sorted){
+    h += `<div onclick="prefAbrirConvenio('${esc(c.slug)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--brd)'">`;
+    h += `<div style="flex:1;min-width:240px"><div style="font-weight:700;font-size:14px;color:var(--t1)">${_prefTipoIcon(c.tipo)} ${esc(c.nome)}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">${esc(_prefTipoLabel(c.tipo))} · ${esc(c.sheet_origem||'')}</div></div>`;
+    h += `<button class="btn-acc btn-sm">Ver regras →</button>`;
+    h += `</div>`;
+  }
+  h += '</div></div>';
   return h;
 }
 
 function renderPrefConvenioDetalhe(){
   const x = prefState.convenioAberto;
   let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
-  h += `<div style="margin-bottom:16px"><button class="btn" onclick="prefFecharConvenio()">← Voltar</button></div>`;
-
-  if(x.loading){ h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando...</div></div>'; return h; }
+  // Breadcrumb
+  const c = x && x.convenio;
+  if(c){
+    h += `<div style="margin-bottom:14px;display:flex;gap:8px;align-items:center;font-size:12px;color:var(--t3);flex-wrap:wrap">
+      <a onclick="prefVoltarParaUfs()" style="cursor:pointer;color:var(--acc)">🏙️ Estados</a>
+      <span>›</span>
+      <a onclick="prefVoltarParaCidades()" style="cursor:pointer;color:var(--acc)">${esc(c.uf||'')}</a>
+      <span>›</span>
+      <a onclick="prefFecharConvenio()" style="cursor:pointer;color:var(--acc)">📍 ${esc(c.municipio||'?')}</a>
+      <span>›</span>
+      <span style="color:var(--t1);font-weight:700">${esc(c.nome)}</span>
+    </div>`;
+  } else {
+    h += `<div style="margin-bottom:16px"><button class="btn" onclick="prefFecharConvenio()">← Voltar</button></div>`;
+  }
+  if(x.loading){ h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando…</div></div>'; return h; }
   if(x.error){ h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">❌ ${esc(x.error)}</div></div>`; return h; }
 
-  const c = x.convenio;
   const bancos = x.bancos || [];
-  const tipoLab = c.tipo==='prefeitura'?'🏛️ Prefeitura':c.tipo==='instituto_previdencia'?'📋 Instituto de Previdência':c.tipo==='cartao_beneficio'?'💳 Cartão Benefício':'❓ Outro';
-  h += `<div style="font-size:24px;font-weight:800;margin-bottom:4px">${esc(c.nome)}</div>`;
-  h += `<div style="font-size:12px;color:var(--t3);margin-bottom:6px">${c.uf?esc(c.uf):''} ${c.estado_nome?'— '+esc(c.estado_nome):''} ${c.municipio?'· 📍 '+esc(c.municipio):''} · ${tipoLab}</div>`;
+  const tipoLab = _prefTipoLabel(c.tipo);
+  const tipoIc = _prefTipoIcon(c.tipo);
+  h += `<div style="font-size:24px;font-weight:800;margin-bottom:4px">${tipoIc} ${esc(c.nome)}</div>`;
+  h += `<div style="font-size:12px;color:var(--t3);margin-bottom:6px">${c.uf?esc(c.uf):''} ${c.estado_nome?'— '+esc(c.estado_nome):''} ${c.municipio?'· 📍 '+esc(c.municipio):''} · ${esc(tipoLab)}</div>`;
   h += `<div style="font-size:11px;color:var(--t3);margin-bottom:18px">Aba: ${esc(c.sheet_origem||'')}${c.atualizado_em?' · 📅 '+esc(c.atualizado_em):''}</div>`;
 
   h += `<div style="margin-bottom:18px;padding:12px;background:rgba(34,211,238,.08);border:1px solid var(--cyan);border-radius:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">`;
@@ -8360,7 +8418,6 @@ function renderPrefConvenioDetalhe(){
   if(bancos.length === 0){
     h += '<div style="padding:30px;text-align:center;color:var(--t3)">Sem bancos cadastrados para este convênio.</div></div>'; return h;
   }
-
   h += `<div style="font-size:13px;color:var(--t2);margin-bottom:10px">${bancos.length} banco(s) operam este convênio:</div>`;
   h += '<div style="display:grid;gap:10px">';
   for(const b of bancos){
@@ -8370,39 +8427,31 @@ function renderPrefConvenioDetalhe(){
       return `<span class="pill pill-grn" style="font-size:10px">${lab}</span>`;
     }).join(' ');
     const susp = b.suspenso ? '<span class="pill" style="background:rgba(239,68,68,.15);color:var(--red);font-size:10px">⛔ Suspenso</span>' : '';
-    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(2).replace('.',',')}%</b></div>` : '';
+    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(1)}%</b></div>` : '';
     const idade = (b.idade_min||b.idade_max) ? `<div><span style="color:var(--t3);font-size:10px">Idade</span> <b>${b.idade_min||'?'}-${b.idade_max||'?'}</b></div>` : '';
-    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2).replace('.',',')}%</b></div>` : '';
+    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2)}%</b></div>` : '';
     const corte = b.data_corte ? `<div><span style="color:var(--t3);font-size:10px">Corte</span> <b>${esc(b.data_corte)}</b></div>` : '';
     const expandido = prefState.bancoExpandido === b.id;
-
     h += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;${b.suspenso?'opacity:.6':''}">`;
     h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px">`;
     h += `<div style="font-weight:800;font-size:15px">${esc(b.banco_nome)} ${susp}</div>`;
     h += `<div style="display:flex;gap:4px">${opsStr||'<span style="color:var(--t3);font-size:11px">— sem operações cadastradas</span>'}</div>`;
     h += `</div>`;
     h += `<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--t2)">${margem}${idade}${taxa}${corte}</div>`;
-
     h += `<div style="margin-top:10px"><button class="btn btn-sm" onclick="prefToggleBanco(${b.id})">${expandido?'▾ Esconder detalhes':'▸ Ver todos os campos do roteiro'}</button></div>`;
-
     if(expandido){
       const brutos = b.atributos_brutos || [];
       const porSecao = { principal:[], portabilidade:[], cartao:[], publico_alvo:[] };
       for(const a of brutos){ (porSecao[a.secao]||porSecao.principal).push(a); }
       h += '<div style="margin-top:12px;border-top:1px solid var(--brd);padding-top:12px">';
-      const secoes = [
-        ['principal','📋 Operação'],
-        ['portabilidade','🔄 Portabilidade'],
-        ['cartao','💳 Cartão Benefício'],
-        ['publico_alvo','👥 Público-Alvo'],
-      ];
+      const secoes = [['principal','📋 Operação'],['portabilidade','🔄 Portabilidade'],['cartao','💳 Cartão Benefício'],['publico_alvo','👥 Público-Alvo']];
       for(const [k,lab] of secoes){
         const items = porSecao[k] || [];
         if(items.length===0) continue;
         h += `<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;margin-bottom:6px">${lab}</div>`;
         h += '<div style="display:grid;grid-template-columns:1fr;gap:6px;font-size:12px">';
         for(const a of items){
-          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(govFmtPct(a.valor))}</div></div>`;
+          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(a.valor)}</div></div>`;
         }
         h += '</div></div>';
       }
@@ -8438,8 +8487,16 @@ function renderPrefHolerite(){
   h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;margin-bottom:18px">';
   h += '<div style="font-size:12px;color:var(--t3);margin-bottom:8px">Convênio (opcional — se não escolher, a IA tenta detectar pelo holerite):</div>';
   h += `<select class="form-input" onchange="prefState.convenioForcadoSlug=this.value" style="width:100%"><option value="">— Detectar automaticamente —</option>`;
-  if(prefState.gruposCat){
-    for(const g of prefState.gruposCat){
+  if(prefState.todosConvenios){
+    // Reagrupa por UF pra exibir no dropdown
+    const grupos = {};
+    for(const c of prefState.todosConvenios){
+      const uf = c.uf || 'OUTROS';
+      if(!grupos[uf]) grupos[uf] = { uf, estado_nome: c.estado_nome, convenios: [] };
+      grupos[uf].convenios.push(c);
+    }
+    const lista = Object.values(grupos).sort((a,b)=>(a.uf||'ZZ').localeCompare(b.uf||'ZZ'));
+    for(const g of lista){
       h += `<optgroup label="${esc(g.uf||'')} - ${esc(g.estado_nome||'')}">`;
       for(const c of g.convenios){
         const muni = c.municipio?` (${esc(c.municipio)})`:'';
@@ -8453,7 +8510,7 @@ function renderPrefHolerite(){
 
   h += '<div style="text-align:center;margin-bottom:20px">';
   if(prefState.loadingHol){
-    h += '<button class="btn-acc" disabled style="padding:14px 32px;font-size:14px">⏳ Analisando com IA... (pode levar 10-30s)</button>';
+    h += '<button class="btn-acc" disabled style="padding:14px 32px;font-size:14px">⏳ Analisando com IA...</button>';
   } else {
     h += `<button class="btn-acc" onclick="prefAnalisarHolerite()" ${prefState.arquivoBase64?'':'disabled'} style="padding:14px 32px;font-size:14px">🔍 Analisar Holerite</button>`;
   }
@@ -8507,6 +8564,397 @@ function renderPrefResultadoHolerite(r){
     h += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px;margin-bottom:16px">`;
     h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">`;
     h += `<div><div style="font-size:11px;color:var(--t3);text-transform:uppercase">Convênio identificado</div><div style="font-size:16px;font-weight:800">${esc(c.nome)}</div><div style="font-size:11px;color:var(--t3)">${c.uf?esc(c.uf):''}${c.municipio?' · 📍 '+esc(c.municipio):''}</div></div>`;
+    h += `<span class="pill" style="background:${corConf}22;color:${corConf};font-size:10px">Confiança: ${esc(conf)}</span>`;
+    h += `</div></div>`;
+  } else {
+    h += `<div style="padding:14px;background:rgba(245,194,66,.1);border:1px solid var(--ylw);border-radius:10px;color:var(--ylw);margin-bottom:16px">⚠️ Convênio não identificado. Selecione manualmente acima e re-analise para ver os bancos que atendem.</div>`;
+  }
+
+  const atendem = r.bancos_atendem || [];
+  const naoAtendem = r.bancos_nao_atendem || [];
+
+  h += '<div style="background:var(--card);border:1px solid var(--grn);border-radius:12px;padding:16px;margin-bottom:14px">';
+  h += `<div style="font-size:13px;font-weight:800;color:var(--grn);margin-bottom:12px">✅ ${atendem.length} banco(s) atendem este servidor</div>`;
+  if(atendem.length === 0){
+    h += '<div style="color:var(--t3);font-size:12px">Nenhum banco do convênio atende com os dados extraídos.</div>';
+  } else {
+    h += '<div style="display:grid;gap:8px">';
+    for(const b of atendem){
+      const reg = b.regras || {};
+      const ops = ['opera_novo','opera_refin','opera_port','opera_cartao'].filter(k=>reg[k]).map(k=>{
+        const lab = ({opera_novo:'Novo',opera_refin:'Refin',opera_port:'Port',opera_cartao:'Cartão'})[k];
+        return `<span class="pill pill-grn" style="font-size:10px">${lab}</span>`;
+      }).join(' ');
+      h += '<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px">';
+      h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px"><div style="font-weight:700">${esc(b.banco_nome)}</div><div>${ops}</div></div>`;
+      const obs = b.observacoes || [];
+      if(obs.length){
+        h += '<ul style="margin:0;padding-left:18px;font-size:11px;color:var(--t2)">';
+        for(const o of obs){ h += `<li>${esc(o)}</li>`; }
+        h += '</ul>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+
+  if(naoAtendem.length){
+    h += '<details style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px"><summary style="cursor:pointer;font-size:12px;color:var(--t3);font-weight:700">⛔ ' + naoAtendem.length + ' banco(s) NÃO atendem (clique pra ver motivo)</summary>';
+    h += '<div style="margin-top:10px;display:grid;gap:6px;font-size:12px">';
+    for(const b of naoAtendem){
+      h += `<div style="padding:8px 10px;background:var(--bg);border-radius:6px"><b>${esc(b.banco_nome)}</b> — <span style="color:var(--t3)">${esc(b.motivo||'')}</span></div>`;
+    }
+    h += '</div></details>';
+  }
+
+  return h;
+}
+
+// ══════════════════════════════════════════════════════════════
+// FEDERAIS — F5 (mai/2026)
+// Catalogo de convenios federais (SIAPE / SERPRO / Forcas Armadas)
+// + Analise de contracheque federal/militar.
+// Espelha 100% a logica de Governos/Prefeituras, com filtros por
+// categoria (civil|militar) e orgao (SIAPE/SERPRO/MARINHA/etc).
+// ══════════════════════════════════════════════════════════════
+let fedState = {
+  loadingCat: false, gruposCat: null, errCat: null,
+  carregouUmaVez: false,
+  filtroCategoria: '', filtroOrgao: '', filtroBusca: '',
+  convenioAberto: null,
+  bancoExpandido: null,
+  arquivoBase64: null, arquivoNome: null, arquivoTipo: null, arquivoTamanho: 0,
+  loadingHol: false, errHol: null, resultadoHol: null,
+  convenioForcadoSlug: '',
+};
+
+async function fedCarregarConvenios(){
+  fedState.loadingCat = true; fedState.errCat = null; renderApp();
+  try{
+    const r = await apiFetch('/api/fed',{method:'POST',body:JSON.stringify({
+      action:'listConvenios', categoria: fedState.filtroCategoria, orgao: fedState.filtroOrgao, busca: fedState.filtroBusca
+    })});
+    if(r.status === 404){ throw new Error('Endpoint /api/fed nao existe — falta git push do api/fed.js'); }
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha');
+    fedState.gruposCat = d.grupos || [];
+  }catch(e){ fedState.errCat = e.message; }
+  fedState.loadingCat = false;
+  fedState.carregouUmaVez = true;
+  renderApp();
+}
+
+async function fedAbrirConvenio(slug){
+  fedState.convenioAberto = { loading: true };
+  renderApp();
+  try{
+    const r = await apiFetch('/api/fed',{method:'POST',body:JSON.stringify({action:'getConvenio', slug})});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha');
+    fedState.convenioAberto = { convenio: d.convenio, bancos: d.bancos };
+  }catch(e){
+    fedState.convenioAberto = { error: e.message };
+  }
+  fedState.bancoExpandido = null;
+  renderApp();
+}
+
+function fedFecharConvenio(){ fedState.convenioAberto = null; fedState.bancoExpandido = null; renderApp(); }
+
+function fedToggleBanco(id){
+  fedState.bancoExpandido = fedState.bancoExpandido === id ? null : id;
+  renderApp();
+}
+
+function fedLimparHolerite(){
+  fedState.arquivoBase64 = null; fedState.arquivoNome = null;
+  fedState.arquivoTipo = null; fedState.arquivoTamanho = 0;
+  fedState.resultadoHol = null; fedState.errHol = null;
+  renderApp();
+}
+
+async function fedOnArquivo(input){
+  const f = input.files && input.files[0];
+  if(!f){ return; }
+  if(f.size > 10*1024*1024){ alert('Arquivo > 10MB. Reduza ou comprima.'); return; }
+  const tipo = f.type;
+  const ok = tipo === 'application/pdf' || tipo.startsWith('image/');
+  if(!ok){ alert('Tipo nao suportado. Use PDF ou imagem (JPG/PNG/WEBP).'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    const b64 = String(dataUrl).split(',')[1] || '';
+    fedState.arquivoBase64 = b64;
+    fedState.arquivoNome = f.name;
+    fedState.arquivoTipo = tipo;
+    fedState.arquivoTamanho = f.size;
+    fedState.errHol = null; fedState.resultadoHol = null;
+    renderApp();
+  };
+  reader.onerror = () => { alert('Falha ao ler arquivo'); };
+  reader.readAsDataURL(f);
+}
+
+async function fedAnalisarHolerite(){
+  if(!fedState.arquivoBase64){ alert('Selecione um arquivo de contracheque primeiro.'); return; }
+  fedState.loadingHol = true; fedState.errHol = null; fedState.resultadoHol = null; renderApp();
+  try{
+    const payload = {
+      action: 'analisarHolerite',
+      arquivo_base64: fedState.arquivoBase64,
+      arquivo_nome: fedState.arquivoNome,
+      arquivo_tipo: fedState.arquivoTipo,
+    };
+    if(fedState.convenioForcadoSlug) payload.convenio_slug = fedState.convenioForcadoSlug;
+    const r = await apiFetch('/api/fed',{method:'POST',body:JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'Falha');
+    fedState.resultadoHol = d;
+  }catch(e){ fedState.errHol = e.message; }
+  fedState.loadingHol = false; renderApp();
+}
+
+// ── Render: Catalogo de Convenios (Federais) ─────────────────
+function renderFedCatalogo(){
+  if(!fedState.carregouUmaVez && !fedState.loadingCat){
+    fedCarregarConvenios();
+  }
+  if(fedState.convenioAberto){
+    return renderFedConvenioDetalhe();
+  }
+
+  const orgaoIcon = (o) => o==='SIAPE'?'🏛️':o==='SERPRO'?'💻':o==='MARINHA'?'⚓':o==='EXERCITO'?'🪖':o==='AERONAUTICA'?'✈️':'🇧🇷';
+  const opTipoLab = (t) => t==='novo_refin'?'Novo / Refin':t==='portabilidade'?'Portabilidade':t==='cartao_consignado'?'Cartão Consignado':t==='cartao_beneficio'?'Cartão Benefício':t==='completo'?'Completo':(t||'');
+
+  let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
+  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">🇧🇷 Catálogo Federal</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Convênios federais civis (SIAPE, SERPRO) e militares (Marinha, Exército, Aeronáutica). Escolha um para ver as regras operacionais e bancos.</div>';
+
+  // orgaos disponiveis
+  const orgaosSet = new Set();
+  if(fedState.gruposCat){
+    for(const g of fedState.gruposCat){ for(const c of g.convenios){ if(c.orgao) orgaosSet.add(c.orgao); } }
+  }
+  const orgaos = [...orgaosSet];
+
+  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">';
+  h += `<input class="form-input" placeholder="🔍 Buscar (ex: SIAPE, Marinha, novo, port)..." value="${esc(fedState.filtroBusca)}" oninput="fedState.filtroBusca=this.value" onkeydown="if(event.key==='Enter')fedCarregarConvenios()" style="flex:2;min-width:240px">`;
+  h += `<select class="form-input" onchange="fedState.filtroCategoria=this.value;fedCarregarConvenios()" style="flex:0 0 150px">
+    <option value="">Todas categorias</option>
+    <option value="civil" ${fedState.filtroCategoria==='civil'?'selected':''}>👔 Civis</option>
+    <option value="militar" ${fedState.filtroCategoria==='militar'?'selected':''}>🪖 Militares</option>
+  </select>`;
+  h += `<select class="form-input" onchange="fedState.filtroOrgao=this.value;fedCarregarConvenios()" style="flex:0 0 150px"><option value="">Todos órgãos</option>`;
+  for(const o of orgaos){ h += `<option value="${o}" ${fedState.filtroOrgao===o?'selected':''}>${orgaoIcon(o)} ${o}</option>`; }
+  h += `</select>`;
+  h += `<button class="btn-acc" onclick="fedCarregarConvenios()">Aplicar</button>`;
+  h += '</div>';
+
+  if(fedState.loadingCat){
+    h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando convênios federais...</div>';
+  } else if(fedState.errCat){
+    h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:12px">❌ ${esc(fedState.errCat)}</div>`;
+    h += `<div style="text-align:center"><button class="btn-acc" onclick="fedState.carregouUmaVez=false;fedCarregarConvenios()">🔄 Tentar de novo</button></div>`;
+  } else if(!fedState.gruposCat || fedState.gruposCat.length === 0){
+    h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum convênio encontrado.</div>';
+  } else {
+    let totalConv = 0;
+    for(const g of fedState.gruposCat) totalConv += g.convenios.length;
+    h += `<div style="font-size:12px;color:var(--t3);margin-bottom:14px">${totalConv} convênio(s) em ${fedState.gruposCat.length} categoria(s)</div>`;
+    for(const g of fedState.gruposCat){
+      const catLab = g.categoria==='civil'?'👔 Civis (SIAPE / SERPRO)':g.categoria==='militar'?'🪖 Militares (Forças Armadas)':'📋 Outros';
+      h += `<div style="margin-bottom:18px">`;
+      h += `<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">${catLab} <span style="color:var(--t2);font-weight:600;text-transform:none">(${g.convenios.length})</span></div>`;
+      h += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px">`;
+      for(const c of g.convenios){
+        h += `<div onclick="fedAbrirConvenio('${esc(c.slug)}')" style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--brd)'">`;
+        h += `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px"><div style="font-weight:700;font-size:14px;color:var(--t1);line-height:1.3;flex:1">${esc(c.nome)}</div><div style="font-size:18px">${orgaoIcon(c.orgao)}</div></div>`;
+        if(c.operacao_tipo) h += `<div style="font-size:11px;color:var(--t2);margin-top:4px">⚙️ ${esc(opTipoLab(c.operacao_tipo))}</div>`;
+        h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">${esc(c.sheet_origem||'')}</div>`;
+        h += `</div>`;
+      }
+      h += `</div></div>`;
+    }
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderFedConvenioDetalhe(){
+  const x = fedState.convenioAberto;
+  let h = '<div style="max-width:1100px;margin:0 auto;padding:24px">';
+  h += `<div style="margin-bottom:16px"><button class="btn" onclick="fedFecharConvenio()">← Voltar</button></div>`;
+
+  if(x.loading){ h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando...</div></div>'; return h; }
+  if(x.error){ h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">❌ ${esc(x.error)}</div></div>`; return h; }
+
+  const c = x.convenio;
+  const bancos = x.bancos || [];
+  const orgaoIcon = (o) => o==='SIAPE'?'🏛️':o==='SERPRO'?'💻':o==='MARINHA'?'⚓':o==='EXERCITO'?'🪖':o==='AERONAUTICA'?'✈️':'🇧🇷';
+  const opTipoLab = (t) => t==='novo_refin'?'Novo / Refin':t==='portabilidade'?'Portabilidade':t==='cartao_consignado'?'Cartão Consignado':t==='cartao_beneficio'?'Cartão Benefício':t==='completo'?'Completo':(t||'');
+  const catLab = c.categoria==='civil'?'👔 Civil':c.categoria==='militar'?'🪖 Militar':'';
+
+  h += `<div style="font-size:24px;font-weight:800;margin-bottom:4px">${orgaoIcon(c.orgao)} ${esc(c.nome)}</div>`;
+  h += `<div style="font-size:12px;color:var(--t3);margin-bottom:6px">${catLab} ${c.orgao?'· '+esc(c.orgao):''} ${c.operacao_tipo?'· ⚙️ '+esc(opTipoLab(c.operacao_tipo)):''}</div>`;
+  h += `<div style="font-size:11px;color:var(--t3);margin-bottom:18px">Aba: ${esc(c.sheet_origem||'')}${c.atualizado_em?' · 📅 '+esc(c.atualizado_em):''}</div>`;
+
+  h += `<div style="margin-bottom:18px;padding:12px;background:rgba(34,211,238,.08);border:1px solid var(--cyan);border-radius:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">`;
+  h += `<span style="font-size:13px;flex:1;min-width:200px">📄 Tem o contracheque do servidor? Suba para ver quais bancos atendem.</span>`;
+  h += `<button class="btn-acc btn-sm" onclick="fedState.convenioForcadoSlug='${esc(c.slug)}';setTab('fedHolerite')">📤 Analisar Contracheque</button>`;
+  h += `</div>`;
+
+  if(bancos.length === 0){
+    h += '<div style="padding:30px;text-align:center;color:var(--t3)">Sem bancos cadastrados para este convênio.</div></div>'; return h;
+  }
+
+  h += `<div style="font-size:13px;color:var(--t2);margin-bottom:10px">${bancos.length} banco(s) operam este convênio:</div>`;
+  h += '<div style="display:grid;gap:10px">';
+  for(const b of bancos){
+    const ops = b.operacoes || {};
+    const opsStr = ['novo','refin','port','cartao'].filter(k=>ops[k]).map(k=>{
+      const lab = k==='cartao'?'Cartão':k.charAt(0).toUpperCase()+k.slice(1);
+      return `<span class="pill pill-grn" style="font-size:10px">${lab}</span>`;
+    }).join(' ');
+    const susp = b.suspenso ? '<span class="pill" style="background:rgba(239,68,68,.15);color:var(--red);font-size:10px">⛔ Suspenso</span>' : '';
+    const margem = b.margem_utilizavel ? `<div><span style="color:var(--t3);font-size:10px">Margem</span> <b>${(b.margem_utilizavel*100).toFixed(2).replace('.',',')}%</b></div>` : '';
+    const idade = (b.idade_min||b.idade_max) ? `<div><span style="color:var(--t3);font-size:10px">Idade</span> <b>${b.idade_min||'?'}-${b.idade_max||'?'}</b></div>` : '';
+    const taxa = b.taxa_minima_port ? `<div><span style="color:var(--t3);font-size:10px">Taxa Port</span> <b>${(b.taxa_minima_port*100).toFixed(2).replace('.',',')}%</b></div>` : '';
+    const corte = b.data_corte ? `<div><span style="color:var(--t3);font-size:10px">Corte</span> <b>${esc(b.data_corte)}</b></div>` : '';
+    const expandido = fedState.bancoExpandido === b.id;
+
+    h += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;${b.suspenso?'opacity:.6':''}">`;
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px">`;
+    h += `<div style="font-weight:800;font-size:15px">${esc(b.banco_nome)} ${susp}</div>`;
+    h += `<div style="display:flex;gap:4px">${opsStr||'<span style="color:var(--t3);font-size:11px">— sem operações cadastradas</span>'}</div>`;
+    h += `</div>`;
+    h += `<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--t2)">${margem}${idade}${taxa}${corte}</div>`;
+
+    h += `<div style="margin-top:10px"><button class="btn btn-sm" onclick="fedToggleBanco(${b.id})">${expandido?'▾ Esconder detalhes':'▸ Ver todos os campos do roteiro'}</button></div>`;
+
+    if(expandido){
+      const brutos = b.atributos_brutos || [];
+      const porSecao = { principal:[], portabilidade:[], cartao:[], publico_alvo:[] };
+      for(const a of brutos){ (porSecao[a.secao]||porSecao.principal).push(a); }
+      h += '<div style="margin-top:12px;border-top:1px solid var(--brd);padding-top:12px">';
+      const secoes = [
+        ['principal','📋 Operação'],
+        ['portabilidade','🔄 Portabilidade'],
+        ['cartao','💳 Cartão'],
+        ['publico_alvo','👥 Público-Alvo'],
+      ];
+      for(const [k,lab] of secoes){
+        const items = porSecao[k] || [];
+        if(items.length===0) continue;
+        h += `<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;margin-bottom:6px">${lab}</div>`;
+        h += '<div style="display:grid;grid-template-columns:1fr;gap:6px;font-size:12px">';
+        for(const a of items){
+          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(govFmtPct(a.valor))}</div></div>`;
+        }
+        h += '</div></div>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div></div>';
+  return h;
+}
+
+// ── Render: Análise de Contracheque (Federais) ───────────────
+function renderFedHolerite(){
+  if(!fedState.carregouUmaVez && !fedState.loadingCat){ fedCarregarConvenios(); }
+
+  let h = '<div style="max-width:900px;margin:0 auto;padding:24px">';
+  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">📄 Análise de Contracheque — Federal</div>';
+  h += '<div style="font-size:13px;color:var(--t2);margin-bottom:20px">Suba o contracheque do servidor federal civil (SIAPE/SERPRO) ou militar (Marinha/Exército/Aeronáutica). A IA identifica o convênio e cruza com os bancos que operam.</div>';
+
+  h += '<div style="background:var(--card);border:2px dashed var(--brd);border-radius:12px;padding:24px;margin-bottom:18px;text-align:center">';
+  if(!fedState.arquivoBase64){
+    h += '<div style="font-size:14px;color:var(--t2);margin-bottom:10px">Arraste o arquivo aqui ou clique no botão</div>';
+    h += '<input type="file" id="fedHolFile" accept="application/pdf,image/*" style="display:none" onchange="fedOnArquivo(this)">';
+    h += '<button class="btn-acc" onclick="document.getElementById(\'fedHolFile\').click()">📎 Selecionar arquivo</button>';
+    h += '<div style="font-size:11px;color:var(--t3);margin-top:8px">PDF, JPG, PNG ou WEBP — máx 10MB</div>';
+  } else {
+    h += `<div style="font-size:14px;font-weight:700">📎 ${esc(fedState.arquivoNome)}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:4px">${(fedState.arquivoTamanho/1024).toFixed(0)} KB · ${esc(fedState.arquivoTipo)}</div>`;
+    h += `<div style="margin-top:10px"><button class="btn btn-sm" onclick="fedLimparHolerite()">🗑 Trocar arquivo</button></div>`;
+  }
+  h += '</div>';
+
+  h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;margin-bottom:18px">';
+  h += '<div style="font-size:12px;color:var(--t3);margin-bottom:8px">Convênio (opcional — se não escolher, a IA tenta detectar pelo contracheque):</div>';
+  h += `<select class="form-input" onchange="fedState.convenioForcadoSlug=this.value" style="width:100%"><option value="">— Detectar automaticamente —</option>`;
+  if(fedState.gruposCat){
+    for(const g of fedState.gruposCat){
+      const catLab = g.categoria==='civil'?'Civis':g.categoria==='militar'?'Militares':g.categoria;
+      h += `<optgroup label="${esc(catLab)}">`;
+      for(const c of g.convenios){
+        h += `<option value="${esc(c.slug)}" ${fedState.convenioForcadoSlug===c.slug?'selected':''}>${esc(c.nome)}</option>`;
+      }
+      h += `</optgroup>`;
+    }
+  }
+  h += `</select>`;
+  h += '</div>';
+
+  h += '<div style="text-align:center;margin-bottom:20px">';
+  if(fedState.loadingHol){
+    h += '<button class="btn-acc" disabled style="padding:14px 32px;font-size:14px">⏳ Analisando com IA...</button>';
+  } else {
+    h += `<button class="btn-acc" onclick="fedAnalisarHolerite()" ${fedState.arquivoBase64?'':'disabled'} style="padding:14px 32px;font-size:14px">🔍 Analisar Contracheque</button>`;
+  }
+  h += '</div>';
+
+  if(fedState.errHol){
+    h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:16px">❌ ${esc(fedState.errHol)}</div>`;
+  }
+
+  if(fedState.resultadoHol){
+    h += renderFedResultadoHolerite(fedState.resultadoHol);
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function renderFedResultadoHolerite(r){
+  const d = r.dados_extraidos || {};
+  const c = r.convenio;
+  let h = '';
+
+  h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:16px;margin-bottom:16px">';
+  h += '<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;margin-bottom:10px">📊 Dados Extraídos</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;font-size:13px">';
+  const campos = [
+    ['Nome', d.nome], ['CPF', d.cpf], ['Matrícula', d.matricula],
+    ['Cargo', d.cargo], ['Órgão', d.orgao],
+    ['Categoria', d.categoria_servidor], ['Órgão Federal', d.orgao_federal],
+    ['Patente', d.patente], ['Situação militar', d.situacao_militar], ['PREC-CP', d.prec_cp],
+    ['Data nasc.', d.data_nascimento], ['Idade', d.idade ? d.idade + ' anos' : null],
+    ['Competência', d.competencia],
+    ['Salário bruto', d.salario_bruto ? 'R$ '+Number(d.salario_bruto).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+    ['Salário líquido', d.salario_liquido ? 'R$ '+Number(d.salario_liquido).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+    ['Total descontos', d.total_descontos ? 'R$ '+Number(d.total_descontos).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+    ['Margem consig. disp.', d.margem_consignavel_disponivel ? 'R$ '+Number(d.margem_consignavel_disponivel).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+    ['Margem cartão disp.', d.margem_cartao_disponivel ? 'R$ '+Number(d.margem_cartao_disponivel).toLocaleString('pt-BR',{minimumFractionDigits:2}) : null],
+  ];
+  for(const [lab, v] of campos){
+    if(v === null || v === undefined || v === '') continue;
+    h += `<div><div style="color:var(--t3);font-size:10px;text-transform:uppercase">${lab}</div><div style="font-weight:600">${esc(String(v))}</div></div>`;
+  }
+  h += '</div>';
+  if(d.observacoes){
+    h += `<div style="margin-top:12px;padding:10px;background:rgba(245,194,66,.08);border-radius:8px;font-size:12px;color:var(--t2)"><b>Obs IA:</b> ${esc(d.observacoes)}</div>`;
+  }
+  h += '</div>';
+
+  if(c){
+    const conf = r.convenio_confianca || 'baixa';
+    const corConf = conf === 'alta' || conf === 'usuario' ? 'var(--grn)' : conf === 'media' ? 'var(--ylw)' : 'var(--red)';
+    h += `<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px;margin-bottom:16px">`;
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">`;
+    h += `<div><div style="font-size:11px;color:var(--t3);text-transform:uppercase">Convênio identificado</div><div style="font-size:16px;font-weight:800">${esc(c.nome)}</div><div style="font-size:11px;color:var(--t3)">${c.categoria?esc(c.categoria):''}${c.orgao?' · '+esc(c.orgao):''}</div></div>`;
     h += `<span class="pill" style="background:${corConf}22;color:${corConf};font-size:10px">Confiança: ${esc(conf)}</span>`;
     h += `</div></div>`;
   } else {
@@ -9611,6 +10059,11 @@ const MENU=[
     items:[
       {k:'prefCatalogo',icon:'📚',label:'Catálogo de Convênios'},
       {k:'prefHolerite',icon:'📄',label:'Análise de Holerite'}
+    ]},
+  {product:'fed',icon:'🇧🇷',label:'Federal',active:true,
+    items:[
+      {k:'fedCatalogo',icon:'📚',label:'Catálogo de Convênios'},
+      {k:'fedHolerite',icon:'📄',label:'Análise de Contracheque'}
     ]}
 ];
 // Item fica sempre no menu (fluxo uniforme), soh muda estado visual conforme role/data
@@ -9943,7 +10396,7 @@ try{renderJobsFloat()}catch{}
 if(!D){
   document.getElementById("headerActions").style.display="none";
   // Aba padrao = home se invalida
-  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite","prefCatalogo","prefHolerite"].includes(S.tab))S.tab="home";
+  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite","prefCatalogo","prefHolerite","fedCatalogo","fedHolerite"].includes(S.tab))S.tab="home";
   let content='';
   if(S.tab==="consulta")content=renderConsulta();
   else if(S.tab==="enquad")content=renderEnquadramento();
@@ -9969,6 +10422,8 @@ if(!D){
   else if(S.tab==="govHolerite")content=renderGovHolerite();
   else if(S.tab==="prefCatalogo")content=renderPrefCatalogo();
   else if(S.tab==="prefHolerite")content=renderPrefHolerite();
+  else if(S.tab==="fedCatalogo")content=renderFedCatalogo();
+  else if(S.tab==="fedHolerite")content=renderFedHolerite();
   if(content){tabContent.innerHTML=content;return}
   // Sem data: tab 'bases' = tela de upload; tab 'home' (padrao) = home
   if(S.tab==="bases"){renderLanding(tabContent);return}
@@ -10013,6 +10468,8 @@ if(!D){
   else if(S.tab==="govHolerite")tcontent=renderGovHolerite();
   else if(S.tab==="prefCatalogo")tcontent=renderPrefCatalogo();
   else if(S.tab==="prefHolerite")tcontent=renderPrefHolerite();
+  else if(S.tab==="fedCatalogo")tcontent=renderFedCatalogo();
+  else if(S.tab==="fedHolerite")tcontent=renderFedHolerite();
   if(tcontent){tabContent.innerHTML=tcontent;return}
 
   // ═══ DASHBOARD ═══
