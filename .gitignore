@@ -1,1 +1,12 @@
 .vercel
+
+# Modulo GOVERNOS — arquivos intermediarios do parser (so o gov_seed.json importa)
+scripts/gov/seed_chunks/
+scripts/gov/convenios.json
+scripts/gov/inspect.json
+scripts/gov/migration_clean.sql
+scripts/gov/01_inspect.py
+scripts/gov/03_gen_seed.py
+scripts/gov/04_seed_chunks.py
+scripts/gov/parse_planilha.py
+supabase_seed_gov.sql

@@ -7698,6 +7698,7 @@ function renderCltAdminMercantil() {
 let govState = {
   // catalogo
   loadingCat: false, gruposCat: null, errCat: null,
+  carregouUmaVez: false,        // evita loop quando da erro
   filtroUf: '', filtroBusca: '',
   convenioAberto: null,        // {convenio, bancos}
   bancoExpandido: null,        // id do banco com atributos brutos abertos
@@ -7713,11 +7714,14 @@ async function govCarregarConvenios(){
     const r = await apiFetch('/api/gov',{method:'POST',body:JSON.stringify({
       action:'listConvenios', uf: govState.filtroUf, busca: govState.filtroBusca
     })});
+    if(r.status === 404){ throw new Error('Endpoint /api/gov nao existe no servidor — falta fazer git push do api/gov.js'); }
     const d = await r.json();
     if(!d.ok) throw new Error(d.error||'Falha');
     govState.gruposCat = d.grupos || [];
   }catch(e){ govState.errCat = e.message; }
-  govState.loadingCat = false; renderApp();
+  govState.loadingCat = false;
+  govState.carregouUmaVez = true;
+  renderApp();
 }
 
 async function govAbrirConvenio(slug){
@@ -7793,8 +7797,8 @@ async function govAnalisarHolerite(){
 
 // ── Render: Catalogo de Convenios ──────────────────────────────
 function renderGovCatalogo(){
-  // Carrega na 1a vez
-  if(govState.gruposCat === null && !govState.loadingCat){
+  // Carrega so na 1a vez (carregouUmaVez impede loop em caso de erro)
+  if(!govState.carregouUmaVez && !govState.loadingCat){
     govCarregarConvenios();
   }
 
@@ -7820,7 +7824,8 @@ function renderGovCatalogo(){
   if(govState.loadingCat){
     h += '<div style="padding:40px;text-align:center;color:var(--t2)">⏳ Carregando convênios...</div>';
   } else if(govState.errCat){
-    h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red)">❌ ${esc(govState.errCat)}</div>`;
+    h += `<div style="padding:14px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);margin-bottom:12px">❌ ${esc(govState.errCat)}</div>`;
+    h += `<div style="text-align:center"><button class="btn-acc" onclick="govState.carregouUmaVez=false;govCarregarConvenios()">🔄 Tentar de novo</button></div>`;
   } else if(!govState.gruposCat || govState.gruposCat.length === 0){
     h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum convênio encontrado.</div>';
   } else {
@@ -7922,8 +7927,8 @@ function renderGovConvenioDetalhe(){
 
 // ── Render: Análise de Holerite ────────────────────────────────
 function renderGovHolerite(){
-  // carrega convenios pra dropdown se nao tiver
-  if(govState.gruposCat === null && !govState.loadingCat){ govCarregarConvenios(); }
+  // carrega convenios pra dropdown so na 1a vez (carregouUmaVez impede loop em caso de erro)
+  if(!govState.carregouUmaVez && !govState.loadingCat){ govCarregarConvenios(); }
 
   let h = '<div style="max-width:900px;margin:0 auto;padding:24px">';
   h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">📄 Análise de Holerite</div>';
