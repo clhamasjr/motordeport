@@ -27,15 +27,14 @@ OUT = Path(__file__).parent / 'convenios.json'
 
 # ── Abas que sao indices/grupos/separadores - nao sao convenios ──
 SKIP_SHEETS = {
+    # Indices reais (com varias linhas mas que sao listas/sumarios, nao convenios)
     'BASE','PREFEITURAS','PREFEITURAS PB','PREFEITURAS PI','PREFEITURAS ANAPOLIS',
-    'PREFEITURAS MACAE','PREFEITURAS CARAGUATATUBA','PREFEITURAS FLORIANOPOLIS',
-    'PREFEITURAS JARAGUA DO SUL ','PREFEITURA JOINVILLE','PREFEITURA LONDRINA',
-    'PREFEITURA CURITIBA','PREFEITURA CASCAVEL','PREFEITURA DE PONTA GROSSA',
-    'PREFEITURA DE PALHOÇA','PREFEITURA DE SÃO PAULO','PREFEITURA DE OSACO',
-    'PREFEITURA NATAL','PREFEITURA POÁ','PREFEITURA MARILIA ','PREFEITURA BAURU',
-    'PREFEITURA DE LONDRINA- CAAPSML',  # essa eh subcategoria
+    'PREFEITURAS MACAE','PREFEITURAS CARAGUATATUBA',
     'CIDADES_SP','PREF_MG','PREF_DIVINOPOLIS','PREF_UBERABA','PREF MA',
     'PREF. JUIZ','SITUAÇÃO ACEITAS E NÃO ACEITAS',
+    # NOTA: NAO incluir abas grandes como 'PREFEITURA DE SÃO PAULO' (eh aba REAL,
+    # 57 linhas x 16354 cols por causa de colunas vazadas). O check <=2,<=2 ja
+    # filtra as abas 1x1 (separadores) sem precisar listar manualmente.
     # UFs sozinhas (separadores)
     'AC','AL','AM','AMAPÁ','PA','TO','BAHIA','CEARÁ','PE','RN','SE','GO','MT','MS','ES',
     'RJ','PR','RS','SC','RONDONIA','BOA VISTA',
@@ -268,7 +267,8 @@ def parse_operacoes(text):
 
 # ─── PARSE ────────────────────────────────────────────────────
 print(f'Lendo {XLSX.name}...')
-wb = openpyxl.load_workbook(XLSX, data_only=True, read_only=True)
+# read_only=False (mais lento mas le abas com colunas vazadas como PREFEITURA DE SÃO PAULO)
+wb = openpyxl.load_workbook(XLSX, data_only=True)
 convenios = []
 problemas = []
 
