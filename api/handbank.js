@@ -92,35 +92,54 @@ async function getCookie() {
   return await loginAutomatico();
 }
 
-// ─── HTTP CALL com retry em 401/403 (cookie expirou no meio) ──────
+// ─── HTTP CALL com retry em 401/403 OU resposta HTML (sessao expirada PHP) ──
+// IMPORTANTE: a Handbank/PHP retorna 200 OK + pagina de login HTML quando o
+// PHPSESSID expirou, em vez de 401/403. Detectamos isso e re-logamos.
 async function hbCall(method, path, body) {
   let tk = await getCookie();
   if (!tk.ok) return { ok: false, status: 0, data: { error: tk.error } };
 
-  const opts = {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      'accept': 'application/json, text/plain, */*',
-      'cookie': tk.cookie,
-      'origin': BASE,
-      'referer': BASE + '/consulta/index'
-    }
+  const buildOpts = (cookie) => {
+    const opts = {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'accept': 'application/json, text/plain, */*',
+        'x-requested-with': 'XMLHttpRequest', // força resposta JSON em frameworks PHP
+        'cookie': cookie,
+        'origin': BASE,
+        'referer': BASE + '/consulta/index'
+      }
+    };
+    if (body && method !== 'GET') opts.body = JSON.stringify(body);
+    return opts;
   };
-  if (body && method !== 'GET') opts.body = JSON.stringify(body);
 
-  let r = await fetch(BASE + path, opts);
-  // Sessao expirou no meio do request — tenta re-login uma vez
-  if (r.status === 401 || r.status === 403) {
+  let r = await fetch(BASE + path, buildOpts(tk.cookie));
+  let t = await r.text();
+  // Detecta sessao PHP expirada: 200 + HTML (pagina de login) em vez de JSON
+  const isHtml = t.startsWith('<!DOCTYPE') || t.startsWith('<html') || t.includes('<title>Handbank</title>');
+  const sessaoExpirada = (r.status === 401 || r.status === 403) || (r.ok && isHtml);
+
+  if (sessaoExpirada) {
     cookieCache = { cookie: null, ts: 0, exp: 0 };
-    tk = await loginAutomatico();
-    if (!tk.ok) return { ok: false, status: r.status, data: { error: tk.error } };
-    opts.headers.cookie = tk.cookie;
-    r = await fetch(BASE + path, opts);
+    const novo = await loginAutomatico();
+    if (!novo.ok) {
+      return { ok: false, status: r.status, data: { error: novo.error || 'Re-login falhou' } };
+    }
+    r = await fetch(BASE + path, buildOpts(novo.cookie));
+    t = await r.text();
   }
-  const t = await r.text();
-  let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 500) }; }
-  return { ok: r.ok, status: r.status, data: d };
+
+  let d; try { d = JSON.parse(t); } catch {
+    // Se mesmo apos re-login veio HTML, retorna erro claro em vez de raw confuso
+    if (t.startsWith('<!DOCTYPE') || t.startsWith('<html')) {
+      d = { error: 'Handbank retornou HTML em vez de JSON (sessao ainda invalida apos re-login)' };
+    } else {
+      d = { raw: t.substring(0, 500) };
+    }
+  }
+  return { ok: r.ok && !d.error, status: r.status, data: d };
 }
 
 // ─── HANDLER ──────────────────────────────────────────────────────
