@@ -9108,7 +9108,7 @@ function renderFedConvenioDetalhe(){
         h += `<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;margin-bottom:6px">${lab}</div>`;
         h += '<div style="display:grid;grid-template-columns:1fr;gap:6px;font-size:12px">';
         for(const a of items){
-          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(govFmtPct(a.valor))}</div></div>`;
+          h += `<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;padding:6px 0;border-bottom:1px dashed var(--brd)"><div style="color:var(--t3)">${esc(a.label)}</div><div style="white-space:pre-line">${esc(a.valor)}</div></div>`;
         }
         h += '</div></div>';
       }

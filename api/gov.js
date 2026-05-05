@@ -15,7 +15,7 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
-import { dbSelect, dbInsert, dbUpdate, dbQuery } from './_lib/supabase.js';
+import { dbSelect, dbInsert, dbUpdate, dbQuery, dbDelete } from './_lib/supabase.js';
 
 const CLAUDE_KEY = () => process.env.CLAUDE_API_KEY;
 const CLAUDE_MODEL = 'claude-sonnet-4-5-20250929';
@@ -43,11 +43,29 @@ export default async function handler(req) {
       case 'analisarHolerite': return await analisarHolerite(body, req, auth);
       case 'listAnalises':     return await listAnalises(body, req, auth);
       case 'getAnalise':       return await getAnalise(body, req, auth);
+      // ── ADMIN actions (so admin/gestor) ──
+      case 'upsertBanco':         return await guardAdmin(auth, req, () => upsertBanco(body, req));
+      case 'upsertConvenio':      return await guardAdmin(auth, req, () => upsertConvenio(body, req));
+      case 'upsertBancoConvenio': return await guardAdmin(auth, req, () => upsertBancoConvenio(body, req));
+      case 'deleteBancoConvenio': return await guardAdmin(auth, req, () => deleteBancoConvenio(body, req));
+      case 'deleteBanco':         return await guardAdmin(auth, req, () => deleteBanco(body, req));
+      case 'deleteConvenio':      return await guardAdmin(auth, req, () => deleteConvenio(body, req));
       default: return jsonError(`Action desconhecida: ${action}`, 400, req);
     }
   } catch (e) {
     return jsonError(`Erro interno: ${e.message}`, 500, req);
   }
+}
+
+function guardAdmin(auth, req, fn) {
+  if (auth.role !== 'admin' && auth.role !== 'gestor' && !auth._internal) {
+    return jsonError('Apenas admin/gestor', 403, req);
+  }
+  return fn();
+}
+
+function slugify(s) {
+  return String(s||'').normalize('NFKD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -453,4 +471,97 @@ async function getAnalise(body, req, auth) {
     return jsonError('Sem permissao', 403, req);
   }
   return jsonResp({ ok: true, analise: data }, 200, req);
+}
+
+// ══════════════════════════════════════════════════════════════
+// ADMIN ACTIONS
+// ══════════════════════════════════════════════════════════════
+
+// upsertBanco — body: { id?, slug?, nome, ativo?, observacoes? }
+async function upsertBanco(body, req) {
+  if (!body.nome) return jsonError('nome obrigatorio', 400, req);
+  const slug = body.slug || slugify(body.nome);
+  if (!slug) return jsonError('slug invalido', 400, req);
+  const data = { slug, nome: body.nome.trim() };
+  if (body.observacoes !== undefined) data.observacoes = body.observacoes;
+  if (body.ativo !== undefined) data.ativo = !!body.ativo;
+  if (body.id) {
+    const r = await dbUpdate('gov_bancos', { id: body.id }, data);
+    if (r.error) return jsonError(`Falha update banco: ${r.error}`, 500, req);
+    return jsonResp({ ok: true, banco: Array.isArray(r.data)?r.data[0]:r.data }, 200, req);
+  }
+  const r = await dbInsert('gov_bancos', data);
+  if (r.error) return jsonError(`Falha insert banco: ${r.error}`, 500, req);
+  return jsonResp({ ok: true, banco: r.data }, 200, req);
+}
+
+// upsertConvenio — body: { id?, slug?, nome, uf?, estado_nome?, ativo?, observacoes? }
+async function upsertConvenio(body, req) {
+  if (!body.nome) return jsonError('nome obrigatorio', 400, req);
+  const slug = body.slug || slugify(body.nome);
+  const data = { slug, nome: body.nome.trim() };
+  if (body.uf !== undefined) data.uf = body.uf || null;
+  if (body.estado_nome !== undefined) data.estado_nome = body.estado_nome || null;
+  if (body.observacoes !== undefined) data.observacoes = body.observacoes;
+  if (body.ativo !== undefined) data.ativo = !!body.ativo;
+  if (body.id) {
+    const r = await dbUpdate('gov_convenios', { id: body.id }, data);
+    if (r.error) return jsonError(`Falha update convenio: ${r.error}`, 500, req);
+    return jsonResp({ ok: true, convenio: Array.isArray(r.data)?r.data[0]:r.data }, 200, req);
+  }
+  const r = await dbInsert('gov_convenios', data);
+  if (r.error) return jsonError(`Falha insert convenio: ${r.error}`, 500, req);
+  return jsonResp({ ok: true, convenio: r.data }, 200, req);
+}
+
+// upsertBancoConvenio — body: { id?, banco_id, convenio_id, opera_*, suspenso, margem, idade_min/max, taxa, ... }
+async function upsertBancoConvenio(body, req) {
+  if (!body.banco_id || !body.convenio_id) return jsonError('banco_id e convenio_id obrigatorios', 400, req);
+  const data = {
+    banco_id: Number(body.banco_id),
+    convenio_id: Number(body.convenio_id),
+    opera_novo: !!body.opera_novo,
+    opera_refin: !!body.opera_refin,
+    opera_port: !!body.opera_port,
+    opera_cartao: !!body.opera_cartao,
+    suspenso: !!body.suspenso,
+    margem_utilizavel: body.margem_utilizavel === '' || body.margem_utilizavel === null ? null : Number(body.margem_utilizavel),
+    idade_min: body.idade_min === '' || body.idade_min === null ? null : Number(body.idade_min),
+    idade_max: body.idade_max === '' || body.idade_max === null ? null : Number(body.idade_max),
+    taxa_minima_port: body.taxa_minima_port === '' || body.taxa_minima_port === null ? null : Number(body.taxa_minima_port),
+    data_corte: body.data_corte || null,
+    valor_minimo: body.valor_minimo || null,
+    qtd_contratos: body.qtd_contratos || null,
+  };
+  if (body.atributos && typeof body.atributos === 'object') data.atributos = body.atributos;
+  if (Array.isArray(body.atributos_brutos)) data.atributos_brutos = body.atributos_brutos;
+  if (body.id) {
+    const r = await dbUpdate('gov_banco_convenio', { id: body.id }, data);
+    if (r.error) return jsonError(`Falha update: ${r.error}`, 500, req);
+    return jsonResp({ ok: true, registro: Array.isArray(r.data)?r.data[0]:r.data }, 200, req);
+  }
+  const r = await dbInsert('gov_banco_convenio', data);
+  if (r.error) return jsonError(`Falha insert: ${r.error}`, 500, req);
+  return jsonResp({ ok: true, registro: r.data }, 200, req);
+}
+
+async function deleteBancoConvenio(body, req) {
+  if (!body.id) return jsonError('id obrigatorio', 400, req);
+  const r = await dbDelete('gov_banco_convenio', { id: body.id });
+  if (r.error) return jsonError(`Falha delete: ${r.error}`, 500, req);
+  return jsonResp({ ok: true }, 200, req);
+}
+
+async function deleteBanco(body, req) {
+  if (!body.id) return jsonError('id obrigatorio', 400, req);
+  const r = await dbDelete('gov_bancos', { id: body.id });
+  if (r.error) return jsonError(`Falha delete: ${r.error}`, 500, req);
+  return jsonResp({ ok: true }, 200, req);
+}
+
+async function deleteConvenio(body, req) {
+  if (!body.id) return jsonError('id obrigatorio', 400, req);
+  const r = await dbDelete('gov_convenios', { id: body.id });
+  if (r.error) return jsonError(`Falha delete: ${r.error}`, 500, req);
+  return jsonResp({ ok: true }, 200, req);
 }
