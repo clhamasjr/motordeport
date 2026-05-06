@@ -7874,6 +7874,243 @@ async function cltAdminMercSalvarJwt() {
   }
 }
 
+// ════════════════════════════════════════════════════════════════════
+// CATÁLOGO + ANÁLISE de Bancos CLT
+// ════════════════════════════════════════════════════════════════════
+let cltCatalogoState = { loading: false, bancos: [], convenios: [], vinculos: [], _loaded: false, expandido: null };
+let cltAnaliseState = {
+  loading: false,
+  resultado: null,
+  filtros: { idade: '', dataNascimento: '', margem: '', valor: '', prazo: '', tempo_admissao_meses: '', operacao: 'novo' }
+};
+
+async function cltCatalogoCarregar() {
+  cltCatalogoState.loading = true; renderApp();
+  try {
+    const r = await fetch('/api/clt-bancos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'listar' })
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'erro');
+    cltCatalogoState.bancos = d.bancos || [];
+    cltCatalogoState.convenios = d.convenios || [];
+    cltCatalogoState.vinculos = d.vinculos || [];
+  } catch (e) { alert('Erro: ' + e.message); }
+  cltCatalogoState.loading = false;
+  renderApp();
+}
+
+function cltCatalogoToggleBanco(id) {
+  cltCatalogoState.expandido = cltCatalogoState.expandido === id ? null : id;
+  renderApp();
+}
+
+function renderCltCatalogo() {
+  if (!cltCatalogoState._loaded) {
+    cltCatalogoState._loaded = true;
+    setTimeout(cltCatalogoCarregar, 0);
+  }
+
+  let h = '<div style="max-width:1200px;margin:0 auto;padding:16px" class="fi">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">';
+  h += '<div><div style="font-size:22px;font-weight:800">📚 CLT — Catálogo de Bancos</div>';
+  h += '<div style="font-size:12px;color:var(--t2)">Lista dos bancos CLT integrados, regras e convênios</div></div>';
+  h += '<button class="btn btn-sm" onclick="cltCatalogoCarregar()">🔄 Atualizar</button>';
+  h += '</div>';
+
+  if (cltCatalogoState.loading && cltCatalogoState.bancos.length === 0) {
+    h += '<div style="padding:60px;text-align:center;color:var(--t2)">⏳ Carregando...</div></div>';
+    return h;
+  }
+
+  const bancos = cltCatalogoState.bancos;
+  const vinculosPorBanco = {};
+  for (const v of cltCatalogoState.vinculos) {
+    if (!vinculosPorBanco[v.banco_id]) vinculosPorBanco[v.banco_id] = [];
+    vinculosPorBanco[v.banco_id].push(v);
+  }
+  const convPorId = {};
+  for (const c of cltCatalogoState.convenios) convPorId[c.id] = c;
+
+  if (bancos.length === 0) {
+    h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum banco cadastrado.</div></div>';
+    return h;
+  }
+
+  h += '<div style="display:grid;gap:10px">';
+  for (const b of bancos) {
+    const expandido = cltCatalogoState.expandido === b.id;
+    const vinculos = vinculosPorBanco[b.id] || [];
+    const apiCor = b.api_status === 'ativa' ? 'var(--grn)' : (b.api_status === 'manual' ? 'var(--ylw)' : 'var(--red)');
+    h += `<div style="background:var(--card);border:1px solid var(--brd);border-left:4px solid var(--acc);border-radius:12px;padding:14px;cursor:pointer" onclick="cltCatalogoToggleBanco(${b.id})">`;
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">';
+    h += `<div><div style="font-size:16px;font-weight:800">🏦 ${esc(b.nome)}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">${esc(b.slug)}</div></div>`;
+    h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+    h += `<span class="pill" style="background:${apiCor}22;color:${apiCor};font-size:10px">API: ${esc(b.api_status||'?')}</span>`;
+    if (b.exige_selfie) h += `<span class="pill pill-default" style="font-size:10px">📸 Selfie</span>`;
+    if (b.exige_termo) h += `<span class="pill pill-default" style="font-size:10px">📝 Termo</span>`;
+    h += `<span class="pill ${b.ativo?'pill-grn':'pill-red'}" style="font-size:10px">${b.ativo?'Ativo':'Inativo'}</span>`;
+    h += `<span style="color:var(--t3)">${expandido?'▾':'▸'}</span>`;
+    h += '</div></div>';
+
+    if (expandido) {
+      h += '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--brd)" onclick="event.stopPropagation()">';
+      if (b.como_funciona) {
+        h += `<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Como funciona</div>`;
+        h += `<div style="font-size:13px;color:var(--t2);line-height:1.5">${esc(b.como_funciona)}</div></div>`;
+      }
+      if (b.observacoes) {
+        h += `<div style="margin-bottom:10px;padding:8px 10px;background:rgba(245,194,66,.06);border-left:3px solid var(--ylw);border-radius:6px"><div style="font-size:11px;color:var(--ylw);font-weight:700;margin-bottom:2px">⚠️ Observações</div>`;
+        h += `<div style="font-size:12px;color:var(--t2)">${esc(b.observacoes)}</div></div>`;
+      }
+      // Convenios + regras
+      h += '<div style="margin-top:12px"><div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:6px">📋 Convênios e regras</div>';
+      if (vinculos.length === 0) {
+        h += '<div style="font-size:12px;color:var(--t3)">Sem convênios cadastrados.</div>';
+      } else {
+        for (const v of vinculos) {
+          const conv = convPorId[v.convenio_id];
+          h += '<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px;margin-bottom:8px">';
+          h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-weight:700">${esc(conv?.nome||'?')}</div>`;
+          const ops = [];
+          if (v.opera_novo) ops.push('Novo');
+          if (v.opera_refin) ops.push('Refin');
+          if (v.opera_port) ops.push('Port');
+          if (v.opera_cartao) ops.push('Cartão');
+          h += `<div style="display:flex;gap:4px">${ops.map(o=>`<span class="pill pill-grn" style="font-size:10px">${o}</span>`).join('')}</div></div>`;
+          h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;font-size:11px">';
+          if (v.idade_min || v.idade_max) h += `<div><span style="color:var(--t3)">Idade:</span> <b>${v.idade_min||'?'}-${v.idade_max||'?'}</b></div>`;
+          if (v.margem_minima) h += `<div><span style="color:var(--t3)">Margem mín:</span> <b>R$ ${Number(v.margem_minima).toFixed(2)}</b></div>`;
+          if (v.valor_minimo || v.valor_maximo) h += `<div><span style="color:var(--t3)">Valor:</span> <b>R$ ${v.valor_minimo||0} - ${v.valor_maximo||'?'}</b></div>`;
+          if (v.prazo_min || v.prazo_max) h += `<div><span style="color:var(--t3)">Parcelas:</span> <b>${v.prazo_min||0}x - ${v.prazo_max||'?'}x</b></div>`;
+          if (v.taxa_minima || v.taxa_maxima) h += `<div><span style="color:var(--t3)">Taxa:</span> <b>${v.taxa_minima||'?'}% - ${v.taxa_maxima||'?'}%</b></div>`;
+          if (v.tempo_admissao_min_meses) h += `<div><span style="color:var(--t3)">Tempo casa:</span> <b>${v.tempo_admissao_min_meses}m+</b></div>`;
+          h += '</div>';
+          if (Array.isArray(v.documentos_obrigatorios) && v.documentos_obrigatorios.length) {
+            h += `<div style="margin-top:6px;font-size:11px;color:var(--t3)">📄 Docs: ${v.documentos_obrigatorios.map(esc).join(' · ')}</div>`;
+          }
+          if (v.observacoes) h += `<div style="margin-top:4px;font-size:11px;color:var(--t2);font-style:italic">${esc(v.observacoes)}</div>`;
+          h += '</div>';
+        }
+      }
+      h += '</div></div>';
+    }
+    h += '</div>';
+  }
+  h += '</div></div>';
+  return h;
+}
+
+async function cltAnaliseRodar() {
+  const f = cltAnaliseState.filtros;
+  const params = { action: 'analisar' };
+  if (f.idade) params.idade = parseInt(f.idade);
+  if (f.dataNascimento) params.dataNascimento = f.dataNascimento;
+  if (f.margem) params.margem = parseFloat(f.margem);
+  if (f.valor) params.valor = parseFloat(f.valor);
+  if (f.prazo) params.prazo = parseInt(f.prazo);
+  if (f.tempo_admissao_meses) params.tempo_admissao_meses = parseInt(f.tempo_admissao_meses);
+  params.operacao = f.operacao || 'novo';
+
+  cltAnaliseState.loading = true; renderApp();
+  try {
+    const r = await fetch('/api/clt-bancos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify(params)
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'erro');
+    cltAnaliseState.resultado = d;
+  } catch (e) { alert('Erro: ' + e.message); }
+  cltAnaliseState.loading = false;
+  renderApp();
+}
+
+function cltAnaliseSet(k, v) { cltAnaliseState.filtros[k] = v; }
+
+function renderCltAnalise() {
+  const f = cltAnaliseState.filtros;
+  let h = '<div style="max-width:1200px;margin:0 auto;padding:16px" class="fi">';
+  h += '<div style="font-size:22px;font-weight:800;margin-bottom:6px">🎯 CLT — Análise de Cliente</div>';
+  h += '<div style="font-size:12px;color:var(--t2);margin-bottom:18px">Entre os parâmetros do cliente e veja quais bancos atendem (e por que os outros não).</div>';
+
+  // Form
+  h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:18px;margin-bottom:16px">';
+  h += '<div style="font-size:13px;font-weight:700;color:var(--t2);margin-bottom:10px">📋 Dados do cliente</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">';
+  const inp = (k, label, type='text', placeholder='') =>
+    `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em">${label}</label><input class="form-input" type="${type}" placeholder="${placeholder}" value="${f[k]||''}" oninput="cltAnaliseSet('${k}',this.value)"></div>`;
+  h += inp('idade', 'Idade', 'number', '45');
+  h += inp('dataNascimento', 'Ou Data Nasc', 'date', '');
+  h += inp('margem', 'Margem (parcela)', 'number', '250');
+  h += inp('valor', 'Valor solicitado', 'number', '5000');
+  h += inp('prazo', 'Prazo (parcelas)', 'number', '60');
+  h += inp('tempo_admissao_meses', 'Tempo casa (meses)', 'number', '24');
+  h += `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em">Operação</label>`;
+  h += `<select class="form-input" onchange="cltAnaliseSet('operacao',this.value)">`;
+  for (const op of [['novo','Novo'],['refin','Refinanciamento'],['port','Portabilidade'],['cartao','Cartão']]) {
+    h += `<option value="${op[0]}" ${f.operacao===op[0]?'selected':''}>${op[1]}</option>`;
+  }
+  h += '</select></div>';
+  h += '</div>';
+  h += '<div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn-acc" onclick="cltAnaliseRodar()" ' + (cltAnaliseState.loading?'disabled':'') + '>' + (cltAnaliseState.loading?'⏳ Analisando...':'🎯 Analisar bancos') + '</button></div>';
+  h += '</div>';
+
+  // Resultado
+  const r = cltAnaliseState.resultado;
+  if (r) {
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">';
+    h += `<div class="kpi"><div class="kpi-label">Total bancos</div><div class="kpi-value">${r.total_bancos}</div></div>`;
+    h += `<div class="kpi" style="border-color:rgba(34,197,94,.35)"><div class="kpi-label">✅ Atendem</div><div class="kpi-value" style="color:var(--grn)">${r.atendem_count}</div></div>`;
+    h += `<div class="kpi" style="border-color:rgba(239,68,68,.25)"><div class="kpi-label">❌ Não atendem</div><div class="kpi-value" style="color:var(--red)">${r.nao_atendem_count}</div></div>`;
+    h += '</div>';
+
+    if (r.atendem.length) {
+      h += '<div style="background:var(--card);border:1px solid var(--grn);border-radius:12px;padding:16px;margin-bottom:14px">';
+      h += `<div style="font-size:13px;font-weight:800;color:var(--grn);margin-bottom:12px">✅ ${r.atendem.length} banco(s) atendem este cliente</div>`;
+      h += '<div style="display:grid;gap:8px">';
+      for (const b of r.atendem) {
+        h += '<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px">';
+        h += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px"><div style="font-weight:700">${esc(b.banco_nome)}</div>`;
+        h += '<div style="display:flex;gap:4px">';
+        if (b.exige_selfie) h += `<span class="pill" style="background:rgba(245,194,66,.15);color:var(--ylw);font-size:10px">📸 Selfie</span>`;
+        if (b.exige_termo) h += `<span class="pill pill-default" style="font-size:10px">📝 Termo</span>`;
+        h += `<span class="pill pill-grn" style="font-size:10px">${esc(b.api_status||'ativa')}</span>`;
+        h += '</div></div>';
+        const reg = b.regras || {};
+        const linhas = [];
+        if (reg.idade_min || reg.idade_max) linhas.push(`Idade ${reg.idade_min||'?'}-${reg.idade_max||'?'}`);
+        if (reg.margem_minima) linhas.push(`Margem mín R$ ${Number(reg.margem_minima).toFixed(2)}`);
+        if (reg.valor_minimo || reg.valor_maximo) linhas.push(`Valor R$ ${reg.valor_minimo||0}-${reg.valor_maximo||'?'}`);
+        if (reg.prazo_min || reg.prazo_max) linhas.push(`${reg.prazo_min||0}x-${reg.prazo_max||'?'}x`);
+        if (reg.tempo_admissao_min_meses) linhas.push(`${reg.tempo_admissao_min_meses}m+ casa`);
+        if (linhas.length) h += `<div style="font-size:11px;color:var(--t3)">${linhas.join(' · ')}</div>`;
+        if (Array.isArray(b.documentos) && b.documentos.length) {
+          h += `<div style="margin-top:4px;font-size:11px;color:var(--t2)">📄 ${b.documentos.map(esc).join(' · ')}</div>`;
+        }
+        h += '</div>';
+      }
+      h += '</div></div>';
+    }
+
+    if (r.nao_atendem.length) {
+      h += '<details style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px"><summary style="cursor:pointer;font-size:12px;color:var(--t3);font-weight:700">❌ ' + r.nao_atendem.length + ' banco(s) NÃO atendem (clique pra ver motivo)</summary>';
+      h += '<div style="margin-top:10px;display:grid;gap:6px;font-size:12px">';
+      for (const b of r.nao_atendem) {
+        h += `<div style="padding:8px 10px;background:var(--bg);border-radius:6px"><b>${esc(b.banco_nome)}</b> — <span style="color:var(--red)">${esc(b.motivo||'')}</span></div>`;
+      }
+      h += '</div></details>';
+    }
+  }
+
+  h += '</div>';
+  return h;
+}
+
 function renderCltAdminMercantil() {
   if (!cltAdminMercState._loaded) {
     cltAdminMercState._loaded = true;
@@ -10623,7 +10860,9 @@ const MENU=[
     ]},
   {product:'clt',icon:'💼',label:'CLT',active:true,
     items:[
-      {k:'cltConsulta',icon:'🔍',label:'Consulta Unitária'}
+      {k:'cltConsulta',icon:'🔍',label:'Consulta Unitária'},
+      {k:'cltCatalogo',icon:'📚',label:'Catálogo de Bancos'},
+      {k:'cltAnalise',icon:'🎯',label:'Análise de Cliente'}
     ],
     groups:[
       {group:'Análise em Lote',icon:'📊',items:[
@@ -11012,6 +11251,8 @@ if(!D){
   else if(S.tab==="cltWebhooks")content=renderCltWebhooks();
   else if(S.tab==="cltWpp")content=renderCltWpp();
   else if(S.tab==="cltPainel")content=renderCltPainel();
+  else if(S.tab==="cltCatalogo")content=renderCltCatalogo();
+  else if(S.tab==="cltAnalise")content=renderCltAnalise();
   else if(S.tab==="cltAdminMercantil"&&isGes)content=renderCltAdminMercantil();
   else if(S.tab==="govCatalogo")content=renderGovCatalogo();
   else if(S.tab==="govHolerite")content=renderGovHolerite();
