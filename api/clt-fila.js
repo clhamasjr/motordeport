@@ -746,6 +746,42 @@ export default async function handler(req) {
       }
     } catch { /* nao quebra se nao tem ainda */ }
 
+    // FALLBACK: Base CAGED 2024 (clt_base_funcionarios) — 43M+ CPFs do Brasil.
+    // So usamos os campos que CONTINUAM faltando apos clt_clientes (priorizamos
+    // dados de consultas anteriores, que sao mais frescos que dados do CAGED 2024).
+    let vinculoInicial = null;
+    try {
+      const { data: baseCaged } = await dbSelect('clt_base_funcionarios', {
+        filters: { cpf }, single: true
+      });
+      if (baseCaged) {
+        if (!clienteInicial.nome && baseCaged.nome) clienteInicial.nome = baseCaged.nome;
+        if (!clienteInicial.dataNascimento && baseCaged.data_nascimento) clienteInicial.dataNascimento = baseCaged.data_nascimento;
+        if (!clienteInicial.sexo && baseCaged.sexo) clienteInicial.sexo = baseCaged.sexo;
+        if (!clienteInicial.telefones?.length && baseCaged.ddd && baseCaged.telefone) {
+          const completo = baseCaged.ddd + baseCaged.telefone;
+          clienteInicial.telefones = [{
+            ddd: baseCaged.ddd, numero: baseCaged.telefone,
+            completo, whatsapp: true, fonte: 'caged_2024'
+          }];
+        }
+        if (!clienteInicial.emails?.length && baseCaged.email) {
+          clienteInicial.emails = [baseCaged.email];
+        }
+        // Pre-popula vinculo com info de empregador (CAGED tem CNPJ + nome + admissao)
+        if (baseCaged.empregador_cnpj) {
+          vinculoInicial = {
+            cnpj: baseCaged.empregador_cnpj,
+            empregador: baseCaged.empregador_nome,
+            dataAdmissao: baseCaged.data_admissao,
+            cnae: baseCaged.cnae,
+            cbo: baseCaged.cbo,
+            fonte: 'caged_2024'
+          };
+        }
+      }
+    } catch { /* base pode ainda nao estar populada — segue sem */ }
+
     if (Object.keys(clienteInicial).length === 0) clienteInicial = null;
 
     // Origem do registro: 'lote' (higienizacao em lote) muda o criada_por_nome
@@ -761,6 +797,7 @@ export default async function handler(req) {
       status_geral: 'processando',
       bancos: inicial,
       cliente: clienteInicial,
+      vinculo: vinculoInicial, // pre-populado do CAGED se disponivel
       iniciado_em: new Date().toISOString(),
       criada_por_user_id: user?.id || null,
       criada_por_nome: criadaPorNome
