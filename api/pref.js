@@ -35,17 +35,148 @@ export default async function handler(req) {
 
   try {
     switch (action) {
-      case 'listConvenios':    return await listConvenios(body, req);
-      case 'getConvenio':      return await getConvenio(body, req);
-      case 'listBancos':       return await listBancos(body, req);
-      case 'analisarHolerite': return await analisarHolerite(body, req, auth);
-      case 'listAnalises':     return await listAnalises(body, req, auth);
-      case 'getAnalise':       return await getAnalise(body, req, auth);
+      case 'listConvenios':       return await listConvenios(body, req);
+      case 'getConvenio':         return await getConvenio(body, req);
+      case 'listBancos':          return await listBancos(body, req);
+      case 'analisarHolerite':    return await analisarHolerite(body, req, auth);
+      case 'listAnalises':        return await listAnalises(body, req, auth);
+      case 'getAnalise':          return await getAnalise(body, req, auth);
+      // ── Admin/gestor: cadastro manual de bancos em convenios ──
+      case 'criarBanco':          return await adminCriarBanco(body, req, auth);
+      case 'upsertBancoConvenio': return await adminUpsertBancoConvenio(body, req, auth);
+      case 'deleteBancoConvenio': return await adminDeleteBancoConvenio(body, req, auth);
       default: return jsonError(`Action desconhecida: ${action}`, 400, req);
     }
   } catch (e) {
     return jsonError(`Erro interno: ${e.message}`, 500, req);
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// ADMIN: criar banco novo em pref_bancos
+// body: { nome, slug? (auto se vazio), observacoes? }
+// ══════════════════════════════════════════════════════════════
+async function adminCriarBanco(body, req, auth) {
+  if (auth.role !== 'admin' && auth.role !== 'gestor') return jsonError('Sem permissao', 403, req);
+  if (!body.nome || !body.nome.trim()) return jsonError('nome obrigatorio', 400, req);
+  const nome = body.nome.trim();
+  // gera slug se nao fornecido
+  const slug = (body.slug || nome).toString().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  if (!slug) return jsonError('slug invalido apos normalizacao', 400, req);
+
+  // upsert
+  const url = `${process.env.SUPABASE_URL}/rest/v1/pref_bancos?on_conflict=slug`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'apikey': process.env.SUPABASE_SERVICE_KEY,
+      'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'resolution=merge-duplicates,return=representation'
+    },
+    body: JSON.stringify({ slug, nome, observacoes: body.observacoes || null })
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    return jsonError(`Falha ao criar banco: ${t.substring(0,300)}`, 500, req);
+  }
+  const arr = await resp.json();
+  return jsonResp({ ok: true, banco: Array.isArray(arr) ? arr[0] : arr }, 200, req);
+}
+
+// ══════════════════════════════════════════════════════════════
+// ADMIN: criar/atualizar vinculo banco x convenio com regras
+// body: { id? (atualizar) | banco_id+convenio_id (criar), regras... }
+// ══════════════════════════════════════════════════════════════
+async function adminUpsertBancoConvenio(body, req, auth) {
+  if (auth.role !== 'admin' && auth.role !== 'gestor') return jsonError('Sem permissao', 403, req);
+  if (!body.banco_id) return jsonError('banco_id obrigatorio', 400, req);
+  if (!body.convenio_id) return jsonError('convenio_id obrigatorio', 400, req);
+
+  // Helpers de saneamento
+  const tobool = v => v === true || v === 'true' || v === 1 || v === '1';
+  const tonum = v => (v === '' || v === null || v === undefined) ? null : Number(v);
+  const toint = v => (v === '' || v === null || v === undefined) ? null : parseInt(v, 10);
+  const tostr = v => (v === '' || v === null || v === undefined) ? null : String(v);
+
+  // Margem/Taxa: aceita "35" (%) ou "0.35" (decimal)
+  const parsePct = v => {
+    if (v === '' || v === null || v === undefined) return null;
+    const n = Number(String(v).replace(',', '.').replace('%', '').trim());
+    if (isNaN(n)) return null;
+    return n > 1 ? n / 100 : n;
+  };
+
+  const dados = {
+    banco_id: toint(body.banco_id),
+    convenio_id: toint(body.convenio_id),
+    opera_novo: tobool(body.opera_novo),
+    opera_refin: tobool(body.opera_refin),
+    opera_port: tobool(body.opera_port),
+    opera_cartao: tobool(body.opera_cartao),
+    suspenso: tobool(body.suspenso),
+    regime_atendido: ['RPPS','RGPS','AMBOS'].includes(body.regime_atendido) ? body.regime_atendido : 'RPPS',
+    publico_ativo: body.publico_ativo === undefined ? true : tobool(body.publico_ativo),
+    publico_aposentado: body.publico_aposentado === undefined ? true : tobool(body.publico_aposentado),
+    publico_pensionista: body.publico_pensionista === undefined ? true : tobool(body.publico_pensionista),
+    margem_utilizavel: parsePct(body.margem_utilizavel),
+    taxa_minima_port: parsePct(body.taxa_minima_port),
+    idade_min: toint(body.idade_min),
+    idade_max: toint(body.idade_max),
+    prazo_max_meses: toint(body.prazo_max_meses),
+    valor_minimo_op: tonum(body.valor_minimo_op),
+    valor_maximo_op: tonum(body.valor_maximo_op),
+    data_corte: tostr(body.data_corte),
+    valor_minimo: tostr(body.valor_minimo),
+    qtd_contratos: tostr(body.qtd_contratos),
+    observacoes_admin: tostr(body.observacoes_admin),
+    criado_por_admin: true,
+    editado_manual: true,
+    criado_por_user_id: auth.id || null,
+  };
+
+  // UPSERT por (banco_id, convenio_id)
+  const url = `${process.env.SUPABASE_URL}/rest/v1/pref_banco_convenio?on_conflict=banco_id,convenio_id`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'apikey': process.env.SUPABASE_SERVICE_KEY,
+      'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'resolution=merge-duplicates,return=representation'
+    },
+    body: JSON.stringify(dados)
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    return jsonError(`Falha ao salvar: ${t.substring(0,400)}`, 500, req);
+  }
+  const arr = await resp.json();
+  return jsonResp({ ok: true, vinculo: Array.isArray(arr) ? arr[0] : arr }, 200, req);
+}
+
+// ══════════════════════════════════════════════════════════════
+// ADMIN: remove vinculo banco x convenio
+// body: { id }
+// ══════════════════════════════════════════════════════════════
+async function adminDeleteBancoConvenio(body, req, auth) {
+  if (auth.role !== 'admin' && auth.role !== 'gestor') return jsonError('Sem permissao', 403, req);
+  if (!body.id) return jsonError('id obrigatorio', 400, req);
+  const url = `${process.env.SUPABASE_URL}/rest/v1/pref_banco_convenio?id=eq.${parseInt(body.id,10)}`;
+  const resp = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      'apikey': process.env.SUPABASE_SERVICE_KEY,
+      'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+    }
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    return jsonError(`Falha ao remover: ${t.substring(0,300)}`, 500, req);
+  }
+  return jsonResp({ ok: true }, 200, req);
 }
 
 // ── listConvenios ───────────────────────────────────────────────
@@ -108,13 +239,22 @@ async function getConvenio(body, req) {
       port: r.opera_port,
       cartao: r.opera_cartao,
     },
+    regime_atendido: r.regime_atendido || 'RPPS',
+    publico_ativo: r.publico_ativo !== false,
+    publico_aposentado: r.publico_aposentado !== false,
+    publico_pensionista: r.publico_pensionista !== false,
     margem_utilizavel: r.margem_utilizavel,
     idade_min: r.idade_min,
     idade_max: r.idade_max,
     taxa_minima_port: r.taxa_minima_port,
+    prazo_max_meses: r.prazo_max_meses,
+    valor_minimo_op: r.valor_minimo_op,
+    valor_maximo_op: r.valor_maximo_op,
     data_corte: r.data_corte,
     valor_minimo: r.valor_minimo,
     qtd_contratos: r.qtd_contratos,
+    observacoes_admin: r.observacoes_admin,
+    criado_por_admin: r.criado_por_admin || false,
     atributos: r.atributos || {},
     atributos_brutos: r.atributos_brutos || [],
   }));
@@ -261,6 +401,20 @@ REGRAS:
 - "convenio_sugerido": orgao/instituto que paga (ex: "PREFEITURA DE SOROCABA", "IPREM CAMPINAS", "FUNPREV BAURU").
 - "uf": sigla 2 letras do estado.
 
+REGIME PREVIDENCIARIO (CRITICO PRA CONSIGNADO):
+- Procure nos descontos: "INSS" / "I.N.S.S." / "PREV. SOCIAL" / "RGPS" → regime_previdenciario = "RGPS"
+  (servidor CLT, comissionado, contrato temporario, designado — NAO eh estatutario)
+- Procure: "IPREM" / "IPSEM" / "FUNPREV" / "IPMDC" / "IPVV" / "PREV. MUNICIPAL" / qualquer instituto municipal
+  ou estadual de previdencia → regime_previdenciario = "RPPS" (servidor estatutario efetivo)
+- Se nao tiver desconto de previdencia identificado → regime_previdenciario = "INDEFINIDO"
+- Se tiver AMBOS (raro, mas pode em casos de duplo vinculo) → regime_previdenciario = "AMBOS"
+
+TIPO DE VINCULO (a partir do cargo + outros indicadores):
+- "ativo" se servidor esta em exercicio (folha de pagamento padrao, descontos completos)
+- "aposentado" se holerite menciona "APOSENTADO", "INATIVO", "PROVENTOS DE APOSENTADORIA"
+- "pensionista" se menciona "PENSIONISTA", "PENSAO", "BENEFICIO POR MORTE"
+- "indefinido" se nao consegue determinar
+
 RESPONDA APENAS COM JSON VALIDO, SEM TEXTO ADICIONAL, SEM MARKDOWN, SEM \`\`\`.
 
 Estrutura esperada:
@@ -273,6 +427,8 @@ Estrutura esperada:
   "municipio": "string|null",
   "uf": "string|null (sigla 2 letras)",
   "cargo": "string|null",
+  "regime_previdenciario": "RGPS|RPPS|AMBOS|INDEFINIDO",
+  "tipo_vinculo": "ativo|aposentado|pensionista|indefinido",
   "data_nascimento": "YYYY-MM-DD|null",
   "idade": "number|null",
   "competencia": "YYYY-MM|null",
@@ -339,6 +495,10 @@ async function cruzarHoleriteComBancos(convenioId, dados) {
   const atendem = [];
   const naoAtendem = [];
 
+  // Regime/vinculo extraidos pela IA
+  const regimeCli = (dados.regime_previdenciario || 'INDEFINIDO').toUpperCase();
+  const tipoVinc = (dados.tipo_vinculo || 'indefinido').toLowerCase();
+
   for (const r of rels) {
     const banco = {
       banco_id: r.banco_id,
@@ -350,10 +510,15 @@ async function cruzarHoleriteComBancos(convenioId, dados) {
         opera_refin: r.opera_refin,
         opera_port: r.opera_port,
         opera_cartao: r.opera_cartao,
+        regime_atendido: r.regime_atendido || 'RPPS',
+        publico_ativo: r.publico_ativo !== false,
+        publico_aposentado: r.publico_aposentado !== false,
+        publico_pensionista: r.publico_pensionista !== false,
         idade_min: r.idade_min,
         idade_max: r.idade_max,
         margem_utilizavel: r.margem_utilizavel,
         taxa_minima_port: r.taxa_minima_port,
+        observacoes_admin: r.observacoes_admin,
         atributos: r.atributos || {},
       }
     };
@@ -363,6 +528,23 @@ async function cruzarHoleriteComBancos(convenioId, dados) {
 
     if (r.suspenso) {
       motivos.push('Banco esta suspenso neste convenio');
+    }
+    // ── Filtro REGIME (RPPS/RGPS) ──
+    const regBanco = r.regime_atendido || 'RPPS';
+    if (regimeCli === 'RGPS' && regBanco === 'RPPS') {
+      motivos.push('Cliente desconta INSS (RGPS — CLT/comissionado/temporario); banco atende so estatutarios efetivos (RPPS)');
+    } else if (regimeCli === 'RPPS' && regBanco === 'RGPS') {
+      motivos.push('Cliente eh estatutario (RPPS); banco atende so RGPS (CLT/comissionado)');
+    }
+    // ── Filtro TIPO DE VINCULO (ativo/aposentado/pensionista) ──
+    if (tipoVinc === 'ativo' && !r.publico_ativo) {
+      motivos.push('Cliente esta na ATIVA; banco nao opera servidores ativos');
+    }
+    if (tipoVinc === 'aposentado' && !r.publico_aposentado) {
+      motivos.push('Cliente esta APOSENTADO; banco nao opera aposentados');
+    }
+    if (tipoVinc === 'pensionista' && !r.publico_pensionista) {
+      motivos.push('Cliente eh PENSIONISTA; banco nao opera pensionistas');
     }
     if (idade !== null && r.idade_max && idade > r.idade_max) {
       motivos.push(`Cliente tem ${idade} anos, banco aceita ate ${r.idade_max}`);

@@ -292,6 +292,20 @@ REGRAS:
 - Margem consignavel: muitos holerites mostram "MARGEM CONSIGNAVEL" ou "MARGEM DISPONIVEL" — extraia o VALOR DISPONIVEL.
 - "convenio_sugerido": tente identificar o orgao/estado (ex: "GOVERNO DO ESTADO DA BAHIA", "TJMG", "PREFEITURA DE SOROCABA").
 
+REGIME PREVIDENCIARIO (CRITICO PRA CONSIGNADO):
+- Procure nos descontos: "INSS" / "I.N.S.S." / "PREV. SOCIAL" / "RGPS" → regime_previdenciario = "RGPS"
+  (servidor CLT, comissionado, contrato temporario — NAO eh estatutario)
+- Procure: "IPESP" / "SPPREV" / "IPSEMG" / "FUNPRESP" / "PREV. ESTADUAL" / qualquer instituto estadual
+  ou municipal de previdencia → regime_previdenciario = "RPPS" (estatutario efetivo)
+- Sem desconto identificado → regime_previdenciario = "INDEFINIDO"
+- Ambos descontos → regime_previdenciario = "AMBOS"
+
+TIPO DE VINCULO:
+- "ativo" se servidor em exercicio (folha padrao)
+- "aposentado" se mencionar "APOSENTADO", "INATIVO", "PROVENTOS DE APOSENTADORIA"
+- "pensionista" se mencionar "PENSIONISTA", "PENSAO", "BENEFICIO POR MORTE"
+- "indefinido" caso contrario
+
 RESPONDA APENAS COM JSON VALIDO, SEM TEXTO ADICIONAL, SEM MARKDOWN, SEM \`\`\`.
 
 Estrutura esperada:
@@ -303,16 +317,18 @@ Estrutura esperada:
   "convenio_sugerido": "string|null",
   "uf": "string|null (sigla 2 letras)",
   "cargo": "string|null",
+  "regime_previdenciario": "RGPS|RPPS|AMBOS|INDEFINIDO",
+  "tipo_vinculo": "ativo|aposentado|pensionista|indefinido",
   "data_nascimento": "YYYY-MM-DD|null",
   "idade": "number|null",
-  "competencia": "YYYY-MM|null (mes/ano de referencia do holerite)",
+  "competencia": "YYYY-MM|null",
   "salario_bruto": "number|null",
   "salario_liquido": "number|null",
   "total_descontos": "number|null",
   "margem_consignavel_disponivel": "number|null",
   "margem_cartao_disponivel": "number|null",
   "descontos_consignados": [{"descricao": "string", "valor": "number"}],
-  "observacoes": "string|null (qualquer info relevante: tipo de vinculo, situacao funcional, etc)"
+  "observacoes": "string|null"
 }`;
 
   const userContent = [
@@ -367,6 +383,8 @@ async function cruzarHoleriteComBancos(convenioId, dados) {
 
   const idade = Number(dados.idade) || null;
   const margemDisponivel = Number(dados.margem_consignavel_disponivel) || null;
+  const regimeCli = (dados.regime_previdenciario || 'INDEFINIDO').toUpperCase();
+  const tipoVinc = (dados.tipo_vinculo || 'indefinido').toLowerCase();
 
   const atendem = [];
   const naoAtendem = [];
@@ -382,10 +400,15 @@ async function cruzarHoleriteComBancos(convenioId, dados) {
         opera_refin: r.opera_refin,
         opera_port: r.opera_port,
         opera_cartao: r.opera_cartao,
+        regime_atendido: r.regime_atendido || 'RPPS',
+        publico_ativo: r.publico_ativo !== false,
+        publico_aposentado: r.publico_aposentado !== false,
+        publico_pensionista: r.publico_pensionista !== false,
         idade_min: r.idade_min,
         idade_max: r.idade_max,
         margem_utilizavel: r.margem_utilizavel,
         taxa_minima_port: r.taxa_minima_port,
+        observacoes_admin: r.observacoes_admin,
         atributos: r.atributos || {},
       }
     };
@@ -396,6 +419,23 @@ async function cruzarHoleriteComBancos(convenioId, dados) {
     // ── Filtros que descartam o banco ──
     if (r.suspenso) {
       motivos.push('Banco esta suspenso neste convenio');
+    }
+    // ── REGIME (RPPS/RGPS) ──
+    const regBanco = r.regime_atendido || 'RPPS';
+    if (regimeCli === 'RGPS' && regBanco === 'RPPS') {
+      motivos.push('Cliente desconta INSS (RGPS — CLT/comissionado); banco atende so estatutarios efetivos (RPPS)');
+    } else if (regimeCli === 'RPPS' && regBanco === 'RGPS') {
+      motivos.push('Cliente eh estatutario (RPPS); banco atende so RGPS');
+    }
+    // ── TIPO DE VINCULO ──
+    if (tipoVinc === 'ativo' && !r.publico_ativo) {
+      motivos.push('Cliente esta na ATIVA; banco nao opera servidores ativos');
+    }
+    if (tipoVinc === 'aposentado' && !r.publico_aposentado) {
+      motivos.push('Cliente esta APOSENTADO; banco nao opera aposentados');
+    }
+    if (tipoVinc === 'pensionista' && !r.publico_pensionista) {
+      motivos.push('Cliente eh PENSIONISTA; banco nao opera pensionistas');
     }
     if (idade !== null && r.idade_max && idade > r.idade_max) {
       motivos.push(`Cliente tem ${idade} anos, banco aceita ate ${r.idade_max}`);
@@ -517,6 +557,13 @@ async function upsertConvenio(body, req) {
 // upsertBancoConvenio — body: { id?, banco_id, convenio_id, opera_*, suspenso, margem, idade_min/max, taxa, ... }
 async function upsertBancoConvenio(body, req) {
   if (!body.banco_id || !body.convenio_id) return jsonError('banco_id e convenio_id obrigatorios', 400, req);
+  // Margem/Taxa: aceita "35" (%) ou "0.35" (decimal)
+  const parsePct = v => {
+    if (v === '' || v === null || v === undefined) return null;
+    const n = Number(String(v).replace(',', '.').replace('%', '').trim());
+    if (isNaN(n)) return null;
+    return n > 1 ? n / 100 : n;
+  };
   const data = {
     banco_id: Number(body.banco_id),
     convenio_id: Number(body.convenio_id),
@@ -525,14 +572,23 @@ async function upsertBancoConvenio(body, req) {
     opera_port: !!body.opera_port,
     opera_cartao: !!body.opera_cartao,
     suspenso: !!body.suspenso,
-    margem_utilizavel: body.margem_utilizavel === '' || body.margem_utilizavel === null ? null : Number(body.margem_utilizavel),
+    regime_atendido: ['RPPS','RGPS','AMBOS'].includes(body.regime_atendido) ? body.regime_atendido : 'RPPS',
+    publico_ativo: body.publico_ativo === undefined ? true : !!body.publico_ativo,
+    publico_aposentado: body.publico_aposentado === undefined ? true : !!body.publico_aposentado,
+    publico_pensionista: body.publico_pensionista === undefined ? true : !!body.publico_pensionista,
+    margem_utilizavel: parsePct(body.margem_utilizavel),
     idade_min: body.idade_min === '' || body.idade_min === null ? null : Number(body.idade_min),
     idade_max: body.idade_max === '' || body.idade_max === null ? null : Number(body.idade_max),
-    taxa_minima_port: body.taxa_minima_port === '' || body.taxa_minima_port === null ? null : Number(body.taxa_minima_port),
+    taxa_minima_port: parsePct(body.taxa_minima_port),
+    prazo_max_meses: body.prazo_max_meses === '' || body.prazo_max_meses === null || body.prazo_max_meses === undefined ? null : Number(body.prazo_max_meses),
+    valor_minimo_op: body.valor_minimo_op === '' || body.valor_minimo_op === null || body.valor_minimo_op === undefined ? null : Number(body.valor_minimo_op),
+    valor_maximo_op: body.valor_maximo_op === '' || body.valor_maximo_op === null || body.valor_maximo_op === undefined ? null : Number(body.valor_maximo_op),
     data_corte: body.data_corte || null,
     valor_minimo: body.valor_minimo || null,
     qtd_contratos: body.qtd_contratos || null,
-    editado_manual: true,  // protegido contra Reseed
+    observacoes_admin: body.observacoes_admin || null,
+    editado_manual: true,
+    criado_por_admin: true,
   };
   if (body.atributos && typeof body.atributos === 'object') data.atributos = body.atributos;
   if (Array.isArray(body.atributos_brutos)) data.atributos_brutos = body.atributos_brutos;
