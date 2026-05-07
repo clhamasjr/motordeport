@@ -276,6 +276,13 @@ export default async function handler(req) {
         }, 200, req);
       }
       const v = vinculos[0];
+      // QITech retorna margem em campos com nomes variaveis (availableMargin pode
+      // vir vazio no checkEligibility — preenchido so apos cltCalculate).
+      // Captura primeiro nao-zero/nao-nulo entre os aliases conhecidos.
+      const margemReal = parseFloat(
+        v.availableMargin || v.available_margin || v.availableMarginValue ||
+        v.margin || v.marginValue || v.marginAvailable || v.margem || 0
+      ) || 0;
       return j({
         success: true, disponivel: true,
         simulationId: simulationIdFinal,
@@ -284,7 +291,7 @@ export default async function handler(req) {
           empregadorCnpj: v.employerDocument,
           matricula: v.registrationNumber,
           renda: v.salary,
-          margemDisponivel: v.availableMargin
+          margemDisponivel: margemReal
         },
         _raw: d3
       }, 200, req);

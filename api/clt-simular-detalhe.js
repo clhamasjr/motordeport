@@ -260,13 +260,42 @@ export default async function handler(req) {
     if (banco === 'joinbank') {
       if (!body.simulationId) return jsonError('simulationId obrigatorio (vem da consulta basica QualiBanking)', 400, req);
 
-      // Margem: se vier explicita, usa; senao estima 35% da renda (lei do consignado CLT)
+      // ─── FALLBACK CHAIN DE MARGEM REAL ───
+      // Prioridade: 1) margem do JoinBank (se veio nao-zero) → 2) PresencaBank consultarMargem
+      // (eSocial via DataPrev — fonte oficial mais confiavel) → 3) Estimativa 35% renda
+      let margemReal = parseFloat(body.margem || 0);
+      let margemFonte = margemReal > 0 ? 'JoinBank/QITech' : null;
       const renda = parseFloat(body.renda || 0);
-      const margem = parseFloat(body.margem || 0) || (renda > 0 ? renda * 0.35 : 0);
+
+      // Fallback 2: PresencaBank consultarMargem (so leitura — funciona mesmo se PB
+      // estiver em manutencao no catalogo, porque essa action nao gera proposta)
+      if (!margemReal && body.matricula && body.empregadorCnpj) {
+        const pbR = await callApi('/api/presencabank', {
+          action: 'consultarMargem',
+          cpf,
+          matricula: body.matricula,
+          cnpj: body.empregadorCnpj
+        }, auth, secret).catch(() => ({ ok: false, data: {} }));
+        const pbM = parseFloat(pbR.data?.margemDisponivel || 0);
+        if (pbM > 0) {
+          margemReal = pbM;
+          margemFonte = 'PresençaBank/eSocial';
+        }
+      }
+
+      // Fallback 3: estimativa 35% da renda CLT (lei do consignado)
+      let estimada = false;
+      if (!margemReal && renda > 0) {
+        margemReal = renda * 0.35;
+        margemFonte = 'Estimativa 35% renda';
+        estimada = true;
+      }
+
+      const margem = margemReal;
       if (!margem || margem <= 0) {
         return jsonResp({
           success: false, banco,
-          mensagem: 'Sem margem ou renda do cliente pra estimar simulação'
+          mensagem: 'Sem margem real (JoinBank/PresençaBank) e sem renda pra estimar'
         }, 200, req);
       }
 
@@ -335,7 +364,9 @@ export default async function handler(req) {
             valorParcela,
             taxaMensal,
             cetMensal,
-            margemDisponivel: margem
+            margemDisponivel: margem,
+            margemFonte,
+            margemEstimada: estimada
           },
           idSimulacao: body.simulationId,
           ruleId

@@ -4437,7 +4437,10 @@ async function cwCall(action,data={}){
   const tel = data.id || data.phone || data.telefone || '';
   switch(action){
     case 'conversations': {
-      const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action:'listConversas',status:data.status||'open',scope:localStorage.getItem('ff_chat_scope')||'mine'})});
+      // Passa a instance ATIVA selecionada no dropdown (não a do bank_codes, que pode ser CLT)
+      const _inst=(typeof getMyActiveChat==='function')?getMyActiveChat():'';
+      const _scope=localStorage.getItem('ff_chat_scope')||'mine';
+      const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action:'listConversas',status:data.status||'open',scope:_scope,instance:_inst})});
       const d=await r.json();
       const list=(d?.conversas||[]).map(_convToCw);
       return { ok:true, data:{ payload:list }, payload:list };
@@ -4498,43 +4501,11 @@ async function cwCall(action,data={}){
   }
 }
 
-// Retorna Set com os inbox_ids correspondentes as instancias Evolution do user atual.
-// Admin ve todas por padrao (pode alternar via setChatScope).
-// FALLBACK IMPORTANTE: se nao conseguir parear instancia↔inbox por nome, mostra TUDO
-// (evita "sumir conversas" quando o pareamento por nome falha).
-// Guarda o warning em cwState._pairingWarning pro UI mostrar.
+// Legacy do Chatwoot — agora o filtro acontece no backend (/api/inss-chat) por instance.
+// Mantido por compatibilidade com chamadas antigas; sempre retorna null (sem filtro client-side).
 function _myInboxIds(){
   cwState._pairingWarning=null;
-  if(!cwState.inboxes||!cwState.inboxes.length)return null; // sem inboxes carregadas = nao filtra
-  const scope=localStorage.getItem('ff_chat_scope')||'mine';
-  if(scope==='all'&&CU&&(CU.role==='admin'||CU.role==='gestor'))return null;
-  const myInsts=[...new Set(getMyInstances().map(n=>String(n||'').toLowerCase()))].filter(Boolean);
-  if(!myInsts.length){
-    // User sem instancia — se for admin/gestor, mostra tudo. Senao realmente nada.
-    if(CU&&(CU.role==='admin'||CU.role==='gestor')){cwState._pairingWarning='Você não tem instância atribuída. Mostrando todas as conversas.';return null}
-    return new Set();
-  }
-  const ids=new Set();
-  const matchedInsts=new Set();
-  for(const ib of cwState.inboxes){
-    const name=String(ib.name||'').toLowerCase();
-    for(const inst of myInsts){
-      if(name===inst||name.includes(inst)||inst.includes(name)){
-        ids.add(ib.id);matchedInsts.add(inst);break;
-      }
-    }
-  }
-  // FALLBACK: se nenhuma inbox pareou com as instancias do user, mostra TUDO + warning
-  if(ids.size===0){
-    cwState._pairingWarning=`⚠️ Seu WhatsApp ainda não está vinculado ao chat. Mostrando todas as conversas — vá em Admin → Conexões WhatsApp pra vincular.`;
-    return null;
-  }
-  // Warning parcial: algumas instancias nao tem inbox correspondente
-  const unmatched=myInsts.filter(i=>!matchedInsts.has(i));
-  if(unmatched.length){
-    cwState._pairingWarning=`ℹ️ Instâncias sem inbox pareada: ${unmatched.join(', ')} — conversas dessas podem não aparecer.`;
-  }
-  return ids;
+  return null;
 }
 function setChatScope(v){localStorage.setItem('ff_chat_scope',v);cwLoadConversations()}
 async function cwLoadConversations(status){
@@ -6472,13 +6443,17 @@ function _cltOfertaCard(o, ctx) {
   } else if (o.disponivel && o.elegibilidade) {
     h += '<div style="color:var(--grn);font-size:13px;margin-bottom:8px">📊 Cliente elegível</div>';
     const margem = parseFloat(o.elegibilidade.margemDisponivel || 0);
+    const margemFonte = o.elegibilidade.margemFonte || null;
     const margemTeorica = parseFloat(o.elegibilidade.margemTeorica || 0);
     const renda = parseFloat(o.elegibilidade.renda || 0);
     if (margem > 0) {
-      h += `<div style="font-size:13px"><b>Margem:</b> R$ ${margem.toFixed(2)}</div>`;
+      // Margem REAL — vem do JoinBank/QITech ou PresençaBank/eSocial (fonte oficial)
+      h += `<div style="font-size:13px"><b>Margem real:</b> R$ ${margem.toFixed(2)}`;
+      if (margemFonte) h += ` <span style="color:var(--t3);font-size:10px">(${margemFonte})</span>`;
+      h += `</div>`;
     } else if (margemTeorica > 0) {
-      // Margem teorica = 35% da renda (lei do consignado CLT) — quando o banco nao retorna margem real no checkEligibility (ex: QualiBanking)
-      h += `<div style="font-size:13px"><b>Margem estimada:</b> R$ ${margemTeorica.toFixed(2)} <span style="color:var(--t3);font-size:10px">(35% da renda)</span></div>`;
+      // Sem margem oficial — estimativa 35% da renda como fallback
+      h += `<div style="font-size:13px;color:var(--ylw)"><b>⚠️ Margem estimada:</b> R$ ${margemTeorica.toFixed(2)} <span style="color:var(--t3);font-size:10px">(35% da renda — não oficial)</span></div>`;
       if (renda > 0) h += `<div style="font-size:11px;color:var(--t3)">Renda CLT: R$ ${renda.toFixed(2)}</div>`;
     }
     if (o.elegibilidade.empregador) h += `<div style="font-size:12px;color:var(--t2);margin-top:4px"><b>Empregador:</b> ${(o.elegibilidade.empregador||'').substring(0,40)}</div>`;

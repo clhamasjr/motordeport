@@ -508,10 +508,32 @@ export default async function handler(req) {
         }, auth, secret).catch(() => ({ ok: false, data: {} }));
         const jb = jbR.data || {};
         if (jb.disponivel) {
-          // QITech retorna availableMargin = 0 no checkEligibility (preenche so apos cltCalculate).
-          // Estimamos margem teorica = 35% da renda (lei do consignado CLT) pra dar feedback ao operador.
+          // ─── FALLBACK DE MARGEM REAL ───
+          // QITech as vezes retorna availableMargin=0 no checkEligibility.
+          // Tentamos PresencaBank consultarMargem (eSocial via DataPrev — fonte oficial)
+          // como fallback. Funciona mesmo se PB estiver em manutencao porque essa
+          // action eh so leitura (nao gera proposta).
+          let margemReal = parseFloat(jb.vinculo?.margemDisponivel || 0);
+          let margemFonte = margemReal > 0 ? 'JoinBank/QITech' : null;
+
+          if (!margemReal && jb.vinculo?.matricula && jb.vinculo?.empregadorCnpj) {
+            const pbMR = await callApi('/api/presencabank', {
+              action: 'consultarMargem',
+              cpf,
+              matricula: jb.vinculo.matricula,
+              cnpj: jb.vinculo.empregadorCnpj
+            }, auth, secret).catch(() => ({ ok: false, data: {} }));
+            const pbM = parseFloat(pbMR.data?.margemDisponivel || 0);
+            if (pbM > 0) {
+              margemReal = pbM;
+              margemFonte = 'PresençaBank/eSocial';
+            }
+          }
+
+          // Estimativa 35% renda como ultimo fallback (apenas se nada veio das fontes oficiais)
           const rendaJb = parseFloat(jb.vinculo?.renda || 0);
           const margemTeorica = rendaJb > 0 ? rendaJb * 0.35 : null;
+
           ofertas.push({
             banco: 'joinbank', label: 'QualiBanking',
             disponivel: true,
@@ -520,11 +542,14 @@ export default async function handler(req) {
               empregador: jb.vinculo?.empregador,
               empregadorCnpj: jb.vinculo?.empregadorCnpj,
               matricula: jb.vinculo?.matricula,
-              margemDisponivel: jb.vinculo?.margemDisponivel,
-              margemTeorica,
+              margemDisponivel: margemReal,           // ← margem REAL (JB ou PB)
+              margemFonte,                             // ← fonte da margem
+              margemTeorica,                           // ← fallback estimativa
               renda: jb.vinculo?.renda
             },
-            mensagem: `Cliente elegível — ${jb.vinculo?.empregador || 'empregador'}. Calculando valor liberado...`
+            mensagem: margemReal > 0
+              ? `Cliente elegível — margem R$ ${margemReal.toFixed(2)} (${margemFonte}). Calculando valor liberado...`
+              : `Cliente elegível — ${jb.vinculo?.empregador || 'empregador'}. Calculando valor liberado...`
           });
         } else {
           ofertas.push({
