@@ -4720,6 +4720,23 @@ function cwRenderMessages(){
 async function cwToggleStatus(id,status){
   try{await cwCall('toggleStatus',{id,status});showToast(status==='resolved'?'Conversa resolvida':'Conversa reaberta','success');cwLoadConversations()}catch(e){showToast('Erro: '+e.message,'error')}
 }
+// Liga/desliga Sofia pra essa conversa especifica.
+// telefone = id usado no cwState (no nosso novo backend, id da conversa = telefone)
+async function cwToggleAgente(telefone,ativar){
+  try{
+    const action=ativar?'retomarAgente':'pausarAgente';
+    const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action,telefone})});
+    const d=await r.json();
+    if(d.ok){
+      showToast?.(ativar?'🤖 Sofia retomada':'👤 Você assumiu a conversa','success');
+      if(cwState.activeConv)cwState.activeConv.agente_ativo=ativar;
+      const tc=document.getElementById('tabContent');
+      if(tc&&S.tab==='wppchat')tc.innerHTML=renderWppChat();
+    }else{
+      showToast?.('Erro: '+(d.error||'falha'),'error');
+    }
+  }catch(e){showToast?.('Erro: '+e.message,'error')}
+}
 
 async function cwLoadInboxes(){
   try{const d=await cwCall('inboxes');cwState.inboxes=d?.payload||d||[]}catch{cwState.inboxes=[]}
@@ -5741,7 +5758,7 @@ function _dispararDetalhesParcial(result, opts) {
     o._calculando = true;
     // Bancos que NAO precisam de clt-simular-detalhe (digitacao manual ou
     // sem fluxo de simulacao automatica): skip silencioso, sem mensagem de erro
-    if (o.banco === 'joinbank' || o.banco === 'mercantil') {
+    if (o.banco === 'mercantil') {
       o._calculando = false;
       detalhesStore[key] = { skip: true };
       set.delete(key);
@@ -5754,6 +5771,20 @@ function _dispararDetalhesParcial(result, opts) {
       payload = { banco: 'v8', cpf, provider: o.provider, consultId: o.consultId, margem: o.elegibilidade?.margemDisponivel || 0 };
     } else if (o.banco === 'c6') {
       payload = { banco: 'c6', cpf };
+    } else if (o.banco === 'joinbank' && o.simulationId) {
+      // QualiBanking: usa simulationId + dados de vinculo pra rodar cltCalculate
+      // e trazer valor liberado real (margem teorica = 35% renda como fallback de installmentValue)
+      const margemReal = parseFloat(o.elegibilidade?.margemDisponivel || 0);
+      const margemTeorica = parseFloat(o.elegibilidade?.margemTeorica || 0);
+      payload = {
+        banco: 'joinbank', cpf,
+        simulationId: o.simulationId,
+        matricula: o.elegibilidade?.matricula,
+        empregadorCnpj: o.elegibilidade?.empregadorCnpj,
+        empregadorNome: o.elegibilidade?.empregador,
+        renda: o.elegibilidade?.renda,
+        margem: margemReal > 0 ? margemReal : margemTeorica
+      };
     }
     if (!payload) {
       o._calculando = false;

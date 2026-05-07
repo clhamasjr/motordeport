@@ -519,11 +519,12 @@ export default async function handler(req) {
             elegibilidade: {
               empregador: jb.vinculo?.empregador,
               empregadorCnpj: jb.vinculo?.empregadorCnpj,
+              matricula: jb.vinculo?.matricula,
               margemDisponivel: jb.vinculo?.margemDisponivel,
               margemTeorica,
               renda: jb.vinculo?.renda
             },
-            mensagem: `Cliente elegível — ${jb.vinculo?.empregador || 'empregador'}. Clique Digitar pra simular.`
+            mensagem: `Cliente elegível — ${jb.vinculo?.empregador || 'empregador'}. Calculando valor liberado...`
           });
         } else {
           ofertas.push({

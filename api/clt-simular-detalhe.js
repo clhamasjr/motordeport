@@ -254,7 +254,104 @@ export default async function handler(req) {
       return jsonResp({ success: false, banco, mensagem: d.mensagem || 'C6 sem planos disponiveis', _raw: d }, 200, req);
     }
 
-    return jsonError(`Banco invalido: ${banco}. Validos: presencabank, v8, c6`, 400, req);
+    // ─── JOINBANK / QUALIBANKING: lista regras CLT + cltCalculate ────────
+    // Pega rule com maior term + rate min, calcula com installmentValue=margem
+    // pra obter valor liberado real. ~3-5s.
+    if (banco === 'joinbank') {
+      if (!body.simulationId) return jsonError('simulationId obrigatorio (vem da consulta basica QualiBanking)', 400, req);
+
+      // Margem: se vier explicita, usa; senao estima 35% da renda (lei do consignado CLT)
+      const renda = parseFloat(body.renda || 0);
+      const margem = parseFloat(body.margem || 0) || (renda > 0 ? renda * 0.35 : 0);
+      if (!margem || margem <= 0) {
+        return jsonResp({
+          success: false, banco,
+          mensagem: 'Sem margem ou renda do cliente pra estimar simulação'
+        }, 200, req);
+      }
+
+      // 1) Lista regras de produto CLT (type=21, operation=1=novo)
+      const rulesR = await callApi('/api/joinbank', {
+        action: 'listRules', operation: 1, limit: 50
+      }, auth, secret);
+      const rulesAll = rulesR.data?.items || [];
+      // Filtra rules CLT — multiple shape fallback (estrutura ukam varia)
+      const cltRules = rulesAll.filter(r =>
+        (r.product?.type?.code === 21) ||
+        (r.productType?.code === 21) ||
+        (r.type?.code === 21)
+      );
+      const usableRules = cltRules.length ? cltRules : rulesAll;
+      if (!usableRules.length) {
+        return jsonResp({
+          success: false, banco,
+          mensagem: 'Nenhuma regra CLT disponivel no JoinBank',
+          _raw: rulesR.data
+        }, 200, req);
+      }
+
+      // Helpers de extração resilientes a variações da API ukam
+      const getTerm = (r) => parseInt(r.term?.max || r.maxTerm || r.installmentsMax || r.maximumTerm || r.numberOfInstallmentsMax || 0) || 0;
+      const getRate = (r) => parseFloat(r.rate?.min || r.minRate || r.minimumRate || r.rate || r.monthlyRate || 0) || 2.5;
+
+      // Rule com maior prazo (mais valor liberado pro cliente)
+      const rule = [...usableRules].sort((a, b) => getTerm(b) - getTerm(a))[0];
+      const term = getTerm(rule) || 84;
+      const rate = getRate(rule);
+      const ruleId = rule.id;
+
+      // 2) cltCalculate (type=1 = por valor parcela, retorna valor liberado correspondente)
+      const calcR = await callApi('/api/joinbank', {
+        action: 'cltCalculate',
+        simulationId: body.simulationId,
+        type: 1,
+        identity: cpf,
+        ruleId,
+        term,
+        rate,
+        installmentValue: margem,
+        registrationNumber: body.matricula || '',
+        employerDocument: (body.empregadorCnpj || '').replace(/\D/g, ''),
+        employerName: body.empregadorNome || '',
+        isInitialCalculation: true
+      }, auth, secret);
+
+      const d = calcR.data || {};
+      // Resposta UKam: campos podem vir como netValue/loanValue/disbursedAmount.
+      const valorLiquido = parseFloat(
+        d.netValue || d.loanValue || d.disbursedAmount || d.valorLiquido || 0
+      );
+      const parcelas = parseInt(d.term || d.numberOfInstallments || term) || term;
+      const valorParcela = parseFloat(d.installmentValue || d.valorParcela || margem) || margem;
+      const taxaMensal = parseFloat(d.rate || d.monthlyRate || rate) || rate;
+      const cetMensal = parseFloat(d.totalMonthlyEffectiveCost || d.cetMonthly || d.cetMensal || 0);
+
+      if (calcR.ok && valorLiquido > 0) {
+        return jsonResp({
+          success: true, banco,
+          detalhes: {
+            valorLiquido,
+            parcelas,
+            valorParcela,
+            taxaMensal,
+            cetMensal,
+            margemDisponivel: margem
+          },
+          idSimulacao: body.simulationId,
+          ruleId
+        }, 200, req);
+      }
+
+      // Erro tratado: retorna mensagem do JoinBank pro front mostrar
+      return jsonResp({
+        success: false, banco,
+        mensagem: d.title || d.detail || d.errors?.[0]?.message || d.mensagem
+                 || `Falha ao simular tabela QualiBanking (HTTP ${calcR.status})`,
+        _raw: d
+      }, 200, req);
+    }
+
+    return jsonError(`Banco invalido: ${banco}. Validos: presencabank, v8, c6, joinbank`, 400, req);
 
   } catch (err) {
     return jsonResp({ error: 'Erro interno', message: err.message }, 500, req);
