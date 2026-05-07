@@ -15,7 +15,7 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
-import { dbUpsert } from './_lib/supabase.js';
+import { dbUpsert, dbSelect } from './_lib/supabase.js';
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
 
@@ -95,23 +95,53 @@ export default async function handler(req) {
     // Se temos WEBHOOK_SECRET, usa ele nas chamadas internas (mais robusto)
     const secret = process.env.WEBHOOK_SECRET || '';
 
+    // ─── Catalogo: bancos com ativo=false sao pulados (em manutencao) ───
+    // Busca rapida (~30ms). Se falhar, default = todos ativos (fail open).
+    const { data: bancosCat = [] } = await dbSelect('clt_bancos', { limit: 100 }).catch(() => ({ data: [] }));
+    const bancosMap = new Map((bancosCat || []).map(b => [b.slug, b]));
+    const isAtivo = (slug) => bancosMap.get(slug)?.ativo !== false; // default true se nao cadastrado
+    const skipped = (slug) => ({ ok: false, data: { _emManutencao: true, _slug: slug } });
+    const msgManutencao = (slug, label) => {
+      const b = bancosMap.get(slug);
+      const obs = b?.observacoes || '';
+      // Pega a primeira frase (até "—" ou ".") da observação se começar com 🔧
+      const m = obs.match(/^(🔧[^—.]*)/);
+      return m ? m[1].trim() : '🔧 Em manutenção — voltará em breve';
+    };
+    const cardManutencao = (slug, label) => ({
+      banco: slug, label, disponivel: false, emManutencao: true,
+      mensagem: msgManutencao(slug, label)
+    });
+
     // ─── FASE 1: chamadas básicas em paralelo (não exigem dados do cliente) ─
     // PresençaBank, Multicorban, V8 (QI + CELCOIN), C6 status, Mercantil iniciarOperacao
     // NovaVida fica como FALLBACK (so se PB+MC nao encontrarem)
     // JoinBank vai pra FASE 2 (precisa nome+dataNasc do cliente)
     const tarefas = [
-      callApi('/api/presencabank', { action: 'oportunidadesPorCPF', cpf }, auth, secret),
+      isAtivo('presencabank')
+        ? callApi('/api/presencabank', { action: 'oportunidadesPorCPF', cpf }, auth, secret)
+        : Promise.resolve(skipped('presencabank')),
       callApi('/api/multicorban',   { action: 'consult_clt', cpf },         auth, secret),
-      callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'QI' },     auth, secret).catch(() => ({ ok: false })),
-      callApi('/api/v8',            { action: 'consultarPorCPF', cpf, provider: 'CELCOIN' }, auth, secret).catch(() => ({ ok: false })),
+      isAtivo('v8_qi') && isAtivo('v8')
+        ? callApi('/api/v8', { action: 'consultarPorCPF', cpf, provider: 'QI' }, auth, secret).catch(() => ({ ok: false }))
+        : Promise.resolve(skipped('v8_qi')),
+      isAtivo('v8_celcoin') && isAtivo('v8')
+        ? callApi('/api/v8', { action: 'consultarPorCPF', cpf, provider: 'CELCOIN' }, auth, secret).catch(() => ({ ok: false }))
+        : Promise.resolve(skipped('v8_celcoin')),
       // C6: SEMPRE checa status de autorizacao primeiro (gratis, rapido).
-      callApi('/api/c6', { action: 'statusAutorizacao', cpf }, auth, secret).catch(() => ({ ok: false })),
+      isAtivo('c6')
+        ? callApi('/api/c6', { action: 'statusAutorizacao', cpf }, auth, secret).catch(() => ({ ok: false }))
+        : Promise.resolve(skipped('c6')),
       // Mercantil: iniciarOperacao só checa cadastro. Se JWT inválido, mb.error
       // contém 'JWT' — frontend mostra "JWT expirado, admin precisa renovar".
-      callApi('/api/mercantil', { action: 'iniciarOperacao', cpf, convenio: 'MTE' }, auth, secret).catch(() => ({ ok: false })),
+      isAtivo('mercantil')
+        ? callApi('/api/mercantil', { action: 'iniciarOperacao', cpf, convenio: 'MTE' }, auth, secret).catch(() => ({ ok: false }))
+        : Promise.resolve(skipped('mercantil')),
       // Handbank/UY3: iniciarConsultaCLT tambem checa autorizacao do cliente.
       // Retorna 202 + linkAutorizacao quando cliente ainda nao autorizou no UY3.
-      callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret).catch(() => ({ ok: false }))
+      isAtivo('handbank')
+        ? callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret).catch(() => ({ ok: false }))
+        : Promise.resolve(skipped('handbank'))
     ];
     const [pbOpor, mcClt, v8QI, v8Celcoin, c6Status, merc, hb] = await Promise.all(tarefas);
 
@@ -478,13 +508,20 @@ export default async function handler(req) {
         }, auth, secret).catch(() => ({ ok: false, data: {} }));
         const jb = jbR.data || {};
         if (jb.disponivel) {
+          // QITech retorna availableMargin = 0 no checkEligibility (preenche so apos cltCalculate).
+          // Estimamos margem teorica = 35% da renda (lei do consignado CLT) pra dar feedback ao operador.
+          const rendaJb = parseFloat(jb.vinculo?.renda || 0);
+          const margemTeorica = rendaJb > 0 ? rendaJb * 0.35 : null;
           ofertas.push({
             banco: 'joinbank', label: 'QualiBanking',
             disponivel: true,
             simulationId: jb.simulationId,
             elegibilidade: {
               empregador: jb.vinculo?.empregador,
-              margemDisponivel: jb.vinculo?.margemDisponivel
+              empregadorCnpj: jb.vinculo?.empregadorCnpj,
+              margemDisponivel: jb.vinculo?.margemDisponivel,
+              margemTeorica,
+              renda: jb.vinculo?.renda
             },
             mensagem: `Cliente elegível — ${jb.vinculo?.empregador || 'empregador'}. Clique Digitar pra simular.`
           });
@@ -509,6 +546,17 @@ export default async function handler(req) {
         disponivel: false,
         mensagem: 'Faltam dados básicos do cliente (nome ou data de nascimento)'
       });
+    }
+
+    // ─── Defensivo: sobrescreve cards de bancos em manutencao ───
+    // Mesmo se a chamada tiver sido feita (ex: banco entrou em manutencao
+    // depois do bancosMap ja carregado, ou nao foi pulado por slug), garante
+    // que o card final mostre o aviso de manutencao em vez do erro real.
+    for (let i = 0; i < ofertas.length; i++) {
+      const o = ofertas[i];
+      if (bancosMap.get(o.banco)?.ativo === false) {
+        ofertas[i] = cardManutencao(o.banco, o.label);
+      }
     }
 
     const totalDisponivel = ofertas.filter(o => o.disponivel).length;

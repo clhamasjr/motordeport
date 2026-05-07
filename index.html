@@ -9,8 +9,46 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#0D1220;--sf:#171E33;--card:#1F2741;--brd:#2E3859;--acc:#4F8EF7;--grn:#32D583;--red:#F04438;--ylw:#F5C242;--pur:#B191FF;--org:#FB923C;--pnk:#F472B6;--t1:#F0F6FC;--t2:#A7B0C0;--t3:#6E7785;--cyan:#22D3EE;--glow:0 0 24px rgba(79,142,247,.18)}
-body{background:var(--bg);background-image:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(79,142,247,.12),transparent 60%),radial-gradient(ellipse 60% 40% at 100% 100%,rgba(34,211,238,.06),transparent 60%),radial-gradient(ellipse 60% 40% at 0% 100%,rgba(180,145,255,.05),transparent 60%);background-attachment:fixed;color:var(--t1);font-family:'Inter','Segoe UI',system-ui,sans-serif;min-height:100vh;font-size:14px;line-height:1.5}
+:root{
+  /* Backgrounds — mais profundos, com tom azulado sutil */
+  --bg:#0A1024;
+  --sf:#131A33;
+  --card:#1A2243;
+  --brd:#2C3760;
+  --brd2:#3D4A7A;
+  /* Cores VIVAS — mais saturadas, com glow forte */
+  --acc:#5B9DFF;
+  --acc2:#0EA5E9;
+  --grn:#22D586;
+  --red:#FF4757;
+  --ylw:#FFC83D;
+  --pur:#B991FF;
+  --org:#FF8A3D;
+  --pnk:#FF5BB7;
+  --cyan:#06E5FF;
+  /* Texto */
+  --t1:#F5F9FF;
+  --t2:#B4BED4;
+  --t3:#727B96;
+  --glow:0 0 24px rgba(91,157,255,.25);
+  /* Cores POR PRODUTO — usadas na sidebar pra criar identidade visual */
+  --p-inss:#B991FF;       /* INSS = roxo */
+  --p-clt:#06E5FF;        /* CLT = ciano */
+  --p-gov:#FFC83D;        /* Governos = âmbar */
+}
+body{
+  background:var(--bg);
+  background-image:
+    radial-gradient(ellipse 90% 60% at 50% -10%,rgba(91,157,255,.18),transparent 65%),
+    radial-gradient(ellipse 55% 45% at 100% 100%,rgba(6,229,255,.10),transparent 60%),
+    radial-gradient(ellipse 55% 45% at 0% 100%,rgba(185,145,255,.10),transparent 60%);
+  background-attachment:fixed;
+  color:var(--t1);
+  font-family:'Inter','Segoe UI',system-ui,sans-serif;
+  min-height:100vh;
+  font-size:14px;
+  line-height:1.5;
+}
 ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--brd);border-radius:3px}
 ::selection{background:var(--acc);color:#fff}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
@@ -32,36 +70,162 @@ input,select,textarea{font-family:inherit;outline:none;font-size:14px}.rh:hover{
 .login-btn{width:100%;padding:14px;border-radius:10px;background:linear-gradient(135deg,#0EA5E9,var(--acc));color:#fff;font-size:15px;font-weight:700;cursor:pointer;margin-top:8px;box-shadow:0 4px 12px rgba(59,130,246,.3)}
 .login-error{color:var(--red);font-size:13px;text-align:center;margin-top:16px;min-height:20px}
 .header{background:rgba(10,17,32,.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--brd);padding:0 28px;height:60px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
-/* === SIDEBAR LAYOUT (Opção 2) === */
+/* === SIDEBAR — Vibrant Dark Pro === */
 .app-layout{display:flex;min-height:calc(100vh - 60px);align-items:stretch}
-.sidebar{width:240px;flex-shrink:0;background:var(--sf);border-right:1px solid var(--brd);padding:14px 10px;overflow-y:auto;max-height:calc(100vh - 60px);position:sticky;top:60px;transition:transform .2s}
-.sidebar::-webkit-scrollbar{width:6px}.sidebar::-webkit-scrollbar-track{background:transparent}.sidebar::-webkit-scrollbar-thumb{background:var(--brd);border-radius:3px}
-/* Produto (INSS, CLT, FGTS, Governos) — linha top-level colapsavel */
-.sidebar-product-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:700;color:var(--t1);cursor:pointer;user-select:none;margin-top:6px;transition:background .12s;letter-spacing:.01em}
-.sidebar-product-row:hover{background:rgba(59,130,246,.06)}
-.sidebar-product-row.active{color:var(--acc);background:rgba(59,130,246,.05)}
-.sidebar-product-row.soon{cursor:not-allowed;opacity:.45;color:var(--t2);font-weight:600}
-.sidebar-product-row.soon:hover{background:transparent}
-.sidebar-product-content{margin:2px 0 8px 10px;padding-left:10px;border-left:2px solid var(--brd)}
-.sidebar-subgroup{margin-bottom:1px}
-.sidebar-subgroup .sidebar-group-label{padding:7px 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--t3)}
-.sidebar-subgroup .sidebar-item{padding:7px 10px;font-size:12.5px}
-.sidebar-group{margin-bottom:3px}
-.sidebar-group-label{font-size:12px;color:var(--t2);letter-spacing:.02em;padding:9px 12px;font-weight:600;display:flex;align-items:center;gap:8px;cursor:pointer;border-radius:7px;user-select:none;transition:background .12s}
-.sidebar-group-label:hover{background:rgba(59,130,246,.05);color:var(--t1)}
+.sidebar{
+  width:248px;flex-shrink:0;
+  background:linear-gradient(180deg,var(--sf) 0%,var(--bg) 100%);
+  border-right:1px solid var(--brd);
+  padding:18px 12px;overflow-y:auto;
+  max-height:calc(100vh - 60px);
+  position:sticky;top:60px;transition:transform .2s;
+}
+.sidebar::-webkit-scrollbar{width:6px}
+.sidebar::-webkit-scrollbar-track{background:transparent}
+.sidebar::-webkit-scrollbar-thumb{background:var(--brd2);border-radius:3px}
+.sidebar::-webkit-scrollbar-thumb:hover{background:var(--acc)}
+
+/* Produto (INSS, CLT, Governos) — linha top-level colapsavel com cor própria */
+.sidebar-product-row{
+  display:flex;align-items:center;gap:11px;
+  padding:11px 14px;border-radius:10px;
+  font-size:14px;font-weight:800;color:var(--t1);
+  cursor:pointer;user-select:none;margin-top:8px;
+  transition:all .18s cubic-bezier(.4,0,.2,1);
+  letter-spacing:.02em;
+  position:relative;
+  border:1px solid transparent;
+}
+.sidebar-product-row::before{
+  content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:3px;height:0;border-radius:2px;
+  background:var(--p-color,var(--acc));
+  transition:height .2s;
+}
+.sidebar-product-row:hover{
+  background:rgba(91,157,255,.06);
+  transform:translateX(2px);
+}
+.sidebar-product-row.active{
+  color:var(--p-color,var(--acc));
+  background:linear-gradient(90deg,color-mix(in srgb,var(--p-color,var(--acc)) 14%,transparent),transparent);
+  border-color:color-mix(in srgb,var(--p-color,var(--acc)) 25%,transparent);
+}
+.sidebar-product-row.active::before{height:60%}
+.sidebar-product-row.soon{cursor:not-allowed;opacity:.4;color:var(--t3);font-weight:600}
+.sidebar-product-row.soon:hover{background:transparent;transform:none}
+.sidebar-product-row[data-product="inss"]{--p-color:var(--p-inss)}
+.sidebar-product-row[data-product="clt"]{--p-color:var(--p-clt)}
+.sidebar-product-row[data-product="gov"]{--p-color:var(--p-gov)}
+.sidebar-product-content{
+  margin:4px 0 10px 14px;
+  padding-left:12px;
+  border-left:2px solid color-mix(in srgb,var(--p-color,var(--brd)) 30%,transparent);
+}
+.sidebar-product-content[data-product="inss"]{--p-color:var(--p-inss)}
+.sidebar-product-content[data-product="clt"]{--p-color:var(--p-clt)}
+.sidebar-product-content[data-product="gov"]{--p-color:var(--p-gov)}
+
+/* Sub-grupos (Consulta, Higienização etc) */
+.sidebar-subgroup{margin-bottom:2px}
+.sidebar-subgroup .sidebar-group-label{padding:8px 10px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--t3)}
+.sidebar-subgroup .sidebar-item{padding:8px 12px;font-size:13px}
+
+.sidebar-group{margin-bottom:4px}
+.sidebar-group-label{
+  font-size:11.5px;color:var(--t2);letter-spacing:.04em;
+  padding:9px 12px;font-weight:700;
+  display:flex;align-items:center;gap:8px;
+  cursor:pointer;border-radius:8px;user-select:none;
+  transition:all .15s;
+}
+.sidebar-group-label:hover{
+  background:rgba(91,157,255,.05);
+  color:var(--t1);
+}
 .sidebar-group.open .sidebar-group-label{color:var(--t1)}
-.sidebar-chev{font-size:10px;width:12px;color:var(--t3);transition:transform .15s;display:inline-block}
-.sidebar-group-badge{min-width:18px;height:17px;padding:0 6px;border-radius:9px;background:var(--acc);color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center}
-.sidebar-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:7px;font-size:13px;font-weight:500;color:var(--t2);cursor:pointer;transition:all .12s;user-select:none;margin:1px 0;text-decoration:none;border:1px solid transparent;line-height:1.25}
-.sidebar-item:hover:not(.disabled){background:rgba(59,130,246,.06);color:var(--t1)}
-.sidebar-item.active{background:linear-gradient(135deg,rgba(14,165,233,.18),rgba(59,130,246,.12));color:var(--acc);border-color:rgba(59,130,246,.3);box-shadow:0 0 12px rgba(59,130,246,.08)}
-.sidebar-item.disabled{opacity:.35;cursor:not-allowed}
-.sidebar-item-icon{font-size:14px;width:18px;text-align:center;flex-shrink:0}
+.sidebar-chev{
+  font-size:10px;width:12px;color:var(--t3);
+  transition:transform .2s ease;
+  display:inline-block;
+}
+.sidebar-group.open .sidebar-chev{transform:rotate(0deg);color:var(--acc)}
+
+/* Badge (notificações) com pulse */
+@keyframes badgePulse{0%,100%{box-shadow:0 0 0 0 rgba(91,157,255,.5)}50%{box-shadow:0 0 0 6px rgba(91,157,255,0)}}
+.sidebar-group-badge{
+  min-width:20px;height:18px;padding:0 7px;border-radius:9px;
+  background:linear-gradient(135deg,var(--acc),var(--acc2));
+  color:#fff;font-size:10px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 8px rgba(91,157,255,.4);
+  animation:badgePulse 2s infinite;
+}
+
+/* Item: button row */
+.sidebar-item{
+  display:flex;align-items:center;gap:11px;
+  padding:9px 12px;border-radius:8px;
+  font-size:13px;font-weight:600;color:var(--t2);
+  cursor:pointer;
+  transition:all .15s cubic-bezier(.4,0,.2,1);
+  user-select:none;margin:2px 0;text-decoration:none;
+  border:1px solid transparent;line-height:1.3;
+  position:relative;
+}
+.sidebar-item:hover:not(.disabled){
+  background:rgba(91,157,255,.08);
+  color:var(--t1);
+  transform:translateX(2px);
+  border-color:rgba(91,157,255,.15);
+}
+.sidebar-item.active{
+  background:linear-gradient(90deg,rgba(91,157,255,.22),rgba(14,165,233,.10));
+  color:var(--t1);
+  border-color:rgba(91,157,255,.4);
+  box-shadow:0 4px 18px rgba(91,157,255,.22),inset 0 0 0 1px rgba(255,255,255,.04);
+  font-weight:700;
+}
+.sidebar-item.active::after{
+  content:'';position:absolute;right:8px;top:50%;
+  transform:translateY(-50%);
+  width:4px;height:4px;border-radius:50%;
+  background:var(--acc);
+  box-shadow:0 0 8px var(--acc);
+}
+.sidebar-item.disabled{opacity:.32;cursor:not-allowed}
+.sidebar-item-icon{
+  font-size:15px;width:22px;height:22px;
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;border-radius:6px;
+  background:rgba(255,255,255,.04);
+  transition:all .15s;
+}
+.sidebar-item:hover:not(.disabled) .sidebar-item-icon{
+  background:rgba(91,157,255,.15);
+  transform:scale(1.05);
+}
+.sidebar-item.active .sidebar-item-icon{
+  background:linear-gradient(135deg,rgba(91,157,255,.3),rgba(14,165,233,.2));
+  box-shadow:0 0 10px rgba(91,157,255,.3);
+}
 .sidebar-item-label{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sidebar-item-badge{min-width:18px;height:17px;padding:0 6px;border-radius:9px;background:var(--acc);color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center}
-.sidebar-item:not(.active) .sidebar-item-badge{background:var(--brd);color:var(--t2)}
-.sidebar-item.disabled .sidebar-item-badge{background:transparent;color:var(--t3);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
-.sidebar-soon{font-size:10px;color:var(--t3);opacity:.5;font-weight:600;padding:0 4px}
+.sidebar-item-badge{
+  min-width:20px;height:18px;padding:0 7px;border-radius:9px;
+  background:linear-gradient(135deg,var(--acc),var(--acc2));
+  color:#fff;font-size:10px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 6px rgba(91,157,255,.35);
+}
+.sidebar-item:not(.active) .sidebar-item-badge{
+  background:var(--brd2);color:var(--t1);box-shadow:none;
+}
+.sidebar-item.disabled .sidebar-item-badge{
+  background:transparent;color:var(--t3);
+  font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+  box-shadow:none;
+}
+.sidebar-soon{font-size:10px;color:var(--t3);opacity:.6;font-weight:700;padding:0 4px;letter-spacing:.05em}
 .main-area{flex:1;min-width:0;display:flex;flex-direction:column}
 .sidebar-backdrop{display:none;position:fixed;inset:60px 0 0 0;background:rgba(0,0,0,.4);z-index:40}
 .sidebar-toggle{display:none}
@@ -856,86 +1020,52 @@ function calcEnquadramentoPlus(beneficio, sumEmp, sumRmc, sumRcc, contratos, opt
     };
   }
 
-  // ── Procura COMBINAÇÃO ÓTIMA pra absorver o excedente
-  // Ordena estratégias da mais barata (1 op) pra mais cara (3 ops)
-  const estrategias = [];
-  // Estrat 1: só cancelar 1 cartão
-  for (const ct of cartoes) {
-    if (ct.valor >= excedente - 0.01) {
-      estrategias.push({ ops: 1, lista: [`cancelar ${ct.tipo} (R$ ${ct.valor.toFixed(2)})`], absorvido: ct.valor, status: 'VIA_CANCELA_CARTAO' });
-    }
-  }
-  // Estrat 2: só redução via port (1 contrato)
-  if (reducaoDetalhes.length) {
-    const r = reducaoDetalhes[0];
-    if (r.reducao >= excedente - 0.01) {
-      estrategias.push({ ops: 1, lista: [`port/refin contrato ${r.contrato || ''} (reduz parcela em R$ ${r.reducao.toFixed(2)})`], absorvido: r.reducao, status: 'VIA_PORT_REDUCAO' });
-    }
-  }
-  // Estrat 3: cancelar cartão + redução port (1 contrato) — combo
-  for (const ct of cartoes) {
-    for (const r of reducaoDetalhes) {
-      const absorvido = ct.valor + r.reducao;
-      if (absorvido >= excedente - 0.01) {
-        estrategias.push({
-          ops: 2,
-          lista: [`cancelar ${ct.tipo} (R$ ${ct.valor.toFixed(2)})`, `port/refin contrato ${r.contrato || ''} (reduz R$ ${r.reducao.toFixed(2)})`],
-          absorvido,
-          status: 'VIA_CARTAO_MAIS_PORT'
-        });
-      }
-    }
-  }
-  // Estrat 4: usar margem livre + cancelar cartão + redução
-  if (margemLivreEmp > 0) {
-    for (const ct of cartoes) {
-      for (const r of reducaoDetalhes) {
-        const absorvido = margemLivreEmp + ct.valor + r.reducao;
-        if (absorvido >= excedente - 0.01) {
-          estrategias.push({
-            ops: 3,
-            lista: [`usar margem livre (R$ ${margemLivreEmp.toFixed(2)})`, `cancelar ${ct.tipo} (R$ ${ct.valor.toFixed(2)})`, `port/refin contrato ${r.contrato || ''} (reduz R$ ${r.reducao.toFixed(2)})`],
-            absorvido,
-            status: 'VIA_MULTIPLO'
-          });
-        }
-      }
-    }
-  }
-  // Estrat 5: redução total via port (vários contratos)
-  if (reducaoTotal >= excedente - 0.01 && reducaoDetalhes.length > 1) {
-    estrategias.push({
-      ops: reducaoDetalhes.length,
-      lista: [`port/refin de ${reducaoDetalhes.length} contratos (reduz parcela total R$ ${reducaoTotal.toFixed(2)})`],
-      absorvido: reducaoTotal,
-      status: 'VIA_PORT_REDUCAO'
-    });
-  }
+  // ── EXCEDENTE > 0: busca UMA ÚNICA OPERAÇÃO (parcela única) que resolva
+  // Regra de negócio: o vendedor quer 1 operação só, pra não complicar pro cliente.
+  const fmt = v => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  if (estrategias.length === 0) {
-    // Excede demais — calcula o quanto falta
-    const totalAbsorcaoPossivel = margemLivreEmp + Math.max(...cartoes.map(c => c.valor), 0) + reducaoTotal;
+  // Opção A: 1 PORT/REFIN cujo redução de parcela cobre o excedente
+  // (Critério: pega a maior redução possível)
+  const portSuf = reducaoDetalhes.find(r => r.reducao >= excedente - 0.01);
+  if (portSuf) {
     return {
-      status: 'INVIAVEL',
-      detalhe: `Excede em R$ ${excedente.toFixed(2)}. Absorção máxima possível: R$ ${totalAbsorcaoPossivel.toFixed(2)} (margem livre R$ ${margemLivreEmp.toFixed(2)} + cartão R$ ${Math.max(...cartoes.map(c => c.valor), 0).toFixed(2)} + redução R$ ${reducaoTotal.toFixed(2)}). Falta R$ ${(excedente - totalAbsorcaoPossivel).toFixed(2)}.`,
-      acao: 'inviável sem operação extra',
+      status: 'VIA_PORT_REDUCAO',
+      detalhe: `Excede ${fmt(excedente)}. Refinanciar contrato ${portSuf.contrato || '?'} (${portSuf.banco || '?'}) reduz parcela em ${fmt(portSuf.reducao)} → enquadra.`,
+      acao: `port/refin 1 contrato`,
       excedente, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
       livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,
-      reducaoTotal, reducaoDetalhes
+      reducaoTotal, reducaoDetalhes,
+      contratoSugerido: portSuf
     };
   }
 
-  // Pega a estratégia com menos operações (mais simples)
-  estrategias.sort((a, b) => a.ops - b.ops);
-  const melhor = estrategias[0];
+  // Opção B: cancelar 1 cartão (RMC ou RCC) cobre o excedente
+  const cartaoSuf = cartoes.find(c => c.valor >= excedente - 0.01);
+  if (cartaoSuf) {
+    return {
+      status: 'VIA_CANCELA_CARTAO',
+      detalhe: `Excede ${fmt(excedente)}. Cancelar ${cartaoSuf.tipo} (${fmt(cartaoSuf.valor)}) já enquadra.`,
+      acao: `cancelar ${cartaoSuf.tipo}`,
+      excedente, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
+      livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,
+      reducaoTotal, reducaoDetalhes,
+      cartaoSugerido: cartaoSuf
+    };
+  }
+
+  // Opção C (fallback): nenhuma operação isolada cobre — INVIÁVEL com 1 operação
+  // Mostra o que melhor cobriria parcialmente, pra dar referência ao vendedor
+  const maiorRed = reducaoDetalhes[0];
+  const maiorCartao = cartoes[cartoes.length - 1]; // o maior valor
+  const melhorIsolada = Math.max(maiorRed?.reducao || 0, maiorCartao?.valor || 0);
+  const falta = excedente - melhorIsolada;
   return {
-    status: melhor.status,
-    detalhe: `Excede em R$ ${excedente.toFixed(2)}. Solução: ${melhor.lista.join(' + ')}.`,
-    acao: melhor.lista.join(' + '),
+    status: 'INVIAVEL',
+    detalhe: `Excede ${fmt(excedente)}. Nenhuma operação isolada resolve — melhor isolada absorve apenas ${fmt(melhorIsolada)}, ainda faltariam ${fmt(falta)}. Precisaria de múltiplas operações (port + cancelar cartão).`,
+    acao: 'múltiplas operações',
     excedente, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
     livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,
-    reducaoTotal, reducaoDetalhes,
-    estrategia: melhor
+    reducaoTotal, reducaoDetalhes
   };
 }
 // Daycoval REFIN PORT INSS (96 meses) — 11 tabelas oficiais (805990-806002). Usa pool proprio, nao COEFS global.
@@ -955,13 +1085,20 @@ const BD={
   DIGIO:{sMin:4500,tMin:250,pMin:0,pgMin:12,faixa:[1.50,1.85],coefF:null,block:["237","001","041","925"],pgMinMap:{"070":12},invRules:{minAge:60}},
   // DAYCOVAL: NAO porta de C6 (336), SAFRA (422), ALFA (025), MASTER (243). Troco min = max(R$100, 2% do saldo).
   // pgMinMap: AGIBANK 15, INBURSA 13, FACTA 24, PAN 12. PINE/BRB/QUALI 0 (ja implicito pois 0<=6 default).
-  DAYCOVAL:{sMin:500,tMin:100,tMinPct:0.02,pMin:20,pgMin:6,faixa:[1.56,1.85],coefF:null,coefs:COEFS_DAY,block:["336","422","025","243","925"],pgMinMap:{"121":15,"012":13,"935":24,"623":12,"070":12},invRules:{minAge:60}}
+  DAYCOVAL:{sMin:500,tMin:100,tMinPct:0.02,pMin:20,pgMin:6,faixa:[1.56,1.85],coefF:null,coefs:COEFS_DAY,block:["336","422","025","243","925"],pgMinMap:{"121":15,"012":13,"935":24,"623":12,"070":12},invRules:{minAge:60}},
+  // ICRED — Portabilidade INSS:
+  // - 1+ paga (PAN 623 e C6 336 acima de 1 paga, mesma regra)
+  // - Troco minimo R$100 / Vlr contrato R$3.000 a R$100.000 (faixa por idade)
+  // - Faixa taxa 1.50% a 1.85%
+  // - NAO porta de QI (329) / PINE (643) / INBURSA (935)
+  // - Limite por idade: ate 61 anos R$100k, 62 R$90k, 63 R$80k, 64 R$70k, 65 R$60k, 66 R$50k, 67 R$40k, 68 R$30k, 69+ R$25k
+  ICRED:{sMin:3000,vcMax:100000,tMin:100,pMin:0,pgMin:0,faixa:[1.50,1.85],coefF:null,block:["329","643","935"],pgMinMap:{"623":1,"336":1},vcMaxByAge:[{ageMax:61,vcMax:100000},{ageMax:62,vcMax:90000},{ageMax:63,vcMax:80000},{ageMax:64,vcMax:70000},{ageMax:65,vcMax:60000},{ageMax:66,vcMax:50000},{ageMax:67,vcMax:40000},{ageMax:68,vcMax:30000},{ageMax:120,vcMax:25000}],invRules:{minAge:60}}
 };
 // PICPAY (380) portado a partir de 1 paga em TODOS os bancos que nao tem restricao (bloqueio) para ele
 const PICPAY_CODE="380";
 // B1P = bancos com portabilidade liberada a partir de 1 paga (inclui PICPAY)
 // ORDEM = bancos ativos no motor. C6/DIGIO/DAYCOVAL desativados por regra (mantidos em BD para reativacao rapida).
-const ORDEM=["QUALI","FACTA","BRB"],B1P=["149","422","739","925","380","033","326","290","041","389","121"],ESP_INV=[4,5,6,32,33,34,51,83,92],ESP_AUX=[31,36,91,94],ESP_LOAS=[87,88],ESP_AGE_MIN={21:45},CARTAO={PAN:"623",BMG:"318",Daycoval:"707"};
+const ORDEM=["QUALI","FACTA","BRB","ICRED"],B1P=["149","422","739","925","380","033","326","290","041","389","121"],ESP_INV=[4,5,6,32,33,34,51,83,92],ESP_AUX=[31,36,91,94],ESP_LOAS=[87,88],ESP_AGE_MIN={21:45},CARTAO={PAN:"623",BMG:"318",Daycoval:"707"};
 // Garantia: PICPAY sempre em B1P
 if(!B1P.includes(PICPAY_CODE))B1P.push(PICPAY_CODE);
 function pV(v){if(v==null||v==="")return 0;if(typeof v==="number")return v;let s=String(v).replace(/R\$\s*/g,"").replace(/\s/g,"");if(s.includes(","))return parseFloat(s.replace(/\./g,"").replace(",","."))||0;if(s.includes("."))return parseFloat(s)||0;let n=parseInt(s,10);return isNaN(n)?0:n>99?n/100:n}
@@ -1007,14 +1144,39 @@ function bankAccepts(b,r,cd,con,p,s,pg,i1,inv,age,bY,espN,taxaOrig){
 // Piso global de troco aplicado a TODOS os bancos: pelo menos 1 parcela ou R$ 250 (o que for maior).
 // Abaixo disso banco raramente paga a port. Pode ser sobrescrito por cada banco com tMin/tMinPct maior.
 const TROCO_MIN_GLOBAL=250;
-function tryBank(b,r,p,s){
+// ICRED tem troco minimo de R$100 (mais agressivo) — sobrescreve o piso global pra ele
+function _tMinFloor(b){return b==='ICRED'?100:TROCO_MIN_GLOBAL}
+// Aplica limite de VC max (banco.vcMax) e VC max por idade (banco.vcMaxByAge)
+function _vcExceedsLimit(r,vc,age){
+  if(r.vcMax&&vc>r.vcMax)return true;
+  if(r.vcMaxByAge&&Array.isArray(r.vcMaxByAge)&&age!=null){
+    // Encontra a primeira faixa onde age <= ageMax
+    for(const tier of r.vcMaxByAge){
+      if(age<=tier.ageMax){
+        if(vc>tier.vcMax)return true;
+        return false;
+      }
+    }
+  }
+  return false;
+}
+function tryBank(b,r,p,s,age){
   // Troco minimo efetivo: combina todas as regras (banco + global)
   const tMinBanco=r.tMinPct?Math.max(r.tMin||0,s*r.tMinPct):(r.tMin||0);
-  const tMinEff=Math.max(tMinBanco,p,TROCO_MIN_GLOBAL);
-  if(r.coefF){let vc=p/r.coefF,tr=vc-s;if(tr<tMinEff)return null;let tx=COEFS.find(x=>x.c===r.coefF);return{banco:b,troco:tr,vc,taxa:tx?tx.t:0}}
+  const tMinEff=Math.max(tMinBanco,p,_tMinFloor(b));
+  if(r.coefF){
+    let vc=p/r.coefF,tr=vc-s;
+    if(tr<tMinEff)return null;
+    if(_vcExceedsLimit(r,vc,age))return null;
+    let tx=COEFS.find(x=>x.c===r.coefF);
+    return{banco:b,troco:tr,vc,taxa:tx?tx.t:0};
+  }
   // Pool de coefs: usa banco.coefs se definido (ex: DAYCOVAL com COEFS_DAY), senao COEFS global.
   const res=bestR(p,s,tMinEff,r.faixa,r.coefs);
-  if(res)return{banco:b,troco:res.tr,vc:res.vc,taxa:res.t};
+  if(res){
+    if(_vcExceedsLimit(r,res.vc,age))return null;
+    return{banco:b,troco:res.tr,vc:res.vc,taxa:res.t};
+  }
   return null;
 }
 function testar(p,s,pg,cd,inv,age,bY,rest,espN,con,taxaOrig){
@@ -1034,7 +1196,7 @@ function testar(p,s,pg,cd,inv,age,bY,rest,espN,con,taxaOrig){
   for(const b of ORDEM){
     const r=BD[b];
     if(!bankAccepts(b,r,cd,con,p,s,pg,i1,inv,age,bY,espN,taxaOrig))continue;
-    const res=tryBank(b,r,p,s);
+    const res=tryBank(b,r,p,s,age);
     if(res){res.i1=i1;return res}
   }
   return null;
@@ -1059,7 +1221,7 @@ function testarTodos(p,s,pg,cd,inv,age,bY,rest,espN,con,taxaOrig){
     if(b==='C6'&&c6Priority)continue; // evita duplicar C6 priority
     const r=BD[b];
     if(!bankAccepts(b,r,cd,con,p,s,pg,i1,inv,age,bY,espN,taxaOrig))continue;
-    const res=tryBank(b,r,p,s);
+    const res=tryBank(b,r,p,s,age);
     if(res){out.push({...res,i1})}
   }
   return out;
@@ -1765,8 +1927,8 @@ function setQ(v){S.q=v;S.pg=0;renderApp()}
 function doSort(col){if(S.sort.c===col)S.sort.d=S.sort.d==="asc"?"desc":"asc";else S.sort={c:col,d:"asc"};S.pg=0;renderApp()}
 function setPg(p){S.pg=p;renderApp()}
 function filt(list){let f=list;if(S.q){let ql=S.q.toLowerCase();f=f.filter(r=>(r.nome||"").toLowerCase().includes(ql)||(r.cpf||"").includes(ql)||(r.con||"").includes(ql))}if(S.sort.c){let sc=S.sort.c,sd=S.sort.d;f=[...f].sort((a,b)=>{let va=a[sc],vb=b[sc];if(typeof va==="string"){va=va.toLowerCase();vb=String(vb||"").toLowerCase()}return(va<vb?-1:va>vb?1:0)*(sd==="asc"?1:-1)})}return f}
-const DC={QUALI:{c:"var(--acc)",bg:"rgba(59,130,246,.1)"},FACTA:{c:"var(--pur)",bg:"rgba(167,139,250,.1)"},C6:{c:"var(--cyan)",bg:"rgba(6,182,212,.1)"},BRB:{c:"var(--ylw)",bg:"rgba(234,179,8,.1)"},DIGIO:{c:"var(--grn)",bg:"rgba(34,197,94,.1)"},DAYCOVAL:{c:"var(--pnk)",bg:"rgba(236,72,153,.1)"}};
-const pCls={QUALI:"pill-acc",FACTA:"pill-pur",C6:"pill-cyan",BRB:"pill-ylw",DIGIO:"pill-grn",DAYCOVAL:"pill-pnk"};
+const DC={QUALI:{c:"var(--acc)",bg:"rgba(59,130,246,.1)"},FACTA:{c:"var(--pur)",bg:"rgba(167,139,250,.1)"},C6:{c:"var(--cyan)",bg:"rgba(6,182,212,.1)"},BRB:{c:"var(--ylw)",bg:"rgba(234,179,8,.1)"},DIGIO:{c:"var(--grn)",bg:"rgba(34,197,94,.1)"},DAYCOVAL:{c:"var(--pnk)",bg:"rgba(236,72,153,.1)"},ICRED:{c:"var(--grn)",bg:"rgba(34,213,134,.12)"}};
+const pCls={QUALI:"pill-acc",FACTA:"pill-pur",C6:"pill-cyan",BRB:"pill-ylw",DIGIO:"pill-grn",DAYCOVAL:"pill-pnk",ICRED:"pill-grn"};
 function si(col){if(S.sort.c!==col)return'<span style="opacity:.2;margin-left:3px;font-size:8px">⇅</span>';return`<span style="margin-left:3px;font-size:8px">${S.sort.d==="asc"?"▲":"▼"}</span>`}
 function TH(col,l,right){return`<th class="${right?"right":""}" onclick="doSort('${col}')">${l}${si(col)}</th>`}
 function pgr(cnt){let tot=Math.ceil(cnt/PER)||1;return`<div class="pager"><span style="color:var(--t3)">${N(cnt)} registros</span><div class="pager-btns"><button onclick="setPg(Math.max(0,S.pg-1))" ${S.pg===0?"disabled":""}>‹</button><span style="color:var(--t2);padding:0 6px;font-size:11px">${S.pg+1}/${tot}</span><button onclick="setPg(Math.min(${tot-1},S.pg+1))" ${S.pg>=tot-1?"disabled":""}>›</button></div></div>`}
@@ -2380,6 +2542,8 @@ async function consultarIN100(cpf,ben,nome){
     if(d.success){
       // Guarda no cache pra exibir badge na home depois
       in100Cache[cpf]={...d,cpf,nome:d.nome||nome,ben,ts:Date.now()};
+      // Stash global pra debug e botões de copiar/baixar JSON
+      window._lastIn100Raw = d;
       pm.innerHTML=`<div style="font-size:16px;font-weight:800;margin-bottom:12px">🔍 IN100 — ${esc(d.nome||nome||cpf)}</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:14px">
           <div class="kpi"><div class="kpi-label">Status</div><div class="kpi-value" style="font-size:13px;color:${d.elegivel?'var(--grn)':'var(--red)'}">${d.elegivel?'✅ Elegível':'❌ '+(d.benefitStatus||'?')}</div></div>
@@ -2391,7 +2555,16 @@ async function consultarIN100(cpf,ben,nome){
         </div>
         ${d.bloqueado?`<div style="background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px;color:var(--red)">⚠️ Bloqueio: ${esc(d.tipoBlock||'—')}</div>`:""}
         <div style="font-size:11px;color:var(--t3)">Espécie: ${esc(d.especie||"—")} | Portabilidades: ${d.portabilidades||0} | Repr Legal: ${d.representanteLegal?"Sim":"Não"}</div>
-        ${d.contaBanco?`<div style="font-size:11px;color:var(--t3);margin-top:4px">Conta: Banco ${esc(d.contaBanco.bank)} | Ag ${esc(d.contaBanco.branch)} | CC ${esc(d.contaBanco.number)}</div>`:""}`;
+        ${d.contaBanco?`<div style="font-size:11px;color:var(--t3);margin-top:4px">Conta: Banco ${esc(d.contaBanco.bank)} | Ag ${esc(d.contaBanco.branch)} | CC ${esc(d.contaBanco.number)}</div>`:""}
+        <details style="margin-top:14px;border:1px solid var(--brd);border-radius:8px;padding:10px;background:var(--bg)">
+          <summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--cyan);user-select:none">▸ Ver JSON COMPLETO da IN100 (raw)</summary>
+          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-grn" onclick="navigator.clipboard.writeText(JSON.stringify(window._lastIn100Raw,null,2));this.textContent='✅ Copiado!';setTimeout(()=>{this.textContent='📋 Copiar JSON'},2000)">📋 Copiar JSON</button>
+            <button class="btn btn-sm" onclick="(function(){const blob=new Blob([JSON.stringify(window._lastIn100Raw,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='in100_${cpf}_${ben}.json';a.click();URL.revokeObjectURL(a.href)})()">↓ Baixar .json</button>
+            <button class="btn btn-sm" onclick="console.log('[IN100 RAW]',window._lastIn100Raw);showToast?.('Logado no console (F12)','info')">🖥️ Console</button>
+          </div>
+          <pre style="background:#0A1024;border:1px solid var(--brd);border-radius:6px;padding:10px;margin-top:8px;font-size:10px;overflow:auto;max-height:400px;color:var(--t1);font-family:'Monaco','Menlo',monospace;white-space:pre-wrap;word-break:break-all">${esc(JSON.stringify(d,null,2))}</pre>
+        </details>`;
     }else{
       pm.innerHTML=`<div style="text-align:center;padding:20px;color:var(--red)">❌ Erro: ${esc(d.error||d.mensagem||"Falha na consulta")}</div>`;
     }
@@ -4724,7 +4897,15 @@ function renderWppChat(){
           <span class="pill pill-${convStatus==='open'?'acc':convStatus==='resolved'?'grn':'ylw'}" style="font-size:8px;padding:1px 5px">${convStatus}</span>
         </div>
       </div>
-      <div style="display:flex;gap:4px">
+      <div style="display:flex;gap:4px;align-items:center">
+        ${(()=>{
+          const ag=!!conv.agente_ativo;
+          const cor=ag?'var(--grn)':'var(--org)';
+          const bg=ag?'rgba(34,213,134,.12)':'rgba(255,138,61,.12)';
+          const txt=ag?'🤖 Sofia ativa':'👤 Humano';
+          const tip=ag?'Sofia está respondendo automaticamente. Clique pra ASSUMIR a conversa (vendedor responde manualmente).':'Você assumiu — Sofia pausada. Clique pra DEVOLVER pra Sofia.';
+          return `<button class="btn btn-sm" onclick="cwToggleAgente('${conv.id}',${!ag})" title="${tip}" style="border-color:${cor};color:${cor};background:${bg};font-weight:700">${txt}</button>`;
+        })()}
         ${chatNum?`<button class="btn btn-sm" onclick="runConsulta('${chatNum}')" title="Consultar CPF">🔍</button>`:''}
         ${chatNum?`<button class="btn btn-sm" onclick="openCrmModal('${chatNum}','${esc(chatName)}')" title="CRM">🏷️</button>`:''}
         ${chatNum?`<a href="tel:+${chatNum}" class="btn btn-sm" title="Ligar" style="text-decoration:none">📞</a>`:''}
@@ -4732,6 +4913,13 @@ function renderWppChat(){
         <button class="btn btn-sm" onclick="cwOpenConversation(${conv.id})" title="Recarregar">🔄</button>
       </div>
     </div>`;
+    // Banner explicativo do estado da Sofia
+    if(!conv.agente_ativo){
+      html+=`<div style="background:rgba(255,138,61,.10);border-bottom:1px solid rgba(255,138,61,.25);padding:8px 16px;font-size:11px;color:var(--org);font-weight:600;display:flex;justify-content:space-between;align-items:center">
+        <span>👤 Você assumiu essa conversa. Sofia não responde automaticamente até você devolver.</span>
+        <button class="btn btn-sm" style="border-color:var(--grn);color:var(--grn);font-size:10px" onclick="cwToggleAgente('${conv.id}',true)">🤖 Devolver pra Sofia</button>
+      </div>`;
+    }
     // ── Client data badge ──
     html+=`<div id="cwClientBadge"></div>`;
     // ── Messages area ──
@@ -5195,7 +5383,10 @@ async function _carregarRecentesDoBanco() {
         id: it.id,
         cpf: it.cpf,
         nome: it.cliente?.nome || it.nome_manual || '',
-        status: it.status_geral
+        status: it.status_geral,
+        criadaPorNome: it.criada_por_nome || '',
+        criadaPorUserId: it.criada_por_user_id || null,
+        iniciadoEm: it.iniciado_em
       }));
       renderApp();
     }
@@ -6102,7 +6293,9 @@ function _cltOfertaCard(o, ctx) {
   let h = `<div style="padding:20px;background:var(--card);border:1px solid var(--brd);border-radius:14px;border-left:4px solid ${cor}">`;
   h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
   h += `<div style="font-size:16px;font-weight:800;color:${cor}">🏦 ${o.label}</div>`;
-  if (o.detalhes?._raw?.requiresLiveness || o.requiresLiveness) {
+  if (o.emManutencao) {
+    h += '<span class="pill" style="background:rgba(245,194,66,.18);color:var(--ylw);border:1px solid rgba(245,194,66,.35)">🔧 MANUTENÇÃO</span>';
+  } else if (o.detalhes?._raw?.requiresLiveness || o.requiresLiveness) {
     h += '<span class="pill" style="background:rgba(245,194,66,.15);color:var(--ylw)">📸 AGUARDA SELFIE</span>';
   } else if (o.processando) {
     h += '<span class="pill" style="background:rgba(59,130,246,.15);color:var(--acc)">⏳ PROCESSANDO</span>';
@@ -6248,8 +6441,14 @@ function _cltOfertaCard(o, ctx) {
   } else if (o.disponivel && o.elegibilidade) {
     h += '<div style="color:var(--grn);font-size:13px;margin-bottom:8px">📊 Cliente elegível</div>';
     const margem = parseFloat(o.elegibilidade.margemDisponivel || 0);
+    const margemTeorica = parseFloat(o.elegibilidade.margemTeorica || 0);
+    const renda = parseFloat(o.elegibilidade.renda || 0);
     if (margem > 0) {
       h += `<div style="font-size:13px"><b>Margem:</b> R$ ${margem.toFixed(2)}</div>`;
+    } else if (margemTeorica > 0) {
+      // Margem teorica = 35% da renda (lei do consignado CLT) — quando o banco nao retorna margem real no checkEligibility (ex: QualiBanking)
+      h += `<div style="font-size:13px"><b>Margem estimada:</b> R$ ${margemTeorica.toFixed(2)} <span style="color:var(--t3);font-size:10px">(35% da renda)</span></div>`;
+      if (renda > 0) h += `<div style="font-size:11px;color:var(--t3)">Renda CLT: R$ ${renda.toFixed(2)}</div>`;
     }
     if (o.elegibilidade.empregador) h += `<div style="font-size:12px;color:var(--t2);margin-top:4px"><b>Empregador:</b> ${(o.elegibilidade.empregador||'').substring(0,40)}</div>`;
     if (o.elegibilidade.empregadorCnpj) h += `<div style="font-size:11px;color:var(--t3)">CNPJ: ${o.elegibilidade.empregadorCnpj}</div>`;
@@ -6729,8 +6928,16 @@ function renderCltConsulta() {
     idsVistos.add(r.id);
     listaUnificada.push({
       id: r.id, cpf: r.cpf, nome: r.nome || '(sem nome)',
-      status: r.status || 'concluido', ts: 0
+      status: r.status || 'concluido',
+      ts: r.iniciadoEm ? Date.parse(r.iniciadoEm) : 0,
+      criadaPorNome: r.criadaPorNome || '',
+      criadaPorUserId: r.criadaPorUserId || null
     });
+  }
+  // Marca consultas da pilha tambem com o usuario atual (sao as que esta consultando agora)
+  for (const it of pilha) {
+    const found = listaUnificada.find(x => x.id === it.id);
+    if (found && !found.criadaPorNome && CU) found.criadaPorNome = CU.name || CU.user || '';
   }
 
   // ─── 1) DETALHE DA CONSULTA SELECIONADA (em cima — operador NÃO precisa rolar) ───
@@ -6778,15 +6985,22 @@ function renderCltConsulta() {
         }
         indicHtml += '</div>';
       }
+      // Vendedor que fez a consulta — destaca se for OUTRO usuario (gestor agir)
+      const meuId = CU?.id || null;
+      const consultouEu = c.criadaPorUserId && meuId && c.criadaPorUserId === meuId;
+      const vendedorBadge = c.criadaPorNome
+        ? `<span class="pill" style="font-size:9px;background:${consultouEu?'rgba(34,213,134,.15)':'rgba(91,157,255,.15)'};color:${consultouEu?'var(--grn)':'var(--acc)'};font-weight:700" title="Quem fez essa consulta">👤 ${esc(c.criadaPorNome)}${consultouEu?' (você)':''}</span>`
+        : '';
       h += `<div onclick="selecionarConsulta('${c.id}')" class="clt-row-hover" style="padding:10px 14px;background:var(--card);border:1px solid ${borderClr};border-radius:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:border-color .15s${shadow}">`;
       h += '<div style="flex:1;min-width:0">';
-      h += `<div style="display:flex;gap:8px;align-items:center;margin-bottom:2px">${statusBadge}<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.nome}</div>`;
+      h += `<div style="display:flex;gap:8px;align-items:center;margin-bottom:3px;flex-wrap:wrap">${statusBadge}<div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.nome)}</div>`;
       if (c.ofertasOk) h += `<span style="font-size:10px;color:var(--grn);font-weight:700">· ${c.ofertasOk} oferta(s)</span>`;
+      h += vendedorBadge;
       h += '</div>';
-      h += `<div style="font-size:10px;color:var(--t3)"><b>CPF:</b> ${c.cpf}${c.empregador?` · ${c.empregador.substring(0,30)}`:''}</div>`;
+      h += `<div style="font-size:10px;color:var(--t3)"><b>CPF:</b> ${c.cpf}${c.empregador?` · ${esc(c.empregador.substring(0,30))}`:''}</div>`;
       h += indicHtml;
       h += '</div>';
-      if (tsStr) h += `<div style="font-size:10px;color:var(--t3);white-space:nowrap">${tsStr}</div>`;
+      if (tsStr) h += `<div style="font-size:10px;color:var(--t3);white-space:nowrap;text-align:right">${tsStr}</div>`;
       h += '</div>';
     }
     h += '</div>';
@@ -10110,61 +10324,78 @@ function renderConsulta() {
 
     // ══ ENQUADRAMENTO NA NOVA REGRA (40% global, cartão opcional) ══
     {
-      const _benefV = parseFloat(String(ben.valor || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      // BASE DE CÁLCULO INSS (exclui pensão alimentícia) — preferida em vez do valor bruto
+      const _baseCalc = parseFloat(String(ben.base_calculo || '').replace(/\./g, '').replace(',', '.')) || 0;
+      const _benefV   = parseFloat(String(ben.valor || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      const _BASE     = _baseCalc > 0 ? _baseCalc : _benefV;
+      // Parcelas EMPRÉSTIMO comprometidas (já vem do Multicorban como sum)
       const _sumEmp = parseFloat(String(mrg.parcelas || '0').replace(/\./g, '').replace(',', '.')) || 0;
-      const _sumRmc = parseFloat(String(mrg.rmc || '0').replace(/\./g, '').replace(',', '.')) || 0;
-      const _sumRcc = parseFloat(String(mrg.rcc || '0').replace(/\./g, '').replace(',', '.')) || 0;
-      // Constrói lista de contratos pra cálculo de redução via port
+      // ATENÇÃO: mrg.rmc / mrg.rcc são MARGEM LIVRE DO CARTÃO (não comprometido).
+      // Pra obter sumRmc COMPROMETIDA: teto_cartao(5% base) - margem_livre_rmc.
+      const _mrgRmcLivre = parseFloat(String(mrg.rmc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      const _mrgRccLivre = parseFloat(String(mrg.rcc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      const _tetoCartao = _BASE * 0.05;
+      // Detecta se cliente TEM o cartão pra evitar dar "comprometido" inflado quando não tem cartão
+      const _temRmc = !!(mrg.rmc != null && _mrgRmcLivre < _tetoCartao - 0.01) || (Array.isArray(r.cartoes) && r.cartoes.some(c=>(c.tipo||'').toUpperCase().includes('RMC')));
+      const _temRcc = !!(mrg.rcc != null && _mrgRccLivre < _tetoCartao - 0.01) || (Array.isArray(r.cartoes) && r.cartoes.some(c=>(c.tipo||'').toUpperCase().includes('RCC')));
+      const _sumRmc = _temRmc ? Math.max(0, _tetoCartao - _mrgRmcLivre) : 0;
+      const _sumRcc = _temRcc ? Math.max(0, _tetoCartao - _mrgRccLivre) : 0;
+      // Contratos pra cálculo de redução via port/refin
       const _contratosCalc = (r.contratos || []).map(ct => ({
         con: ct.contrato || '',
         cod: String(ct.banco_codigo || '').padStart(3, '0'),
         par: parseFloat(String(ct.parcela || '0').replace(/\./g, '').replace(',', '.')) || 0,
         sal: parseFloat(String(ct.saldo || ct.saldo_quitacao || '0').replace(/\./g, '').replace(',', '.')) || 0,
         taxaOrig: parseFloat(String(ct.taxa || '0').replace(',', '.')) || 0
-      }));
-      if (_benefV > 0) {
-        const enq = calcEnquadramentoPlus(_benefV, _sumEmp, _sumRmc, _sumRcc, _contratosCalc);
+      })).filter(c => c.par > 0);
+      if (_BASE > 0) {
+        const enq = calcEnquadramentoPlus(_BASE, _sumEmp, _sumRmc, _sumRcc, _contratosCalc);
         const stMap = {
-          ENQUADRA: { cor: 'var(--grn)', icon: '✅', titulo: 'JÁ ENQUADRA NA NOVA REGRA', luz: 'rgba(34,197,94,.10)' },
-          ENQUADRA_TROCAR_CARTAO: { cor: 'var(--grn)', icon: '✅', titulo: 'ENQUADRA — basta escolher 1 cartão', luz: 'rgba(34,197,94,.08)' },
-          VIA_CANCELA_CARTAO: { cor: 'var(--pur)', icon: '💳', titulo: 'CANCELAR 1 CARTÃO RESOLVE', luz: 'rgba(167,139,250,.08)' },
-          VIA_PORT_REDUCAO: { cor: 'var(--cyan)', icon: '🔄', titulo: 'PORT/REFIN REDUZ E ENQUADRA', luz: 'rgba(6,182,212,.08)' },
-          VIA_CARTAO_MAIS_PORT: { cor: 'var(--ylw)', icon: '🔀', titulo: 'CANCELAR CARTÃO + PORT RESOLVE', luz: 'rgba(245,194,66,.08)' },
-          VIA_MULTIPLO: { cor: 'var(--org)', icon: '⚙️', titulo: 'MARGEM + CARTÃO + PORT', luz: 'rgba(249,115,22,.08)' },
-          INVIAVEL: { cor: 'var(--red)', icon: '⚠', titulo: 'INVIÁVEL — EXCEDENTE ALTO', luz: 'rgba(239,68,68,.08)' }
+          ENQUADRA: { cor: 'var(--grn)', icon: '✅', titulo: 'JÁ ENQUADRA NA NOVA REGRA' },
+          ENQUADRA_TROCAR_CARTAO: { cor: 'var(--grn)', icon: '✅', titulo: 'ENQUADRA — escolher 1 cartão' },
+          VIA_CANCELA_CARTAO: { cor: 'var(--pur)', icon: '💳', titulo: 'CANCELAR 1 CARTÃO RESOLVE' },
+          VIA_PORT_REDUCAO: { cor: 'var(--cyan)', icon: '🔄', titulo: 'PORT REDUZ PARCELA E ENQUADRA' },
+          INVIAVEL: { cor: 'var(--red)', icon: '⚠', titulo: 'NÃO ENQUADRA EM 1 OPERAÇÃO' }
         };
-        const meta = stMap[enq.status] || { cor: 'var(--t2)', icon: '❓', titulo: enq.status, luz: 'rgba(255,255,255,.04)' };
+        const meta = stMap[enq.status] || { cor: 'var(--t2)', icon: '❓', titulo: enq.status };
         const fmt = v => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const sumTotal = _sumEmp + _sumRmc + _sumRcc;
-        const pctTotal = (_benefV > 0 ? (sumTotal / _benefV * 100) : 0).toFixed(1);
-        html += `<div style="background:linear-gradient(135deg,${meta.luz},rgba(255,255,255,.02));border:2px solid ${meta.cor};border-radius:14px;padding:18px;margin-bottom:20px">
+        const pctTotal = _BASE > 0 ? (sumTotal / _BASE * 100) : 0;
+        const corPct = pctTotal > 40 ? 'var(--red)' : 'var(--grn)';
+        const luz = `color-mix(in srgb,${meta.cor} 12%,transparent)`;
+        html += `<div style="background:linear-gradient(135deg,${luz},rgba(255,255,255,.02));border:2px solid ${meta.cor};border-radius:14px;padding:18px;margin-bottom:20px">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:12px">
             <div>
-              <div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.1em;font-weight:700">🔮 Enquadramento Nova Regra (40% global)</div>
+              <div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.1em;font-weight:700">🔮 Enquadramento Nova Regra · base 40%</div>
               <div style="font-size:18px;font-weight:800;color:${meta.cor};margin-top:4px">${meta.icon} ${meta.titulo}</div>
             </div>
             <div style="text-align:right">
-              <div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Comprometimento atual</div>
-              <div style="font-size:20px;font-weight:800;color:${pctTotal > 40 ? 'var(--red)' : 'var(--grn)'};font-family:monospace">${pctTotal}% / 40%</div>
-              <div style="font-size:11px;color:var(--t3);margin-top:2px">${fmt(sumTotal)} de ${fmt(_benefV * 0.40)}</div>
+              <div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Comprometimento</div>
+              <div style="font-size:22px;font-weight:900;color:${corPct};font-family:monospace">${pctTotal.toFixed(1)}% / 40%</div>
+              <div style="font-size:11px;color:var(--t3);margin-top:2px">${fmt(sumTotal)} de ${fmt(_BASE * 0.40)}</div>
             </div>
           </div>
-          <div style="font-size:13px;color:var(--t1);background:var(--bg);border-radius:8px;padding:10px 14px;line-height:1.5">${esc(enq.detalhe)}</div>`;
-        // Detalhe quantitativo
-        if (enq.excedente > 0 || enq.reducaoTotal > 0) {
-          html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:12px">`;
-          if (enq.excedente > 0) html += `<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Excedente</div><div style="font-size:14px;font-weight:800;color:var(--red);font-family:monospace">${fmt(enq.excedente)}</div></div>`;
-          if (enq.livreEmpAtual > 0) html += `<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Margem livre</div><div style="font-size:14px;font-weight:800;color:var(--grn);font-family:monospace">${fmt(enq.livreEmpAtual)}</div></div>`;
-          if (_sumRmc > 0) html += `<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Cancelar RMC</div><div style="font-size:14px;font-weight:800;color:var(--pur);font-family:monospace">${fmt(_sumRmc)}</div></div>`;
-          if (_sumRcc > 0) html += `<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Cancelar RCC</div><div style="font-size:14px;font-weight:800;color:var(--pnk);font-family:monospace">${fmt(_sumRcc)}</div></div>`;
-          if (enq.reducaoTotal > 0) html += `<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Redução via port</div><div style="font-size:14px;font-weight:800;color:var(--cyan);font-family:monospace">${fmt(enq.reducaoTotal)}</div></div>`;
-          html += `</div>`;
-        }
-        // Detalhe por contrato (top 3 maiores reduções)
-        if (Array.isArray(enq.reducaoDetalhes) && enq.reducaoDetalhes.length > 0 && enq.excedente > 0) {
-          html += `<details style="margin-top:10px"><summary style="cursor:pointer;font-size:11px;color:var(--t2);font-weight:600">▸ Ver redução possível por contrato (${enq.reducaoDetalhes.length})</summary><div style="margin-top:8px;font-size:11px">`;
-          enq.reducaoDetalhes.slice(0, 5).forEach(d => {
-            html += `<div style="padding:6px 10px;background:var(--bg);border-radius:6px;margin-top:4px;display:flex;justify-content:space-between"><span style="color:var(--t2)">${esc(d.contrato || '?')} (${esc(d.banco || '?')})</span><span class="mono" style="color:var(--cyan);font-weight:700">−${fmt(d.reducao)} → R$${d.novaParc.toFixed(2)} a ${d.taxa}% em ${d.prazo}m</span></div>`;
+          <div style="font-size:13px;color:var(--t1);background:var(--bg);border-radius:8px;padding:12px 14px;line-height:1.5;font-weight:500">${esc(enq.detalhe)}</div>`;
+
+        // Decomposição: emp / rmc / rcc / base
+        html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:12px">
+          <div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:9px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">Base cálculo</div><div style="font-size:13px;font-weight:800;color:var(--t1);font-family:monospace">${fmt(_BASE)}</div></div>
+          <div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:9px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">Parcelas Emp</div><div style="font-size:13px;font-weight:800;color:var(--acc);font-family:monospace">${fmt(_sumEmp)}</div></div>
+          ${_sumRmc>0?`<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:9px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">RMC Compromet.</div><div style="font-size:13px;font-weight:800;color:var(--pur);font-family:monospace">${fmt(_sumRmc)}</div></div>`:''}
+          ${_sumRcc>0?`<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:9px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">RCC Compromet.</div><div style="font-size:13px;font-weight:800;color:var(--pnk);font-family:monospace">${fmt(_sumRcc)}</div></div>`:''}
+          ${enq.excedente>0?`<div style="background:rgba(255,71,87,.08);border:1px solid rgba(255,71,87,.3);border-radius:8px;padding:9px"><div style="font-size:9px;color:var(--red);text-transform:uppercase;font-weight:700">⚠ Excedente</div><div style="font-size:13px;font-weight:800;color:var(--red);font-family:monospace">${fmt(enq.excedente)}</div></div>`:`<div style="background:rgba(34,213,134,.08);border:1px solid rgba(34,213,134,.3);border-radius:8px;padding:9px"><div style="font-size:9px;color:var(--grn);text-transform:uppercase;font-weight:700">✅ Folga</div><div style="font-size:13px;font-weight:800;color:var(--grn);font-family:monospace">${fmt(Math.max(0,_BASE*0.40-sumTotal))}</div></div>`}
+        </div>`;
+
+        // Quando excede e tem reducaoDetalhes — mostra opções de port pra escolher
+        if (enq.excedente > 0 && Array.isArray(enq.reducaoDetalhes) && enq.reducaoDetalhes.length > 0) {
+          html += `<details style="margin-top:12px" open><summary style="cursor:pointer;font-size:12px;color:var(--t1);font-weight:700">▸ Contratos que reduzem parcela via port (${enq.reducaoDetalhes.length})</summary><div style="margin-top:8px;font-size:11px;display:grid;gap:4px">`;
+          enq.reducaoDetalhes.slice(0, 6).forEach(d => {
+            const enquadra = d.reducao >= enq.excedente - 0.01;
+            const corLinha = enquadra ? 'var(--grn)' : 'var(--t2)';
+            html += `<div style="padding:7px 10px;background:${enquadra?'rgba(34,213,134,.08)':'var(--bg)'};border-radius:6px;display:flex;justify-content:space-between;border:1px solid ${enquadra?'rgba(34,213,134,.25)':'var(--brd)'}">
+              <span style="color:${corLinha};font-weight:600">${enquadra?'✅ ':''}${esc(d.contrato || '?')} (${esc(d.banco || '?')})</span>
+              <span class="mono" style="color:var(--cyan);font-weight:700">reduz ${fmt(d.reducao)} · nova parc ${fmt(d.novaParc)} · ${d.taxa}% / ${d.prazo}m</span>
+            </div>`;
           });
           html += `</div></details>`;
         }
@@ -11198,9 +11429,9 @@ function renderSidebar(){
       const isOpen=canOpen&&(isActive||openSet.has(pKey));
       const chev=canOpen?(isOpen?'▾':'▸'):'';
       const soonTag=entry.soon?'<span class="sidebar-soon" title="Em breve">em breve</span>':'';
-      html+=`<div class="sidebar-product-row ${isOpen?'open':''} ${entry.soon?'soon':''} ${isActive?'active':''}" ${canOpen?`onclick="toggleSidebarGroup('${pKey}')"`:''}><span class="sidebar-chev" style="font-size:10px;width:12px">${chev}</span><span class="sidebar-item-icon">${entry.icon}</span><span class="sidebar-item-label">${entry.label}</span>${soonTag}</div>`;
+      html+=`<div class="sidebar-product-row ${isOpen?'open':''} ${entry.soon?'soon':''} ${isActive?'active':''}" data-product="${entry.product}" ${canOpen?`onclick="toggleSidebarGroup('${pKey}')"`:''}><span class="sidebar-chev" style="font-size:10px;width:12px">${chev}</span><span class="sidebar-item-icon">${entry.icon}</span><span class="sidebar-item-label">${entry.label}</span>${soonTag}</div>`;
       if(isOpen&&canOpen){
-        html+=`<div class="sidebar-product-content">`;
+        html+=`<div class="sidebar-product-content" data-product="${entry.product}">`;
         // Items diretos (sem sub-grupo) vem primeiro
         if(Array.isArray(entry.items)){
           for(const it of entry.items){
@@ -11299,83 +11530,154 @@ function renderHome(tabContent){
   const hasData=!!S.data;
   const isAdm=CU&&CU.role==='admin';
   const isGes=CU&&(CU.role==='gestor'||CU.role==='admin');
-  const isOp=CU&&CU.role==='operador';
-  // Stats de base atual (se tiver)
+  // Stats globais
+  const cart=(typeof getCartItems==='function')?getCartItems():[];
+  const crmCnt=(typeof _crmCnt==='number')?_crmCnt:0;
+  const wppCnt=(typeof _wppCnt==='number')?_wppCnt:0;
+  const in100Cnt=(typeof _in100Cnt==='number')?_in100Cnt:0;
   const baseStats=hasData?{
     contratos:(S.data.analise||S.data.elegiveis||[]).length,
     elegiveis:(S.data.elegiveis||[]).length,
     troco:(S.data.elegiveis||[]).reduce((s,e)=>s+(e.troco||0),0)
   }:null;
-  // Stats de carrinho / CRM / jobs
-  const cart=(typeof getCartItems==='function')?getCartItems():[];
-  const crmCnt=(typeof _crmCnt==='number')?_crmCnt:0;
-  const wppCnt=(typeof _wppCnt==='number')?_wppCnt:0;
-  const in100Cnt=(typeof _in100Cnt==='number')?_in100Cnt:0;
+  // Stats CLT
+  const cltConvCnt=(typeof cltChatsState!=='undefined'&&cltChatsState.conversas)?cltChatsState.conversas.length:0;
+  const cltRecentes=(typeof cltConsultaState!=='undefined'&&cltConsultaState.recentes)?cltConsultaState.recentes.length:0;
 
-  let html=`<div class="fi" style="max-width:1200px;margin:0 auto">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:16px">
+  // ── HEADER ──
+  let html=`<div class="fi" style="max-width:1280px;margin:0 auto">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:16px">
       <div style="flex:1;min-width:280px">
-        <div style="font-size:12px;color:var(--t3);text-transform:uppercase;letter-spacing:.1em;font-weight:700">FLOWFORCE — PLATAFORMA DE CRÉDITO</div>
-        <div style="font-size:28px;font-weight:800;color:var(--t1);margin-top:4px">${saudacao}, ${nome.split(' ')[0]||''} 👋</div>
-        <div style="margin-top:10px;padding:12px 16px;background:linear-gradient(135deg,rgba(79,142,247,.08),rgba(34,211,238,.04));border-left:3px solid var(--acc);border-radius:0 8px 8px 0;font-size:13px;color:var(--t1);font-style:italic;font-weight:500;max-width:620px">
+        <div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.12em;font-weight:800">FLOWFORCE — PLATAFORMA DE CRÉDITO</div>
+        <div style="font-size:30px;font-weight:900;color:var(--t1);margin-top:4px;letter-spacing:-.02em">${saudacao}, ${nome.split(' ')[0]||''} 👋</div>
+        <div style="margin-top:12px;padding:14px 18px;background:linear-gradient(135deg,rgba(91,157,255,.10),rgba(6,229,255,.04));border-left:3px solid var(--acc);border-radius:0 10px 10px 0;font-size:13px;color:var(--t1);font-style:italic;font-weight:500;max-width:680px">
           💡 "${_fraseDoDia()}"
         </div>
-        <div style="font-size:13px;color:var(--t2);margin-top:10px">${hasData?`📁 Base carregada: <b style="color:var(--grn)">${esc(S.fname||'')}</b>`:'Nenhuma base carregada no momento'}</div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${hasData?`<button class="btn" onclick="setTab('dash')">📈 Dashboard</button>`:""}
-        ${isGes?`<button class="btn btn-acc" onclick="setTab('bases')">📥 Importar Base</button>`:""}
-        <button class="btn btn-grn" onclick="setTab('consulta')">🔍 Consulta Unitária</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
+        <button class="btn btn-grn" onclick="setTab('consulta')" style="font-weight:700">🔍 Consulta Unitária INSS</button>
       </div>
     </div>`;
 
-  // ── KPIs do dia / base / carrinho ──
-  html+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:28px">`;
-  if(hasData){
-    html+=`
-      <div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:16px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Contratos</div><div style="font-size:24px;font-weight:800;color:var(--acc);margin-top:4px">${N(baseStats.contratos)}</div></div>
-      <div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:16px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Elegíveis</div><div style="font-size:24px;font-weight:800;color:var(--grn);margin-top:4px">${N(baseStats.elegiveis)}</div></div>
-      <div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:16px"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Troco Total</div><div style="font-size:18px;font-weight:800;color:var(--grn);margin-top:4px">${R$(baseStats.troco)}</div></div>`;
-  }
-  html+=`
-    <div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:16px;cursor:pointer" onclick="setTab('est')"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Carrinho Esteira</div><div style="font-size:24px;font-weight:800;color:var(--org);margin-top:4px">${N(cart.filter(i=>i.status==='pendente').length)}</div><div style="font-size:10px;color:var(--t3);margin-top:2px">pendente digitar</div></div>
-    <div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:16px;cursor:pointer" onclick="setTab('wppchat')"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">Chat WhatsApp</div><div style="font-size:24px;font-weight:800;color:var(--pnk);margin-top:4px">${N(wppCnt)}</div><div style="font-size:10px;color:var(--t3);margin-top:2px">conversas abertas</div></div>
-    <div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:16px;cursor:pointer" onclick="setTab('crm')"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:700">CRM</div><div style="font-size:24px;font-weight:800;color:var(--cyan);margin-top:4px">${N(crmCnt)}</div><div style="font-size:10px;color:var(--t3);margin-top:2px">clientes acompanhados</div></div>
+  // ── KPIs DO DIA (operacionais — comuns a todos produtos) ──
+  html+=`<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">⚡ Sua operação hoje</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:28px">
+    <div class="home-kpi" onclick="setTab('est')" style="background:linear-gradient(135deg,rgba(255,138,61,.10),rgba(255,200,61,.04));border:1px solid rgba(255,138,61,.25);border-radius:12px;padding:16px;cursor:pointer;transition:all .15s">
+      <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:800;letter-spacing:.05em">Carrinho de Digitação</div><div style="font-size:18px">🛒</div></div>
+      <div style="font-size:28px;font-weight:900;color:var(--org);margin-top:6px">${N(cart.filter(i=>i.status==='pendente').length)}</div>
+      <div style="font-size:11px;color:var(--t2);margin-top:2px">pendente digitar</div>
+    </div>
+    <div class="home-kpi" onclick="setTab('wppchat')" style="background:linear-gradient(135deg,rgba(255,91,183,.10),rgba(185,145,255,.04));border:1px solid rgba(255,91,183,.25);border-radius:12px;padding:16px;cursor:pointer;transition:all .15s">
+      <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:800;letter-spacing:.05em">Chat WhatsApp INSS</div><div style="font-size:18px">💬</div></div>
+      <div style="font-size:28px;font-weight:900;color:var(--pnk);margin-top:6px">${N(wppCnt)}</div>
+      <div style="font-size:11px;color:var(--t2);margin-top:2px">conversas abertas</div>
+    </div>
+    <div class="home-kpi" onclick="setTab('crm')" style="background:linear-gradient(135deg,rgba(6,229,255,.10),rgba(91,157,255,.04));border:1px solid rgba(6,229,255,.25);border-radius:12px;padding:16px;cursor:pointer;transition:all .15s">
+      <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:800;letter-spacing:.05em">CRM</div><div style="font-size:18px">🏷️</div></div>
+      <div style="font-size:28px;font-weight:900;color:var(--cyan);margin-top:6px">${N(crmCnt)}</div>
+      <div style="font-size:11px;color:var(--t2);margin-top:2px">clientes acompanhados</div>
+    </div>
   </div>`;
 
-  // ── Atalhos (grid grande) ──
-  const actions=[
-    {k:'consulta',icon:'🔍',title:'Consulta Unitária',sub:'Extrato completo por CPF',cor:'var(--grn)'},
-    isGes?{k:'bases',icon:'📥',title:'Importar Base',sub:'Suba um XLSX/CSV pra processar',cor:'var(--acc)'}:null,
-    {k:'est',icon:'🛒',title:'Esteira de Digitação',sub:`${N(cart.filter(i=>i.status==='pendente').length)} pendente(s)`,cor:'var(--org)'},
-    {k:'camp',icon:'📋',title:'Campanhas',sub:'Criar e gerir campanhas WhatsApp',cor:'var(--pur)'},
-    {k:'wppchat',icon:'💬',title:'Chat WhatsApp',sub:`${N(wppCnt)} conversa(s)`,cor:'var(--pnk)'},
-    {k:'crm',icon:'🏷️',title:'CRM',sub:'Acompanhamento de clientes',cor:'var(--cyan)'},
-    hasData?{k:'el',icon:'✅',title:'Elegíveis',sub:`${N((S.data.elegiveis||[]).length)} contrato(s)`,cor:'var(--grn)'}:null,
-    hasData?{k:'mp',icon:'🗺️',title:'Mapa',sub:'Distribuição por banco',cor:'var(--ylw)'}:null,
-    hasData?{k:'rc',icon:'💳',title:'RMC/RCC',sub:'Cartão consignado',cor:'var(--pur)'}:null,
-    hasData?{k:'in100',icon:'🔎',title:'IN100 Lote',sub:`${N(in100Cnt)} concluído(s)`,cor:'var(--red)'}:null,
-    isGes?{k:'gestao',icon:'📊',title:'Gestão',sub:'Relatórios e parceiros',cor:'var(--t2)'}:null,
-    isAdm?{k:'admin',icon:'👥',title:'Usuários & Bancos',sub:'Admin',cor:'var(--red)'}:null
-  ].filter(Boolean);
-  html+=`<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.1em;margin-bottom:12px">⚡ Atalhos</div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:28px">`;
-  for(const a of actions){
-    html+=`<div class="home-card" onclick="setTab('${a.k}')" style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:18px;cursor:pointer;transition:all .15s;position:relative;overflow:hidden"><div style="position:absolute;top:0;left:0;right:0;height:3px;background:${a.cor}"></div><div style="font-size:28px;margin-bottom:8px">${a.icon}</div><div style="font-size:14px;font-weight:700;color:var(--t1)">${a.title}</div><div style="font-size:11px;color:var(--t2);margin-top:3px">${a.sub}</div></div>`;
-  }
+  // ── QUADROS POR PRODUTO ──
+  html+=`<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">🎯 Convênios e produtos</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px;margin-bottom:28px">`;
+
+  // ─── QUADRO INSS (roxo) ───
+  html+=`<div class="home-product-card" data-product="inss" style="background:linear-gradient(160deg,rgba(185,145,255,.10),rgba(185,145,255,.02));border:2px solid rgba(185,145,255,.25);border-radius:16px;padding:20px;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--p-inss),transparent)"></div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+      <div>
+        <div style="font-size:11px;color:var(--p-inss);text-transform:uppercase;font-weight:800;letter-spacing:.1em">Convênio</div>
+        <div style="font-size:22px;font-weight:900;color:var(--t1);margin-top:2px">🟣 INSS</div>
+        <div style="font-size:11px;color:var(--t2);margin-top:2px">Aposentados e pensionistas</div>
+      </div>
+      <span class="pill" style="background:rgba(34,213,134,.15);color:var(--grn);font-size:10px;font-weight:800">ATIVO</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
+      <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:10px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">Base atual</div><div style="font-size:18px;font-weight:800;color:${hasData?'var(--p-inss)':'var(--t3)'};margin-top:2px">${hasData?N(baseStats.elegiveis):'—'}</div><div style="font-size:9px;color:var(--t3)">elegíveis</div></div>
+      <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:10px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">Troco potencial</div><div style="font-size:13px;font-weight:800;color:${hasData?'var(--grn)':'var(--t3)'};margin-top:2px">${hasData?R$(baseStats.troco):'—'}</div></div>
+      <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:10px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">Bases salvas</div><div style="font-size:18px;font-weight:800;color:var(--cyan);margin-top:2px">${N(hist.length)}</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+      <button class="btn-prod-inss" onclick="setTab('consulta')" style="background:rgba(185,145,255,.15);border:1px solid rgba(185,145,255,.3);color:var(--p-inss);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .15s">🔍 Consulta Unitária</button>
+      ${isGes?`<button onclick="setTab('bases')" style="background:rgba(91,157,255,.12);border:1px solid rgba(91,157,255,.3);color:var(--acc);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;transition:all .15s">📥 Importar Base</button>`:''}
+      ${hasData?`<button onclick="setTab('dash')" style="background:rgba(34,213,134,.10);border:1px solid rgba(34,213,134,.3);color:var(--grn);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">📈 Dashboard</button>
+      <button onclick="setTab('el')" style="background:rgba(34,213,134,.10);border:1px solid rgba(34,213,134,.3);color:var(--grn);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">✅ Elegíveis</button>`:''}
+      <button onclick="setTab('enquad')" style="background:rgba(255,200,61,.10);border:1px solid rgba(255,200,61,.3);color:var(--ylw);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">🔮 Enquadramento</button>
+      <button onclick="setTab('camp')" style="background:rgba(255,91,183,.10);border:1px solid rgba(255,91,183,.3);color:var(--pnk);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">📋 Campanhas</button>
+    </div>
+  </div>`;
+
+  // ─── QUADRO CLT (ciano) ───
+  html+=`<div class="home-product-card" data-product="clt" style="background:linear-gradient(160deg,rgba(6,229,255,.10),rgba(6,229,255,.02));border:2px solid rgba(6,229,255,.25);border-radius:16px;padding:20px;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--p-clt),transparent)"></div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+      <div>
+        <div style="font-size:11px;color:var(--p-clt);text-transform:uppercase;font-weight:800;letter-spacing:.1em">Convênio</div>
+        <div style="font-size:22px;font-weight:900;color:var(--t1);margin-top:2px">💼 CLT Privado</div>
+        <div style="font-size:11px;color:var(--t2);margin-top:2px">Trabalhadores carteira assinada</div>
+      </div>
+      <span class="pill" style="background:rgba(34,213,134,.15);color:var(--grn);font-size:10px;font-weight:800">ATIVO</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
+      <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:10px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">Conversas</div><div style="font-size:18px;font-weight:800;color:var(--p-clt);margin-top:2px">${N(cltConvCnt)}</div><div style="font-size:9px;color:var(--t3)">no atendimento</div></div>
+      <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:10px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">Consultas recentes</div><div style="font-size:18px;font-weight:800;color:var(--cyan);margin-top:2px">${N(cltRecentes)}</div></div>
+      <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:10px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">Modelo</div><div style="font-size:13px;font-weight:800;color:var(--ylw);margin-top:2px">B2B + B2C</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+      <button onclick="setTab('cltConsulta')" style="background:rgba(6,229,255,.15);border:1px solid rgba(6,229,255,.3);color:var(--p-clt);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">🔍 Consulta CLT</button>
+      <button onclick="setTab('cltChats')" style="background:rgba(255,91,183,.10);border:1px solid rgba(255,91,183,.3);color:var(--pnk);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">💬 Conversas</button>
+      ${isGes?`<button onclick="setTab('cltBatch')" style="background:rgba(91,157,255,.12);border:1px solid rgba(91,157,255,.3);color:var(--acc);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">📥 Higienização</button>
+      <button onclick="setTab('cltEsteira')" style="background:rgba(255,138,61,.10);border:1px solid rgba(255,138,61,.3);color:var(--org);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">🛒 Esteira CLT</button>`:''}
+    </div>
+  </div>`;
+
+  // ─── QUADRO GOVERNOS (âmbar) ───
+  html+=`<div class="home-product-card" data-product="gov" style="background:linear-gradient(160deg,rgba(255,200,61,.10),rgba(255,200,61,.02));border:2px solid rgba(255,200,61,.25);border-radius:16px;padding:20px;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--p-gov),transparent)"></div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+      <div>
+        <div style="font-size:11px;color:var(--p-gov);text-transform:uppercase;font-weight:800;letter-spacing:.1em">Convênio</div>
+        <div style="font-size:22px;font-weight:900;color:var(--t1);margin-top:2px">🏛️ Governos</div>
+        <div style="font-size:11px;color:var(--t2);margin-top:2px">Servidores Federal / Estadual / Municipal</div>
+      </div>
+      <span class="pill" style="background:rgba(91,157,255,.15);color:var(--acc);font-size:10px;font-weight:800">EM CONSTRUÇÃO</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
+      <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:10px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">SIAPE</div><div style="font-size:13px;font-weight:800;color:var(--p-gov);margin-top:2px">Federal</div></div>
+      <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:10px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">Estadual</div><div style="font-size:13px;font-weight:800;color:var(--p-gov);margin-top:2px">SP/MG/RJ...</div></div>
+      <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:10px"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:700">Municipal</div><div style="font-size:13px;font-weight:800;color:var(--p-gov);margin-top:2px">Prefeituras</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr;gap:6px">
+      <button onclick="setTab('govCatalogo')" style="background:rgba(255,200,61,.15);border:1px solid rgba(255,200,61,.3);color:var(--p-gov);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">📚 Catálogo de Convênios</button>
+    </div>
+  </div>`;
+
   html+=`</div>`;
 
-  // ── Bases recentes ──
+  // ── BASES RECENTES (INSS) ──
   if(hist.length){
-    html+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.1em">📁 Bases Recentes</div><button class="btn btn-sm" onclick="setTab('bases')">Ver todas →</button></div>
+    html+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.12em">📁 Bases INSS Recentes</div><button class="btn btn-sm" onclick="setTab('bases')">Ver todas →</button></div>
     <div style="display:grid;gap:8px;margin-bottom:24px">`;
     for(const h of hist.slice(0,3)){
       const sm=h.summary||{};
-      const parceiroBadge=h.parceiroId?`<span class="pill pill-cyan" style="font-size:9px">🏢 ${esc(h.parceiroNome||'?')}</span>`:`<span class="pill" style="font-size:9px;background:rgba(245,194,66,.15);color:var(--ylw)">📁 Geral</span>`;
+      const parceiroBadge=h.parceiroId?`<span class="pill pill-cyan" style="font-size:9px">🏢 ${esc(h.parceiroNome||'?')}</span>`:`<span class="pill" style="font-size:9px;background:rgba(255,200,61,.15);color:var(--ylw)">📁 Geral</span>`;
       html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:200px"><div style="font-size:13px;font-weight:700">${esc(h.fname)} ${parceiroBadge}</div><div style="font-size:11px;color:var(--t3);margin-top:2px">${h.date}</div></div><div style="display:flex;gap:16px"><div style="text-align:right"><div style="font-size:13px;font-weight:700;color:var(--acc)">${sm.elegiveis?N(sm.elegiveis):'-'}</div><div style="font-size:9px;color:var(--t3)">ELEG</div></div><div style="text-align:right"><div style="font-size:13px;font-weight:700;color:var(--grn)">${sm.troco?R$(sm.troco):'-'}</div><div style="font-size:9px;color:var(--t3)">TROCO</div></div></div><button class="btn-acc btn-sm" onclick="loadHist(${h.id})">📂 Abrir</button></div>`;
     }
     html+=`</div>`;
   }
+
+  // ── ATALHOS ADMIN ──
+  if(isAdm){
+    html+=`<div style="font-size:11px;color:var(--t3);font-weight:800;text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px;margin-top:20px">⚙️ Administração</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:24px">
+      <button onclick="setTab('admin')" style="background:var(--card);border:1px solid var(--brd);color:var(--t1);padding:14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;text-align:left;transition:all .15s">👥 Usuários & Bancos</button>
+      <button onclick="setTab('wpp')" style="background:var(--card);border:1px solid var(--brd);color:var(--t1);padding:14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;text-align:left;transition:all .15s">📱 Conexões WhatsApp</button>
+      <button onclick="setTab('gestao')" style="background:var(--card);border:1px solid var(--brd);color:var(--t1);padding:14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;text-align:left;transition:all .15s">📊 Relatórios</button>
+    </div>`;
+  }
+
   tabContent.innerHTML=html;
 }
 
