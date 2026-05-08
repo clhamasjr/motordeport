@@ -359,32 +359,64 @@ function isValidCPF(cpf) {
 
 // Consulta Multicorban + monta oportunidades (mesma logica da Consulta Unitaria do frontend)
 async function consultarMotorSofia(cpf, appUrl) {
+  const log = [];
+  // Auth interna — bypass de sessao usando WEBHOOK_SECRET (a /api/multicorban aceita)
+  const internalSecret = process.env.WEBHOOK_SECRET || '';
+  const internalHeaders = {
+    'Content-Type': 'application/json',
+    ...(internalSecret ? { 'x-internal-secret': internalSecret } : {})
+  };
   try {
+    log.push({ step: 'consult_cpf', cpf, hasSecret: !!internalSecret });
     const r = await fetch(appUrl + '/api/multicorban', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders,
       body: JSON.stringify({ action: 'consult_cpf', cpf })
     });
-    const data = await r.json();
-    if (!data.ok) return { success: false, error: data.error || data.mensagem || 'CPF nao encontrado' };
+    const txt = await r.text();
+    let data;
+    try { data = JSON.parse(txt); } catch { data = { ok: false, error: 'resposta nao-JSON', raw: txt.substring(0, 300) }; }
+    log.push({ step: 'consult_cpf_resp', status: r.status, ok: data.ok, error: data.error, hasParsed: !!data.parsed, hasList: Array.isArray(data.lista) ? data.lista.length : false });
+    if (!data.ok) {
+      console.error('[MOTOR_SOFIA] consult_cpf falhou:', JSON.stringify(log));
+      return { success: false, error: data.error || data.mensagem || 'CPF nao encontrado', log };
+    }
     // Se retornou lista (multiplos beneficios), usa o primeiro ativo
     if (data.lista && data.lista.length && !data.parsed) {
       const ativo = data.lista.find(b => b.situacao === 'ATIVO') || data.lista[0];
+      log.push({ step: 'consult_beneficio', nb: ativo?.nb, situacao: ativo?.situacao });
       if (ativo && ativo.nb) {
         const r2 = await fetch(appUrl + '/api/multicorban', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: internalHeaders,
           body: JSON.stringify({ action: 'consult_beneficio', beneficio: ativo.nb })
         });
-        const d2 = await r2.json();
-        if (d2.ok && d2.parsed) return extractOportunidades(d2.parsed);
+        const t2 = await r2.text();
+        let d2;
+        try { d2 = JSON.parse(t2); } catch { d2 = { ok: false, error: 'resposta nao-JSON', raw: t2.substring(0, 300) }; }
+        log.push({ step: 'consult_beneficio_resp', status: r2.status, ok: d2.ok, error: d2.error, hasParsed: !!d2.parsed });
+        if (d2.ok && d2.parsed) {
+          const out = extractOportunidades(d2.parsed);
+          out.log = log;
+          return out;
+        }
+        console.error('[MOTOR_SOFIA] consult_beneficio falhou:', JSON.stringify(log));
+        return { success: false, error: d2.error || 'Erro ao detalhar beneficio', log };
       }
-      return { success: false, error: 'Multiplos beneficios, nao conseguiu detalhar' };
+      console.error('[MOTOR_SOFIA] sem nb na lista:', JSON.stringify(log));
+      return { success: false, error: 'Multiplos beneficios, nao conseguiu detalhar', log };
     }
-    if (data.parsed) return extractOportunidades(data.parsed);
-    return { success: false, error: 'Estrutura de resposta inesperada' };
+    if (data.parsed) {
+      const out = extractOportunidades(data.parsed);
+      out.log = log;
+      return out;
+    }
+    console.error('[MOTOR_SOFIA] estrutura inesperada:', JSON.stringify(log));
+    return { success: false, error: 'Estrutura de resposta inesperada', log };
   } catch (e) {
-    return { success: false, error: e.message };
+    log.push({ step: 'exception', error: e.message });
+    console.error('[MOTOR_SOFIA] exception:', e.message, JSON.stringify(log));
+    return { success: false, error: e.message, log };
   }
 }
 
@@ -697,6 +729,14 @@ export default async function handler(req) {
         } else {
           // Motor falhou — avisa no contexto pra Sofia lidar
           conv.motorErro = motor.error;
+          // Grava evento pra investigacao
+          try {
+            await dbInsert('inss_conversas_eventos', {
+              telefone: number,
+              tipo: 'motor_falhou',
+              detalhes: { cpf: cpfDetectado, error: motor.error, log: motor.log || [] }
+            });
+          } catch {}
         }
         setConv(number, conv);
       }
