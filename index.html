@@ -2104,8 +2104,148 @@ function renderAdmin(){
   </div>`;
   // Dropdown de parceiros (agencias) pro form de criar usuario
   const parceirosOpts=parceiros.filter(p=>p.active!==false).map(p=>`<option value="${p.id}">🏢 ${esc(p.nome)}</option>`).join('');
+  // Painel Sofia Knowledge Base (só admin)
+  const sofiaHtml=isAdmin?`<div style="background:linear-gradient(180deg,rgba(185,145,255,.08),var(--card));border:1px solid rgba(185,145,255,.3);border-radius:14px;padding:22px;margin-top:24px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-size:16px;font-weight:800;color:var(--p-inss)">🧠 Sofia Knowledge Base</div>
+        <div style="font-size:11px;color:var(--t3);margin-top:3px">Afirmações que a Sofia usa pra responder. Edite aqui sem mexer no código.</div>
+      </div>
+      <button class="btn-acc btn-sm" onclick="openAddKnowledge()">+ Nova afirmação</button>
+    </div>
+    <div id="sofiaKnowledgeList" style="display:grid;gap:8px"><div style="text-align:center;padding:18px;color:var(--t3);font-size:12px">Carregando…</div></div>
+  </div>`:'';
   return`<div class="admin-panel fi">${parceirosHtml}<div style="font-size:16px;font-weight:800;margin-bottom:16px">👥 Usuários & Hierarquia</div>${statsHtml}<table class="users-table"><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Parceiro</th><th>Códigos</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table>
-  <div class="add-user-form" style="margin-top:14px"><div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="nN"></div><div class="form-group"><label class="form-label">Login</label><input class="form-input" id="nU"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" id="nP" type="password"></div><div class="form-group"><label class="form-label">Perfil</label><select class="form-input" id="nR" onchange="document.getElementById('nParceiroWrap').style.display=this.value==='admin'?'none':'flex'"><option value="operador">Vendedor</option><option value="gestor">Gestor</option><option value="admin">Admin</option></select></div><div class="form-group" id="nParceiroWrap"><label class="form-label">Parceiro</label><select class="form-input" id="nParceiro"><option value="">— Sem parceiro —</option>${parceirosOpts}</select></div><button class="btn-acc" style="height:36px;padding:0 20px;font-size:11px" onclick="addU()">+ Add</button></div><div class="login-error" id="aErr" style="text-align:left;margin-top:8px"></div></div>${bankHtml}${manutHtml}`}
+  <div class="add-user-form" style="margin-top:14px"><div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="nN"></div><div class="form-group"><label class="form-label">Login</label><input class="form-input" id="nU"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" id="nP" type="password"></div><div class="form-group"><label class="form-label">Perfil</label><select class="form-input" id="nR" onchange="document.getElementById('nParceiroWrap').style.display=this.value==='admin'?'none':'flex'"><option value="operador">Vendedor</option><option value="gestor">Gestor</option><option value="admin">Admin</option></select></div><div class="form-group" id="nParceiroWrap"><label class="form-label">Parceiro</label><select class="form-input" id="nParceiro"><option value="">— Sem parceiro —</option>${parceirosOpts}</select></div><button class="btn-acc" style="height:36px;padding:0 20px;font-size:11px" onclick="addU()">+ Add</button></div><div class="login-error" id="aErr" style="text-align:left;margin-top:8px"></div></div>${bankHtml}${sofiaHtml}${manutHtml}`}
+
+// ═══ SOFIA KNOWLEDGE BASE — gestão via UI ═══
+async function loadSofiaKnowledge(){
+  const list=document.getElementById('sofiaKnowledgeList');if(!list)return;
+  try{
+    const r=await apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'listKnowledge'})});
+    const d=await r.json();
+    if(!d.ok){list.innerHTML='<div style="color:var(--red);font-size:12px">Erro: '+esc(d.error||'')+'</div>';return}
+    const items=d.knowledge||[];
+    if(!items.length){list.innerHTML='<div style="text-align:center;padding:18px;color:var(--t3)">Nenhuma afirmação cadastrada.</div>';return}
+    // Agrupa por categoria
+    const byCat={};
+    for(const k of items){if(!byCat[k.categoria])byCat[k.categoria]=[];byCat[k.categoria].push(k)}
+    let html='';
+    const catColors={empresa:'var(--cyan)',produto_portabilidade:'var(--p-inss)',produto_emprestimo_novo:'var(--grn)',produto_cartao:'var(--ylw)',produto_saque:'var(--org)',regulacao:'var(--red)',objecao:'var(--acc)',escalacao:'var(--red)'};
+    for(const cat of Object.keys(byCat).sort()){
+      const col=catColors[cat]||'var(--t2)';
+      html+=`<div style="margin-top:6px">
+        <div style="font-size:10px;font-weight:800;color:${col};letter-spacing:.05em;text-transform:uppercase;margin-bottom:4px">${esc(cat).replace(/_/g,' ')}</div>`;
+      for(const k of byCat[cat]){
+        const opacity=k.ativo?'1':'.45';
+        html+=`<div style="background:var(--sf);border:1px solid var(--brd);border-left:3px solid ${col};padding:10px 12px;border-radius:8px;margin-bottom:5px;opacity:${opacity};display:flex;gap:10px;align-items:flex-start">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;color:${col};font-weight:700;margin-bottom:2px">[${esc(k.topico)}] <span style="color:var(--t3);font-weight:400;font-size:10px">prio: ${k.prioridade||0}</span></div>
+            <div style="font-size:12px;color:var(--t1);line-height:1.45">${esc(k.conteudo)}</div>
+          </div>
+          <div style="display:flex;gap:4px;flex-shrink:0">
+            <button class="btn btn-sm" style="font-size:10px;padding:3px 7px" onclick="editKnowledgeItem(${k.id})" title="Editar">✎</button>
+            <button class="btn btn-sm" style="font-size:10px;padding:3px 7px;border-color:${k.ativo?'var(--ylw)':'var(--grn)'};color:${k.ativo?'var(--ylw)':'var(--grn)'}" onclick="toggleKnowledgeAtivo(${k.id},${!k.ativo})" title="${k.ativo?'Desativar':'Ativar'}">${k.ativo?'⏸️':'▶️'}</button>
+          </div>
+        </div>`;
+      }
+      html+='</div>';
+    }
+    list.innerHTML=html;
+    window._sofiaKnowledge=items;
+  }catch(e){list.innerHTML='<div style="color:var(--red);font-size:12px">Erro: '+esc(e.message)+'</div>'}
+}
+
+function openAddKnowledge(){
+  const cats=['empresa','produto_portabilidade','produto_emprestimo_novo','produto_cartao','produto_saque','regulacao','objecao','escalacao','outros'];
+  const opts=cats.map(c=>`<option value="${c}">${c.replace(/_/g,' ')}</option>`).join('');
+  const html=`<div id="addKnowledgeModal" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px">
+    <div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:24px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:16px;font-weight:800;color:var(--p-inss)">🧠 Nova Afirmação</div>
+        <button class="btn btn-sm" onclick="document.getElementById('addKnowledgeModal').remove()">✕</button>
+      </div>
+      <div style="display:grid;gap:12px">
+        <div><label class="form-label">Categoria</label><select id="kbCat" class="form-input">${opts}</select></div>
+        <div><label class="form-label">Tópico (curto, ex: "taxa", "horario", "medo_golpe")</label><input id="kbTop" class="form-input" placeholder="ex: prazo_entrega"></div>
+        <div><label class="form-label">Afirmação (texto direto, NÃO pergunta/resposta)</label><textarea id="kbCont" class="form-input" rows="4" placeholder="ex: A FACTA pratica taxa de portabilidade INSS a partir de 1.50% ao mês."></textarea></div>
+        <div><label class="form-label">Prioridade (0-100, maior = mais peso)</label><input id="kbPrio" class="form-input" type="number" value="50" min="0" max="100"></div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+        <button class="btn" onclick="document.getElementById('addKnowledgeModal').remove()">Cancelar</button>
+        <button class="btn-acc" onclick="saveNewKnowledge()">Salvar</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+
+async function saveNewKnowledge(){
+  const categoria=document.getElementById('kbCat').value;
+  const topico=document.getElementById('kbTop').value.trim();
+  const conteudo=document.getElementById('kbCont').value.trim();
+  const prioridade=parseInt(document.getElementById('kbPrio').value,10)||50;
+  if(!topico||!conteudo){alert('Tópico e afirmação são obrigatórios');return}
+  try{
+    const r=await apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'addKnowledge',categoria,topico,conteudo,prioridade})});
+    const d=await r.json();
+    if(!d.ok){alert('Erro: '+(d.error||''));return}
+    document.getElementById('addKnowledgeModal').remove();
+    loadSofiaKnowledge();
+  }catch(e){alert('Erro: '+e.message)}
+}
+
+async function toggleKnowledgeAtivo(id,ativo){
+  try{
+    const r=await apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'updateKnowledge',id,ativo})});
+    const d=await r.json();
+    if(!d.ok){alert('Erro: '+(d.error||''));return}
+    // Recarrega cache da Sofia
+    apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'reloadKnowledge'})}).catch(()=>{});
+    loadSofiaKnowledge();
+  }catch(e){alert('Erro: '+e.message)}
+}
+
+function editKnowledgeItem(id){
+  const item=(window._sofiaKnowledge||[]).find(k=>k.id===id);
+  if(!item){alert('Item não encontrado');return}
+  const cats=['empresa','produto_portabilidade','produto_emprestimo_novo','produto_cartao','produto_saque','regulacao','objecao','escalacao','outros'];
+  const opts=cats.map(c=>`<option value="${c}" ${c===item.categoria?'selected':''}>${c.replace(/_/g,' ')}</option>`).join('');
+  const html=`<div id="editKnowledgeModal" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px">
+    <div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:24px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:16px;font-weight:800;color:var(--p-inss)">✎ Editar Afirmação #${item.id}</div>
+        <button class="btn btn-sm" onclick="document.getElementById('editKnowledgeModal').remove()">✕</button>
+      </div>
+      <div style="display:grid;gap:12px">
+        <div><label class="form-label">Categoria</label><select id="ekbCat" class="form-input">${opts}</select></div>
+        <div><label class="form-label">Tópico</label><input id="ekbTop" class="form-input" value="${esc(item.topico)}"></div>
+        <div><label class="form-label">Afirmação</label><textarea id="ekbCont" class="form-input" rows="4">${esc(item.conteudo)}</textarea></div>
+        <div><label class="form-label">Prioridade</label><input id="ekbPrio" class="form-input" type="number" value="${item.prioridade||50}" min="0" max="100"></div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+        <button class="btn" onclick="document.getElementById('editKnowledgeModal').remove()">Cancelar</button>
+        <button class="btn-acc" onclick="saveEditKnowledge(${item.id})">Salvar</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+
+async function saveEditKnowledge(id){
+  const categoria=document.getElementById('ekbCat').value;
+  const topico=document.getElementById('ekbTop').value.trim();
+  const conteudo=document.getElementById('ekbCont').value.trim();
+  const prioridade=parseInt(document.getElementById('ekbPrio').value,10)||50;
+  try{
+    const r=await apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'updateKnowledge',id,categoria,topico,conteudo,prioridade})});
+    const d=await r.json();
+    if(!d.ok){alert('Erro: '+(d.error||''));return}
+    apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'reloadKnowledge'})}).catch(()=>{});
+    document.getElementById('editKnowledgeModal').remove();
+    loadSofiaKnowledge();
+  }catch(e){alert('Erro: '+e.message)}
+}
 
 async function govAdminReseed(){
   const btn = document.getElementById('btnGovReseed');
@@ -4561,8 +4701,57 @@ async function cwOpenConversation(id){
       cwCall('clientByPhone',{phone:pNum}).then(cd=>{
         if(cd&&cd.cpf){cwState.clientData=cd;cwRenderClientBadge()}
       }).catch(()=>{});
+      // Carrega insights da Sofia (lead score, intenção, sentimento, tags)
+      cwLoadInsights(pNum);
     }
   }catch(e){console.log('[CW] openConv error:',e.message);cwRenderMessages()}
+}
+
+// Carrega tags inteligentes geradas pela Sofia e renderiza barra de insights
+async function cwLoadInsights(phone){
+  try{
+    const r=await apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'getConvInsights',phone})});
+    const d=await r.json();
+    if(!d.ok)return;
+    cwRenderInsights(d);
+  }catch(e){console.log('[insights]',e.message)}
+}
+
+function cwRenderInsights(ins){
+  const el=document.getElementById('sofiaInsights');if(!el)return;
+  if(!ins||(!ins.intencao&&!ins.sentimento&&typeof ins.lead_score!=='number'&&!(ins.tags&&ins.tags.length))){el.style.display='none';return;}
+  // Cor do lead score
+  const score=ins.lead_score||0;
+  const scoreCol=score>=80?'var(--grn)':score>=50?'var(--ylw)':score>0?'var(--org)':'var(--t3)';
+  const scoreLabel=score>=80?'🔥 Quente':score>=50?'☀️ Morno':score>0?'🌫️ Frio':'❔';
+  // Cor do sentimento
+  const sentMap={positivo:{c:'var(--grn)',ic:'😊'},neutro:{c:'var(--t2)',ic:'😐'},desconfiado:{c:'var(--ylw)',ic:'🤨'},bravo:{c:'var(--red)',ic:'😡'},confuso:{c:'var(--org)',ic:'😕'},ansioso:{c:'var(--acc)',ic:'😰'}};
+  const sent=sentMap[ins.sentimento]||{c:'var(--t3)',ic:'•'};
+  // Cor da intenção
+  const intMap={portabilidade:{c:'var(--cyan)',ic:'🔄'},emprestimo_novo:{c:'var(--grn)',ic:'💰'},cartao:{c:'var(--p-inss)',ic:'💳'},saque:{c:'var(--ylw)',ic:'💵'},duvida_geral:{c:'var(--t2)',ic:'❓'},duvida_seguranca:{c:'var(--ylw)',ic:'🔒'},reclamacao:{c:'var(--red)',ic:'⚠️'},recusa:{c:'var(--t3)',ic:'❌'},fechar_proposta:{c:'var(--grn)',ic:'✅'},quer_humano:{c:'var(--org)',ic:'👤'}};
+  const intn=intMap[ins.intencao]||{c:'var(--t3)',ic:'•'};
+  let html=`<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+    <span style="font-weight:800;color:var(--p-inss);font-size:10px;letter-spacing:.05em">SOFIA INSIGHTS</span>`;
+  if(typeof ins.lead_score==='number'){
+    html+=`<span class="pill" style="background:${scoreCol}1a;color:${scoreCol};border:1px solid ${scoreCol}55;font-size:10px;padding:2px 7px;font-weight:700">${scoreLabel} ${score}</span>`;
+  }
+  if(ins.intencao){
+    html+=`<span class="pill" style="background:${intn.c}1a;color:${intn.c};border:1px solid ${intn.c}55;font-size:10px;padding:2px 7px">${intn.ic} ${ins.intencao.replace(/_/g,' ')}</span>`;
+  }
+  if(ins.sentimento){
+    html+=`<span class="pill" style="background:${sent.c}1a;color:${sent.c};border:1px solid ${sent.c}55;font-size:10px;padding:2px 7px">${sent.ic} ${ins.sentimento}</span>`;
+  }
+  if(ins.handoff_motivo){
+    html+=`<span class="pill" style="background:rgba(255,71,87,.15);color:var(--red);border:1px solid rgba(255,71,87,.4);font-size:10px;padding:2px 7px;font-weight:700">⚠️ HANDOFF: ${ins.handoff_motivo}</span>`;
+  }
+  if(ins.tags&&ins.tags.length){
+    for(const t of ins.tags.slice(-4)){
+      html+=`<span style="font-size:9px;color:var(--t3);background:var(--card);border:1px solid var(--brd);padding:1px 6px;border-radius:8px">#${esc(t)}</span>`;
+    }
+  }
+  html+=`</div>`;
+  el.innerHTML=html;
+  el.style.display='block';
 }
 function cwRenderClientBadge(){
   let badge=document.getElementById('cwClientBadge');if(!badge)return;
@@ -4932,6 +5121,8 @@ function renderWppChat(){
         <button class="btn btn-sm" style="border-color:var(--grn);color:var(--grn);font-size:10px" onclick="cwToggleAgente('${conv.id}',true)">🤖 Devolver pra Sofia</button>
       </div>`;
     }
+    // ── Sofia Insights bar (lead score, intenção, sentimento, tags) ──
+    html+=`<div id="sofiaInsights" style="padding:8px 16px;border-bottom:1px solid var(--brd);background:linear-gradient(180deg,rgba(185,145,255,.08),transparent);font-size:11px;display:none"></div>`;
     // ── Client data badge ──
     html+=`<div id="cwClientBadge"></div>`;
     // ── Messages area — bubbles diferenciadas por remetente ──
@@ -8219,54 +8410,82 @@ function renderCltCatalogo() {
   for (const b of bancos) {
     const expandido = cltCatalogoState.expandido === b.id;
     const vinculos = vinculosPorBanco[b.id] || [];
-    const apiCor = b.api_status === 'ativa' ? 'var(--grn)' : (b.api_status === 'manual' ? 'var(--ylw)' : 'var(--red)');
+    // Status visual em linguagem do vendedor (não jargão técnico de API)
+    const statusMap = {
+      ativa:      { cor: 'var(--grn)', icon: '🟢', label: 'No FlowForce' },
+      manual:     { cor: 'var(--ylw)', icon: '✋', label: 'No portal do banco' },
+      manutencao: { cor: 'var(--red)', icon: '🔧', label: 'Em manutenção' }
+    };
+    const st = statusMap[b.api_status] || { cor: 'var(--red)', icon: '❓', label: b.api_status || '?' };
     h += `<div style="background:var(--card);border:1px solid var(--brd);border-left:4px solid var(--acc);border-radius:12px;padding:14px;cursor:pointer" onclick="cltCatalogoToggleBanco(${b.id})">`;
     h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">';
     h += `<div><div style="font-size:16px;font-weight:800">🏦 ${esc(b.nome)}</div>`;
     h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">${esc(b.slug)}</div></div>`;
     h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
-    h += `<span class="pill" style="background:${apiCor}22;color:${apiCor};font-size:10px">API: ${esc(b.api_status||'?')}</span>`;
-    if (b.exige_selfie) h += `<span class="pill pill-default" style="font-size:10px">📸 Selfie</span>`;
-    if (b.exige_termo) h += `<span class="pill pill-default" style="font-size:10px">📝 Termo</span>`;
-    h += `<span class="pill ${b.ativo?'pill-grn':'pill-red'}" style="font-size:10px">${b.ativo?'Ativo':'Inativo'}</span>`;
+    h += `<span class="pill" style="background:${st.cor}22;color:${st.cor};font-size:10px" title="Onde o vendedor digita: aqui no FlowForce ou no portal próprio do banco">${st.icon} ${st.label}</span>`;
+    if (b.exige_selfie) h += `<span class="pill pill-default" style="font-size:10px" title="Cliente precisa fazer selfie pra autorizar a consulta">📸 Selfie do cliente</span>`;
+    if (b.exige_termo) h += `<span class="pill pill-default" style="font-size:10px" title="Cliente precisa aceitar termo de autorização">📝 Termo digital</span>`;
+    h += `<span class="pill ${b.ativo?'pill-grn':'pill-red'}" style="font-size:10px">${b.ativo?'Operando':'Parado'}</span>`;
     h += `<span style="color:var(--t3)">${expandido?'▾':'▸'}</span>`;
     h += '</div></div>';
 
     if (expandido) {
       h += '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--brd)" onclick="event.stopPropagation()">';
       if (b.como_funciona) {
-        h += `<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Como funciona</div>`;
+        h += `<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">▶️ Como o vendedor opera</div>`;
         h += `<div style="font-size:13px;color:var(--t2);line-height:1.5">${esc(b.como_funciona)}</div></div>`;
       }
       if (b.observacoes) {
-        h += `<div style="margin-bottom:10px;padding:8px 10px;background:rgba(245,194,66,.06);border-left:3px solid var(--ylw);border-radius:6px"><div style="font-size:11px;color:var(--ylw);font-weight:700;margin-bottom:2px">⚠️ Observações</div>`;
+        h += `<div style="margin-bottom:10px;padding:8px 10px;background:rgba(245,194,66,.06);border-left:3px solid var(--ylw);border-radius:6px"><div style="font-size:11px;color:var(--ylw);font-weight:700;margin-bottom:2px">⚠️ Atenção / detalhes importantes</div>`;
         h += `<div style="font-size:12px;color:var(--t2)">${esc(b.observacoes)}</div></div>`;
       }
       // Convenios + regras
-      h += '<div style="margin-top:12px"><div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:6px">📋 Convênios e regras</div>';
+      // Regras em linguagem do vendedor (não jargão de planilha)
+      h += '<div style="margin-top:12px"><div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:6px">📋 O que esse banco aceita</div>';
       if (vinculos.length === 0) {
         h += '<div style="font-size:12px;color:var(--t3)">Sem convênios cadastrados.</div>';
       } else {
         for (const v of vinculos) {
           const conv = convPorId[v.convenio_id];
           h += '<div style="background:var(--bg);border:1px solid var(--brd);border-radius:8px;padding:10px;margin-bottom:8px">';
-          h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-weight:700">${esc(conv?.nome||'?')}</div>`;
+          h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px"><div style="font-weight:700">${esc(conv?.nome||'?')}</div>`;
           const ops = [];
-          if (v.opera_novo) ops.push('Novo');
-          if (v.opera_refin) ops.push('Refin');
-          if (v.opera_port) ops.push('Port');
-          if (v.opera_cartao) ops.push('Cartão');
-          h += `<div style="display:flex;gap:4px">${ops.map(o=>`<span class="pill pill-grn" style="font-size:10px">${o}</span>`).join('')}</div></div>`;
-          h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;font-size:11px">';
-          if (v.idade_min || v.idade_max) h += `<div><span style="color:var(--t3)">Idade:</span> <b>${v.idade_min||'?'}-${v.idade_max||'?'}</b></div>`;
-          if (v.margem_minima) h += `<div><span style="color:var(--t3)">Margem mín:</span> <b>R$ ${Number(v.margem_minima).toFixed(2)}</b></div>`;
-          if (v.valor_minimo || v.valor_maximo) h += `<div><span style="color:var(--t3)">Valor:</span> <b>R$ ${v.valor_minimo||0} - ${v.valor_maximo||'?'}</b></div>`;
-          if (v.prazo_min || v.prazo_max) h += `<div><span style="color:var(--t3)">Parcelas:</span> <b>${v.prazo_min||0}x - ${v.prazo_max||'?'}x</b></div>`;
-          if (v.taxa_minima || v.taxa_maxima) h += `<div><span style="color:var(--t3)">Taxa:</span> <b>${v.taxa_minima||'?'}% - ${v.taxa_maxima||'?'}%</b></div>`;
-          if (v.tempo_admissao_min_meses) h += `<div><span style="color:var(--t3)">Tempo casa:</span> <b>${v.tempo_admissao_min_meses}m+</b></div>`;
-          h += '</div>';
+          if (v.opera_novo)   ops.push({ label: 'Novo',           tip: 'Empréstimo novo' });
+          if (v.opera_refin)  ops.push({ label: 'Refinanciamento', tip: 'Refinanciamento de contrato existente' });
+          if (v.opera_port)   ops.push({ label: 'Portabilidade',   tip: 'Trazer contrato de outro banco' });
+          if (v.opera_cartao) ops.push({ label: 'Cartão',          tip: 'Cartão consignado' });
+          h += `<div style="display:flex;gap:4px;flex-wrap:wrap">${ops.map(o=>`<span class="pill pill-grn" style="font-size:10px" title="${esc(o.tip)}">${esc(o.label)}</span>`).join('')}</div></div>`;
+          // Linhas em linguagem natural
+          const fmtBR = (n) => Number(n||0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+          const fmtBR2 = (n) => Number(n||0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const linhas = [];
+          if (v.idade_min || v.idade_max) {
+            linhas.push(`<b>Idade:</b> de ${v.idade_min||'?'} a ${v.idade_max||'?'} anos`);
+          }
+          if (v.tempo_admissao_min_meses) {
+            const m = parseInt(v.tempo_admissao_min_meses);
+            const anos = m >= 12 ? ` (${(m/12).toFixed(m%12===0?0:1)} ${m===12?'ano':'anos'})` : '';
+            linhas.push(`<b>Tempo na empresa:</b> mínimo ${m} meses${anos}`);
+          }
+          if (v.margem_minima) {
+            linhas.push(`<b>Parcela mínima:</b> R$ ${fmtBR2(v.margem_minima)}`);
+          }
+          if (v.valor_minimo || v.valor_maximo) {
+            linhas.push(`<b>Valor liberado:</b> R$ ${fmtBR(v.valor_minimo||0)} a R$ ${fmtBR(v.valor_maximo||0)}`);
+          }
+          if (v.prazo_min || v.prazo_max) {
+            linhas.push(`<b>Parcelas:</b> de ${v.prazo_min||0}x a ${v.prazo_max||'?'}x`);
+          }
+          if (v.taxa_minima || v.taxa_maxima) {
+            linhas.push(`<b>Taxa:</b> ${v.taxa_minima||'?'}% a ${v.taxa_maxima||'?'}% ao mês`);
+          }
+          if (linhas.length) {
+            h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px;font-size:12px;color:var(--t2)">';
+            for (const ln of linhas) h += `<div style="padding:2px 0">${ln}</div>`;
+            h += '</div>';
+          }
           if (Array.isArray(v.documentos_obrigatorios) && v.documentos_obrigatorios.length) {
-            h += `<div style="margin-top:6px;font-size:11px;color:var(--t3)">📄 Docs: ${v.documentos_obrigatorios.map(esc).join(' · ')}</div>`;
+            h += `<div style="margin-top:8px;font-size:11px;color:var(--t3)">📄 Documentos do cliente: ${v.documentos_obrigatorios.map(esc).join(' · ')}</div>`;
           }
           if (v.observacoes) h += `<div style="margin-top:4px;font-size:11px;color:var(--t2);font-style:italic">${esc(v.observacoes)}</div>`;
           h += '</div>';
@@ -11839,7 +12058,7 @@ if(!D){
   else if(S.tab==="wppchat")content=renderWppChat();
   else if(S.tab==="wpp"&&isGes)content=renderWhatsApp();
   else if(S.tab==="gestao"&&isGes)content=renderGestao();
-  else if(S.tab==="admin"&&isAdm)content=renderAdmin();
+  else if(S.tab==="admin"&&isAdm){content=renderAdmin();setTimeout(()=>{if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()},150)}
   else if(S.tab==="cltConsulta")content=renderCltConsulta();
   else if(S.tab==="cltChats")content=renderCltChats();
   else if(S.tab==="cltBatch")content=renderCltBatch();
@@ -11876,7 +12095,7 @@ if(!D){
   if(S.tab==="bases"){renderLanding(tabContent);return}
   let nSel=selected.size,nHig=[...selected].filter(c=>phoneCache[c]).length,nWpp=[...selected].filter(c=>wppSent.has(c)).length;
   let tcontent='';
-  if(S.tab==="admin")tcontent=renderAdmin();
+  if(S.tab==="admin"){tcontent=renderAdmin();setTimeout(()=>{if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()},150)}
   else if(S.tab==="consulta")tcontent=renderConsulta();
   else if(S.tab==="enquad")tcontent=renderEnquadramento();
   else if(S.tab==="enquadLote")tcontent=renderEnquadramentoLote();
