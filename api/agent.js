@@ -7,9 +7,44 @@ const EVO_KEY = () => process.env.EVOLUTION_KEY;
 const CLAUDE_MODEL = 'claude-sonnet-4-5-20250929';
 
 import { json as jsonResp, handleOptions } from './_lib/auth.js';
+import { dbSelect, dbInsert, dbUpdate } from './_lib/supabase.js';
 
 // ═══ CONVERSATION STATE (in-memory, resets on cold start) ═══
 const convState = new Map();
+
+// ═══ INSS CHAT PERSISTENCE (substitui Chatwoot) ═══
+// Grava cada mensagem em inss_conversas. Vendedor enxerga via /api/inss-chat.
+async function inssAppendMsg(telefone, msg) {
+  try {
+    const { data: existing } = await dbSelect('inss_conversas', { filters: { telefone }, single: true });
+    const now = new Date().toISOString();
+    if (!existing) {
+      await dbInsert('inss_conversas', {
+        telefone,
+        instance: msg.instance || '',
+        nome: msg.nome || '',
+        historico: [msg],
+        status: 'open',
+        agente_ativo: true, // por padrao, Sofia atende ate vendedor pausar
+        unread_count: msg.role === 'cliente' ? 1 : 0,
+        last_msg_at: now,
+        created_at: now,
+        updated_at: now
+      });
+      return { agenteAtivo: true, novo: true };
+    }
+    const hist = Array.isArray(existing.historico) ? existing.historico : [];
+    hist.push(msg);
+    const patch = { historico: hist, last_msg_at: now, updated_at: now };
+    if (msg.role === 'cliente') patch.unread_count = (existing.unread_count || 0) + 1;
+    if (msg.nome && !existing.nome) patch.nome = msg.nome;
+    await dbUpdate('inss_conversas', { id: existing.id }, patch);
+    return { agenteAtivo: !!existing.agente_ativo, novo: false };
+  } catch (e) {
+    console.error('[inssAppendMsg]', e);
+    return { agenteAtivo: true, novo: false }; // failsafe: deixa Sofia responder
+  }
+}
 
 function getConv(phone) {
   return convState.get(phone) || { phase: 'abordagem', data: {}, campaignType: 'completa', collectedFields: [], startedAt: Date.now(), lastAt: Date.now() };
@@ -20,144 +55,169 @@ function setConv(phone, state) {
   for (const [k, v] of convState) { if (Date.now() - v.lastAt > 86400000) convState.delete(k); }
 }
 
-// ═══ SYSTEM PROMPT — SOFIA v2.1 ═══
-const SYSTEM_PROMPT = `Você é Sofia, consultora de crédito consignado da LhamasCred — uma promotora correspondente bancária autorizada pelo Banco Central, com sede em Sorocaba/SP.
+// ═══ SYSTEM PROMPT — SOFIA v3.0 (estrutura GPT Maker / 6 seções) ═══
+// Construido em 6 secoes (IDENTIDADE, OBJETIVO, TOM, REGRAS, LIMITES, ESCALACAO)
+// + Golden examples + tags inteligentes. Knowledge base separada vem da tabela sofia_knowledge.
 
-═══ SUA PERSONALIDADE ═══
-- Simpática, confiante e profissional — você ENTENDE de consignado
-- Linguagem informal mas respeitosa (você, não tu)
-- Mensagens CURTAS para WhatsApp: 3-5 linhas máximo por mensagem
-- Emojis com moderação (1-2 por mensagem)
-- Fale como consultora real, use o NOME do cliente
-- NUNCA invente valores — use APENAS os dados do contexto
-- NUNCA peça senhas, tokens ou dados bancários de acesso online
+const SOFIA_BEHAVIOR_BASE = `# 1. IDENTIDADE
+Você é a Sofia, consultora digital de crédito consignado da LhamasCred. A LhamasCred é uma promotora correspondente bancária autorizada pelo Banco Central, com sede em Sorocaba/SP, que atende aposentados e pensionistas do INSS em todo o Brasil. Você fala em primeira pessoa, sempre como Sofia — nunca em terceira pessoa, nunca como "assistente virtual" ou "IA".
 
-═══ BANCOS INTEGRADOS — O QUE VOCÊ PODE DIGITAR ═══
+# 2. OBJETIVO
+Seu objetivo é transformar uma conversa pelo WhatsApp em uma proposta de crédito consignado digitada e assinada. Para isso você:
+1. Identifica o cliente (CPF + benefício INSS)
+2. Apresenta a melhor oportunidade real do contexto (portabilidade, empréstimo novo, cartão ou saque) com valores em reais
+3. Quebra objeções comuns com argumentos honestos
+4. Coleta os dados que faltam pra digitação
+5. Dispara a digitação ou transfere pra humano nos casos previstos
+Você NUNCA inventa valor, taxa, prazo ou nome de banco. Se não está no contexto, você diz "vou verificar e te retorno".
 
-FACTA FINANCEIRA (principal):
-- Empréstimo Novo Digital (op 13) — até 84x, taxa a partir de 1.66%
-- Margem Complementar (op 27) — empréstimo usando margem extra
-- Refinanciamento (op 14) — renegocia contrato existente com melhores condições
-- Portabilidade CIP + Refinanciamento (op 003500) — transfere de outro banco + troco
-- Cartão Benefício (op 33) — cartão com saque imediato
-→ Formalização 100% digital, link enviado por WhatsApp
+# 3. TOM E LINGUAGEM
+- Português do Brasil, tratamento "você" (nunca "tu", nunca "senhor/senhora" cerimonioso)
+- Mensagens curtas pra WhatsApp: 3 a 5 linhas no máximo por bolha
+- Use o nome do cliente sempre que tiver, mas com moderação (não em toda mensagem)
+- Emojis com parcimônia: 1 ou 2 por mensagem, e só quando faz sentido (😊 ✅ 💰 📋)
+- Linguagem natural de consultora real, não de roteiro: contrações, expressões coloquiais ("dá uma olhada", "fica tranquilo", "sem problema")
+- Quando falar em dinheiro, sempre formate "R$ 1.234,56" (pt-BR)
+- Quando falar em taxa, use "ao mês" por extenso, não "a.m."
 
-QUALICONSIG / JOINBANK (complementar):
-- Empréstimo Novo (op 1)
-- Refinanciamento (op 2)
-- Portabilidade (op 3)
-- Portabilidade + Refinanciamento (op 4)
-→ Também digital, boas taxas
+# 4. REGRAS DE RESPOSTA (o que você FAZ)
+- Se o contexto traz dados do cliente, NUNCA peça CPF de novo — use o que tem
+- Apresente UMA oportunidade por vez, começando pela de maior valor; se o cliente engatar, mencione as outras
+- Confirme cada dado coletado com um "Anotado! ✅" curto, depois siga
+- Quando todos os dados FACTA estão completos, avise o cliente e dispare [ACAO:DIGITAR_PROPOSTA]
+- Quando o cliente pergunta sobre regra/legislação/regulação INSS, responda baseado em KNOWLEDGE_BASE — não invente
+- Quando o cliente pergunta sobre concorrente ou outro banco, foque no que VOCÊ entrega, não fale mal de ninguém
+- Sempre que detectar motivo de escalação, dispare a tag de handoff correspondente
 
-QUANDO USAR CADA BANCO:
-- Portabilidade com troco: FACTA (op 003500) é o principal
-- Empréstimo novo: FACTA (op 13) ou Quali (op 1) — comparar taxas
-- Cartão/saque: FACTA (op 33) para cartão benefício
-- Refinanciamento: FACTA (op 14) ou Quali (op 2)
+# 5. LIMITES (o que você NÃO faz)
+- NUNCA peça senha do gov.br, código do INSS, token bancário, senha do cartão ou foto de cartão
+- NUNCA prometa taxa específica fora do contexto, NUNCA prometa aprovação ("a aprovação depende da análise do banco")
+- NUNCA fale de produto que a LhamasCred não opera (FGTS, financiamento de veículo, crédito pessoal não-consignado, criptomoedas, investimentos)
+- NUNCA processe áudio ou imagem — peça pra cliente escrever
+- NUNCA discuta política, religião, futebol, opiniões pessoais
+- NUNCA ofereça desconto, brinde ou benefício que não tenha sido oficialmente comunicado
+- Se o cliente perguntar se você é robô/IA: assuma com naturalidade ("sou a Sofia, atendente digital da LhamasCred — uso tecnologia pra te atender rápido, mas posso passar pra um consultor humano sempre que precisar")
 
-═══ PRODUTOS QUE VOCÊ DOMINA ═══
+# 6. ESCALAÇÃO PARA HUMANO
+Transfira IMEDIATAMENTE (com [ACAO:TRANSFERIR_HUMANO] + [HANDOFF:motivo]) quando:
+- Cliente pede pra falar com pessoa, atendente, gerente, consultor (motivo: pedido_cliente)
+- Cliente menciona ação judicial, processo, advogado, perícia, justiça (motivo: judicial)
+- Cliente menciona benefício bloqueado, suspenso, em revisão (motivo: bloqueio_inss)
+- Cliente está bravo, reclamando de cobrança, pedindo reembolso (motivo: reclamacao)
+- Cliente fala de produto que não operamos (motivo: fora_escopo)
+- Cliente faz 3 perguntas seguidas que você não consegue responder (motivo: complexidade)
 
-1. PORTABILIDADE DE CRÉDITO
-   Transferir empréstimo de outro banco pra FACTA com taxa menor + troco em dinheiro
-   Argumento: "Você paga [parcela atual] no [banco]. Trazendo pra cá, parcela cai e ainda recebe [troco] na conta"
+# 7. EXEMPLOS DE OURO
 
-2. EMPRÉSTIMO NOVO
-   Margem consignável disponível → libera crédito com taxa muito menor que pessoal
-   Argumento: "Sua margem libera até [valor] em até 84x com taxa a partir de 1.66%"
+## Exemplo A — campanha de portabilidade com troco (dados do contexto):
+[Contexto: nome=Maria, troco=R$ 4.500,00, banco_origem=Itaú, parcela_atual=R$ 380]
+Cliente: "oi"
+Sofia: "Oi, Maria! 😊 Aqui é a Sofia da LhamasCred. Olhei seu contrato do Itaú e identifiquei uma oportunidade boa: trazendo a portabilidade pra cá, sua parcela cai e ainda libera R$ 4.500,00 de troco na sua conta. Posso te explicar como funciona?
+[FASE:qualificacao]
+[INTENCAO:portabilidade]"
 
-3. CARTÃO CONSIGNADO / BENEFÍCIO
-   Cartão com limite alto, saque na hora, taxa menor que cartão comum
-   Argumento: "Limite de [valor] aprovado, pode sacar [saque] direto na conta"
+## Exemplo B — cliente sem contexto manda CPF:
+Cliente: "123.456.789-00"
+Sofia: "🔍 Consultando aqui na base... só 1 minutinho..."
+[ACAO:CONSULTAR_DADOS]
 
-4. SAQUE COMPLEMENTAR (RMC/RCC)
-   Saque do limite disponível em cartão consignado já existente
-   Argumento: "Seu cartão [banco] tem [valor] de saque disponível, é seu, só precisa solicitar"
+## Exemplo C — objeção "tô com medo de golpe":
+Cliente: "isso é golpe né, vai pegar minha senha"
+Sofia: "Entendo a preocupação, é importante mesmo desconfiar. A LhamasCred é correspondente autorizado pelo Banco Central, e eu não peço senha do gov.br nem do banco em momento nenhum. A formalização é feita pelo próprio INSS, com link enviado aqui no WhatsApp. Pode até ligar na empresa pra confirmar (Sorocaba/SP) antes de seguir.
+[SENTIMENTO:desconfiado]
+[INTENCAO:duvida_seguranca]"
 
-═══ REGRA CRÍTICA — DADOS DO CLIENTE ═══
-⚠️ SE você JÁ TEM dados do cliente no contexto (nome, CPF, benefício, valores de oportunidade, margens) —
-NUNCA PEÇA CPF ou dados que JÁ ESTÃO no contexto. USE OS DADOS DIRETO.
-Só peça CPF se o contexto explicitamente disser "SEM CONTEXTO — peça CPF".
+## Exemplo D — handoff judicial:
+Cliente: "minha advogada falou pra eu não fazer nada antes da perícia"
+Sofia: "Entendi, Sr(a). Como tem advogado envolvido, vou passar seu atendimento pra um consultor humano da LhamasCred pra dar a orientação certa. Em instantes alguém te chama por aqui. 😊
+[ACAO:TRANSFERIR_HUMANO]
+[HANDOFF:judicial]"
 
-═══ FASES DA CONVERSA ═══
+## Exemplo E — coleta de dados (já tem nome e CPF):
+Sofia: "Pra eu registrar sua proposta na FACTA, preciso de mais 3 informaçõezinhas:
+1. Sua data de nascimento
+2. Nome completo da sua mãe
+3. RG (número e órgão emissor)
+Pode mandar de uma vez ou um por vez, como ficar melhor pra você 😊
+[FASE:coleta]"
 
-FASE 1 — ABORDAGEM (PRIMEIRO CONTATO)
+## Exemplo F — todos os dados completos:
+Sofia: "Tudo certo, Maria! ✅ Tenho seus dados completos. Vou registrar sua proposta agora na FACTA e em alguns minutos te mando o link da assinatura digital aqui pelo WhatsApp 📋
+[ACAO:DIGITAR_PROPOSTA]
+[INTENCAO:fechar_proposta]
+[SENTIMENTO:positivo]"
 
-CASO A — Conversa veio de CAMPANHA (você já tem dados):
-  → NUNCA PEÇA CPF. Você já tem.
-  → Mencione o cliente pelo NOME (que já está no contexto)
-  → Vá direto ao benefício com VALORES reais do contexto
-  → Pergunte se pode explicar melhor
+# 8. FORMATO DE RESPOSTA (CRÍTICO)
+Sua resposta tem 2 partes:
 
-CASO B — Cliente chegou SEM contexto (iniciou conversa do nada):
-  → Só use este caso se o contexto disser "SEM CONTEXTO".
-  → Cumprimente, apresente-se, PEÇA O CPF educadamente:
-    Ex: "Oi! Aqui é a Sofia da LhamasCred 😊 Pra eu ver as melhores oportunidades pra você, pode me passar seu CPF?"
-  → Assim que cliente mandar CPF, o sistema consulta o motor e traz dados REAIS no próximo turno.
+PARTE 1 — Mensagem pro cliente (vai ser enviada literal pelo WhatsApp). Sem markdown, sem tags, sem comentários sobre o sistema. Texto puro como uma pessoa escreveria.
 
-FASE 2 — QUALIFICAÇÃO (apresentar oportunidades)
-→ Apresente a MAIS ATRATIVA primeiro (maior valor), de forma natural
-→ Ex: "Ótimo, [Nome]! Encontrei uma oportunidade boa: [descrição]. Posso te explicar como funciona?"
-→ Responda dúvidas, quebre objeções
+PARTE 2 — Tags de sistema, no FINAL, cada uma em linha separada. Estas NÃO vão pro cliente, são parseadas pelo backend. Use as que se aplicam:
 
-FASE 3 — QUEBRA DE OBJEÇÕES
-- "Taxa alta" → Compare: banco dele cobra [taxa atual], aqui a partir de 1.66%
-- "Não preciso" → Mostre economia mensal e troco
-- "Medo de golpe" → Somos correspondente autorizado, formalização pelo INSS, não peço senha
-- "Vou pensar" → Respeite, diga que a condição é por tempo limitado
-- "Já tenho consignado" → Ótimo! A portabilidade transfere com melhores condições + troco
+[FASE:nome] — atualiza fase. Valores: abordagem | qualificacao | objecoes | coleta | digitacao | handoff | encerrado
 
-FASE 4 — COLETA DE DADOS
-IMPORTANTE: Muitos dados você JÁ TEM do contexto (nome, CPF, benefício, telefone).
-NÃO peça o que já tem. Confirme os dados existentes e peça APENAS o que falta.
+[INTENCAO:tipo] — qual a intenção do cliente nessa mensagem. Valores: portabilidade | emprestimo_novo | cartao | saque | duvida_geral | duvida_seguranca | reclamacao | recusa | fechar_proposta | quer_humano
 
-Dados que a digitação FACTA precisa (e que geralmente FALTAM):
-- Sexo (masculino/feminino)
-- Estado civil
-- Nome da mãe
-- RG (número, órgão emissor, UF emissor, data expedição)
-- CEP + Endereço completo (logradouro, número, complemento, bairro, cidade, UF)
-- Banco pra depósito (banco, agência, conta, tipo conta)
-- Email
+[SENTIMENTO:estado] — sentimento do cliente. Valores: positivo | neutro | desconfiado | bravo | confuso | ansioso
 
-Dados que você JÁ TERÁ do pipeline (NÃO peça de novo):
-- Nome completo → confirme
-- CPF → confirme
-- Data de nascimento → pode já ter
-- Número do benefício → pode já ter
-- Telefone → já tem (é o WhatsApp)
+[LEAD_SCORE:n] — qualidade do lead de 0 a 100. 0=desqualificado, 50=interessado mas indeciso, 80=quente pronto pra fechar, 100=já confirmou intenção. Atualize só quando mudar significativamente.
 
-FLUXO DE COLETA:
-1. Confirme: "Seus dados: [nome], CPF [cpf]. Está correto?"
-2. Peça 2-3 campos por vez no máximo (não bombardeie)
-3. Confirme cada resposta: "Anotado! ✅"
-4. Quando tiver TODOS os campos, avise: "Tudo certo! Vou registrar sua proposta agora..."
+[HANDOFF:motivo] — quando dispara TRANSFERIR_HUMANO, anota o motivo: pedido_cliente | judicial | bloqueio_inss | reclamacao | fora_escopo | complexidade
 
-FASE 5 — DIGITAÇÃO
-→ "Registrando sua proposta no sistema... já já te mando o link pra formalizar 📋"
-→ O sistema vai chamar a API FACTA automaticamente
+[ACAO:tipo] — ação executável. Valores:
+  CONSULTAR_DADOS — cliente mandou CPF, dispara motor
+  DIGITAR_PROPOSTA — dados completos, disparar FACTA
+  TRANSFERIR_HUMANO — passar pra consultor (sempre acompanhado de [HANDOFF:...])
+  AGENDAR_RETORNO — cliente pediu pra ligar depois
+  ENCERRAR — cliente recusou definitivamente
 
-FASE 6 — HANDOFF
-→ Transfira quando: cliente quer pessoa, situação complexa, judicial, bloqueio
+[DADO:campo=valor] — dado coletado. Campos válidos: nome_completo, cpf, data_nascimento, sexo, estado_civil, nome_mae, rg_numero, rg_orgao, rg_uf, rg_data, cep, endereco, numero_end, complemento, bairro, cidade, uf, banco_deposito, agencia, conta, tipo_conta, email, beneficio
 
-═══ REGRAS DE OURO ═══
-- Se não tiver o dado no contexto, NÃO invente — diga "vou verificar e te retorno"
-- Se cliente mandar áudio/imagem: "Por enquanto consigo ler só texto, pode me escrever? 😊"
-- Se for grosso: mantenha calma e profissionalismo
-- Se perguntar se é robô: "Sou a Sofia da LhamasCred! Uso tecnologia pra te atender rápido, mas pode pedir pra falar com nosso consultor 😊"
-- Se cliente pedir pra parar: respeite IMEDIATAMENTE e agradeça
+NUNCA mostre as tags pro cliente. Elas são DEPOIS da mensagem, em linhas separadas, e o backend remove antes de enviar.`;
 
-═══ FORMATO DE RESPOSTA ═══
-Responda APENAS com a mensagem pro cliente. Sem tags, sem markdown, sem explicações.
-Se precisar acionar sistema, adicione no FINAL em linha separada:
-[FASE:nome] — atualizar fase (abordagem/qualificacao/objecoes/coleta/digitacao/handoff)
-[ACAO:DIGITAR_PROPOSTA] — todos os dados prontos, disparar digitação FACTA
-[ACAO:TRANSFERIR_HUMANO] — cliente quer pessoa
-[ACAO:AGENDAR_RETORNO] — cliente pediu pra ligar depois
-[ACAO:CONSULTAR_DADOS] — precisa consultar dados do cliente na base (IN100/DATAPREV)
-[ACAO:ENCERRAR] — cliente recusou definitivamente
-[DADO:campo=valor] — dado coletado (ex: [DADO:nome_mae=Maria da Silva])
+// SYSTEM_PROMPT é montado dinamicamente em buildSystemPrompt() incluindo o knowledge da tabela.
+// O const SYSTEM_PROMPT abaixo é só fallback caso o load do knowledge falhe.
+const SYSTEM_PROMPT = SOFIA_BEHAVIOR_BASE;
 
-Campos válidos pra [DADO]: nome_completo, cpf, data_nascimento, sexo, estado_civil, nome_mae, rg_numero, rg_orgao, rg_uf, rg_data, cep, endereco, numero_end, complemento, bairro, cidade, uf, banco_deposito, agencia, conta, tipo_conta, email, beneficio`;
+// ═══ KNOWLEDGE BASE LOADER (tabela sofia_knowledge) ═══
+let _knowledgeCache = null;
+let _knowledgeCacheAt = 0;
+const KNOWLEDGE_TTL_MS = 5 * 60 * 1000; // 5 min
+
+async function loadKnowledge() {
+  const now = Date.now();
+  if (_knowledgeCache && (now - _knowledgeCacheAt) < KNOWLEDGE_TTL_MS) return _knowledgeCache;
+  try {
+    const { data } = await dbSelect('sofia_knowledge', {
+      filters: { ativo: true },
+      order: 'prioridade.desc',
+      limit: 200
+    });
+    if (!data || !data.length) return '';
+    // Agrupa por categoria
+    const byCat = {};
+    for (const k of data) {
+      if (!byCat[k.categoria]) byCat[k.categoria] = [];
+      byCat[k.categoria].push(`- [${k.topico}] ${k.conteudo}`);
+    }
+    let out = '\n\n# KNOWLEDGE BASE — FATOS QUE VOCÊ SABE\n';
+    out += 'Estas são afirmações da LhamasCred. Use-as como fonte da verdade ao responder dúvidas.\n\n';
+    for (const cat of Object.keys(byCat)) {
+      out += `## ${cat.toUpperCase()}\n${byCat[cat].join('\n')}\n\n`;
+    }
+    _knowledgeCache = out;
+    _knowledgeCacheAt = now;
+    return out;
+  } catch (e) {
+    console.error('[loadKnowledge]', e);
+    return '';
+  }
+}
+
+async function buildSystemPrompt() {
+  const kb = await loadKnowledge();
+  return SOFIA_BEHAVIOR_BASE + kb;
+}
 
 // ═══ REQUIRED FIELDS FOR DIGITAÇÃO ═══
 const FACTA_REQUIRED = [
@@ -409,10 +469,11 @@ async function evoCall(method, path, body) {
 }
 
 async function callClaude(messages, systemOverride) {
+  const sys = systemOverride || (await buildSystemPrompt());
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': CLAUDE_KEY(), 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 800, system: systemOverride || SYSTEM_PROMPT, messages })
+    body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 900, system: sys, messages })
   });
   const d = await r.json();
   if (d.content && d.content[0]) return d.content[0].text;
@@ -436,13 +497,66 @@ function parseResponse(reply) {
   let actions = [];
   let phase = null;
   let collectedData = {};
+  let intencao = null;
+  let sentimento = null;
+  let leadScore = null;
+  let handoffMotivo = null;
+
   const phaseMatch = reply.match(/\[FASE:(\w+)\]/);
   if (phaseMatch) { phase = phaseMatch[1]; cleanReply = cleanReply.replace(/\[FASE:\w+\]/, '').trim(); }
+
+  const intMatch = reply.match(/\[INTENCAO:(\w+)\]/);
+  if (intMatch) { intencao = intMatch[1]; cleanReply = cleanReply.replace(/\[INTENCAO:\w+\]/, '').trim(); }
+
+  const sentMatch = reply.match(/\[SENTIMENTO:(\w+)\]/);
+  if (sentMatch) { sentimento = sentMatch[1]; cleanReply = cleanReply.replace(/\[SENTIMENTO:\w+\]/, '').trim(); }
+
+  const scoreMatch = reply.match(/\[LEAD_SCORE:(\d+)\]/);
+  if (scoreMatch) { leadScore = parseInt(scoreMatch[1], 10); cleanReply = cleanReply.replace(/\[LEAD_SCORE:\d+\]/, '').trim(); }
+
+  const handMatch = reply.match(/\[HANDOFF:(\w+)\]/);
+  if (handMatch) { handoffMotivo = handMatch[1]; cleanReply = cleanReply.replace(/\[HANDOFF:\w+\]/, '').trim(); }
+
   const actionMatches = reply.matchAll(/\[ACAO:(\w+)\]/g);
   for (const m of actionMatches) { actions.push(m[1]); cleanReply = cleanReply.replace(m[0], '').trim(); }
+
   const dataMatches = reply.matchAll(/\[DADO:(\w+)=([^\]]+)\]/g);
   for (const m of dataMatches) { collectedData[m[1]] = m[2]; cleanReply = cleanReply.replace(m[0], '').trim(); }
-  return { cleanReply, actions, phase, collectedData };
+
+  // Limpa linhas em branco extras que ficaram
+  cleanReply = cleanReply.replace(/\n{3,}/g, '\n\n').trim();
+
+  return { cleanReply, actions, phase, collectedData, intencao, sentimento, leadScore, handoffMotivo };
+}
+
+// Persiste tags inteligentes na conversa após cada turno da Sofia
+async function persistTags(telefone, parsed) {
+  try {
+    const { data: existing } = await dbSelect('inss_conversas', { filters: { telefone }, single: true });
+    if (!existing) return;
+    const patch = {};
+    const tagsArr = Array.isArray(existing.tags) ? [...existing.tags] : [];
+    if (parsed.intencao) {
+      patch.intencao = parsed.intencao;
+      if (!tagsArr.includes('intencao:' + parsed.intencao)) tagsArr.push('intencao:' + parsed.intencao);
+    }
+    if (parsed.sentimento) patch.sentimento = parsed.sentimento;
+    if (typeof parsed.leadScore === 'number') patch.lead_score = parsed.leadScore;
+    if (parsed.handoffMotivo) {
+      patch.handoff_motivo = parsed.handoffMotivo;
+      patch.handoff_at = new Date().toISOString();
+      if (!tagsArr.includes('handoff:' + parsed.handoffMotivo)) tagsArr.push('handoff:' + parsed.handoffMotivo);
+    }
+    // Quando dispara handoff, pausa a Sofia automaticamente
+    if (parsed.actions && parsed.actions.includes('TRANSFERIR_HUMANO')) {
+      patch.agente_ativo = false;
+    }
+    if (tagsArr.length !== (existing.tags || []).length) patch.tags = tagsArr;
+    if (Object.keys(patch).length === 0) return;
+    await dbUpdate('inss_conversas', { id: existing.id }, patch);
+  } catch (e) {
+    console.error('[persistTags]', e);
+  }
 }
 
 // ═══ WEBHOOK SECRET for Evolution API ═══
@@ -450,7 +564,13 @@ function verifyWebhookSecret(req) {
   const secret = process.env.WEBHOOK_SECRET;
   if (!secret) return true; // se nao configurou, aceita tudo (backward compat)
   const provided = req.headers.get('x-webhook-secret') || '';
-  return provided === secret;
+  if (provided === secret) return true;
+  // Fallback: aceita via query string ?s=... (caso Evolution nao suporte custom headers)
+  try {
+    const url = new URL(req.url);
+    if (url.searchParams.get('s') === secret) return true;
+  } catch {}
+  return false;
 }
 
 // ═══ MAIN HANDLER ═══
@@ -460,13 +580,28 @@ export default async function handler(req) {
 
   try {
     const body = await req.json();
+    // DEBUG: loga todo POST com event/action visível pra rastrear webhook
+    try {
+      console.log('[AGENT IN]', JSON.stringify({
+        event: body.event,
+        action: body.action,
+        instance: body.instance,
+        hasData: !!body.data,
+        fromMe: body.data?.key?.fromMe,
+        jid: body.data?.key?.remoteJid,
+        msgType: body.data?.messageType,
+        textPreview: (body.data?.message?.conversation || body.data?.message?.extendedTextMessage?.text || '').substring(0, 60)
+      }));
+    } catch {}
 
     // ═══ EVOLUTION WEBHOOK (incoming message) ═══
     if (body.event === 'messages.upsert' || body.event === 'messages.update') {
       // Webhook nao requer auth de usuario, mas pode ter webhook secret
       if (!verifyWebhookSecret(req)) {
+        console.log('[AGENT 401] webhook secret invalid');
         return jsonResp({ error: 'Unauthorized webhook' }, 401, req);
       }
+      console.log('[AGENT WEBHOOK] event=' + body.event + ' instance=' + body.instance);
 
       const data = body.data;
       if (!data || !data.key) return jsonResp({ ok: true }, 200, req);
@@ -482,14 +617,35 @@ export default async function handler(req) {
       const clientName = data.pushName || '';
       const number = jid.replace('@s.whatsapp.net', '');
 
-      // Commands
+      // ─── PERSISTENCIA: grava mensagem entrante na inss_conversas ───
+      const persist = await inssAppendMsg(number, {
+        role: 'cliente',
+        content: text,
+        ts: new Date().toISOString(),
+        instance,
+        nome: clientName
+      });
+
+      // Commands (sempre processados, mesmo se agente pausado)
       if (text.trim().toLowerCase() === '/pausa') {
+        try {
+          const { data: c } = await dbSelect('inss_conversas', { filters: { telefone: number }, single: true });
+          if (c) await dbUpdate('inss_conversas', { id: c.id }, { agente_ativo: false });
+        } catch {}
         await sendMsg(instance, number, '⏸️ Agente pausado. Um consultor humano vai continuar seu atendimento.');
         return jsonResp({ paused: true }, 200, req);
       }
       if (text.trim().toLowerCase() === '/agente') {
+        try {
+          const { data: c } = await dbSelect('inss_conversas', { filters: { telefone: number }, single: true });
+          if (c) await dbUpdate('inss_conversas', { id: c.id }, { agente_ativo: true });
+        } catch {}
         await sendMsg(instance, number, '🤖 Sofia de volta! Como posso te ajudar?');
         return jsonResp({ resumed: true }, 200, req);
+      }
+      // Se vendedor pausou Sofia (agente_ativo=false), apenas grava e nao responde — vendedor controla
+      if (!persist.agenteAtivo) {
+        return jsonResp({ ok: true, paused: true, persisted: true }, 200, req);
       }
       if (text.trim().toLowerCase() === '/status') {
         const conv = getConv(number);
@@ -617,7 +773,8 @@ export default async function handler(req) {
       const reply = await callClaude(cleanMessages);
       if (!reply) return jsonResp({ error: 'Claude sem resposta' }, 500, req);
 
-      const { cleanReply, actions, phase, collectedData } = parseResponse(reply);
+      const parsed = parseResponse(reply);
+      const { cleanReply, actions, phase, collectedData, intencao, sentimento, leadScore, handoffMotivo } = parsed;
 
       if (phase) conv.phase = phase;
       if (Object.keys(collectedData).length > 0) {
@@ -626,14 +783,20 @@ export default async function handler(req) {
       }
       setConv(number, conv);
 
+      // Persiste tags inteligentes (intencao, sentimento, lead_score, handoff) na conversa
+      await persistTags(number, parsed);
+
       if (cleanReply.length > 500) {
         const parts = cleanReply.split('\n\n').filter(p => p.trim());
         for (let i = 0; i < parts.length; i++) {
-          await sendMsg(instance, number, parts[i].trim());
+          const part = parts[i].trim();
+          await sendMsg(instance, number, part);
+          await inssAppendMsg(number, { role: 'sofia', content: part, ts: new Date().toISOString(), instance });
           if (i < parts.length - 1) await new Promise(r => setTimeout(r, 1500));
         }
       } else {
         await sendMsg(instance, number, cleanReply);
+        await inssAppendMsg(number, { role: 'sofia', content: cleanReply, ts: new Date().toISOString(), instance });
       }
 
       const result = { success: true, instance, number, clientName, reply: cleanReply, actions, phase: conv.phase, collectedData, missingFields: getMissingFields(conv.data) };
@@ -723,10 +886,84 @@ export default async function handler(req) {
     if (action === 'setWebhook') {
       const inst = body.instance || '';
       if (!inst) return jsonResp({ error: 'instance obrigatorio' }, 400, req);
-      const appUrl = process.env.APP_URL || 'https://motordeport.vercel.app';
-      const webhookUrl = body.webhookUrl || `${appUrl}/api/agent`;
-      const r = await evoCall('POST', '/webhook/set/' + inst, { webhook: { enabled: true, url: webhookUrl, webhookByEvents: false, webhookBase64: false, events: ['MESSAGES_UPSERT'] } });
-      return jsonResp({ success: true, instance: inst, webhookUrl, response: r }, 200, req);
+      const appUrl = process.env.APP_URL || 'https://flowforce.vercel.app';
+      const secret = process.env.WEBHOOK_SECRET || '';
+      // URL do webhook inclui o secret como query string (?s=...) caso Evolution nao suporte headers custom
+      const webhookUrl = body.webhookUrl || `${appUrl}/api/agent${secret ? '?s=' + encodeURIComponent(secret) : ''}`;
+      const events = ['MESSAGES_UPSERT'];
+      // Inclui tambem nos headers (cinto+suspensorio): headers passa quando Evolution suporta, query string passa sempre
+      const headers = secret ? { 'x-webhook-secret': secret } : null;
+      // Tenta v2 (top-level) primeiro, com fallback v1 (wrapper webhook:{...})
+      const payloadV2 = { enabled: true, url: webhookUrl, webhookByEvents: false, webhookBase64: false, events };
+      if (headers) payloadV2.headers = headers;
+      let r1 = await evoCall('POST', '/webhook/set/' + inst, payloadV2);
+      let r2 = null;
+      const enabled1 = r1 && (r1.enabled || r1.webhook?.enabled);
+      if (!enabled1) {
+        const payloadV1 = { webhook: { enabled: true, url: webhookUrl, webhookByEvents: false, webhookBase64: false, events } };
+        if (headers) payloadV1.webhook.headers = headers;
+        r2 = await evoCall('POST', '/webhook/set/' + inst, payloadV1);
+      }
+      const fin = await evoCall('GET', '/webhook/find/' + inst);
+      return jsonResp({ success: true, instance: inst, webhookUrl, hasSecret: !!secret, response_v2: r1, response_v1: r2, current: fin }, 200, req);
+    }
+
+    if (action === 'evoDiag') {
+      const inst = body.instance || '';
+      if (!inst) return jsonResp({ error: 'instance obrigatorio' }, 400, req);
+      const out = {};
+      // 1) Status da instance (conectada?)
+      try { out.connectionState = await evoCall('GET', '/instance/connectionState/' + inst); } catch (e) { out.connectionState = { error: e.message }; }
+      // 2) Webhook configurada
+      try { out.webhook = await evoCall('GET', '/webhook/find/' + inst); } catch (e) { out.webhook = { error: e.message }; }
+      // 3) Chatwoot integration nativa (que pode estar SOBREPONDO o webhook)
+      try { out.chatwoot = await evoCall('GET', '/chatwoot/find/' + inst); } catch (e) { out.chatwoot = { error: e.message }; }
+      // 4) Settings da instance (filtros que poderiam descartar mensagens)
+      try { out.settings = await evoCall('GET', '/settings/find/' + inst); } catch (e) { out.settings = { error: e.message }; }
+      return jsonResp({ success: true, instance: inst, diag: out }, 200, req);
+    }
+    if (action === 'disableChatwoot') {
+      const inst = body.instance || '';
+      if (!inst) return jsonResp({ error: 'instance obrigatorio' }, 400, req);
+      // Desativa o Chatwoot nativo (deixa o webhook normal funcionar)
+      const r = await evoCall('POST', '/chatwoot/set/' + inst, { enabled: false, accountId: '0', token: '', url: '' });
+      return jsonResp({ success: true, instance: inst, response: r }, 200, req);
+    }
+    if (action === 'resetWebhook') {
+      const inst = body.instance || '';
+      if (!inst) return jsonResp({ error: 'instance obrigatorio' }, 400, req);
+      const log = [];
+      // 1) Desliga Chatwoot nativo
+      try {
+        const r = await evoCall('POST', '/chatwoot/set/' + inst, { enabled: false, accountId: '0', token: '', url: '' });
+        log.push({ step: 'chatwoot off', ok: true, r });
+      } catch (e) { log.push({ step: 'chatwoot off', error: e.message }); }
+      // 2) Apaga webhook
+      try {
+        const r = await evoCall('POST', '/webhook/set/' + inst, { enabled: false, url: '', events: [] });
+        log.push({ step: 'webhook clear', ok: true, r });
+      } catch (e) { log.push({ step: 'webhook clear', error: e.message }); }
+      // 3) Reconfigura webhook pra Sofia (com secret na query)
+      const appUrl = process.env.APP_URL || 'https://flowforce.vercel.app';
+      const secret = process.env.WEBHOOK_SECRET || '';
+      const webhookUrl = `${appUrl}/api/agent${secret ? '?s=' + encodeURIComponent(secret) : ''}`;
+      const events = ['MESSAGES_UPSERT'];
+      const headers = secret ? { 'x-webhook-secret': secret } : null;
+      try {
+        const payload = { enabled: true, url: webhookUrl, webhookByEvents: false, webhookBase64: false, events };
+        if (headers) payload.headers = headers;
+        const r = await evoCall('POST', '/webhook/set/' + inst, payload);
+        log.push({ step: 'webhook set v2', ok: true, r });
+        // fallback v1 se enabled nao foi
+        if (!(r && (r.enabled || r.webhook?.enabled))) {
+          const r1 = await evoCall('POST', '/webhook/set/' + inst, { webhook: { enabled: true, url: webhookUrl, webhookByEvents: false, webhookBase64: false, events, headers } });
+          log.push({ step: 'webhook set v1', ok: true, r1 });
+        }
+      } catch (e) { log.push({ step: 'webhook set', error: e.message }); }
+      // 4) Le estado final
+      let final = null;
+      try { final = await evoCall('GET', '/webhook/find/' + inst); } catch {}
+      return jsonResp({ success: true, instance: inst, webhookUrl, log, final }, 200, req);
     }
 
     if (action === 'getWebhook') {
@@ -741,10 +978,60 @@ export default async function handler(req) {
       try { const t = await callClaude([{ role: 'user', content: 'Responda apenas: OK' }]); claudeOk = !!t; } catch {}
       let evoOk = false;
       try { const e = await evoCall('GET', '/instance/fetchInstances'); evoOk = Array.isArray(e); } catch {}
-      return jsonResp({ agentActive: claudeOk && evoOk, claude: claudeOk ? 'Ativo' : 'Erro', evolution: evoOk ? 'Ativo' : 'Erro', model: CLAUDE_MODEL, version: 'Sofia v2.1', activeConversations: convState.size }, 200, req);
+      return jsonResp({ agentActive: claudeOk && evoOk, claude: claudeOk ? 'Ativo' : 'Erro', evolution: evoOk ? 'Ativo' : 'Erro', model: CLAUDE_MODEL, version: 'Sofia v3.0 (gptmaker pattern)', activeConversations: convState.size }, 200, req);
     }
 
-    return jsonResp({ error: 'action invalida', validActions: ['dispatch', 'bulkDispatch', 'getConv', 'setConvData', 'setWebhook', 'getWebhook', 'test'] }, 400, req);
+    // ═══ KNOWLEDGE MANAGEMENT (separa "o que ela sabe" do código) ═══
+    if (action === 'listKnowledge') {
+      const { data, error } = await dbSelect('sofia_knowledge', { order: 'categoria.asc,prioridade.desc', limit: 500 });
+      if (error) return jsonResp({ ok: false, error: error.message }, 500, req);
+      return jsonResp({ ok: true, knowledge: data || [] }, 200, req);
+    }
+    if (action === 'addKnowledge') {
+      const { categoria, topico, conteudo, prioridade } = body;
+      if (!categoria || !topico || !conteudo) return jsonResp({ ok: false, error: 'categoria, topico, conteudo obrigatorios' }, 400, req);
+      const created = await dbInsert('sofia_knowledge', { categoria, topico, conteudo, prioridade: prioridade || 50, ativo: true });
+      _knowledgeCache = null; // invalida cache
+      return jsonResp({ ok: true, knowledge: created.data }, 200, req);
+    }
+    if (action === 'updateKnowledge') {
+      const { id, ...patch } = body;
+      if (!id) return jsonResp({ ok: false, error: 'id obrigatorio' }, 400, req);
+      const validKeys = ['categoria', 'topico', 'conteudo', 'prioridade', 'ativo'];
+      const clean = {};
+      for (const k of validKeys) if (patch[k] !== undefined) clean[k] = patch[k];
+      clean.updated_at = new Date().toISOString();
+      await dbUpdate('sofia_knowledge', { id }, clean);
+      _knowledgeCache = null;
+      return jsonResp({ ok: true }, 200, req);
+    }
+    if (action === 'reloadKnowledge') {
+      _knowledgeCache = null;
+      const kb = await loadKnowledge();
+      return jsonResp({ ok: true, length: kb.length, preview: kb.substring(0, 500) }, 200, req);
+    }
+
+    // ═══ CONVERSA INSIGHTS (tags inteligentes) ═══
+    if (action === 'getConvInsights') {
+      const phone = String(body.phone || body.telefone || '').replace(/\D/g, '');
+      if (!phone) return jsonResp({ ok: false, error: 'phone obrigatorio' }, 400, req);
+      const { data } = await dbSelect('inss_conversas', { filters: { telefone: phone }, single: true });
+      if (!data) return jsonResp({ ok: false, error: 'nao encontrada' }, 404, req);
+      return jsonResp({
+        ok: true,
+        telefone: data.telefone,
+        nome: data.nome,
+        intencao: data.intencao,
+        sentimento: data.sentimento,
+        lead_score: data.lead_score,
+        tags: data.tags || [],
+        handoff_motivo: data.handoff_motivo,
+        handoff_at: data.handoff_at,
+        agente_ativo: data.agente_ativo
+      }, 200, req);
+    }
+
+    return jsonResp({ error: 'action invalida', validActions: ['dispatch', 'bulkDispatch', 'getConv', 'setConvData', 'setWebhook', 'getWebhook', 'test', 'listKnowledge', 'addKnowledge', 'updateKnowledge', 'reloadKnowledge', 'getConvInsights'] }, 400, req);
 
   } catch (err) {
     return jsonResp({ error: 'Erro interno' }, 500, req);
