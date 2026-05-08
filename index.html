@@ -2104,7 +2104,7 @@ function renderAdmin(){
   </div>`;
   // Dropdown de parceiros (agencias) pro form de criar usuario
   const parceirosOpts=parceiros.filter(p=>p.active!==false).map(p=>`<option value="${p.id}">🏢 ${esc(p.nome)}</option>`).join('');
-  // Painel Sofia Knowledge Base (só admin)
+  // Painel Sofia Knowledge Base + Stress Test + Follow-up (só admin)
   const sofiaHtml=isAdmin?`<div style="background:linear-gradient(180deg,rgba(185,145,255,.08),var(--card));border:1px solid rgba(185,145,255,.3);border-radius:14px;padding:22px;margin-top:24px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
       <div>
@@ -2114,6 +2114,14 @@ function renderAdmin(){
       <button class="btn-acc btn-sm" onclick="openAddKnowledge()">+ Nova afirmação</button>
     </div>
     <div id="sofiaKnowledgeList" style="display:grid;gap:8px"><div style="text-align:center;padding:18px;color:var(--t3);font-size:12px">Carregando…</div></div>
+    <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--brd);display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
+      <button class="btn btn-sm" style="border-color:var(--cyan);color:var(--cyan);padding:10px;font-size:12px;font-weight:700" onclick="runSofiaStressTest('qualificado')">🧪 Test cliente qualificado</button>
+      <button class="btn btn-sm" style="border-color:var(--ylw);color:var(--ylw);padding:10px;font-size:12px;font-weight:700" onclick="runSofiaStressTest('indeciso')">🤷 Test cliente indeciso</button>
+      <button class="btn btn-sm" style="border-color:var(--org);color:var(--org);padding:10px;font-size:12px;font-weight:700" onclick="runSofiaStressTest('confuso')">😕 Test cliente confuso</button>
+      <button class="btn btn-sm" style="border-color:var(--red);color:var(--red);padding:10px;font-size:12px;font-weight:700" onclick="runSofiaStressTest('agressivo')">😡 Test cliente agressivo</button>
+      <button class="btn btn-sm" style="border-color:var(--grn);color:var(--grn);padding:10px;font-size:12px;font-weight:700" onclick="runSofiaIdleFollowup()">📤 Disparar follow-up agora</button>
+    </div>
+    <div id="sofiaTestResult" style="margin-top:14px;display:none"></div>
   </div>`:'';
   return`<div class="admin-panel fi">${parceirosHtml}<div style="font-size:16px;font-weight:800;margin-bottom:16px">👥 Usuários & Hierarquia</div>${statsHtml}<table class="users-table"><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Parceiro</th><th>Códigos</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table>
   <div class="add-user-form" style="margin-top:14px"><div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="nN"></div><div class="form-group"><label class="form-label">Login</label><input class="form-input" id="nU"></div><div class="form-group"><label class="form-label">Senha</label><input class="form-input" id="nP" type="password"></div><div class="form-group"><label class="form-label">Perfil</label><select class="form-input" id="nR" onchange="document.getElementById('nParceiroWrap').style.display=this.value==='admin'?'none':'flex'"><option value="operador">Vendedor</option><option value="gestor">Gestor</option><option value="admin">Admin</option></select></div><div class="form-group" id="nParceiroWrap"><label class="form-label">Parceiro</label><select class="form-input" id="nParceiro"><option value="">— Sem parceiro —</option>${parceirosOpts}</select></div><button class="btn-acc" style="height:36px;padding:0 20px;font-size:11px" onclick="addU()">+ Add</button></div><div class="login-error" id="aErr" style="text-align:left;margin-top:8px"></div></div>${bankHtml}${sofiaHtml}${manutHtml}`}
@@ -2245,6 +2253,68 @@ async function saveEditKnowledge(id){
     document.getElementById('editKnowledgeModal').remove();
     loadSofiaKnowledge();
   }catch(e){alert('Erro: '+e.message)}
+}
+
+// ═══ SOFIA STRESS TEST — simula 4 personas conversando ═══
+async function runSofiaStressTest(persona){
+  const out=document.getElementById('sofiaTestResult');if(!out)return;
+  out.style.display='block';
+  out.innerHTML=`<div style="padding:14px;background:var(--sf);border:1px solid var(--brd);border-radius:10px;font-size:12px;color:var(--t2)">⏳ Testando Sofia com persona "${persona}"... isso pode levar 30s-1min</div>`;
+  try{
+    const r=await apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'stressTest',persona})});
+    const d=await r.json();
+    if(!d.ok){out.innerHTML=`<div style="padding:14px;background:rgba(255,71,87,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);font-size:12px">❌ ${esc(d.error||'erro')}</div>`;return}
+    const personaIcon={qualificado:'✅',indeciso:'🤷',confuso:'😕',agressivo:'😡'}[persona]||'🧪';
+    let html=`<div style="padding:14px;background:var(--sf);border:1px solid var(--brd);border-radius:10px">
+      <div style="font-size:13px;font-weight:800;color:var(--p-inss);margin-bottom:10px">${personaIcon} Resultado Stress Test — ${persona} <span style="color:var(--t3);font-weight:400">(${d.turnos} turnos)</span></div>`;
+    for(const turn of d.log){
+      const tags=turn.tags||{};
+      let tagPills='';
+      if(tags.fase)tagPills+=`<span class="pill" style="background:rgba(14,165,233,.12);color:var(--acc);font-size:9px;padding:1px 5px">FASE: ${tags.fase}</span> `;
+      if(tags.intencao)tagPills+=`<span class="pill" style="background:rgba(185,145,255,.12);color:var(--p-inss);font-size:9px;padding:1px 5px">${tags.intencao}</span> `;
+      if(tags.sentimento)tagPills+=`<span class="pill" style="background:rgba(255,200,0,.12);color:var(--ylw);font-size:9px;padding:1px 5px">${tags.sentimento}</span> `;
+      if(typeof tags.lead_score==='number')tagPills+=`<span class="pill" style="background:rgba(34,213,134,.12);color:var(--grn);font-size:9px;padding:1px 5px">SCORE: ${tags.lead_score}</span> `;
+      if(tags.handoff)tagPills+=`<span class="pill" style="background:rgba(255,71,87,.15);color:var(--red);font-size:9px;padding:1px 5px;font-weight:700">HANDOFF: ${tags.handoff}</span> `;
+      if(tags.acoes&&tags.acoes.length)for(const a of tags.acoes)tagPills+=`<span class="pill" style="background:rgba(255,138,61,.15);color:var(--org);font-size:9px;padding:1px 5px">${a}</span> `;
+      html+=`<div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed var(--brd)">
+        <div style="margin-bottom:5px"><span style="font-size:10px;font-weight:800;color:var(--t3)">CLIENTE:</span> <span style="font-size:12px;color:var(--t2)">${esc(turn.user||'')}</span></div>
+        <div style="margin-bottom:5px"><span style="font-size:10px;font-weight:800;color:var(--p-inss)">SOFIA:</span> <span style="font-size:12px;color:var(--t1);white-space:pre-wrap">${esc(turn.sofia||turn.error||'')}</span></div>
+        ${tagPills?`<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:3px">${tagPills}</div>`:''}
+      </div>`;
+    }
+    html+=`</div>`;
+    out.innerHTML=html;
+  }catch(e){out.innerHTML=`<div style="padding:14px;background:rgba(255,71,87,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);font-size:12px">❌ ${esc(e.message)}</div>`}
+}
+
+// ═══ DISPARAR FOLLOW-UP MANUALMENTE ═══
+async function runSofiaIdleFollowup(){
+  const out=document.getElementById('sofiaTestResult');if(!out)return;
+  if(!confirm('Disparar follow-up agora pra todas as conversas inativas há 4h+? Sofia vai mandar mensagem pra cada cliente que parou de responder.'))return;
+  out.style.display='block';
+  out.innerHTML=`<div style="padding:14px;background:var(--sf);border:1px solid var(--brd);border-radius:10px;font-size:12px;color:var(--t2)">⏳ Buscando conversas elegíveis e disparando follow-ups... pode levar 1-2 min</div>`;
+  try{
+    const r=await apiFetch('/api/agent',{method:'POST',body:JSON.stringify({action:'idleFollowup',horas:4,max:20})});
+    const d=await r.json();
+    if(!d.ok){out.innerHTML=`<div style="padding:14px;background:rgba(255,71,87,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);font-size:12px">❌ ${esc(d.error||'erro')}</div>`;return}
+    let html=`<div style="padding:14px;background:var(--sf);border:1px solid var(--brd);border-radius:10px">
+      <div style="font-size:13px;font-weight:800;color:var(--grn);margin-bottom:10px">📤 Follow-up disparado <span style="color:var(--t3);font-weight:400">(${d.processed||0} processados, ${(d.results||[]).filter(r=>r.ok).length} enviados)</span></div>`;
+    if(!d.results||!d.results.length){
+      html+=`<div style="font-size:12px;color:var(--t3)">${esc(d.message||'Nenhuma conversa elegível agora.')}</div>`;
+    }else{
+      for(const r of d.results){
+        const ic=r.ok?'✅':'❌';
+        const col=r.ok?'var(--grn)':'var(--red)';
+        html+=`<div style="margin-bottom:6px;padding:6px;background:var(--card);border-radius:6px;font-size:11px">
+          <span style="color:${col}">${ic}</span> <span style="font-family:monospace">${esc(r.telefone||'')}</span>
+          ${r.message?`<span style="color:var(--t2)"> — "${esc(r.message)}"</span>`:''}
+          ${r.error?`<span style="color:var(--red)"> — ${esc(r.error)}</span>`:''}
+        </div>`;
+      }
+    }
+    html+=`</div>`;
+    out.innerHTML=html;
+  }catch(e){out.innerHTML=`<div style="padding:14px;background:rgba(255,71,87,.1);border:1px solid var(--red);border-radius:10px;color:var(--red);font-size:12px">❌ ${esc(e.message)}</div>`}
 }
 
 async function govAdminReseed(){

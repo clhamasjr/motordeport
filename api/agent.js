@@ -818,11 +818,18 @@ export default async function handler(req) {
     // ═══ ACTIONS (requer auth via header ou webhook secret) ═══
     const action = body.action || '';
 
-    // Para actions do frontend, verificar auth
-    // Webhook do Evolution já foi tratado acima
-    const { requireAuth: reqAuth } = await import('./_lib/auth.js');
-    const user = await reqAuth(req);
-    if (user instanceof Response) return user;
+    // Bypass de auth pra cron — APENAS pra actions de cron (idleFollowup)
+    const cronSecret = process.env.CRON_SECRET || process.env.WEBHOOK_SECRET || '';
+    const isCronCall = cronSecret
+      && req.headers.get('x-cron-secret') === cronSecret
+      && (action === 'idleFollowup');
+
+    let user = null;
+    if (!isCronCall) {
+      const { requireAuth: reqAuth } = await import('./_lib/auth.js');
+      user = await reqAuth(req);
+      if (user instanceof Response) return user;
+    }
 
     if (action === 'dispatch') {
       const { instance, number, campaignType, clientData } = body;
@@ -1011,6 +1018,133 @@ export default async function handler(req) {
       return jsonResp({ ok: true, length: kb.length, preview: kb.substring(0, 500) }, 200, req);
     }
 
+    // ═══ IDLE FOLLOWUP — retomada automática de conversas inativas ═══
+    // Roda como cron (Vercel Cron ou GitHub Actions): busca conversas onde
+    // Sofia ainda atende, status open, última msg > X horas, e manda follow-up.
+    if (action === 'idleFollowup') {
+      const horasIdle = body.horas || 4; // default: 4h sem resposta
+      const maxFollowups = body.max || 20; // máximo de follow-ups por execução
+      const cutoff = new Date(Date.now() - horasIdle * 3600 * 1000).toISOString();
+      const cutoff24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+      // Busca todas conversas open + agente ativo
+      const { data: convs } = await dbSelect('inss_conversas', {
+        filters: { status: 'open', agente_ativo: true },
+        order: 'last_msg_at.desc',
+        limit: 200
+      });
+      if (!convs || !convs.length) return jsonResp({ ok: true, processed: 0, message: 'sem conversas elegíveis' }, 200, req);
+      const elegives = convs.filter(c => {
+        if (!c.last_msg_at) return false;
+        if (c.last_msg_at > cutoff) return false; // ainda recente
+        if (c.last_idle_followup_at && c.last_idle_followup_at > cutoff24h) return false; // já fez followup nas últimas 24h
+        // Última mensagem precisa ser do CLIENTE (não do vendedor/sofia)
+        const hist = Array.isArray(c.historico) ? c.historico : [];
+        if (!hist.length) return false;
+        const last = hist[hist.length - 1];
+        if (last.role !== 'cliente') return false;
+        // Precisa ter instance pra enviar
+        if (!c.instance) return false;
+        return true;
+      }).slice(0, maxFollowups);
+
+      if (!elegives.length) return jsonResp({ ok: true, processed: 0, message: 'nenhuma elegível agora', total_scanned: convs.length }, 200, req);
+
+      const results = [];
+      for (const c of elegives) {
+        try {
+          // Pede pra Sofia gerar uma mensagem natural de follow-up baseada no contexto
+          const hist = (c.historico || []).slice(-6);
+          const lastClienteMsg = [...hist].reverse().find(m => m.role === 'cliente')?.content || '';
+          const ctxMsg = `[CONTEXTO DO SISTEMA — RETOMADA]
+O cliente ${c.nome || ''} (${c.telefone}) parou de responder há ${horasIdle}h. A última mensagem dele foi:
+"${lastClienteMsg}"
+
+Sua tarefa: gerar UMA mensagem curta (2-3 linhas máximo) de retomada natural pelo WhatsApp. Seja gentil, não pressione, lembre da oportunidade sem ser comercial demais. Use o nome dele se tiver. Não peça desculpa por incomodar — soa fraco. Pergunte se ele tem alguma dúvida ou se quer que você mande mais informação.
+
+Não use tags [FASE:], [INTENCAO:] etc. Apenas a mensagem em texto puro.`;
+          const reply = await callClaude([{ role: 'user', content: ctxMsg }]);
+          if (!reply) { results.push({ telefone: c.telefone, ok: false, error: 'claude sem resposta' }); continue; }
+          const cleanReply = reply.replace(/\[\w+:[^\]]+\]/g, '').trim();
+          // Envia
+          await sendMsg(c.instance, c.telefone, cleanReply);
+          // Persiste
+          await inssAppendMsg(c.telefone, { role: 'sofia', content: cleanReply, ts: new Date().toISOString(), instance: c.instance, _followup: true });
+          // Marca último followup
+          await dbUpdate('inss_conversas', { id: c.id }, { last_idle_followup_at: new Date().toISOString() });
+          results.push({ telefone: c.telefone, ok: true, message: cleanReply.substring(0, 80) });
+          await new Promise(r => setTimeout(r, 1500)); // throttle
+        } catch (e) {
+          results.push({ telefone: c.telefone, ok: false, error: e.message });
+        }
+      }
+      return jsonResp({ ok: true, processed: results.length, sent: results.filter(r => r.ok).length, results }, 200, req);
+    }
+
+    // ═══ STRESS TEST — simula 4 personas conversando com Sofia ═══
+    // Útil pra validar mudanças no behavior/knowledge sem enviar WhatsApp real
+    if (action === 'stressTest') {
+      const persona = body.persona || 'qualificado';
+      const personas = {
+        confuso: [
+          'oi quem é vc?',
+          'eu nao entendi nada do que vc tá falando',
+          'mas eu nao mexo com isso direito não, sou velho',
+          'meu cpf? esquece, deixa pra outro dia',
+          'vai me ligar quando? hoje a noite?'
+        ],
+        agressivo: [
+          'que porcaria é essa?',
+          'me tira dessa lista, não autorizei nada',
+          'vou processar voces',
+          'cala a boca robo, quero falar com gente'
+        ],
+        indeciso: [
+          'oi',
+          'hmm, talvez',
+          'depois eu pego o cpf, depois te mando',
+          'vou pensar e te falo depois',
+          'sei la, fica caro?',
+          'depois eu vejo'
+        ],
+        qualificado: [
+          'oi sofia, tô interessado',
+          'meu cpf é 123.456.789-00',
+          'pode explicar como funciona a portabilidade?',
+          'beleza, quero seguir',
+          'sim, pode digitar'
+        ]
+      };
+      const turnos = personas[persona] || personas.qualificado;
+      const log = [];
+      const fakePhone = 'TEST_' + persona + '_' + Date.now();
+      const conv = { phase: 'abordagem', data: {}, campaignType: 'completa', collectedFields: [], startedAt: Date.now(), lastAt: Date.now() };
+      const messages = [];
+      for (const userMsg of turnos) {
+        messages.push({ role: 'user', content: userMsg });
+        try {
+          const reply = await callClaude(messages);
+          if (!reply) { log.push({ user: userMsg, sofia: '[ERRO: sem resposta]' }); continue; }
+          const parsed = parseResponse(reply);
+          messages.push({ role: 'assistant', content: parsed.cleanReply });
+          log.push({
+            user: userMsg,
+            sofia: parsed.cleanReply,
+            tags: {
+              fase: parsed.phase,
+              intencao: parsed.intencao,
+              sentimento: parsed.sentimento,
+              lead_score: parsed.leadScore,
+              acoes: parsed.actions,
+              handoff: parsed.handoffMotivo
+            }
+          });
+        } catch (e) {
+          log.push({ user: userMsg, error: e.message });
+        }
+      }
+      return jsonResp({ ok: true, persona, turnos: log.length, log }, 200, req);
+    }
+
     // ═══ CONVERSA INSIGHTS (tags inteligentes) ═══
     if (action === 'getConvInsights') {
       const phone = String(body.phone || body.telefone || '').replace(/\D/g, '');
@@ -1031,7 +1165,7 @@ export default async function handler(req) {
       }, 200, req);
     }
 
-    return jsonResp({ error: 'action invalida', validActions: ['dispatch', 'bulkDispatch', 'getConv', 'setConvData', 'setWebhook', 'getWebhook', 'test', 'listKnowledge', 'addKnowledge', 'updateKnowledge', 'reloadKnowledge', 'getConvInsights'] }, 400, req);
+    return jsonResp({ error: 'action invalida', validActions: ['dispatch', 'bulkDispatch', 'getConv', 'setConvData', 'setWebhook', 'getWebhook', 'test', 'listKnowledge', 'addKnowledge', 'updateKnowledge', 'reloadKnowledge', 'getConvInsights', 'idleFollowup', 'stressTest'] }, 400, req);
 
   } catch (err) {
     return jsonResp({ error: 'Erro interno' }, 500, req);

@@ -6,6 +6,10 @@
     {
       "path": "/api/clt-cron-followups",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/sofia-cron-followups",
+      "schedule": "0 */2 * * *"
     }
   ]
 }
