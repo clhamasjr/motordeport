@@ -525,7 +525,7 @@ function showApp(){document.getElementById("loginScreen").style.display="none";d
   // Auto-restore last active session
   if(!S.data){
     let activeId=localStorage.getItem("ff_active");
-    if(activeId){try{loadHist(parseInt(activeId))}catch{}}
+    if(activeId){try{loadHist(parseInt(activeId),true)}catch{}}
     // Restore pipeline state, selections, tab from sessionStorage
     restoreSession();
     // Fallback: try localStorage tab
@@ -611,7 +611,7 @@ function askBaseParceiro(fileName){
 }
 function delHist(id){localStorage.removeItem("lhm_data_"+id);saveHist(getHist().filter(x=>x.id!==id));renderApp()}
 function clearHist(){if(confirm("Limpar?")){let h=getMyHist();h.forEach(x=>localStorage.removeItem("lhm_data_"+x.id));let all=getHist();let ids=new Set(h.map(x=>x.id));saveHist(all.filter(x=>!ids.has(x.id)));renderApp()}}
-function loadHist(id){try{let raw=localStorage.getItem("lhm_data_"+id);if(!raw){alert("Dados não disponíveis.");return}
+function loadHist(id,silent){try{let raw=localStorage.getItem("lhm_data_"+id);if(!raw){if(!silent)alert("Dados não disponíveis.");localStorage.removeItem("ff_active");return}
   let sv=JSON.parse(raw);if(sv.phones)for(let k of Object.keys(sv.phones))phoneCache[k]=sv.phones[k];
   let eleg=sv.elegiveis||[];let analise=sv.analise||eleg;
   const hist=getHist(),h=hist.find(x=>x.id===id);
@@ -4429,7 +4429,10 @@ function _msgsToCw(historico){
     created_at: _ts2int(m.ts),
     sender: m.role==='cliente'?null:{name: m.role==='sofia'?'Sofia':(m.sender||'Eu')},
     private: false,
-    attachments: m.anexo?[m.anexo]:[]
+    attachments: m.anexo?[m.anexo]:[],
+    // Metadados extras pro renderer diferenciar Sofia vs Vendedor
+    _role: m.role || (m.role==='cliente'?'cliente':'me'),
+    _senderName: m.role==='sofia' ? 'Sofia' : (m.role==='me' ? (m.sender || 'Eu') : '')
   }));
 }
 async function cwCall(action,data={}){
@@ -4694,19 +4697,36 @@ async function cwToggleStatus(id,status){
 // Liga/desliga Sofia pra essa conversa especifica.
 // telefone = id usado no cwState (no nosso novo backend, id da conversa = telefone)
 async function cwToggleAgente(telefone,ativar){
+  console.log('[cwToggleAgente]',{telefone,ativar});
   try{
     const action=ativar?'retomarAgente':'pausarAgente';
-    const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action,telefone})});
+    const tel=String(telefone||'').replace(/\D/g,'');
+    if(!tel){showToast?.('Telefone invalido','error');return}
+    const r=await apiFetch('/api/inss-chat',{method:'POST',body:JSON.stringify({action,telefone:tel})});
     const d=await r.json();
+    console.log('[cwToggleAgente] resposta:',d);
     if(d.ok){
-      showToast?.(ativar?'🤖 Sofia retomada':'👤 Você assumiu a conversa','success');
+      showToast?.(ativar?'🤖 Sofia ATIVADA — vai responder':'👤 Sofia PAUSADA — humano assume','success');
+      // Atualiza estado local imediato
       if(cwState.activeConv)cwState.activeConv.agente_ativo=ativar;
+      // Atualiza tambem na lista de conversas
+      if(Array.isArray(cwState.conversations)){
+        const conv=cwState.conversations.find(c=>String(c.id||'').replace(/\D/g,'')===tel);
+        if(conv)conv.agente_ativo=ativar;
+      }
+      // Re-renderiza
       const tc=document.getElementById('tabContent');
       if(tc&&S.tab==='wppchat')tc.innerHTML=renderWppChat();
+      // Re-busca conversa do servidor pra confirmar persistencia (sem await pra nao travar UI)
+      setTimeout(()=>cwLoadConversations(cwState.filter||'open'),500);
     }else{
-      showToast?.('Erro: '+(d.error||'falha'),'error');
+      showToast?.('Erro: '+(d.error||JSON.stringify(d)),'error');
+      console.error('[cwToggleAgente] backend nao OK:',d);
     }
-  }catch(e){showToast?.('Erro: '+e.message,'error')}
+  }catch(e){
+    showToast?.('Erro de rede: '+e.message,'error');
+    console.error('[cwToggleAgente]',e);
+  }
 }
 
 async function cwLoadInboxes(){
@@ -4842,11 +4862,15 @@ function renderWppChat(){
     let avatarColors=['var(--acc)','var(--pur)','var(--grn)','var(--org)','var(--pnk)','var(--cyan)'];
     let avatarColor=avatarColors[(name||'').charCodeAt(0)%avatarColors.length];
     let statusPill=ch.status==='resolved'?'<span class="pill pill-grn" style="font-size:8px;padding:0 4px;margin-left:4px">✓</span>':ch.status==='pending'?'<span class="pill pill-ylw" style="font-size:8px;padding:0 4px;margin-left:4px">⏳</span>':'';
+    // Badge: estado da Sofia (ativa = nada / pausada = laranja humano)
+    let agentePill = (ch.agente_ativo === false)
+      ? '<span title="Sofia pausada — vendedor responde manualmente" style="font-size:9px;padding:1px 6px;margin-left:4px;background:rgba(255,138,61,.15);color:var(--org);border-radius:8px;font-weight:700;border:1px solid rgba(255,138,61,.3)">👤 HUMANO</span>'
+      : '<span title="Sofia ativa — respondendo automaticamente" style="font-size:9px;padding:1px 5px;margin-left:4px;background:rgba(34,213,134,.10);color:var(--grn);border-radius:8px;font-weight:700">🤖</span>';
     html+=`<div data-chat="${ch.id}" onclick="cwOpenConversation(${ch.id})" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--brd);background:${isActive?'rgba(59,130,246,.1)':'transparent'};display:flex;gap:10px;align-items:center;transition:background .15s" onmouseover="if(!${isActive})this.style.background='rgba(255,255,255,.03)'" onmouseout="if(!${isActive})this.style.background='transparent'">
       <div style="width:40px;height:40px;min-width:40px;border-radius:50%;background:linear-gradient(135deg,${avatarColor},rgba(0,0,0,.3));display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff">${initial}</div>
       <div style="flex:1;min-width:0">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-          <div style="font-size:13px;font-weight:${isActive||unread?'800':'600'};color:${isActive?'var(--acc)':'var(--t1)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px">${esc(name)}${statusPill}</div>
+          <div style="font-size:13px;font-weight:${isActive||unread?'800':'600'};color:${isActive?'var(--acc)':'var(--t1)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px">${esc(name)}${statusPill}${agentePill}</div>
           <span style="font-size:10px;color:${unread?'var(--grn)':'var(--t3)'};white-space:nowrap;font-weight:${unread?'700':'400'}">${time}</span>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -4910,20 +4934,52 @@ function renderWppChat(){
     }
     // ── Client data badge ──
     html+=`<div id="cwClientBadge"></div>`;
-    // ── Messages area ──
-    html+=`<div id="wppMsgList" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:6px;min-height:0">`;
+    // ── Messages area — bubbles diferenciadas por remetente ──
+    // Sofia (bot) → roxo · Vendedor (eu/me) → verde · Cliente → cinza neutro à esquerda
+    html+=`<div id="wppMsgList" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;min-height:0">`;
+    let _lastRole = null;
     for(let m of cwState.messages){
-      if(m.message_type===2)continue; // skip activity messages
-      let fromMe=m.message_type===1; // 0=incoming, 1=outgoing
-      let text=m.content||'';
-      if(!text)continue;
+      if(m.message_type===2)continue; // skip activity
+      const role = m._role || (m.message_type===0 ? 'cliente' : 'me');
+      const senderName = m._senderName || (role==='sofia' ? 'Sofia' : role==='me' ? 'Vendedor' : '');
+      const fromCliente = role === 'cliente';
+      let text=m.content||'';if(!text)continue;
       if(m.private)text='🔒 '+text;
-      let time=m.created_at?new Date(typeof m.created_at==='number'?m.created_at*1000:m.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
-      let isMedia=!!(m.content_type&&m.content_type!=='text');
-      html+=`<div style="align-self:${fromMe?'flex-end':'flex-start'};max-width:70%;padding:10px 14px;border-radius:${fromMe?'12px 12px 2px 12px':'12px 12px 12px 2px'};background:${fromMe?'rgba(14,165,233,.12)':m.private?'rgba(167,139,250,.08)':'var(--card)'};border:1px solid ${fromMe?'rgba(14,165,233,.2)':m.private?'rgba(167,139,250,.2)':'var(--brd)'}">
-        <div style="font-size:13px;color:${isMedia?'var(--t3)':'var(--t1)'};white-space:pre-wrap;word-break:break-word;${isMedia?'font-style:italic':''}">${esc(text)}</div>
-        <div style="font-size:9px;color:var(--t3);text-align:${fromMe?'right':'left'};margin-top:4px">${time}${fromMe?' ✓':''}</div>
-      </div>`}
+      const time=m.created_at?new Date(typeof m.created_at==='number'?m.created_at*1000:m.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+      const isMedia=!!(m.content_type&&m.content_type!=='text');
+      // Estilo por role
+      const styles = {
+        cliente: { bg:'var(--card)', brd:'var(--brd)', col:'var(--t1)', avatarBg:'linear-gradient(135deg,var(--t3),var(--brd))', avatarIcon:'👤', label:'Cliente', labelCol:'var(--t3)' },
+        sofia:   { bg:'rgba(185,145,255,.12)', brd:'rgba(185,145,255,.32)', col:'var(--t1)', avatarBg:'linear-gradient(135deg,var(--p-inss),#9966FF)', avatarIcon:'🤖', label:'Sofia', labelCol:'var(--p-inss)' },
+        me:      { bg:'rgba(34,213,134,.10)', brd:'rgba(34,213,134,.30)', col:'var(--t1)', avatarBg:'linear-gradient(135deg,var(--grn),#10A85B)', avatarIcon:'💼', label:senderName||'Você', labelCol:'var(--grn)' }
+      };
+      const st = styles[role] || styles.me;
+      const isFirstOfRole = _lastRole !== role;
+      _lastRole = role;
+      // Container: alinha à esquerda (cliente) ou à direita (sofia/me)
+      const align = fromCliente ? 'flex-start' : 'flex-end';
+      const radius = fromCliente ? '4px 14px 14px 14px' : '14px 4px 14px 14px';
+      // Avatar (só na primeira mensagem da sequência)
+      const avatar = isFirstOfRole
+        ? `<div style="width:28px;height:28px;border-radius:50%;background:${st.avatarBg};display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;box-shadow:0 2px 6px rgba(0,0,0,.2)">${st.avatarIcon}</div>`
+        : `<div style="width:28px;flex-shrink:0"></div>`;
+      // Label do remetente (só na primeira da sequência)
+      const labelHtml = isFirstOfRole
+        ? `<div style="font-size:10px;font-weight:800;color:${st.labelCol};margin-bottom:3px;letter-spacing:.03em">${esc(st.label)}</div>`
+        : '';
+      // Layout: [avatar] [bubble + label]
+      const direction = fromCliente ? 'row' : 'row-reverse';
+      html += `<div style="display:flex;flex-direction:${direction};gap:8px;align-items:flex-end;align-self:${align};max-width:80%">
+        ${avatar}
+        <div style="display:flex;flex-direction:column;${fromCliente?'':'align-items:flex-end'}">
+          ${labelHtml}
+          <div style="padding:9px 13px;border-radius:${radius};background:${st.bg};border:1px solid ${st.brd};box-shadow:0 1px 3px rgba(0,0,0,.15)">
+            <div style="font-size:13px;color:${isMedia?'var(--t3)':st.col};white-space:pre-wrap;word-break:break-word;line-height:1.4;${isMedia?'font-style:italic':''}">${esc(text)}</div>
+            <div style="font-size:9px;color:var(--t3);text-align:${fromCliente?'left':'right'};margin-top:4px">${time}${!fromCliente?' ✓':''}</div>
+          </div>
+        </div>
+      </div>`;
+    }
     if(!cwState.messages.length)html+=`<div style="text-align:center;padding:30px;color:var(--t3)">Carregando mensagens...</div>`;
     html+=`</div>`;
     // ── Quick replies bar ──
@@ -11771,7 +11827,7 @@ try{renderJobsFloat()}catch{}
 if(!D){
   document.getElementById("headerActions").style.display="none";
   // Aba padrao = home se invalida
-  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite","prefCatalogo","prefHolerite","fedCatalogo","fedHolerite"].includes(S.tab))S.tab="home";
+  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltCatalogo","cltAnalise","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite","prefCatalogo","prefHolerite","fedCatalogo","fedHolerite"].includes(S.tab))S.tab="home";
   let content='';
   if(S.tab==="consulta")content=renderConsulta();
   else if(S.tab==="enquad")content=renderEnquadramento();
