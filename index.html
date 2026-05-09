@@ -6821,7 +6821,22 @@ function _cltOfertaCard(o, ctx) {
       if (renda > 0) h += `<div style="font-size:11px;color:var(--t3)">Renda CLT: R$ ${renda.toFixed(2)}</div>`;
     }
     if (o.elegibilidade.empregador) h += `<div style="font-size:12px;color:var(--t2);margin-top:4px"><b>Empregador:</b> ${(o.elegibilidade.empregador||'').substring(0,40)}</div>`;
-    if (o.elegibilidade.empregadorCnpj) h += `<div style="font-size:11px;color:var(--t3)">CNPJ: ${o.elegibilidade.empregadorCnpj}</div>`;
+    if (o.elegibilidade.empregadorCnpj) {
+      const cnpj = String(o.elegibilidade.empregadorCnpj).replace(/\D/g, '');
+      const cnpjFmt = cnpj.length === 14 ? cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : cnpj;
+      h += `<div style="font-size:11px;color:var(--t3)">CNPJ: ${cnpjFmt}</div>`;
+    }
+    // Badge "🏆 Empresa já aprovou" — chama atenção do vendedor que esse CNPJ tem histórico
+    if (o.elegibilidade.empresaJaAprovou) {
+      const ja = o.elegibilidade.empresaJaAprovou;
+      const total = ja.totalAprovacoes || 0;
+      const cnpjLimpo = String(o.elegibilidade.empregadorCnpj || '').replace(/\D/g, '');
+      h += `<div style="margin-top:6px;padding:6px 8px;background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.30);border-radius:6px;font-size:11px;cursor:pointer" onclick="cltVerCpfsDessaEmpresa('${cnpjLimpo}','${(o.elegibilidade.empregador||'').replace(/'/g,"\\'")}'); event.stopPropagation();" title="Ver outros CPFs do CAGED dessa empresa">`;
+      h += `<b style="color:var(--grn)">🏆 Empresa já aprovada</b>`;
+      h += ` <span style="color:var(--t2)">${total} ${total===1?'aprovação':'aprovações'} em ${ja.qtdBancos} ${ja.qtdBancos===1?'banco':'bancos'}</span>`;
+      h += `<div style="font-size:10px;color:var(--t3);margin-top:2px">Clique pra ver outros CPFs do CAGED dessa empresa →</div>`;
+      h += `</div>`;
+    }
     if (o._calculando) {
       h += `<div style="margin-top:10px;padding:8px;background:rgba(59,130,246,.08);border-radius:6px;font-size:11px;color:var(--acc)">⏳ Calculando simulação detalhada...</div>`;
     } else if (o._erroDetalhe) {
@@ -8668,6 +8683,225 @@ async function cltAnaliseRodar() {
 }
 
 function cltAnaliseSet(k, v) { cltAnaliseState.filtros[k] = v; }
+
+// ════════════════════════════════════════════════════════════════════
+// EMPRESAS APROVADAS — CNPJs com historico de aprovacao em algum banco CLT
+// + filtro pra puxar CPFs do CAGED dessa empresa pra higienizar
+// ════════════════════════════════════════════════════════════════════
+let cltEmpresasState = {
+  loading: false, _loaded: false,
+  empresas: [], total: 0,
+  filtros: { busca: '', banco: '', uf: '', orderBy: 'total_aprovacoes' },
+  cpfsModal: { open: false, cnpj: null, nome: null, cpfs: [], loading: false, apenasAtivos: true }
+};
+
+async function cltEmpresasCarregar() {
+  cltEmpresasState.loading = true; renderApp();
+  try {
+    const f = cltEmpresasState.filtros;
+    const r = await fetch('/api/clt-empresas-aprovadas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({
+        action: 'listar',
+        busca: f.busca || undefined,
+        banco: f.banco || undefined,
+        uf: f.uf || undefined,
+        orderBy: f.orderBy
+      })
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'erro');
+    cltEmpresasState.empresas = d.empresas || [];
+    cltEmpresasState.total = d.total || 0;
+  } catch (e) { alert('Erro: ' + e.message); }
+  cltEmpresasState.loading = false;
+  renderApp();
+}
+
+function cltEmpresasSetFiltro(k, v) {
+  cltEmpresasState.filtros[k] = v;
+  // Auto-recarrega depois de digitar (debounce simples 400ms)
+  if (cltEmpresasState._debounce) clearTimeout(cltEmpresasState._debounce);
+  cltEmpresasState._debounce = setTimeout(() => cltEmpresasCarregar(), 400);
+}
+
+// Modal: lista CPFs do CAGED de uma empresa específica
+async function cltVerCpfsDessaEmpresa(cnpj, nomeEmpresa) {
+  cltEmpresasState.cpfsModal = {
+    open: true, cnpj, nome: nomeEmpresa,
+    cpfs: [], loading: true, apenasAtivos: true
+  };
+  renderApp();
+  try {
+    const r = await fetch('/api/clt-empresas-aprovadas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'cpfsDessaEmpresa', cnpj, apenasAtivos: true, limit: 5000 })
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'erro');
+    cltEmpresasState.cpfsModal.cpfs = d.cpfs || [];
+  } catch (e) { alert('Erro: ' + e.message); }
+  cltEmpresasState.cpfsModal.loading = false;
+  renderApp();
+}
+
+function cltFecharCpfsModal() {
+  cltEmpresasState.cpfsModal.open = false;
+  renderApp();
+}
+
+// Higienização em lote dos CPFs da empresa (manda direto pra fila CLT)
+async function cltHigienizarCpfsEmpresa() {
+  const m = cltEmpresasState.cpfsModal;
+  if (!m.cpfs?.length) { alert('Nenhum CPF pra higienizar'); return; }
+  const total = m.cpfs.length;
+  const ok = confirm(`Vou enviar ${total} CPFs pra higienização CLT em lote.\n\nIsso vai consultar todos os bancos pra cada CPF (PB/V8/UY3/JoinBank/C6).\n\nConfirma?`);
+  if (!ok) return;
+  // Manda pra higienização em lote — usa endpoint clt-fila com origem=lote
+  let enviados = 0, erros = 0;
+  for (const c of m.cpfs) {
+    try {
+      const r = await fetch('/api/clt-fila', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+        body: JSON.stringify({
+          action: 'iniciar',
+          cpf: c.cpf,
+          nome: c.nome,
+          origem: 'lote'
+        })
+      });
+      const d = await r.json();
+      if (d.success) enviados++; else erros++;
+    } catch { erros++; }
+    // throttle leve pra nao saturar
+    if (enviados % 20 === 0) await new Promise(r => setTimeout(r, 300));
+  }
+  alert(`✅ ${enviados} CPFs enviados pra higienização\n❌ ${erros} falhas\n\nAcompanhe em CLT > Higienização em Lote`);
+  cltFecharCpfsModal();
+}
+
+function renderCltEmpresasAprovadas() {
+  if (!cltEmpresasState._loaded) {
+    cltEmpresasState._loaded = true;
+    setTimeout(cltEmpresasCarregar, 0);
+  }
+  const f = cltEmpresasState.filtros;
+  let h = '<div style="max-width:1300px;margin:0 auto;padding:16px" class="fi">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:18px;flex-wrap:wrap;gap:12px">';
+  h += '<div><div style="font-size:22px;font-weight:800">🏆 CLT — Empresas Aprovadas</div>';
+  h += '<div style="font-size:12px;color:var(--t2);margin-top:4px">Empresas (CNPJs) que já tiveram pelo menos 1 aprovação CLT em algum banco. Use pra puxar outros CPFs da mesma empresa do CAGED 2024 — alta probabilidade de aprovação.</div></div>';
+  h += '<button class="btn btn-sm" onclick="cltEmpresasCarregar()">🔄 Atualizar</button>';
+  h += '</div>';
+
+  // Filtros
+  h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px;margin-bottom:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">';
+  h += `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase">Busca (nome ou CNPJ)</label><input class="form-input" placeholder="Ex: HUMMEL" value="${f.busca||''}" oninput="cltEmpresasSetFiltro('busca',this.value)"></div>`;
+  h += `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase">Banco que aprovou</label><select class="form-input" onchange="cltEmpresasSetFiltro('banco',this.value)">`;
+  h += `<option value="">Todos</option>`;
+  for (const [v,l] of [['handbank','Handbank · UY3'],['joinbank','JoinBank/QualiBanking'],['presencabank','PresençaBank']]) {
+    h += `<option value="${v}" ${f.banco===v?'selected':''}>${l}</option>`;
+  }
+  h += `</select></div>`;
+  h += `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase">UF</label><input class="form-input" placeholder="SP, MG..." maxlength="2" value="${f.uf||''}" oninput="cltEmpresasSetFiltro('uf',this.value.toUpperCase())"></div>`;
+  h += `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase">Ordenar por</label><select class="form-input" onchange="cltEmpresasSetFiltro('orderBy',this.value)">`;
+  for (const [v,l] of [['total_aprovacoes','Mais aprovações'],['ultima_aprovacao_em','Mais recentes'],['empregador_nome','Nome A-Z']]) {
+    h += `<option value="${v}" ${f.orderBy===v?'selected':''}>${l}</option>`;
+  }
+  h += `</select></div>`;
+  h += '</div>';
+
+  // Lista
+  if (cltEmpresasState.loading && cltEmpresasState.empresas.length === 0) {
+    h += '<div style="padding:60px;text-align:center;color:var(--t2)">⏳ Carregando empresas...</div></div>';
+    return h;
+  }
+  const lista = cltEmpresasState.empresas;
+  if (lista.length === 0) {
+    h += '<div style="padding:60px;text-align:center;color:var(--t3)">Nenhuma empresa aprovada encontrada com esses filtros.</div></div>';
+    return h;
+  }
+
+  h += '<div style="font-size:11px;color:var(--t3);margin-bottom:8px">📊 Mostrando ' + lista.length + ' empresa(s)</div>';
+  h += '<div style="display:grid;gap:10px">';
+  for (const e of lista) {
+    const cnpjFmt = (e.cnpj||'').replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+    const ultimaData = e.ultima_aprovacao_em ? new Date(e.ultima_aprovacao_em).toLocaleDateString('pt-BR') : '-';
+    h += '<div style="background:var(--card);border:1px solid var(--brd);border-left:4px solid var(--grn);border-radius:12px;padding:14px">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:10px">';
+    h += '<div style="flex:1;min-width:250px">';
+    h += `<div style="font-size:15px;font-weight:800">🏢 ${esc(e.empregador_nome || '(Nome não disponível)')}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">CNPJ ${cnpjFmt}${e.cidade_empresa?` · 📍 ${esc(e.cidade_empresa)}/${e.uf||'?'}`:''}${e.cnae?` · CNAE ${esc(e.cnae)}`:''}</div>`;
+    h += '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">';
+    for (const b of (e.bancos_aprovam || [])) {
+      const bancoLabels = { handbank: 'UY3', joinbank: 'QualiBanking', presencabank: 'PresençaBank', v8_qi: 'V8 QI', v8_celcoin: 'V8 Celcoin', c6: 'C6', mercantil: 'Mercantil' };
+      h += `<span class="pill pill-grn" style="font-size:10px" title="${b.total_aprovacoes||1} aprovação(ões) — última em ${b.ultima_aprovacao_em?new Date(b.ultima_aprovacao_em).toLocaleDateString('pt-BR'):'-'}">${esc(bancoLabels[b.banco] || b.banco)} · ${b.total_aprovacoes||1}</span>`;
+    }
+    h += '</div></div>';
+    h += '<div style="text-align:right">';
+    h += `<div style="font-size:24px;font-weight:900;color:var(--grn)">${e.total_aprovacoes}</div>`;
+    h += `<div style="font-size:10px;color:var(--t3);text-transform:uppercase">aprovações</div>`;
+    h += `<div style="font-size:10px;color:var(--t3);margin-top:4px">Última: ${ultimaData}</div>`;
+    if (e.cpfs_no_caged > 0) {
+      h += `<div style="margin-top:8px;font-size:11px;color:var(--cyan);font-weight:700">📊 ${e.cpfs_no_caged.toLocaleString('pt-BR')} CPFs no CAGED</div>`;
+    }
+    h += '</div></div>';
+    // Botão: ver/higienizar CPFs
+    if (e.cpfs_no_caged > 0) {
+      const nomeEsc = (e.empregador_nome||'').replace(/'/g,"\\'");
+      h += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--brd)">`;
+      h += `<button class="btn-acc btn-sm" onclick="cltVerCpfsDessaEmpresa('${e.cnpj}','${nomeEsc}')">🎯 Ver CPFs no CAGED dessa empresa (${e.cpfs_no_caged.toLocaleString('pt-BR')})</button>`;
+      h += `</div>`;
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // Modal de CPFs
+  const m = cltEmpresasState.cpfsModal;
+  if (m.open) {
+    h += '<div style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px" onclick="cltFecharCpfsModal()">';
+    h += '<div style="background:var(--card);border-radius:14px;max-width:900px;width:100%;max-height:90vh;overflow:auto;padding:20px" onclick="event.stopPropagation()">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:14px">';
+    h += `<div><div style="font-size:18px;font-weight:800">🏢 ${esc(m.nome || '')}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">CNPJ ${(m.cnpj||'').replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')}</div></div>`;
+    h += `<button class="btn btn-sm" onclick="cltFecharCpfsModal()">✕</button></div>`;
+    if (m.loading) {
+      h += '<div style="padding:60px;text-align:center;color:var(--t2)">⏳ Carregando CPFs do CAGED...</div>';
+    } else if (m.cpfs.length === 0) {
+      h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum CPF ativo encontrado no CAGED 2024 pra essa empresa.</div>';
+    } else {
+      h += `<div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">`;
+      h += `<div style="font-size:13px;color:var(--t2)">📊 <b>${m.cpfs.length.toLocaleString('pt-BR')}</b> CPFs ativos encontrados no CAGED 2024</div>`;
+      h += `<button class="btn-acc btn-sm" onclick="cltHigienizarCpfsEmpresa()">🚀 Higienizar todos no CLT (${m.cpfs.length})</button>`;
+      h += `</div>`;
+      // Tabela amostra
+      h += '<div style="max-height:50vh;overflow:auto;border:1px solid var(--brd);border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:12px">';
+      h += '<thead style="position:sticky;top:0;background:var(--card)"><tr style="border-bottom:1px solid var(--brd)">';
+      h += '<th style="text-align:left;padding:8px">CPF</th><th style="text-align:left;padding:8px">Nome</th><th style="text-align:left;padding:8px">Admissão</th><th style="text-align:left;padding:8px">CBO</th><th style="text-align:left;padding:8px">Cidade</th>';
+      h += '</tr></thead><tbody>';
+      for (const c of m.cpfs.slice(0, 200)) {
+        const cpfFmt = (c.cpf||'').replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+        const adm = c.data_admissao ? new Date(c.data_admissao).toLocaleDateString('pt-BR') : '-';
+        h += `<tr style="border-bottom:1px solid var(--brd)"><td style="padding:6px 8px;font-family:monospace">${cpfFmt}</td>`;
+        h += `<td style="padding:6px 8px">${esc((c.nome||'').substring(0,40))}</td>`;
+        h += `<td style="padding:6px 8px">${adm}</td>`;
+        h += `<td style="padding:6px 8px">${esc(c.cbo||'-')}</td>`;
+        h += `<td style="padding:6px 8px">${esc(c.cidade||'-')}/${c.uf||'-'}</td></tr>`;
+      }
+      h += '</tbody></table></div>';
+      if (m.cpfs.length > 200) {
+        h += `<div style="font-size:11px;color:var(--t3);margin-top:6px;text-align:center">Mostrando primeiros 200 de ${m.cpfs.length}. Higienização processa todos.</div>`;
+      }
+    }
+    h += '</div></div>';
+  }
+
+  h += '</div>';
+  return h;
+}
 
 function renderCltAnalise() {
   const f = cltAnaliseState.filtros;
@@ -11750,7 +11984,8 @@ const MENU=[
     items:[
       {k:'cltConsulta',icon:'🔍',label:'Consulta Unitária'},
       {k:'cltCatalogo',icon:'📚',label:'Catálogo de Bancos'},
-      {k:'cltAnalise',icon:'🎯',label:'Análise de Cliente'}
+      {k:'cltAnalise',icon:'🎯',label:'Análise de Cliente'},
+      {k:'cltEmpresasAprovadas',icon:'🏆',label:'Empresas Aprovadas'}
     ],
     groups:[
       {group:'Análise em Lote',icon:'📊',items:[
@@ -12189,7 +12424,7 @@ try{renderJobsFloat()}catch{}
 if(!D){
   document.getElementById("headerActions").style.display="none";
   // Aba padrao = home se invalida
-  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltCatalogo","cltAnalise","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite","prefCatalogo","prefHolerite","fedCatalogo","fedHolerite"].includes(S.tab))S.tab="home";
+  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltCatalogo","cltAnalise","cltEmpresasAprovadas","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite","prefCatalogo","prefHolerite","fedCatalogo","fedHolerite"].includes(S.tab))S.tab="home";
   let content='';
   if(S.tab==="consulta")content=renderConsulta();
   else if(S.tab==="enquad")content=renderEnquadramento();
@@ -12217,6 +12452,7 @@ if(!D){
   else if(S.tab==="cltPainel")content=renderCltPainel();
   else if(S.tab==="cltCatalogo")content=renderCltCatalogo();
   else if(S.tab==="cltAnalise")content=renderCltAnalise();
+  else if(S.tab==="cltEmpresasAprovadas")content=renderCltEmpresasAprovadas();
   else if(S.tab==="cltAdminMercantil"&&isGes)content=renderCltAdminMercantil();
   else if(S.tab==="govCatalogo")content=renderGovCatalogo();
   else if(S.tab==="govHolerite")content=renderGovHolerite();

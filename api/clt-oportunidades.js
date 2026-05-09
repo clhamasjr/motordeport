@@ -650,6 +650,40 @@ export default async function handler(req) {
       }
     }
 
+    // ─── Enriquece ofertas com info "essa empresa ja aprovou X clientes" ──
+    // 1 query batch pelos CNPJs unicos das ofertas disponiveis. Lookup leve
+    // (PK) — O(N) com N pequeno (max 6-8 bancos por consulta).
+    try {
+      const cnpjsUnicos = [...new Set(
+        ofertas
+          .filter(o => o.disponivel && o.elegibilidade?.empregadorCnpj)
+          .map(o => String(o.elegibilidade.empregadorCnpj).replace(/\D/g, ''))
+          .filter(Boolean)
+      )];
+      if (cnpjsUnicos.length > 0) {
+        // dbSelect so suporta 'eq', usa fetch direto pra in.()
+        const queryStr = `select=cnpj,empregador_nome,total_aprovacoes,bancos_aprovam,ultima_aprovacao_em&cnpj=in.(${cnpjsUnicos.join(',')})`;
+        const fetchR = await fetch(
+          `${process.env.SUPABASE_URL}/rest/v1/clt_empresas_aprovadas?${queryStr}`,
+          { headers: { apikey: process.env.SUPABASE_SERVICE_KEY, Authorization: 'Bearer ' + process.env.SUPABASE_SERVICE_KEY } }
+        ).catch(() => null);
+        const empresasAprov = fetchR?.ok ? await fetchR.json() : [];
+        const empMap = new Map((empresasAprov || []).map(e => [e.cnpj, e]));
+        for (const o of ofertas) {
+          if (!o.disponivel || !o.elegibilidade?.empregadorCnpj) continue;
+          const cnpjLimpo = String(o.elegibilidade.empregadorCnpj).replace(/\D/g, '');
+          const e = empMap.get(cnpjLimpo);
+          if (e) {
+            o.elegibilidade.empresaJaAprovou = {
+              totalAprovacoes: e.total_aprovacoes || 0,
+              qtdBancos: Array.isArray(e.bancos_aprovam) ? e.bancos_aprovam.length : 0,
+              ultimaAprovacaoEm: e.ultima_aprovacao_em
+            };
+          }
+        }
+      }
+    } catch { /* enrichment opcional, nao quebra fluxo */ }
+
     const totalDisponivel = ofertas.filter(o => o.disponivel).length;
     const telefonePrincipal = cliente.telefones?.[0]?.completo || null;
     const temNomeETel = !!(cliente.nome && telefonePrincipal);
