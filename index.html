@@ -12394,8 +12394,12 @@ if(!D){
         // Passa contratos pra calculadoria considerar redução via port/refin
         enqByCpf[cpf]=calcEnquadramentoPlus(benef,sumEmp,x.vRmc||0,x.vRcc||0,contratosCpf);
       }
+      // Meta-status ENQUADRA_40_OK = enquadra com NO MÁXIMO 1 operação
+      // (já enquadra OU cancelar 1 cartão OU port/refin de 1 parcela)
+      const ENQUADRA_40_OK_SET = new Set(['ENQUADRA','ENQUADRA_TROCAR_CARTAO','VIA_CANCELA_CARTAO','VIA_PORT_REDUCAO']);
       filtered=filtered.filter(r=>{
         const e=enqByCpf[r.cpf]||{status:''};
+        if(S.fEnquad==='ENQUADRA_40_OK')return ENQUADRA_40_OK_SET.has(e.status);
         return e.status===S.fEnquad;
       });
     }
@@ -12454,6 +12458,7 @@ if(!D){
         sel("Invalidez",S.fInv,"setFInv",[{v:"",l:"Todos"},{v:"sim",l:"Só invalidez"},{v:"nao",l:"Sem invalidez"}]),
         sel("Enquadramento Nova Regra",S.fEnquad,"setFEnquad",[
           {v:"",l:"Todos"},
+          {v:"ENQUADRA_40_OK",l:"🎯 Enquadra no 40% (até 1 operação)"},
           {v:"ENQUADRA",l:"✅ Já enquadra (40%)"},
           {v:"ENQUADRA_TROCAR_CARTAO",l:"✅ Cabe trocando cartão"},
           {v:"VIA_CANCELA_CARTAO",l:"💳 Cancelar 1 cartão resolve"},
