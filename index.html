@@ -2019,9 +2019,12 @@ function renderAdmin(){
   </div>`;
   // Secao Parceiros (topo)
   let parceirosHtml=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:22px;margin-bottom:20px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-      <div style="font-size:15px;font-weight:800">🏢 Parceiros (Agências)</div>
-      <button class="btn-acc btn-sm" onclick="addParceiro()">+ Novo Parceiro</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div style="font-size:15px;font-weight:800">🏢 Parceiros (Agências) <span style="font-size:11px;color:var(--t3);font-weight:400">— ${parceiros.length} cadastrado${parceiros.length===1?'':'s'}</span></div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-sm" onclick="reloadParceiros()" title="Recarregar lista de parceiros do servidor">🔄 Recarregar</button>
+        <button class="btn-acc btn-sm" onclick="addParceiro()">+ Novo Parceiro</button>
+      </div>
     </div>`;
   if(!parceiros.length){
     parceirosHtml+=`<div style="text-align:center;padding:20px;color:var(--t3);font-size:13px">Nenhum parceiro cadastrado. Clique em "+ Novo Parceiro" para começar.</div>`;
@@ -2470,6 +2473,16 @@ async function delParceiro(parceiroId,nome){
     showToast?.('Parceiro desativado','success');
     await loadUsersFromApi();
     renderApp();
+  }catch(e){alert('Erro: '+e.message)}
+}
+
+// Recarrega manualmente a lista de parceiros (fallback se o cache zerou)
+async function reloadParceiros(){
+  try{
+    showToast?.('Recarregando parceiros...','info');
+    await loadUsersFromApi();
+    renderApp();
+    showToast?.(`${(_parceirosCache||[]).length} parceiros carregados`,'success');
   }catch(e){alert('Erro: '+e.message)}
 }
 
@@ -12146,7 +12159,12 @@ if(!D){
   else if(S.tab==="wppchat")content=renderWppChat();
   else if(S.tab==="wpp"&&isGes)content=renderWhatsApp();
   else if(S.tab==="gestao"&&isGes)content=renderGestao();
-  else if(S.tab==="admin"&&isAdm){content=renderAdmin();setTimeout(()=>{if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()},150)}
+  else if(S.tab==="admin"&&isAdm){
+    content=renderAdmin();
+    // Garante que cache de users/parceiros está atualizado (resolve cache vazio em sessão restaurada)
+    if(typeof loadUsersFromApi==='function'){loadUsersFromApi().then(()=>{const tc=document.getElementById('tabContent');if(tc&&S.tab==='admin')tc.innerHTML=renderAdmin();if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()})}
+    setTimeout(()=>{if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()},150);
+  }
   else if(S.tab==="cltConsulta")content=renderCltConsulta();
   else if(S.tab==="cltChats")content=renderCltChats();
   else if(S.tab==="cltBatch")content=renderCltBatch();
@@ -12183,7 +12201,11 @@ if(!D){
   if(S.tab==="bases"){renderLanding(tabContent);return}
   let nSel=selected.size,nHig=[...selected].filter(c=>phoneCache[c]).length,nWpp=[...selected].filter(c=>wppSent.has(c)).length;
   let tcontent='';
-  if(S.tab==="admin"){tcontent=renderAdmin();setTimeout(()=>{if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()},150)}
+  if(S.tab==="admin"){
+    tcontent=renderAdmin();
+    if(typeof loadUsersFromApi==='function'){loadUsersFromApi().then(()=>{const tc=document.getElementById('tabContent');if(tc&&S.tab==='admin')tc.innerHTML=renderAdmin();if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()})}
+    setTimeout(()=>{if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()},150);
+  }
   else if(S.tab==="consulta")tcontent=renderConsulta();
   else if(S.tab==="enquad")tcontent=renderEnquadramento();
   else if(S.tab==="enquadLote")tcontent=renderEnquadramentoLote();
