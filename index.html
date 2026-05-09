@@ -7151,9 +7151,34 @@ function _renderConsultaBloco(item) {
   h += '<div style="display:flex;gap:8px;align-items:start">';
   if (v) {
     h += '<div style="text-align:right">';
+    // Badge de fonte: oficial (PB/eSocial) vs CAGED 2024 (cadastral histórico)
+    if (v.fonte === 'caged_2024') {
+      h += `<div style="font-size:9px;color:var(--ylw);text-transform:uppercase;font-weight:700;margin-bottom:2px" title="Vínculo do CAGED 2024 (base oficial Ministério do Trabalho). Pode estar desatualizado — bancos confirmam na consulta.">📊 Base CAGED 2024</div>`;
+    } else if (v.fonte === 'presencabank') {
+      h += `<div style="font-size:9px;color:var(--grn);text-transform:uppercase;font-weight:700;margin-bottom:2px" title="Vínculo confirmado em tempo real via eSocial">✅ Vínculo confirmado (eSocial)</div>`;
+    }
     if (v.empregador) h += `<div style="font-size:12px;font-weight:700;color:var(--cyan)">${v.empregador}</div>`;
     h += `<div style="font-size:10px;color:var(--t3)">CNPJ ${v.cnpj || '-'}${v.matricula?` · Mat ${v.matricula}`:''}</div>`;
+    // Tempo na empresa — usa tempoEmpresaMeses (calculado da admissão) se vier
+    if (v.tempoEmpresaMeses && v.tempoEmpresaMeses > 0) {
+      const m = v.tempoEmpresaMeses;
+      const txt = m >= 12 ? `${(m/12).toFixed(m%12===0?0:1)} ${m===12?'ano':'anos'}` : `${m} meses`;
+      h += `<div style="font-size:11px;color:var(--t2);margin-top:2px">⏱️ Na empresa há <b>${txt}</b></div>`;
+    } else if (v.dataAdmissao) {
+      h += `<div style="font-size:10px;color:var(--t3);margin-top:2px">Admissão: ${new Date(v.dataAdmissao).toLocaleDateString('pt-BR')}</div>`;
+    }
     if (v.renda) h += `<div style="font-size:11px;color:var(--grn);margin-top:2px">Renda: R$ ${v.renda.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>`;
+    // Função/CBO + atividade da empresa/CNAE (vem da CAGED — pode ajudar vendedor)
+    if (v.cbo || v.cnae) {
+      h += '<div style="font-size:10px;color:var(--t3);margin-top:2px">';
+      if (v.cbo) h += `Função CBO ${v.cbo}`;
+      if (v.cbo && v.cnae) h += ' · ';
+      if (v.cnae) h += `CNAE ${v.cnae}`;
+      h += '</div>';
+    }
+    if (v.cidadeEmpresa) {
+      h += `<div style="font-size:10px;color:var(--t3)">📍 ${v.cidadeEmpresa}${v.ufCliente?'/'+v.ufCliente:''}</div>`;
+    }
     h += '</div>';
   }
   h += `<button class="btn btn-sm" style="font-size:11px" onclick="fecharConsultaPilha('${item.id}')" title="Remover do empilhamento (não deleta do banco)">✕</button>`;
