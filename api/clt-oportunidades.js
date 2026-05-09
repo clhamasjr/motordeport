@@ -238,8 +238,11 @@ export default async function handler(req) {
       _enriquecidoCaged: !!caged
     };
 
-    // Vinculo: PB (oficial eSocial) > MC > CAGED 2024 (cadastral). Calcula tempo
-    // de empresa em meses se temos data de admissao (uteil pra regras de banco).
+    // Vinculo: APENAS fontes online em tempo real (PB/eSocial > Multicorban).
+    // CAGED 2024 NAO eh usado pra vinculo — base desatualizada (cliente pode ter
+    // mudado de emprego). Se PB esta indisponivel, vinculo fica null e o real
+    // vai aparecer pelo proprio retorno de cada banco (V8/UY3/JoinBank trazem
+    // o vinculo atual quando aprovam).
     function calcMesesAdmissao(dataAdmissaoIso) {
       if (!dataAdmissaoIso) return null;
       const adm = new Date(dataAdmissaoIso);
@@ -250,46 +253,37 @@ export default async function handler(req) {
 
     let vinculo = null;
     if (pb.temVinculo) {
-      // Vinculo oficial via PresençaBank/eSocial
       const dataAdm = pb.vinculo?.dataAdmissao
                    || (mc.trabalhista?.dataAdmissao ? ddMmYyToIso(mc.trabalhista.dataAdmissao) : null)
-                   || caged?.data_admissao
                    || null;
       vinculo = {
         matricula: pb.vinculo?.matricula,
         cnpj: pb.vinculo?.cnpj,
-        empregador: pb.vinculo?.empregador || mc.empresa?.razaoSocial || caged?.empregador_nome || null,
+        empregador: pb.vinculo?.empregador || mc.empresa?.razaoSocial || null,
         dataAdmissao: dataAdm,
         tempoEmpresaMeses: mc.trabalhista?.tempoContribuicaoMeses || calcMesesAdmissao(dataAdm),
         tempoContribuicaoMeses: mc.trabalhista?.tempoContribuicaoMeses || null,
         renda: mc.trabalhista?.renda || null,
         saldoAproximadoFgts: mc.trabalhista?.saldoAproximado || null,
-        // Enriquecimento CAGED (CBO/CNAE/cidade da empresa)
-        cbo: caged?.cbo || null,
-        cnae: caged?.cnae || null,
-        cidadeEmpresa: caged?.cidade_empresa || null,
-        ufCliente: caged?.uf || null,
         fonte: 'presencabank'
       };
-    } else if (caged?.empregador_cnpj && caged?.ativo !== false) {
-      // PB nao trouxe vinculo, mas CAGED 2024 tem registro ATIVO.
-      // Util pra mostrar "esse cliente trabalha em X" mesmo sem PB consultar.
-      vinculo = {
-        matricula: null,
-        cnpj: caged.empregador_cnpj,
-        empregador: caged.empregador_nome,
-        dataAdmissao: caged.data_admissao,
-        tempoEmpresaMeses: calcMesesAdmissao(caged.data_admissao),
-        tempoContribuicaoMeses: null,
-        renda: null,
-        saldoAproximadoFgts: null,
-        cbo: caged.cbo,
-        cnae: caged.cnae,
-        cidadeEmpresa: caged.cidade_empresa,
-        ufCliente: caged.uf,
-        fonte: 'caged_2024'
-      };
     }
+
+    // CAGED 2024: apenas como REFERENCIA HISTORICA (ultimo emprego conhecido em
+    // 2024). NUNCA usar como vinculo atual — pode estar desatualizado.
+    const vinculoHistorico = caged?.empregador_cnpj ? {
+      cnpj: caged.empregador_cnpj,
+      empregador: caged.empregador_nome,
+      dataAdmissao: caged.data_admissao,
+      dataDemissao: caged.data_demissao,
+      cbo: caged.cbo,
+      cnae: caged.cnae,
+      cidadeEmpresa: caged.cidade_empresa,
+      uf: caged.uf,
+      ativoNoCaged: caged.ativo,
+      anoReferencia: caged.ano_referencia || 2024,
+      fonte: 'caged_2024'
+    } : null;
 
     const margem = pb.margem || null;
 
@@ -701,7 +695,8 @@ export default async function handler(req) {
       success: true,
       cpf,
       cliente,
-      vinculo,
+      vinculo,                  // vinculo ATUAL via PB/eSocial (null se PB indisponivel)
+      vinculoHistorico,         // ultimo emprego conhecido no CAGED 2024 (referencia)
       margemPresencaBank: margem,
       enriquecimento: {
         presencaBankOk: pbOpor.ok && pb.temVinculo,

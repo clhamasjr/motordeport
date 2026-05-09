@@ -15,7 +15,7 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
-import { dbSelect, dbInsert, dbUpdate, dbUpsert } from './_lib/supabase.js';
+import { dbSelect, dbInsert, dbUpdate, dbUpsert, dbRPC } from './_lib/supabase.js';
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
 
@@ -196,6 +196,28 @@ async function _marcarEmManutencao(id, slug, msg) {
   });
 }
 
+// Tracking de empresas aprovadas — chama clt_registrar_aprovacao() pra UPSERT
+// na tabela clt_empresas_aprovadas. Roda em background (sem await na cadeia
+// principal) pra nao atrasar o response do banco. Falhas sao silenciosas
+// (nao queremos quebrar o fluxo de aprovacao por causa de tracking).
+async function _registrarAprovacao(cnpj, empregadorNome, banco, cnae, cidade, uf) {
+  if (!cnpj) return;
+  const cnpjLimpo = String(cnpj).replace(/\D/g, '');
+  if (!cnpjLimpo || cnpjLimpo.length < 8) return;
+  try {
+    await dbRPC('clt_registrar_aprovacao', {
+      p_cnpj: cnpjLimpo,
+      p_empregador_nome: empregadorNome || null,
+      p_banco: banco,
+      p_cnae: cnae || null,
+      p_cidade: cidade || null,
+      p_uf: uf || null
+    });
+  } catch (e) {
+    console.error('[clt-fila] tracking aprovacao falhou:', e.message);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // PROCESSADORES POR BANCO
 // ═══════════════════════════════════════════════════════════════════
@@ -251,9 +273,12 @@ async function processarPresencaBank(id, cpf, auth, secret) {
       dados: {
         margemDisponivel: margemDisp,
         margemBase: margemBase,
-        empregador: pb.vinculo?.empregador
+        empregador: pb.vinculo?.empregador,
+        empregadorCnpj: pb.vinculo?.cnpj
       }
     });
+    // Tracking: registra empresa aprovada
+    _registrarAprovacao(pb.vinculo?.cnpj, pb.vinculo?.empregador, 'presencabank', null, null, null);
   } else {
     await patchBanco(id, 'presencabank', {
       status: 'falha',
@@ -528,6 +553,8 @@ async function processarHandbank(id, cpf, auth, secret) {
       },
       _raw_response: d
     });
+    // Tracking: registra empresa aprovada
+    _registrarAprovacao(d.empregadorCnpj, d.empregador, 'handbank', null, null, null);
     return;
   }
 
@@ -650,6 +677,8 @@ async function processarJoinBank(id, cpf, auth, secret) {
       vinculos: vinculos.length
     }
   });
+  // Tracking: registra empresa aprovada
+  _registrarAprovacao(v.employerDocument, v.employerName, 'joinbank', null, null, null);
 }
 
 async function processarC6(id, cpf, incluirC6, auth, secret) {
