@@ -11531,6 +11531,169 @@ async function loadGestao(){
   }catch(e){console.log('[Gestao] erro:',e.message)}
   gestaoLoading=false;renderApp();
 }
+// ===== GESTÃO GERAL (admin only) — hub operacional =====
+async function ggCall(endpoint,body,opts={}){
+  const out=document.getElementById('ggOut');
+  if(out){out.textContent='⏳ chamando '+endpoint+' '+(body&&body.action?'('+body.action+')':'')+'...';}
+  try{
+    const r=await apiFetch(endpoint,{method:'POST',body:JSON.stringify(body||{})});
+    const d=await r.json();
+    if(out){out.textContent=JSON.stringify(d,null,2);}
+    return d;
+  }catch(e){
+    if(out){out.textContent='❌ erro: '+e.message;}
+    return {ok:false,error:e.message};
+  }
+}
+async function ggConfirm(msg,fn){if(confirm(msg))return fn();}
+async function ggListUsers(){return ggCall('/api/auth',{action:'list'});}
+async function ggListParceiros(){return ggCall('/api/auth',{action:'list_parceiros'});}
+async function ggResetPwPrompt(){
+  const u=prompt('Username do usuário pra resetar a senha:');if(!u)return;
+  const p=prompt('Nova senha (mín 8 chars):');if(!p||p.length<8)return alert('Senha precisa ter ≥8 chars');
+  if(!confirm('⚠️ Vai resetar a senha de '+u+' E matar todas as sessões ativas dele. Confirmar?'))return;
+  return ggCall('/api/auth',{action:'reset_pw',targetUser:u,newPass:p});
+}
+async function ggUpdateRolePrompt(){
+  const u=prompt('Username:');if(!u)return;
+  const r=prompt('Nova role (admin|gestor|operador):');if(!['admin','gestor','operador'].includes(r))return alert('role inválida');
+  if(!confirm('Mudar role de '+u+' para '+r+'?'))return;
+  return ggCall('/api/auth',{action:'update_role',targetUser:u,role:r});
+}
+async function ggDeleteUserPrompt(){
+  const u=prompt('Username pra desativar (soft delete):');if(!u)return;
+  if(!confirm('⚠️ Desativar '+u+'? Pode reativar via SQL depois.'))return;
+  return ggCall('/api/auth',{action:'delete',targetUser:u});
+}
+async function ggCreateUserPrompt(){
+  const name=prompt('Nome completo:');if(!name)return;
+  const user=prompt('Username (login):');if(!user)return;
+  const pass=prompt('Senha inicial (mín 8 chars):');if(!pass||pass.length<8)return alert('Senha curta');
+  const role=prompt('Role (admin|gestor|operador):','operador');if(!['admin','gestor','operador'].includes(role))return alert('role inválida');
+  if(!confirm('Criar usuário '+user+' como '+role+'?'))return;
+  return ggCall('/api/auth',{action:'create',name:name,user:user,pass:pass,role:role});
+}
+async function ggBankCodesPrompt(){
+  const u=prompt('Username:');if(!u)return;
+  const banco=prompt('Banco (facta, qitech, daycoval, c6, ...):');if(!banco)return;
+  const codigo=prompt('Código (deixe vazio pra remover):','');
+  const codes={};codes[banco]=codigo||'';
+  return ggCall('/api/auth',{action:'update_bank_codes',targetUser:u,codes:codes});
+}
+async function ggHealthAll(){
+  const out=document.getElementById('ggOut');
+  if(out)out.textContent='⏳ rodando healthcheck (~10s)...';
+  const calls=[
+    ['c6',{action:'test'}],['presencabank',{action:'test'}],['joinbank',{action:'test'}],
+    ['v8',{action:'test'}],['handbank',{action:'status'}],['mercantil',{action:'test'}],
+    ['facta',{action:'diag'}],['daycoval',{action:'test'}],['agente-clt',{action:'test'}]
+  ];
+  const results={};
+  await Promise.all(calls.map(async ([ep,body])=>{
+    try{
+      const r=await apiFetch('/api/'+ep,{method:'POST',body:JSON.stringify(body)});
+      const d=await r.json();
+      results[ep]=d.ok?'✅ ok':('❌ '+(d.error||d.mensagem||'falhou'));
+    }catch(e){results[ep]='❌ '+e.message;}
+  }));
+  if(out)out.textContent='🩺 Healthcheck:\n\n'+Object.entries(results).map(([k,v])=>k.padEnd(15)+v).join('\n');
+}
+async function ggCltConfigVer(){return ggCall('/api/clt-bancos',{action:'getConfig'});}
+async function ggCltOrdemPrompt(){
+  const ordem=prompt('Nova ordem dos bancos (CSV):','c6,presencabank,joinbank,v8,handbank,mercantil');
+  if(!ordem)return;
+  const arr=ordem.split(',').map(s=>s.trim()).filter(Boolean);
+  if(!confirm('Aplicar ordem: '+arr.join(' → ')+'?'))return;
+  // SQL via execute_sql não disponível direto no front — orienta o admin
+  const sql="update clt_config set ordem_bancos = array["+arr.map(a=>"'"+a+"'").join(',')+"] where id = 1;";
+  alert('Cole no SQL Editor do Supabase:\n\n'+sql);
+  const out=document.getElementById('ggOut');if(out)out.textContent='SQL gerado:\n\n'+sql+'\n\nDashboard: https://supabase.com/dashboard/project/rirsmtyuyqxsoxqbgtpu/sql';
+}
+async function ggCltTomPrompt(){
+  const tom=prompt('Tom do agente (conciso|moderado|insistente):','conciso');
+  if(!['conciso','moderado','insistente'].includes(tom))return alert('valor inválido');
+  const sql="update clt_config set modo_insistencia = '"+tom+"' where id = 1;";
+  const out=document.getElementById('ggOut');if(out)out.textContent='SQL gerado (cole no Supabase SQL Editor):\n\n'+sql;
+}
+async function ggCltConversasAtivas(){return ggCall('/api/agente-clt',{action:'conversasAtivas'});}
+async function ggCltDebugConversa(){
+  const tel=prompt('Telefone (com DDI+DDD, ex: 5515999111111):');if(!tel)return;
+  return ggCall('/api/agente-clt',{action:'debugConversa',telefone:tel});
+}
+async function ggCltRetomar(){
+  const tel=prompt('Telefone pra retomar:');if(!tel)return;
+  return ggCall('/api/agente-clt',{action:'retomarConversa',telefone:tel});
+}
+async function ggCatalogoListar(modulo){return ggCall('/api/'+modulo,{action:'listConvenios'});}
+async function ggCatalogoReseed(modulo){
+  if(!confirm('⚠️ Reseed '+modulo.toUpperCase()+': sobrescreve registros NÃO marcados editado_manual. Confirmar?'))return;
+  if(!confirm('🚨 Tem CERTEZA? Esta ação é destrutiva pros catálogos não-protegidos.'))return;
+  return ggCall('/api/'+modulo+'-seed',{});
+}
+async function ggMercantilJwtPrompt(){
+  const jwt=prompt('Cole o JWT copiado do portal bml.b.br (F12 → request headers Authorization):');
+  if(!jwt||!jwt.startsWith('eyJ'))return alert('JWT inválido (deve começar com eyJ)');
+  return ggCall('/api/mercantil',{action:'setJwt',jwt:jwt});
+}
+async function ggWebhookCltPrompt(){
+  if(!confirm('Configurar webhook Evolution em TODAS as instâncias prefixadas "clt"?'))return;
+  return ggCall('/api/clt-config-webhook',{});
+}
+
+function renderGestaoGeral(){
+  const card=(titulo,icon,corpo)=>`<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:18px;margin-bottom:14px"><div style="font-size:14px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px">${icon} ${titulo}</div><div style="display:flex;flex-wrap:wrap;gap:8px">${corpo}</div></div>`;
+  const btn=(label,fn,style='')=>`<button class="btn btn-sm" style="${style}" onclick="${fn}">${label}</button>`;
+  const btnAcc=(l,f)=>btn(l,f,'border-color:var(--cyan);color:var(--cyan)');
+  const btnRed=(l,f)=>btn(l,f,'border-color:#ff6b6b;color:#ff6b6b');
+  const btnYlw=(l,f)=>btn(l,f,'border-color:var(--ylw);color:var(--ylw)');
+
+  let html=`<div style="margin-bottom:18px"><div style="font-size:18px;font-weight:800">🎛️ Gestão Geral</div><div style="font-size:12px;color:var(--t2);margin-top:4px">Hub operacional admin — referência completa em <code>GESTAO.md</code> no repo</div></div>`;
+
+  html+=card('Usuários & Acessos','👥',
+    btnAcc('📋 Listar users','ggListUsers()')+
+    btnAcc('🏢 Listar parceiros','ggListParceiros()')+
+    btn('+ Novo usuário','ggCreateUserPrompt()')+
+    btnYlw('🔑 Reset senha','ggResetPwPrompt()')+
+    btnYlw('🎚️ Mudar role','ggUpdateRolePrompt()')+
+    btnYlw('🏦 Bank codes','ggBankCodesPrompt()')+
+    btnRed('🗑 Desativar user','ggDeleteUserPrompt()')
+  );
+
+  html+=card('Configuração CLT','⚙️',
+    btnAcc('👁️ Ver clt_config','ggCltConfigVer()')+
+    btnYlw('🔢 Ordem bancos','ggCltOrdemPrompt()')+
+    btnYlw('🗣️ Tom do agente','ggCltTomPrompt()')+
+    btnAcc('💬 Conversas ativas','ggCltConversasAtivas()')+
+    btnAcc('🔍 Debug conversa','ggCltDebugConversa()')+
+    btnYlw('▶️ Retomar conversa','ggCltRetomar()')
+  );
+
+  html+=card('Catálogos','📚',
+    btnAcc('🇧🇷 Listar Federal','ggCatalogoListar(\'fed\')')+
+    btnAcc('🏛️ Listar Governos','ggCatalogoListar(\'gov\')')+
+    btnAcc('🏙️ Listar Prefeituras','ggCatalogoListar(\'pref\')')+
+    btnRed('🔄 Reseed Federal','ggCatalogoReseed(\'fed\')')+
+    btnRed('🔄 Reseed Governos','ggCatalogoReseed(\'gov\')')+
+    btnRed('🔄 Reseed Prefeituras','ggCatalogoReseed(\'pref\')')
+  );
+
+  html+=card('Auditoria & Sessões','🔐',
+    `<div style="font-size:12px;color:var(--t2)">Queries SQL prontas no <code>GESTAO.md § 5</code>. Rode no <a href="https://supabase.com/dashboard/project/rirsmtyuyqxsoxqbgtpu/sql" target="_blank" style="color:var(--cyan)">SQL Editor do Supabase</a>.</div>`
+  );
+
+  html+=card('Infra & Healthchecks','🩺',
+    btnAcc('🩺 Health all bancos','ggHealthAll()')+
+    btnYlw('🔑 Renovar JWT Mercantil','ggMercantilJwtPrompt()')+
+    btnYlw('🔗 Webhook CLT (todas)','ggWebhookCltPrompt()')+
+    `<a class="btn btn-sm" style="border-color:var(--pur);color:var(--pur);text-decoration:none" href="https://vercel.com/clhamasjrs-projects/motordeport" target="_blank">↗ Vercel</a>`+
+    `<a class="btn btn-sm" style="border-color:var(--pur);color:var(--pur);text-decoration:none" href="https://supabase.com/dashboard/project/rirsmtyuyqxsoxqbgtpu" target="_blank">↗ Supabase</a>`
+  );
+
+  html+=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px;margin-top:14px"><div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--t2)">📤 Output</div><pre id="ggOut" style="background:#0a0a0f;color:#e6e6f0;padding:12px;border-radius:8px;font-size:11px;line-height:1.5;max-height:420px;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-word">Selecione uma ação acima — o resultado aparece aqui.</pre></div>`;
+
+  return html;
+}
+
 function renderGestao(){
   if(!gestaoData){setTimeout(()=>loadGestao(),100);return'<div style="text-align:center;padding:60px"><div style="font-size:30px;animation:pulse 1.2s ease infinite">📊</div><div style="font-size:13px;color:var(--t2);margin-top:12px">Carregando painel de gestao...</div></div>'}
   let g=gestaoData;let html='';
@@ -11688,7 +11851,8 @@ const MENU=[
       ]},
       {group:'Admin',icon:'⚙️',needsRole:['admin','gestor'],items:[
         {k:'wpp',icon:'📱',label:'Conexões WhatsApp',needsRole:['gestor','admin']},
-        {k:'admin',icon:'👥',label:'Usuários & Bancos',needsRole:['gestor','admin']}
+        {k:'admin',icon:'👥',label:'Usuários & Bancos',needsRole:['gestor','admin']},
+        {k:'gestaoGeral',icon:'🎛️',label:'Gestão Geral',needsRole:['admin']}
       ]}
     ]},
   {product:'clt',icon:'💼',label:'CLT',active:true,
@@ -12147,6 +12311,7 @@ if(!D){
   else if(S.tab==="wpp"&&isGes)content=renderWhatsApp();
   else if(S.tab==="gestao"&&isGes)content=renderGestao();
   else if(S.tab==="admin"&&isAdm){content=renderAdmin();setTimeout(()=>{if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()},150)}
+  else if(S.tab==="gestaoGeral"&&isAdm)content=renderGestaoGeral();
   else if(S.tab==="cltConsulta")content=renderCltConsulta();
   else if(S.tab==="cltChats")content=renderCltChats();
   else if(S.tab==="cltBatch")content=renderCltBatch();
@@ -12195,6 +12360,7 @@ if(!D){
   else if(S.tab==="in100")tcontent=renderIN100();
   else if(S.tab==="crm")tcontent=renderCRM();
   else if(S.tab==="gestao"&&isAdm)tcontent=renderGestao();
+  else if(S.tab==="gestaoGeral"&&isAdm)tcontent=renderGestaoGeral();
   else if(S.tab==="cltConsulta")tcontent=renderCltConsulta();
   else if(S.tab==="cltChats")tcontent=renderCltChats();
   else if(S.tab==="cltBatch")tcontent=renderCltBatch();
