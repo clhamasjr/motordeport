@@ -141,7 +141,7 @@ export default async function handler(req) {
       } else {
         cfg = lista.find(c => temSeguro(c)) || lista[0]; // se nenhum identificado, fallback pro 1o
       }
-      const cfgComSeguro = temSeguro(cfg);
+      let cfgComSeguro = temSeguro(cfg);
 
       const parcelasOpts = (cfg.number_of_installments || ['24']).map(n => parseInt(n)).filter(n => !isNaN(n));
       // Se cliente pediu N parcelas e está disponível, usa. Senão pega o maior.
@@ -187,6 +187,34 @@ export default async function handler(req) {
           for (const p of tentar) {
             const t = await tentarSimular(p);
             if (t.d?.idSimulation) { sim = t; d = t.d; break; }
+          }
+        }
+      }
+
+      // FALLBACK SEM SEGURO: se erro do tipo "Provedor informado não possui seguro
+      // ativo" (ou similar), troca pra config sem seguro e re-tenta. Comum em alguns
+      // empregadores que o V8 cobre mas sem produto de seguro habilitado.
+      if (!d?.idSimulation && !querSemSeguro && cfgComSeguro) {
+        const errMsgSeg = String(d?._raw?.title || d?._raw?.detail || d?.mensagem || '').toLowerCase();
+        const erroSeguro = (errMsgSeg.includes('seguro') && (errMsgSeg.includes('ativo') || errMsgSeg.includes('disponiv') || errMsgSeg.includes('disponíve')))
+                        || (errMsgSeg.includes('provedor') && errMsgSeg.includes('seguro'));
+        if (erroSeguro) {
+          const cfgSemSeg = lista.find(c => !temSeguro(c));
+          if (cfgSemSeg && cfgSemSeg.id !== cfg.id) {
+            // Refaz o tentarSimular agora apontando pra config sem seguro
+            const parcelasOptsSemSeg = (cfgSemSeg.number_of_installments || ['24']).map(n => parseInt(n)).filter(n => !isNaN(n));
+            const numInstSemSeg = (numParcelasCustom > 0 && parcelasOptsSemSeg.includes(numParcelasCustom))
+              ? numParcelasCustom
+              : Math.max(...parcelasOptsSemSeg) || 24;
+            const payloadSemSeg = { ...payloadV8, configId: cfgSemSeg.id };
+            const r2 = await callApi('/api/v8', { ...payloadSemSeg, numberOfInstallments: numInstSemSeg }, auth, secret);
+            if (r2.data?.idSimulation) {
+              sim = { d: r2.data, parcelasUsadas: numInstSemSeg };
+              d = r2.data;
+              // sobrescreve refs pra resposta certa abaixo
+              cfg = cfgSemSeg;
+              cfgComSeguro = false;
+            }
           }
         }
       }

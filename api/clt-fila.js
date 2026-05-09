@@ -15,7 +15,7 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
-import { dbSelect, dbInsert, dbUpdate, dbUpsert } from './_lib/supabase.js';
+import { dbSelect, dbInsert, dbUpdate, dbUpsert, dbRPC } from './_lib/supabase.js';
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
 
@@ -163,10 +163,68 @@ async function mesclarCliente(id, novoBloco) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// CATÁLOGO: bancos com ativo=false sao pulados (em manutencao)
+// Cache de 60s pra nao bater no DB a cada banco processado.
+// ═══════════════════════════════════════════════════════════════════
+let _bancosCacheClt = null;
+let _bancosCacheCltAt = 0;
+async function _getBancosCatalogoClt() {
+  const now = Date.now();
+  if (_bancosCacheClt && (now - _bancosCacheCltAt) < 60_000) return _bancosCacheClt;
+  const { data } = await dbSelect('clt_bancos', { limit: 100 }).catch(() => ({ data: [] }));
+  _bancosCacheClt = new Map((data || []).map(b => [b.slug, b]));
+  _bancosCacheCltAt = now;
+  return _bancosCacheClt;
+}
+
+async function _bancoEmManutencao(slug) {
+  const m = await _getBancosCatalogoClt();
+  const b = m.get(slug);
+  if (!b || b.ativo !== false) return null;
+  // Extrai a mensagem das observacoes se comecar com 🔧
+  const obs = b.observacoes || '';
+  const mt = obs.match(/^(🔧[^—.]*)/);
+  return mt ? mt[1].trim() : '🔧 Em manutenção — voltará em breve';
+}
+
+async function _marcarEmManutencao(id, slug, msg) {
+  await patchBanco(id, slug, {
+    status: 'em_manutencao',
+    disponivel: false,
+    emManutencao: true,
+    mensagem: msg
+  });
+}
+
+// Tracking de empresas aprovadas — chama clt_registrar_aprovacao() pra UPSERT
+// na tabela clt_empresas_aprovadas. Roda em background (sem await na cadeia
+// principal) pra nao atrasar o response do banco. Falhas sao silenciosas
+// (nao queremos quebrar o fluxo de aprovacao por causa de tracking).
+async function _registrarAprovacao(cnpj, empregadorNome, banco, cnae, cidade, uf) {
+  if (!cnpj) return;
+  const cnpjLimpo = String(cnpj).replace(/\D/g, '');
+  if (!cnpjLimpo || cnpjLimpo.length < 8) return;
+  try {
+    await dbRPC('clt_registrar_aprovacao', {
+      p_cnpj: cnpjLimpo,
+      p_empregador_nome: empregadorNome || null,
+      p_banco: banco,
+      p_cnae: cnae || null,
+      p_cidade: cidade || null,
+      p_uf: uf || null
+    });
+  } catch (e) {
+    console.error('[clt-fila] tracking aprovacao falhou:', e.message);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // PROCESSADORES POR BANCO
 // ═══════════════════════════════════════════════════════════════════
 
 async function processarPresencaBank(id, cpf, auth, secret) {
+  const manut = await _bancoEmManutencao('presencabank');
+  if (manut) { await _marcarEmManutencao(id, 'presencabank', manut); return; }
   await patchBanco(id, 'presencabank', { status: 'processando' });
   const r = await callApi('/api/presencabank', { action: 'oportunidadesPorCPF', cpf }, auth, secret);
   const pb = r.data || {};
@@ -215,9 +273,12 @@ async function processarPresencaBank(id, cpf, auth, secret) {
       dados: {
         margemDisponivel: margemDisp,
         margemBase: margemBase,
-        empregador: pb.vinculo?.empregador
+        empregador: pb.vinculo?.empregador,
+        empregadorCnpj: pb.vinculo?.cnpj
       }
     });
+    // Tracking: registra empresa aprovada
+    _registrarAprovacao(pb.vinculo?.cnpj, pb.vinculo?.empregador, 'presencabank', null, null, null);
   } else {
     await patchBanco(id, 'presencabank', {
       status: 'falha',
@@ -259,6 +320,8 @@ async function processarMulticorban(id, cpf, auth, secret) {
 
 async function processarV8(id, provider, cpf, auth, secret) {
   const banco = provider === 'QI' ? 'v8_qi' : 'v8_celcoin';
+  const manut = await _bancoEmManutencao(banco);
+  if (manut) { await _marcarEmManutencao(id, banco, manut); return; }
   await patchBanco(id, banco, { status: 'processando' });
 
   // 1) Consulta status
@@ -339,6 +402,8 @@ async function processarV8(id, provider, cpf, auth, secret) {
 // Tenta API; se nao tiver JWT configurado (env MERCANTIL_JWT), cai pra
 // modo digitacao manual (operador faz no portal e cadastra valor).
 async function processarMercantil(id, cpf, auth, secret) {
+  const manut = await _bancoEmManutencao('mercantil');
+  if (manut) { await _marcarEmManutencao(id, 'mercantil', manut); return; }
   await patchBanco(id, 'mercantil', { status: 'processando' });
 
   // Tenta via API: iniciarOperacao confirma se cliente tem vinculo
@@ -407,6 +472,8 @@ async function processarMercantil(id, cpf, auth, secret) {
 //   201 → autorizado, retorna { cnpj, matricula, valor_margem, mensagem }
 //   400 → cliente ja tem contrato OU outro impedimento
 async function processarHandbank(id, cpf, auth, secret) {
+  const manut = await _bancoEmManutencao('handbank');
+  if (manut) { await _marcarEmManutencao(id, 'handbank', manut); return; }
   await patchBanco(id, 'handbank', { status: 'processando' });
   let r = await callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret);
   let d = r.data || {};
@@ -486,6 +553,8 @@ async function processarHandbank(id, cpf, auth, secret) {
       },
       _raw_response: d
     });
+    // Tracking: registra empresa aprovada
+    _registrarAprovacao(d.empregadorCnpj, d.empregador, 'handbank', null, null, null);
     return;
   }
 
@@ -498,6 +567,8 @@ async function processarHandbank(id, cpf, auth, secret) {
 }
 
 async function processarJoinBank(id, cpf, auth, secret) {
+  const manut = await _bancoEmManutencao('joinbank');
+  if (manut) { await _marcarEmManutencao(id, 'joinbank', manut); return; }
   await patchBanco(id, 'joinbank', { status: 'processando' });
 
   // Espera dados basicos do cliente (nome + dataNasc) — JoinBank exige borrower completo
@@ -606,9 +677,13 @@ async function processarJoinBank(id, cpf, auth, secret) {
       vinculos: vinculos.length
     }
   });
+  // Tracking: registra empresa aprovada
+  _registrarAprovacao(v.employerDocument, v.employerName, 'joinbank', null, null, null);
 }
 
 async function processarC6(id, cpf, incluirC6, auth, secret) {
+  const manut = await _bancoEmManutencao('c6');
+  if (manut) { await _marcarEmManutencao(id, 'c6', manut); return; }
   await patchBanco(id, 'c6', { status: 'processando' });
 
   // Sempre checa status (gratis, rapido)

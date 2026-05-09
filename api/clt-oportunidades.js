@@ -143,7 +143,14 @@ export default async function handler(req) {
         ? callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret).catch(() => ({ ok: false }))
         : Promise.resolve(skipped('handbank'))
     ];
+    // Em paralelo: lookup no CAGED 2024 (43M+ CPFs do Brasil) — fallback de
+    // dados cadastrais quando PB/MC/NV não trazem. Query rapida (~30ms, PK).
+    const cagedPromise = dbSelect('clt_base_funcionarios', {
+      filters: { cpf }, single: true
+    }).catch(() => ({ data: null }));
+
     const [pbOpor, mcClt, v8QI, v8Celcoin, c6Status, merc, hb] = await Promise.all(tarefas);
+    const caged = (await cagedPromise).data || null;
 
     // Se C6 ja autorizado, busca oferta tambem (em paralelo nao da pra fazer porque depende do status)
     let c6Of = { ok: false, data: { _bloqueado: true } };
@@ -165,12 +172,12 @@ export default async function handler(req) {
       });
     }
 
-    // ─── FALLBACK NovaVida: so chama se PB+MC nao trouxeram nome OU telefone ─
+    // ─── FALLBACK NovaVida: so chama se PB+MC+CAGED nao trouxeram nome OU telefone ─
     // (NovaVida eh paga por consulta, entao so usa quando realmente precisa)
     let nv = {};
     let novaVidaUsada = false;
-    const nomeBase = mc.nome || pb.dadosCliente?.nome;
-    const temTelefone = telefonesMap.size > 0;
+    const nomeBase = mc.nome || pb.dadosCliente?.nome || caged?.nome;
+    const temTelefone = telefonesMap.size > 0 || (caged?.ddd && caged?.telefone);
     if (!nomeBase || !temTelefone) {
       try {
         const nvRes = await callApi('/api/novavida', { cpf }, auth, secret);
@@ -186,17 +193,36 @@ export default async function handler(req) {
       } catch { /* falhou - segue sem NovaVida */ }
     }
 
+    // CAGED: adiciona telefone se PB/MC/NV não trouxeram nada (último fallback)
+    // Telefone do CAGED não é WhatsApp confirmado — pode ser fixo da empresa.
+    if (caged?.ddd && caged?.telefone) {
+      const ddd = String(caged.ddd).replace(/\D/g, '');
+      const numero = String(caged.telefone).replace(/\D/g, '');
+      const key = `${ddd}-${numero}`;
+      if (key !== '-' && !telefonesMap.has(key)) {
+        telefonesMap.set(key, {
+          ddd, numero, completo: ddd + numero,
+          whatsapp: false, fonte: 'caged_2024'
+        });
+      }
+    }
+
     // V8 (QI ou CELCOIN) retorna nome do cliente em consultarPorCPF se ja existe
     // consult anterior — aproveita isso pra nao depender so de PB/MC/NV
     const v8Nome = v8QI?.data?.nome || v8Celcoin?.data?.nome || null;
+    // Nome da CAGED vem em CAIXA ALTA — converte pra Title Case pra leitura
+    const cagedNome = caged?.nome
+      ? caged.nome.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
+      : null;
     const cliente = {
-      // Prioridade: manual (operador) > MC > PB > V8 > NV
-      nome: nomeManual || mc.nome || pb.dadosCliente?.nome || v8Nome || nv.nome || null,
+      // Prioridade: manual (operador) > MC > PB > V8 > NV > CAGED 2024
+      nome: nomeManual || mc.nome || pb.dadosCliente?.nome || v8Nome || nv.nome || cagedNome || null,
       cpf,
       dataNascimento: pb.dadosCliente?.dataNascimento
                    || (mc.dataNascimento ? ddMmYyToIso(mc.dataNascimento) : null)
-                   || (nv.nascimento ? ddMmYyToIso(nv.nascimento) : null),
-      sexo: pb.dadosCliente?.sexo || mc.sexo || null,
+                   || (nv.nascimento ? ddMmYyToIso(nv.nascimento) : null)
+                   || caged?.data_nascimento || null,
+      sexo: pb.dadosCliente?.sexo || mc.sexo || caged?.sexo || null,
       nomeMae: pb.dadosCliente?.nomeMae || mc.nomeMae || null,
       nomePai: mc.nomePai || null,
       idade: mc.idade || nv.idade || null,
@@ -206,18 +232,57 @@ export default async function handler(req) {
         tipo: e.tipo, logradouro: e.logradouro, numero: e.numero, complemento: e.complemento,
         bairro: e.bairro, cidade: e.cidade, uf: e.uf, cep: (e.cep || '').replace(/\D/g, '')
       })),
-      emails: nv.emails || [],
-      obito: !!nv.obito
+      emails: [...(nv.emails || []), caged?.email].filter(Boolean),
+      obito: !!nv.obito,
+      // Marca quais campos vieram do CAGED 2024 (transparencia pro vendedor)
+      _enriquecidoCaged: !!caged
     };
 
-    const vinculo = pb.temVinculo ? {
-      matricula: pb.vinculo?.matricula,
-      cnpj: pb.vinculo?.cnpj,
-      empregador: pb.vinculo?.empregador || mc.empresa?.razaoSocial || null,
-      dataAdmissao: pb.vinculo?.dataAdmissao || (mc.trabalhista?.dataAdmissao ? ddMmYyToIso(mc.trabalhista.dataAdmissao) : null),
-      tempoContribuicaoMeses: mc.trabalhista?.tempoContribuicaoMeses || null,
-      renda: mc.trabalhista?.renda || null,
-      saldoAproximadoFgts: mc.trabalhista?.saldoAproximado || null
+    // Vinculo: APENAS fontes online em tempo real (PB/eSocial > Multicorban).
+    // CAGED 2024 NAO eh usado pra vinculo — base desatualizada (cliente pode ter
+    // mudado de emprego). Se PB esta indisponivel, vinculo fica null e o real
+    // vai aparecer pelo proprio retorno de cada banco (V8/UY3/JoinBank trazem
+    // o vinculo atual quando aprovam).
+    function calcMesesAdmissao(dataAdmissaoIso) {
+      if (!dataAdmissaoIso) return null;
+      const adm = new Date(dataAdmissaoIso);
+      if (isNaN(adm.getTime())) return null;
+      const hoje = new Date();
+      return (hoje.getFullYear() - adm.getFullYear()) * 12 + (hoje.getMonth() - adm.getMonth());
+    }
+
+    let vinculo = null;
+    if (pb.temVinculo) {
+      const dataAdm = pb.vinculo?.dataAdmissao
+                   || (mc.trabalhista?.dataAdmissao ? ddMmYyToIso(mc.trabalhista.dataAdmissao) : null)
+                   || null;
+      vinculo = {
+        matricula: pb.vinculo?.matricula,
+        cnpj: pb.vinculo?.cnpj,
+        empregador: pb.vinculo?.empregador || mc.empresa?.razaoSocial || null,
+        dataAdmissao: dataAdm,
+        tempoEmpresaMeses: mc.trabalhista?.tempoContribuicaoMeses || calcMesesAdmissao(dataAdm),
+        tempoContribuicaoMeses: mc.trabalhista?.tempoContribuicaoMeses || null,
+        renda: mc.trabalhista?.renda || null,
+        saldoAproximadoFgts: mc.trabalhista?.saldoAproximado || null,
+        fonte: 'presencabank'
+      };
+    }
+
+    // CAGED 2024: apenas como REFERENCIA HISTORICA (ultimo emprego conhecido em
+    // 2024). NUNCA usar como vinculo atual — pode estar desatualizado.
+    const vinculoHistorico = caged?.empregador_cnpj ? {
+      cnpj: caged.empregador_cnpj,
+      empregador: caged.empregador_nome,
+      dataAdmissao: caged.data_admissao,
+      dataDemissao: caged.data_demissao,
+      cbo: caged.cbo,
+      cnae: caged.cnae,
+      cidadeEmpresa: caged.cidade_empresa,
+      uf: caged.uf,
+      ativoNoCaged: caged.ativo,
+      anoReferencia: caged.ano_referencia || 2024,
+      fonte: 'caged_2024'
     } : null;
 
     const margem = pb.margem || null;
@@ -585,6 +650,40 @@ export default async function handler(req) {
       }
     }
 
+    // ─── Enriquece ofertas com info "essa empresa ja aprovou X clientes" ──
+    // 1 query batch pelos CNPJs unicos das ofertas disponiveis. Lookup leve
+    // (PK) — O(N) com N pequeno (max 6-8 bancos por consulta).
+    try {
+      const cnpjsUnicos = [...new Set(
+        ofertas
+          .filter(o => o.disponivel && o.elegibilidade?.empregadorCnpj)
+          .map(o => String(o.elegibilidade.empregadorCnpj).replace(/\D/g, ''))
+          .filter(Boolean)
+      )];
+      if (cnpjsUnicos.length > 0) {
+        // dbSelect so suporta 'eq', usa fetch direto pra in.()
+        const queryStr = `select=cnpj,empregador_nome,total_aprovacoes,bancos_aprovam,ultima_aprovacao_em&cnpj=in.(${cnpjsUnicos.join(',')})`;
+        const fetchR = await fetch(
+          `${process.env.SUPABASE_URL}/rest/v1/clt_empresas_aprovadas?${queryStr}`,
+          { headers: { apikey: process.env.SUPABASE_SERVICE_KEY, Authorization: 'Bearer ' + process.env.SUPABASE_SERVICE_KEY } }
+        ).catch(() => null);
+        const empresasAprov = fetchR?.ok ? await fetchR.json() : [];
+        const empMap = new Map((empresasAprov || []).map(e => [e.cnpj, e]));
+        for (const o of ofertas) {
+          if (!o.disponivel || !o.elegibilidade?.empregadorCnpj) continue;
+          const cnpjLimpo = String(o.elegibilidade.empregadorCnpj).replace(/\D/g, '');
+          const e = empMap.get(cnpjLimpo);
+          if (e) {
+            o.elegibilidade.empresaJaAprovou = {
+              totalAprovacoes: e.total_aprovacoes || 0,
+              qtdBancos: Array.isArray(e.bancos_aprovam) ? e.bancos_aprovam.length : 0,
+              ultimaAprovacaoEm: e.ultima_aprovacao_em
+            };
+          }
+        }
+      }
+    } catch { /* enrichment opcional, nao quebra fluxo */ }
+
     const totalDisponivel = ofertas.filter(o => o.disponivel).length;
     const telefonePrincipal = cliente.telefones?.[0]?.completo || null;
     const temNomeETel = !!(cliente.nome && telefonePrincipal);
@@ -630,17 +729,23 @@ export default async function handler(req) {
       success: true,
       cpf,
       cliente,
-      vinculo,
+      vinculo,                  // vinculo ATUAL via PB/eSocial (null se PB indisponivel)
+      vinculoHistorico,         // ultimo emprego conhecido no CAGED 2024 (referencia)
       margemPresencaBank: margem,
       enriquecimento: {
         presencaBankOk: pbOpor.ok && pb.temVinculo,
         multicorbanOk: mcClt.ok && !!mc.nome,
         novaVidaUsada,
         novaVidaOk: novaVidaUsada && !!(nv.success || nv.nome || (nv.telefones || []).length > 0),
-        nomeOrigem: mc.nome ? 'multicorban' : (pb.dadosCliente?.nome ? 'presencabank' : (nv.nome ? 'novavida' : null)),
+        cagedOk: !!caged,
+        nomeOrigem: mc.nome ? 'multicorban'
+                  : (pb.dadosCliente?.nome ? 'presencabank'
+                  : (nv.nome ? 'novavida'
+                  : (caged?.nome ? 'caged_2024' : null))),
         telefoneOrigem: cliente.telefones?.[0]?.fonte || null,
         enderecoOrigem: cliente.enderecos?.length > 0 ? 'novavida' : null,
-        emailOrigem: cliente.emails?.length > 0 ? 'novavida' : null
+        emailOrigem: cliente.emails?.length > 0 ? 'novavida' : null,
+        vinculoOrigem: vinculo?.fonte || null  // 'presencabank' | 'caged_2024' | null
       },
       ofertas,
       totalBancosDisponiveis: totalDisponivel,

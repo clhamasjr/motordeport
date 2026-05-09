@@ -965,6 +965,22 @@ function calcEnquadramento(beneficio, sumEmp, sumRmc, sumRcc, opts) {
   return calcEnquadramentoPlus(beneficio, sumEmp, sumRmc, sumRcc, [], opts);
 }
 
+// Parser numérico universal: aceita number JS (6056.96), string pt-BR (6.056,96)
+// ou string sem formatação (6056.96). Resolve o bug de 6056.96 virar 605696.
+function parseBR(v) {
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number') return isFinite(v) ? v : 0;
+  const s = String(v).trim();
+  if (!s) return 0;
+  // Se tem vírgula, formato pt-BR (1.234,56) — pontos são separador de milhar
+  if (s.indexOf(',') >= 0) return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  // Sem vírgula: pode ser "6056.96" (decimal JS) ou "6056" inteiro
+  // Se tem mais de UM ponto, são milhares pt-BR sem decimal (ex: "1.234.567")
+  const dots = (s.match(/\./g) || []).length;
+  if (dots > 1) return parseFloat(s.replace(/\./g, '')) || 0;
+  return parseFloat(s) || 0;
+}
+
 // Versão COMPLETA: aceita lista de contratos pra calcular redução possível via port/refin
 function calcEnquadramentoPlus(beneficio, sumEmp, sumRmc, sumRcc, contratos, opts) {
   opts = opts || {};
@@ -2019,9 +2035,12 @@ function renderAdmin(){
   </div>`;
   // Secao Parceiros (topo)
   let parceirosHtml=`<div style="background:var(--card);border:1px solid var(--brd);border-radius:14px;padding:22px;margin-bottom:20px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-      <div style="font-size:15px;font-weight:800">🏢 Parceiros (Agências)</div>
-      <button class="btn-acc btn-sm" onclick="addParceiro()">+ Novo Parceiro</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div style="font-size:15px;font-weight:800">🏢 Parceiros (Agências) <span style="font-size:11px;color:var(--t3);font-weight:400">— ${parceiros.length} cadastrado${parceiros.length===1?'':'s'}</span></div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-sm" onclick="reloadParceiros()" title="Recarregar lista de parceiros do servidor">🔄 Recarregar</button>
+        <button class="btn-acc btn-sm" onclick="addParceiro()">+ Novo Parceiro</button>
+      </div>
     </div>`;
   if(!parceiros.length){
     parceirosHtml+=`<div style="text-align:center;padding:20px;color:var(--t3);font-size:13px">Nenhum parceiro cadastrado. Clique em "+ Novo Parceiro" para começar.</div>`;
@@ -2473,6 +2492,16 @@ async function delParceiro(parceiroId,nome){
   }catch(e){alert('Erro: '+e.message)}
 }
 
+// Recarrega manualmente a lista de parceiros (fallback se o cache zerou)
+async function reloadParceiros(){
+  try{
+    showToast?.('Recarregando parceiros...','info');
+    await loadUsersFromApi();
+    renderApp();
+    showToast?.(`${(_parceirosCache||[]).length} parceiros carregados`,'success');
+  }catch(e){alert('Erro: '+e.message)}
+}
+
 // Ativar / Desativar parceiro (sem precisar excluir). Mantém o vínculo dos users.
 async function toggleParceiroActive(parceiroId,ativar,nome){
   const verbo=ativar?'reativar':'desativar';
@@ -2813,7 +2842,7 @@ function openSimulacao(cpf,nome,ben){
     <div><div style="font-size:10px;color:var(--t3)">BENEFÍCIO</div><div style="font-size:13px;font-family:monospace">${ben||'—'}</div></div>`;
   let dtNasc='',margem=0;
   let cr=consultaState.result;
-  if(cr){let b=cr.beneficiario||{};if(b.data_nascimento)dtNasc=b.data_nascimento;let mrg=cr.margem||{};margem=parseFloat(String(mrg.disponivel||'0').replace(/\./g,'').replace(',','.'))||0}
+  if(cr){let b=cr.beneficiario||{};if(b.data_nascimento)dtNasc=b.data_nascimento;let mrg=cr.margem||{};margem=parseBR(mrg.disponivel)}
   if(!dtNasc&&S.data&&S.data.analise){let cl=S.data.analise.find(a=>a.cpf===cpf);if(cl&&cl.dtNasc)dtNasc=cl.dtNasc}
   document.getElementById('simDtNasc').value=dtNasc;
   if(margem>0){document.getElementById('simParcela').value=margem.toFixed(2);document.getElementById('simValor').value=''}
@@ -2853,11 +2882,11 @@ function simTipoChanged(){
   else{document.getElementById('simValorWrap').style.display='';document.getElementById('simParcelaWrap').style.display=''}
   if(isPort&&consultaState.result&&consultaState.result.contratos){
     let cts=consultaState.result.contratos;
-    let best=cts.find(ct=>{let tx=parseFloat(String(ct.taxa||'0').replace(',','.'))||0;return tx>1.85});
+    let best=cts.find(ct=>{let tx=parseBR(ct.taxa);return tx>1.85});
     if(!best&&cts.length)best=cts[0];
     if(best){
-      let par=parseFloat(String(best.parcela||'0').replace(/\./g,'').replace(',','.'))||0;
-      let sal=parseFloat(String(best.saldo||best.saldo_quitacao||'0').replace(/\./g,'').replace(',','.'))||0;
+      let par=parseBR(best.parcela);
+      let sal=parseBR(best.saldo||best.saldo_quitacao);
       let prazo=parseInt(best.prazo||best.prazo_restante||'0')||0;
       let prazoOrig=parseInt(best.prazo_original||'84')||84;
       if(par>0)document.getElementById('simParcelaOrig').value=par.toFixed(2);
@@ -2867,8 +2896,8 @@ function simTipoChanged(){
       if(par>0)document.getElementById('simParcela').value=par.toFixed(2);
     }
   }
-  if(isRefin&&consultaState.result){let ben=consultaState.result.beneficio||{};let renda=parseFloat(String(ben.valor||'0').replace(/\./g,'').replace(',','.'))||0;if(renda>0)document.getElementById('simRenda').value=renda.toFixed(2)}
-  if(isCartao&&consultaState.result){let ben=consultaState.result.beneficio||{};let renda=parseFloat(String(ben.valor||'0').replace(/\./g,'').replace(',','.'))||0;if(renda>0)document.getElementById('simRendaCartao').value=renda.toFixed(2)}
+  if(isRefin&&consultaState.result){let ben=consultaState.result.beneficio||{};let renda=parseBR(ben.valor);if(renda>0)document.getElementById('simRenda').value=renda.toFixed(2)}
+  if(isCartao&&consultaState.result){let ben=consultaState.result.beneficio||{};let renda=parseBR(ben.valor);if(renda>0)document.getElementById('simRendaCartao').value=renda.toFixed(2)}
 }
 
 
@@ -3312,7 +3341,7 @@ function renderEsteira(){
     // "Valor" adaptativo: port usa saldo_devedor; demais usam valor_operacao
     let valor='—';
     if(item.tipo==='portabilidade')valor=item.saldo_devedor?'R$ '+item.saldo_devedor:'—';
-    else if(item.valor_operacao){const v=typeof item.valor_operacao==='number'?item.valor_operacao:parseFloat(String(item.valor_operacao).replace(/\./g,'').replace(',','.'))||0;valor=R$(v)}
+    else if(item.valor_operacao){const v=typeof item.valor_operacao==='number'?item.valor_operacao:parseBR(item.valor_operacao);valor=R$(v)}
     const troco=item.valor_troco?'R$ '+item.valor_troco:(item.tipo==='portabilidade'?'—':'');
     const af=item.codigo_af||item.url_formalizacao||'—';
 
@@ -6792,7 +6821,22 @@ function _cltOfertaCard(o, ctx) {
       if (renda > 0) h += `<div style="font-size:11px;color:var(--t3)">Renda CLT: R$ ${renda.toFixed(2)}</div>`;
     }
     if (o.elegibilidade.empregador) h += `<div style="font-size:12px;color:var(--t2);margin-top:4px"><b>Empregador:</b> ${(o.elegibilidade.empregador||'').substring(0,40)}</div>`;
-    if (o.elegibilidade.empregadorCnpj) h += `<div style="font-size:11px;color:var(--t3)">CNPJ: ${o.elegibilidade.empregadorCnpj}</div>`;
+    if (o.elegibilidade.empregadorCnpj) {
+      const cnpj = String(o.elegibilidade.empregadorCnpj).replace(/\D/g, '');
+      const cnpjFmt = cnpj.length === 14 ? cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : cnpj;
+      h += `<div style="font-size:11px;color:var(--t3)">CNPJ: ${cnpjFmt}</div>`;
+    }
+    // Badge "🏆 Empresa já aprovou" — chama atenção do vendedor que esse CNPJ tem histórico
+    if (o.elegibilidade.empresaJaAprovou) {
+      const ja = o.elegibilidade.empresaJaAprovou;
+      const total = ja.totalAprovacoes || 0;
+      const cnpjLimpo = String(o.elegibilidade.empregadorCnpj || '').replace(/\D/g, '');
+      h += `<div style="margin-top:6px;padding:6px 8px;background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.30);border-radius:6px;font-size:11px;cursor:pointer" onclick="cltVerCpfsDessaEmpresa('${cnpjLimpo}','${(o.elegibilidade.empregador||'').replace(/'/g,"\\'")}'); event.stopPropagation();" title="Ver outros CPFs do CAGED dessa empresa">`;
+      h += `<b style="color:var(--grn)">🏆 Empresa já aprovada</b>`;
+      h += ` <span style="color:var(--t2)">${total} ${total===1?'aprovação':'aprovações'} em ${ja.qtdBancos} ${ja.qtdBancos===1?'banco':'bancos'}</span>`;
+      h += `<div style="font-size:10px;color:var(--t3);margin-top:2px">Clique pra ver outros CPFs do CAGED dessa empresa →</div>`;
+      h += `</div>`;
+    }
     if (o._calculando) {
       h += `<div style="margin-top:10px;padding:8px;background:rgba(59,130,246,.08);border-radius:6px;font-size:11px;color:var(--acc)">⏳ Calculando simulação detalhada...</div>`;
     } else if (o._erroDetalhe) {
@@ -7122,9 +7166,34 @@ function _renderConsultaBloco(item) {
   h += '<div style="display:flex;gap:8px;align-items:start">';
   if (v) {
     h += '<div style="text-align:right">';
+    // Badge de fonte: oficial (PB/eSocial) vs CAGED 2024 (cadastral histórico)
+    if (v.fonte === 'caged_2024') {
+      h += `<div style="font-size:9px;color:var(--ylw);text-transform:uppercase;font-weight:700;margin-bottom:2px" title="Vínculo do CAGED 2024 (base oficial Ministério do Trabalho). Pode estar desatualizado — bancos confirmam na consulta.">📊 Base CAGED 2024</div>`;
+    } else if (v.fonte === 'presencabank') {
+      h += `<div style="font-size:9px;color:var(--grn);text-transform:uppercase;font-weight:700;margin-bottom:2px" title="Vínculo confirmado em tempo real via eSocial">✅ Vínculo confirmado (eSocial)</div>`;
+    }
     if (v.empregador) h += `<div style="font-size:12px;font-weight:700;color:var(--cyan)">${v.empregador}</div>`;
     h += `<div style="font-size:10px;color:var(--t3)">CNPJ ${v.cnpj || '-'}${v.matricula?` · Mat ${v.matricula}`:''}</div>`;
+    // Tempo na empresa — usa tempoEmpresaMeses (calculado da admissão) se vier
+    if (v.tempoEmpresaMeses && v.tempoEmpresaMeses > 0) {
+      const m = v.tempoEmpresaMeses;
+      const txt = m >= 12 ? `${(m/12).toFixed(m%12===0?0:1)} ${m===12?'ano':'anos'}` : `${m} meses`;
+      h += `<div style="font-size:11px;color:var(--t2);margin-top:2px">⏱️ Na empresa há <b>${txt}</b></div>`;
+    } else if (v.dataAdmissao) {
+      h += `<div style="font-size:10px;color:var(--t3);margin-top:2px">Admissão: ${new Date(v.dataAdmissao).toLocaleDateString('pt-BR')}</div>`;
+    }
     if (v.renda) h += `<div style="font-size:11px;color:var(--grn);margin-top:2px">Renda: R$ ${v.renda.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>`;
+    // Função/CBO + atividade da empresa/CNAE (vem da CAGED — pode ajudar vendedor)
+    if (v.cbo || v.cnae) {
+      h += '<div style="font-size:10px;color:var(--t3);margin-top:2px">';
+      if (v.cbo) h += `Função CBO ${v.cbo}`;
+      if (v.cbo && v.cnae) h += ' · ';
+      if (v.cnae) h += `CNAE ${v.cnae}`;
+      h += '</div>';
+    }
+    if (v.cidadeEmpresa) {
+      h += `<div style="font-size:10px;color:var(--t3)">📍 ${v.cidadeEmpresa}${v.ufCliente?'/'+v.ufCliente:''}</div>`;
+    }
     h += '</div>';
   }
   h += `<button class="btn btn-sm" style="font-size:11px" onclick="fecharConsultaPilha('${item.id}')" title="Remover do empilhamento (não deleta do banco)">✕</button>`;
@@ -8614,6 +8683,225 @@ async function cltAnaliseRodar() {
 }
 
 function cltAnaliseSet(k, v) { cltAnaliseState.filtros[k] = v; }
+
+// ════════════════════════════════════════════════════════════════════
+// EMPRESAS APROVADAS — CNPJs com historico de aprovacao em algum banco CLT
+// + filtro pra puxar CPFs do CAGED dessa empresa pra higienizar
+// ════════════════════════════════════════════════════════════════════
+let cltEmpresasState = {
+  loading: false, _loaded: false,
+  empresas: [], total: 0,
+  filtros: { busca: '', banco: '', uf: '', orderBy: 'total_aprovacoes' },
+  cpfsModal: { open: false, cnpj: null, nome: null, cpfs: [], loading: false, apenasAtivos: true }
+};
+
+async function cltEmpresasCarregar() {
+  cltEmpresasState.loading = true; renderApp();
+  try {
+    const f = cltEmpresasState.filtros;
+    const r = await fetch('/api/clt-empresas-aprovadas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({
+        action: 'listar',
+        busca: f.busca || undefined,
+        banco: f.banco || undefined,
+        uf: f.uf || undefined,
+        orderBy: f.orderBy
+      })
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'erro');
+    cltEmpresasState.empresas = d.empresas || [];
+    cltEmpresasState.total = d.total || 0;
+  } catch (e) { alert('Erro: ' + e.message); }
+  cltEmpresasState.loading = false;
+  renderApp();
+}
+
+function cltEmpresasSetFiltro(k, v) {
+  cltEmpresasState.filtros[k] = v;
+  // Auto-recarrega depois de digitar (debounce simples 400ms)
+  if (cltEmpresasState._debounce) clearTimeout(cltEmpresasState._debounce);
+  cltEmpresasState._debounce = setTimeout(() => cltEmpresasCarregar(), 400);
+}
+
+// Modal: lista CPFs do CAGED de uma empresa específica
+async function cltVerCpfsDessaEmpresa(cnpj, nomeEmpresa) {
+  cltEmpresasState.cpfsModal = {
+    open: true, cnpj, nome: nomeEmpresa,
+    cpfs: [], loading: true, apenasAtivos: true
+  };
+  renderApp();
+  try {
+    const r = await fetch('/api/clt-empresas-aprovadas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'cpfsDessaEmpresa', cnpj, apenasAtivos: true, limit: 5000 })
+    });
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'erro');
+    cltEmpresasState.cpfsModal.cpfs = d.cpfs || [];
+  } catch (e) { alert('Erro: ' + e.message); }
+  cltEmpresasState.cpfsModal.loading = false;
+  renderApp();
+}
+
+function cltFecharCpfsModal() {
+  cltEmpresasState.cpfsModal.open = false;
+  renderApp();
+}
+
+// Higienização em lote dos CPFs da empresa (manda direto pra fila CLT)
+async function cltHigienizarCpfsEmpresa() {
+  const m = cltEmpresasState.cpfsModal;
+  if (!m.cpfs?.length) { alert('Nenhum CPF pra higienizar'); return; }
+  const total = m.cpfs.length;
+  const ok = confirm(`Vou enviar ${total} CPFs pra higienização CLT em lote.\n\nIsso vai consultar todos os bancos pra cada CPF (PB/V8/UY3/JoinBank/C6).\n\nConfirma?`);
+  if (!ok) return;
+  // Manda pra higienização em lote — usa endpoint clt-fila com origem=lote
+  let enviados = 0, erros = 0;
+  for (const c of m.cpfs) {
+    try {
+      const r = await fetch('/api/clt-fila', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+        body: JSON.stringify({
+          action: 'iniciar',
+          cpf: c.cpf,
+          nome: c.nome,
+          origem: 'lote'
+        })
+      });
+      const d = await r.json();
+      if (d.success) enviados++; else erros++;
+    } catch { erros++; }
+    // throttle leve pra nao saturar
+    if (enviados % 20 === 0) await new Promise(r => setTimeout(r, 300));
+  }
+  alert(`✅ ${enviados} CPFs enviados pra higienização\n❌ ${erros} falhas\n\nAcompanhe em CLT > Higienização em Lote`);
+  cltFecharCpfsModal();
+}
+
+function renderCltEmpresasAprovadas() {
+  if (!cltEmpresasState._loaded) {
+    cltEmpresasState._loaded = true;
+    setTimeout(cltEmpresasCarregar, 0);
+  }
+  const f = cltEmpresasState.filtros;
+  let h = '<div style="max-width:1300px;margin:0 auto;padding:16px" class="fi">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:18px;flex-wrap:wrap;gap:12px">';
+  h += '<div><div style="font-size:22px;font-weight:800">🏆 CLT — Empresas Aprovadas</div>';
+  h += '<div style="font-size:12px;color:var(--t2);margin-top:4px">Empresas (CNPJs) que já tiveram pelo menos 1 aprovação CLT em algum banco. Use pra puxar outros CPFs da mesma empresa do CAGED 2024 — alta probabilidade de aprovação.</div></div>';
+  h += '<button class="btn btn-sm" onclick="cltEmpresasCarregar()">🔄 Atualizar</button>';
+  h += '</div>';
+
+  // Filtros
+  h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px;margin-bottom:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">';
+  h += `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase">Busca (nome ou CNPJ)</label><input class="form-input" placeholder="Ex: HUMMEL" value="${f.busca||''}" oninput="cltEmpresasSetFiltro('busca',this.value)"></div>`;
+  h += `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase">Banco que aprovou</label><select class="form-input" onchange="cltEmpresasSetFiltro('banco',this.value)">`;
+  h += `<option value="">Todos</option>`;
+  for (const [v,l] of [['handbank','Handbank · UY3'],['joinbank','JoinBank/QualiBanking'],['presencabank','PresençaBank']]) {
+    h += `<option value="${v}" ${f.banco===v?'selected':''}>${l}</option>`;
+  }
+  h += `</select></div>`;
+  h += `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase">UF</label><input class="form-input" placeholder="SP, MG..." maxlength="2" value="${f.uf||''}" oninput="cltEmpresasSetFiltro('uf',this.value.toUpperCase())"></div>`;
+  h += `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase">Ordenar por</label><select class="form-input" onchange="cltEmpresasSetFiltro('orderBy',this.value)">`;
+  for (const [v,l] of [['total_aprovacoes','Mais aprovações'],['ultima_aprovacao_em','Mais recentes'],['empregador_nome','Nome A-Z']]) {
+    h += `<option value="${v}" ${f.orderBy===v?'selected':''}>${l}</option>`;
+  }
+  h += `</select></div>`;
+  h += '</div>';
+
+  // Lista
+  if (cltEmpresasState.loading && cltEmpresasState.empresas.length === 0) {
+    h += '<div style="padding:60px;text-align:center;color:var(--t2)">⏳ Carregando empresas...</div></div>';
+    return h;
+  }
+  const lista = cltEmpresasState.empresas;
+  if (lista.length === 0) {
+    h += '<div style="padding:60px;text-align:center;color:var(--t3)">Nenhuma empresa aprovada encontrada com esses filtros.</div></div>';
+    return h;
+  }
+
+  h += '<div style="font-size:11px;color:var(--t3);margin-bottom:8px">📊 Mostrando ' + lista.length + ' empresa(s)</div>';
+  h += '<div style="display:grid;gap:10px">';
+  for (const e of lista) {
+    const cnpjFmt = (e.cnpj||'').replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+    const ultimaData = e.ultima_aprovacao_em ? new Date(e.ultima_aprovacao_em).toLocaleDateString('pt-BR') : '-';
+    h += '<div style="background:var(--card);border:1px solid var(--brd);border-left:4px solid var(--grn);border-radius:12px;padding:14px">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:10px">';
+    h += '<div style="flex:1;min-width:250px">';
+    h += `<div style="font-size:15px;font-weight:800">🏢 ${esc(e.empregador_nome || '(Nome não disponível)')}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">CNPJ ${cnpjFmt}${e.cidade_empresa?` · 📍 ${esc(e.cidade_empresa)}/${e.uf||'?'}`:''}${e.cnae?` · CNAE ${esc(e.cnae)}`:''}</div>`;
+    h += '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">';
+    for (const b of (e.bancos_aprovam || [])) {
+      const bancoLabels = { handbank: 'UY3', joinbank: 'QualiBanking', presencabank: 'PresençaBank', v8_qi: 'V8 QI', v8_celcoin: 'V8 Celcoin', c6: 'C6', mercantil: 'Mercantil' };
+      h += `<span class="pill pill-grn" style="font-size:10px" title="${b.total_aprovacoes||1} aprovação(ões) — última em ${b.ultima_aprovacao_em?new Date(b.ultima_aprovacao_em).toLocaleDateString('pt-BR'):'-'}">${esc(bancoLabels[b.banco] || b.banco)} · ${b.total_aprovacoes||1}</span>`;
+    }
+    h += '</div></div>';
+    h += '<div style="text-align:right">';
+    h += `<div style="font-size:24px;font-weight:900;color:var(--grn)">${e.total_aprovacoes}</div>`;
+    h += `<div style="font-size:10px;color:var(--t3);text-transform:uppercase">aprovações</div>`;
+    h += `<div style="font-size:10px;color:var(--t3);margin-top:4px">Última: ${ultimaData}</div>`;
+    if (e.cpfs_no_caged > 0) {
+      h += `<div style="margin-top:8px;font-size:11px;color:var(--cyan);font-weight:700">📊 ${e.cpfs_no_caged.toLocaleString('pt-BR')} CPFs no CAGED</div>`;
+    }
+    h += '</div></div>';
+    // Botão: ver/higienizar CPFs
+    if (e.cpfs_no_caged > 0) {
+      const nomeEsc = (e.empregador_nome||'').replace(/'/g,"\\'");
+      h += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--brd)">`;
+      h += `<button class="btn-acc btn-sm" onclick="cltVerCpfsDessaEmpresa('${e.cnpj}','${nomeEsc}')">🎯 Ver CPFs no CAGED dessa empresa (${e.cpfs_no_caged.toLocaleString('pt-BR')})</button>`;
+      h += `</div>`;
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // Modal de CPFs
+  const m = cltEmpresasState.cpfsModal;
+  if (m.open) {
+    h += '<div style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px" onclick="cltFecharCpfsModal()">';
+    h += '<div style="background:var(--card);border-radius:14px;max-width:900px;width:100%;max-height:90vh;overflow:auto;padding:20px" onclick="event.stopPropagation()">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:14px">';
+    h += `<div><div style="font-size:18px;font-weight:800">🏢 ${esc(m.nome || '')}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">CNPJ ${(m.cnpj||'').replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')}</div></div>`;
+    h += `<button class="btn btn-sm" onclick="cltFecharCpfsModal()">✕</button></div>`;
+    if (m.loading) {
+      h += '<div style="padding:60px;text-align:center;color:var(--t2)">⏳ Carregando CPFs do CAGED...</div>';
+    } else if (m.cpfs.length === 0) {
+      h += '<div style="padding:40px;text-align:center;color:var(--t3)">Nenhum CPF ativo encontrado no CAGED 2024 pra essa empresa.</div>';
+    } else {
+      h += `<div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">`;
+      h += `<div style="font-size:13px;color:var(--t2)">📊 <b>${m.cpfs.length.toLocaleString('pt-BR')}</b> CPFs ativos encontrados no CAGED 2024</div>`;
+      h += `<button class="btn-acc btn-sm" onclick="cltHigienizarCpfsEmpresa()">🚀 Higienizar todos no CLT (${m.cpfs.length})</button>`;
+      h += `</div>`;
+      // Tabela amostra
+      h += '<div style="max-height:50vh;overflow:auto;border:1px solid var(--brd);border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:12px">';
+      h += '<thead style="position:sticky;top:0;background:var(--card)"><tr style="border-bottom:1px solid var(--brd)">';
+      h += '<th style="text-align:left;padding:8px">CPF</th><th style="text-align:left;padding:8px">Nome</th><th style="text-align:left;padding:8px">Admissão</th><th style="text-align:left;padding:8px">CBO</th><th style="text-align:left;padding:8px">Cidade</th>';
+      h += '</tr></thead><tbody>';
+      for (const c of m.cpfs.slice(0, 200)) {
+        const cpfFmt = (c.cpf||'').replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+        const adm = c.data_admissao ? new Date(c.data_admissao).toLocaleDateString('pt-BR') : '-';
+        h += `<tr style="border-bottom:1px solid var(--brd)"><td style="padding:6px 8px;font-family:monospace">${cpfFmt}</td>`;
+        h += `<td style="padding:6px 8px">${esc((c.nome||'').substring(0,40))}</td>`;
+        h += `<td style="padding:6px 8px">${adm}</td>`;
+        h += `<td style="padding:6px 8px">${esc(c.cbo||'-')}</td>`;
+        h += `<td style="padding:6px 8px">${esc(c.cidade||'-')}/${c.uf||'-'}</td></tr>`;
+      }
+      h += '</tbody></table></div>';
+      if (m.cpfs.length > 200) {
+        h += `<div style="font-size:11px;color:var(--t3);margin-top:6px;text-align:center">Mostrando primeiros 200 de ${m.cpfs.length}. Higienização processa todos.</div>`;
+      }
+    }
+    h += '</div></div>';
+  }
+
+  h += '</div>';
+  return h;
+}
 
 function renderCltAnalise() {
   const f = cltAnaliseState.filtros;
@@ -10694,15 +10982,16 @@ function renderConsulta() {
     // ══ ENQUADRAMENTO NA NOVA REGRA (40% global, cartão opcional) ══
     {
       // BASE DE CÁLCULO INSS (exclui pensão alimentícia) — preferida em vez do valor bruto
-      const _baseCalc = parseFloat(String(ben.base_calculo || '').replace(/\./g, '').replace(',', '.')) || 0;
-      const _benefV   = parseFloat(String(ben.valor || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      // parseBR aceita tanto string pt-BR ("6.056,96") quanto number JS (6056.96).
+      const _baseCalc = parseBR(ben.base_calculo);
+      const _benefV   = parseBR(ben.valor);
       const _BASE     = _baseCalc > 0 ? _baseCalc : _benefV;
       // Parcelas EMPRÉSTIMO comprometidas (já vem do Multicorban como sum)
-      const _sumEmp = parseFloat(String(mrg.parcelas || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      const _sumEmp = parseBR(mrg.parcelas);
       // ATENÇÃO: mrg.rmc / mrg.rcc são MARGEM LIVRE DO CARTÃO (não comprometido).
       // Pra obter sumRmc COMPROMETIDA: teto_cartao(5% base) - margem_livre_rmc.
-      const _mrgRmcLivre = parseFloat(String(mrg.rmc || '0').replace(/\./g, '').replace(',', '.')) || 0;
-      const _mrgRccLivre = parseFloat(String(mrg.rcc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      const _mrgRmcLivre = parseBR(mrg.rmc);
+      const _mrgRccLivre = parseBR(mrg.rcc);
       const _tetoCartao = _BASE * 0.05;
       // Detecta se cliente TEM o cartão pra evitar dar "comprometido" inflado quando não tem cartão
       const _temRmc = !!(mrg.rmc != null && _mrgRmcLivre < _tetoCartao - 0.01) || (Array.isArray(r.cartoes) && r.cartoes.some(c=>(c.tipo||'').toUpperCase().includes('RMC')));
@@ -10713,9 +11002,9 @@ function renderConsulta() {
       const _contratosCalc = (r.contratos || []).map(ct => ({
         con: ct.contrato || '',
         cod: String(ct.banco_codigo || '').padStart(3, '0'),
-        par: parseFloat(String(ct.parcela || '0').replace(/\./g, '').replace(',', '.')) || 0,
-        sal: parseFloat(String(ct.saldo || ct.saldo_quitacao || '0').replace(/\./g, '').replace(',', '.')) || 0,
-        taxaOrig: parseFloat(String(ct.taxa || '0').replace(',', '.')) || 0
+        par: parseBR(ct.parcela),
+        sal: parseBR(ct.saldo || ct.saldo_quitacao),
+        taxaOrig: parseBR(ct.taxa)
       })).filter(c => c.par > 0);
       if (_BASE > 0) {
         const enq = calcEnquadramentoPlus(_BASE, _sumEmp, _sumRmc, _sumRcc, _contratosCalc);
@@ -10777,9 +11066,9 @@ function renderConsulta() {
 const MIN_MRG_EMP=50;        // margem minima R$ 50/mes pra considerar emprestimo novo
 const MIN_MRG_RMC_RCC=10;    // margem minima cartao R$ 10/mes
 let oportunidades=[];let totalOport=0;
-let mrgDisp=parseFloat(String(mrg.disponivel||'0').replace(/\./g,'').replace(',','.'))||0;
-let mrgRmcLivre=parseFloat(String(mrg.rmc||'0').replace(/\./g,'').replace(',','.'))||0;
-let mrgRccLivre=parseFloat(String(mrg.rcc||'0').replace(/\./g,'').replace(',','.'))||0;
+let mrgDisp=parseBR(mrg.disponivel);
+let mrgRmcLivre=parseBR(mrg.rmc);
+let mrgRccLivre=parseBR(mrg.rcc);
 
 // Emprestimo Novo — so se margem livre for util (>= R$50)
 if(mrgDisp>=MIN_MRG_EMP){
@@ -10812,7 +11101,7 @@ if(mrgDisp>=MIN_MRG_EMP&&!carts.length&&mrgRmcLivre===0&&mrgRccLivre===0){
 // Saque Complementar — quando ja tem cartao ativo COM margem
 if(carts.length){
   for(let cd of carts){
-    let mrgC=parseFloat(String(cd.margem||'0').replace(/\./g,'').replace(',','.'))||0;
+    let mrgC=parseBR(cd.margem);
     if(mrgC>=MIN_MRG_RMC_RCC){
       oportunidades.push({icon:'💳',tipo:'Saque '+((cd.tipo||'')+' '+(cd.banco||'')).trim(),cor:'var(--pur)',valor:mrgC,desc:'Cartão ativo com margem',cartTipo:'saque_complementar',cartBanco:cd.banco});
       totalOport+=mrgC;
@@ -10832,9 +11121,9 @@ let isInvCons=ESP_INV.includes(espN);
 // Anos de beneficio (DIB)
 let bYCons=null;if(b.dib||ben.dib){const d=b.dib||ben.dib;const by=cBY(d);if(by!==null)bYCons=by}
 if(r.contratos&&r.contratos.length){for(let ct of r.contratos){
-  let par=parseFloat(String(ct.parcela||'0').replace(/\./g,'').replace(',','.'))||0;
-  let sal=parseFloat(String(ct.saldo||ct.saldo_quitacao||'0').replace(/\./g,'').replace(',','.'))||0;
-  let taxa=parseFloat(String(ct.taxa||'0').replace(',','.'))||0;
+  let par=parseBR(ct.parcela);
+  let sal=parseBR(ct.saldo||ct.saldo_quitacao);
+  let taxa=parseBR(ct.taxa);
   let cod=String(ct.banco_codigo||ct.codigo||'').padStart(3,'0');
   let rest=parseInt(ct.prazo||ct.prazo_restante||'0')||0;
   let total=parseInt(ct.prazo_original||'0')||0;
@@ -11067,13 +11356,13 @@ function enquadImportarConsulta() {
   const r = (typeof consultaState !== 'undefined' && consultaState && consultaState.result) ? consultaState.result : null;
   if (!r) { alert('Nenhuma consulta unitária aberta. Vá em 🔍 Consulta Unitária e consulte um CPF antes.'); return; }
   const ben = r.beneficiario || {};
-  const benefVal = parseFloat(String(r.margem?.valor_beneficio || ben.valor_beneficio || '0').replace(/\./g, '').replace(',', '.')) || 0;
+  const benefVal = parseBR(r.margem?.valor_beneficio || ben.valor_beneficio || '0');
   enquadState.beneficio = benefVal;
   enquadState.contratos = [];
   for (const ct of (r.contratos || [])) {
-    const par = parseFloat(String(ct.parcela || '0').replace(/\./g, '').replace(',', '.')) || 0;
-    const sal = parseFloat(String(ct.saldo || ct.saldo_quitacao || '0').replace(/\./g, '').replace(',', '.')) || 0;
-    const tx = parseFloat(String(ct.taxa || '0').replace(',', '.')) || 0;
+    const par = parseBR(ct.parcela || '0');
+    const sal = parseBR(ct.saldo || ct.saldo_quitacao || '0');
+    const tx = parseBR(ct.taxa || '0');
     const total = parseInt(ct.prazo_original || '0') || 0;
     const rest = parseInt(ct.prazo || ct.prazo_restante || '0') || 0;
     if (par <= 0) continue;
@@ -11083,8 +11372,8 @@ function enquadImportarConsulta() {
     });
   }
   // Adiciona linhas RMC/RCC se a margem indicar reserva
-  const mrgRmc = parseFloat(String(r.margem?.rmc || '0').replace(/\./g, '').replace(',', '.')) || 0;
-  const mrgRcc = parseFloat(String(r.margem?.rcc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+  const mrgRmc = parseBR(r.margem?.rmc || '0');
+  const mrgRcc = parseBR(r.margem?.rcc || '0');
   if (mrgRmc > 0) enquadState.contratos.push({ banco: 'CARTÃO RMC', parcela: mrgRmc, saldo: 0, taxa: 0, prazoRest: 0, tipo: 'rmc' });
   if (mrgRcc > 0) enquadState.contratos.push({ banco: 'CARTÃO RCC', parcela: mrgRcc, saldo: 0, taxa: 0, prazoRest: 0, tipo: 'rcc' });
   enquadState.prefilledFromCpf = ben.cpf || ben.nome || 'consulta';
@@ -11859,7 +12148,8 @@ const MENU=[
     items:[
       {k:'cltConsulta',icon:'🔍',label:'Consulta Unitária'},
       {k:'cltCatalogo',icon:'📚',label:'Catálogo de Bancos'},
-      {k:'cltAnalise',icon:'🎯',label:'Análise de Cliente'}
+      {k:'cltAnalise',icon:'🎯',label:'Análise de Cliente'},
+      {k:'cltEmpresasAprovadas',icon:'🏆',label:'Empresas Aprovadas'}
     ],
     groups:[
       {group:'Análise em Lote',icon:'📊',items:[
@@ -12298,7 +12588,7 @@ try{renderJobsFloat()}catch{}
 if(!D){
   document.getElementById("headerActions").style.display="none";
   // Aba padrao = home se invalida
-  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltCatalogo","cltAnalise","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite","prefCatalogo","prefHolerite","fedCatalogo","fedHolerite"].includes(S.tab))S.tab="home";
+  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltCatalogo","cltAnalise","cltEmpresasAprovadas","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite","prefCatalogo","prefHolerite","fedCatalogo","fedHolerite"].includes(S.tab))S.tab="home";
   let content='';
   if(S.tab==="consulta")content=renderConsulta();
   else if(S.tab==="enquad")content=renderEnquadramento();
@@ -12310,7 +12600,12 @@ if(!D){
   else if(S.tab==="wppchat")content=renderWppChat();
   else if(S.tab==="wpp"&&isGes)content=renderWhatsApp();
   else if(S.tab==="gestao"&&isGes)content=renderGestao();
-  else if(S.tab==="admin"&&isAdm){content=renderAdmin();setTimeout(()=>{if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()},150)}
+  else if(S.tab==="admin"&&isAdm){
+    content=renderAdmin();
+    // Garante que cache de users/parceiros está atualizado (resolve cache vazio em sessão restaurada)
+    if(typeof loadUsersFromApi==='function'){loadUsersFromApi().then(()=>{const tc=document.getElementById('tabContent');if(tc&&S.tab==='admin')tc.innerHTML=renderAdmin();if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()})}
+    setTimeout(()=>{if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()},150);
+  }
   else if(S.tab==="gestaoGeral"&&isAdm)content=renderGestaoGeral();
   else if(S.tab==="cltConsulta")content=renderCltConsulta();
   else if(S.tab==="cltChats")content=renderCltChats();
@@ -12322,6 +12617,7 @@ if(!D){
   else if(S.tab==="cltPainel")content=renderCltPainel();
   else if(S.tab==="cltCatalogo")content=renderCltCatalogo();
   else if(S.tab==="cltAnalise")content=renderCltAnalise();
+  else if(S.tab==="cltEmpresasAprovadas")content=renderCltEmpresasAprovadas();
   else if(S.tab==="cltAdminMercantil"&&isGes)content=renderCltAdminMercantil();
   else if(S.tab==="govCatalogo")content=renderGovCatalogo();
   else if(S.tab==="govHolerite")content=renderGovHolerite();
@@ -12348,7 +12644,11 @@ if(!D){
   if(S.tab==="bases"){renderLanding(tabContent);return}
   let nSel=selected.size,nHig=[...selected].filter(c=>phoneCache[c]).length,nWpp=[...selected].filter(c=>wppSent.has(c)).length;
   let tcontent='';
-  if(S.tab==="admin"){tcontent=renderAdmin();setTimeout(()=>{if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()},150)}
+  if(S.tab==="admin"){
+    tcontent=renderAdmin();
+    if(typeof loadUsersFromApi==='function'){loadUsersFromApi().then(()=>{const tc=document.getElementById('tabContent');if(tc&&S.tab==='admin')tc.innerHTML=renderAdmin();if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()})}
+    setTimeout(()=>{if(typeof loadSofiaKnowledge==='function'&&document.getElementById('sofiaKnowledgeList'))loadSofiaKnowledge()},150);
+  }
   else if(S.tab==="consulta")tcontent=renderConsulta();
   else if(S.tab==="enquad")tcontent=renderEnquadramento();
   else if(S.tab==="enquadLote")tcontent=renderEnquadramentoLote();
@@ -12496,8 +12796,12 @@ if(!D){
         // Passa contratos pra calculadoria considerar redução via port/refin
         enqByCpf[cpf]=calcEnquadramentoPlus(benef,sumEmp,x.vRmc||0,x.vRcc||0,contratosCpf);
       }
+      // Meta-status ENQUADRA_40_OK = enquadra com NO MÁXIMO 1 operação
+      // (já enquadra OU cancelar 1 cartão OU port/refin de 1 parcela)
+      const ENQUADRA_40_OK_SET = new Set(['ENQUADRA','ENQUADRA_TROCAR_CARTAO','VIA_CANCELA_CARTAO','VIA_PORT_REDUCAO']);
       filtered=filtered.filter(r=>{
         const e=enqByCpf[r.cpf]||{status:''};
+        if(S.fEnquad==='ENQUADRA_40_OK')return ENQUADRA_40_OK_SET.has(e.status);
         return e.status===S.fEnquad;
       });
     }
@@ -12556,6 +12860,7 @@ if(!D){
         sel("Invalidez",S.fInv,"setFInv",[{v:"",l:"Todos"},{v:"sim",l:"Só invalidez"},{v:"nao",l:"Sem invalidez"}]),
         sel("Enquadramento Nova Regra",S.fEnquad,"setFEnquad",[
           {v:"",l:"Todos"},
+          {v:"ENQUADRA_40_OK",l:"🎯 Enquadra no 40% (até 1 operação)"},
           {v:"ENQUADRA",l:"✅ Já enquadra (40%)"},
           {v:"ENQUADRA_TROCAR_CARTAO",l:"✅ Cabe trocando cartão"},
           {v:"VIA_CANCELA_CARTAO",l:"💳 Cancelar 1 cartão resolve"},
