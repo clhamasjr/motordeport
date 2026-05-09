@@ -965,6 +965,22 @@ function calcEnquadramento(beneficio, sumEmp, sumRmc, sumRcc, opts) {
   return calcEnquadramentoPlus(beneficio, sumEmp, sumRmc, sumRcc, [], opts);
 }
 
+// Parser numérico universal: aceita number JS (6056.96), string pt-BR (6.056,96)
+// ou string sem formatação (6056.96). Resolve o bug de 6056.96 virar 605696.
+function parseBR(v) {
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number') return isFinite(v) ? v : 0;
+  const s = String(v).trim();
+  if (!s) return 0;
+  // Se tem vírgula, formato pt-BR (1.234,56) — pontos são separador de milhar
+  if (s.indexOf(',') >= 0) return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  // Sem vírgula: pode ser "6056.96" (decimal JS) ou "6056" inteiro
+  // Se tem mais de UM ponto, são milhares pt-BR sem decimal (ex: "1.234.567")
+  const dots = (s.match(/\./g) || []).length;
+  if (dots > 1) return parseFloat(s.replace(/\./g, '')) || 0;
+  return parseFloat(s) || 0;
+}
+
 // Versão COMPLETA: aceita lista de contratos pra calcular redução possível via port/refin
 function calcEnquadramentoPlus(beneficio, sumEmp, sumRmc, sumRcc, contratos, opts) {
   opts = opts || {};
@@ -2826,7 +2842,7 @@ function openSimulacao(cpf,nome,ben){
     <div><div style="font-size:10px;color:var(--t3)">BENEFÍCIO</div><div style="font-size:13px;font-family:monospace">${ben||'—'}</div></div>`;
   let dtNasc='',margem=0;
   let cr=consultaState.result;
-  if(cr){let b=cr.beneficiario||{};if(b.data_nascimento)dtNasc=b.data_nascimento;let mrg=cr.margem||{};margem=parseFloat(String(mrg.disponivel||'0').replace(/\./g,'').replace(',','.'))||0}
+  if(cr){let b=cr.beneficiario||{};if(b.data_nascimento)dtNasc=b.data_nascimento;let mrg=cr.margem||{};margem=parseBR(mrg.disponivel)}
   if(!dtNasc&&S.data&&S.data.analise){let cl=S.data.analise.find(a=>a.cpf===cpf);if(cl&&cl.dtNasc)dtNasc=cl.dtNasc}
   document.getElementById('simDtNasc').value=dtNasc;
   if(margem>0){document.getElementById('simParcela').value=margem.toFixed(2);document.getElementById('simValor').value=''}
@@ -2866,11 +2882,11 @@ function simTipoChanged(){
   else{document.getElementById('simValorWrap').style.display='';document.getElementById('simParcelaWrap').style.display=''}
   if(isPort&&consultaState.result&&consultaState.result.contratos){
     let cts=consultaState.result.contratos;
-    let best=cts.find(ct=>{let tx=parseFloat(String(ct.taxa||'0').replace(',','.'))||0;return tx>1.85});
+    let best=cts.find(ct=>{let tx=parseBR(ct.taxa);return tx>1.85});
     if(!best&&cts.length)best=cts[0];
     if(best){
-      let par=parseFloat(String(best.parcela||'0').replace(/\./g,'').replace(',','.'))||0;
-      let sal=parseFloat(String(best.saldo||best.saldo_quitacao||'0').replace(/\./g,'').replace(',','.'))||0;
+      let par=parseBR(best.parcela);
+      let sal=parseBR(best.saldo||best.saldo_quitacao);
       let prazo=parseInt(best.prazo||best.prazo_restante||'0')||0;
       let prazoOrig=parseInt(best.prazo_original||'84')||84;
       if(par>0)document.getElementById('simParcelaOrig').value=par.toFixed(2);
@@ -2880,8 +2896,8 @@ function simTipoChanged(){
       if(par>0)document.getElementById('simParcela').value=par.toFixed(2);
     }
   }
-  if(isRefin&&consultaState.result){let ben=consultaState.result.beneficio||{};let renda=parseFloat(String(ben.valor||'0').replace(/\./g,'').replace(',','.'))||0;if(renda>0)document.getElementById('simRenda').value=renda.toFixed(2)}
-  if(isCartao&&consultaState.result){let ben=consultaState.result.beneficio||{};let renda=parseFloat(String(ben.valor||'0').replace(/\./g,'').replace(',','.'))||0;if(renda>0)document.getElementById('simRendaCartao').value=renda.toFixed(2)}
+  if(isRefin&&consultaState.result){let ben=consultaState.result.beneficio||{};let renda=parseBR(ben.valor);if(renda>0)document.getElementById('simRenda').value=renda.toFixed(2)}
+  if(isCartao&&consultaState.result){let ben=consultaState.result.beneficio||{};let renda=parseBR(ben.valor);if(renda>0)document.getElementById('simRendaCartao').value=renda.toFixed(2)}
 }
 
 
@@ -3325,7 +3341,7 @@ function renderEsteira(){
     // "Valor" adaptativo: port usa saldo_devedor; demais usam valor_operacao
     let valor='—';
     if(item.tipo==='portabilidade')valor=item.saldo_devedor?'R$ '+item.saldo_devedor:'—';
-    else if(item.valor_operacao){const v=typeof item.valor_operacao==='number'?item.valor_operacao:parseFloat(String(item.valor_operacao).replace(/\./g,'').replace(',','.'))||0;valor=R$(v)}
+    else if(item.valor_operacao){const v=typeof item.valor_operacao==='number'?item.valor_operacao:parseBR(item.valor_operacao);valor=R$(v)}
     const troco=item.valor_troco?'R$ '+item.valor_troco:(item.tipo==='portabilidade'?'—':'');
     const af=item.codigo_af||item.url_formalizacao||'—';
 
@@ -10707,15 +10723,16 @@ function renderConsulta() {
     // ══ ENQUADRAMENTO NA NOVA REGRA (40% global, cartão opcional) ══
     {
       // BASE DE CÁLCULO INSS (exclui pensão alimentícia) — preferida em vez do valor bruto
-      const _baseCalc = parseFloat(String(ben.base_calculo || '').replace(/\./g, '').replace(',', '.')) || 0;
-      const _benefV   = parseFloat(String(ben.valor || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      // parseBR aceita tanto string pt-BR ("6.056,96") quanto number JS (6056.96).
+      const _baseCalc = parseBR(ben.base_calculo);
+      const _benefV   = parseBR(ben.valor);
       const _BASE     = _baseCalc > 0 ? _baseCalc : _benefV;
       // Parcelas EMPRÉSTIMO comprometidas (já vem do Multicorban como sum)
-      const _sumEmp = parseFloat(String(mrg.parcelas || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      const _sumEmp = parseBR(mrg.parcelas);
       // ATENÇÃO: mrg.rmc / mrg.rcc são MARGEM LIVRE DO CARTÃO (não comprometido).
       // Pra obter sumRmc COMPROMETIDA: teto_cartao(5% base) - margem_livre_rmc.
-      const _mrgRmcLivre = parseFloat(String(mrg.rmc || '0').replace(/\./g, '').replace(',', '.')) || 0;
-      const _mrgRccLivre = parseFloat(String(mrg.rcc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+      const _mrgRmcLivre = parseBR(mrg.rmc);
+      const _mrgRccLivre = parseBR(mrg.rcc);
       const _tetoCartao = _BASE * 0.05;
       // Detecta se cliente TEM o cartão pra evitar dar "comprometido" inflado quando não tem cartão
       const _temRmc = !!(mrg.rmc != null && _mrgRmcLivre < _tetoCartao - 0.01) || (Array.isArray(r.cartoes) && r.cartoes.some(c=>(c.tipo||'').toUpperCase().includes('RMC')));
@@ -10726,9 +10743,9 @@ function renderConsulta() {
       const _contratosCalc = (r.contratos || []).map(ct => ({
         con: ct.contrato || '',
         cod: String(ct.banco_codigo || '').padStart(3, '0'),
-        par: parseFloat(String(ct.parcela || '0').replace(/\./g, '').replace(',', '.')) || 0,
-        sal: parseFloat(String(ct.saldo || ct.saldo_quitacao || '0').replace(/\./g, '').replace(',', '.')) || 0,
-        taxaOrig: parseFloat(String(ct.taxa || '0').replace(',', '.')) || 0
+        par: parseBR(ct.parcela),
+        sal: parseBR(ct.saldo || ct.saldo_quitacao),
+        taxaOrig: parseBR(ct.taxa)
       })).filter(c => c.par > 0);
       if (_BASE > 0) {
         const enq = calcEnquadramentoPlus(_BASE, _sumEmp, _sumRmc, _sumRcc, _contratosCalc);
@@ -10790,9 +10807,9 @@ function renderConsulta() {
 const MIN_MRG_EMP=50;        // margem minima R$ 50/mes pra considerar emprestimo novo
 const MIN_MRG_RMC_RCC=10;    // margem minima cartao R$ 10/mes
 let oportunidades=[];let totalOport=0;
-let mrgDisp=parseFloat(String(mrg.disponivel||'0').replace(/\./g,'').replace(',','.'))||0;
-let mrgRmcLivre=parseFloat(String(mrg.rmc||'0').replace(/\./g,'').replace(',','.'))||0;
-let mrgRccLivre=parseFloat(String(mrg.rcc||'0').replace(/\./g,'').replace(',','.'))||0;
+let mrgDisp=parseBR(mrg.disponivel);
+let mrgRmcLivre=parseBR(mrg.rmc);
+let mrgRccLivre=parseBR(mrg.rcc);
 
 // Emprestimo Novo — so se margem livre for util (>= R$50)
 if(mrgDisp>=MIN_MRG_EMP){
@@ -10825,7 +10842,7 @@ if(mrgDisp>=MIN_MRG_EMP&&!carts.length&&mrgRmcLivre===0&&mrgRccLivre===0){
 // Saque Complementar — quando ja tem cartao ativo COM margem
 if(carts.length){
   for(let cd of carts){
-    let mrgC=parseFloat(String(cd.margem||'0').replace(/\./g,'').replace(',','.'))||0;
+    let mrgC=parseBR(cd.margem);
     if(mrgC>=MIN_MRG_RMC_RCC){
       oportunidades.push({icon:'💳',tipo:'Saque '+((cd.tipo||'')+' '+(cd.banco||'')).trim(),cor:'var(--pur)',valor:mrgC,desc:'Cartão ativo com margem',cartTipo:'saque_complementar',cartBanco:cd.banco});
       totalOport+=mrgC;
@@ -10845,9 +10862,9 @@ let isInvCons=ESP_INV.includes(espN);
 // Anos de beneficio (DIB)
 let bYCons=null;if(b.dib||ben.dib){const d=b.dib||ben.dib;const by=cBY(d);if(by!==null)bYCons=by}
 if(r.contratos&&r.contratos.length){for(let ct of r.contratos){
-  let par=parseFloat(String(ct.parcela||'0').replace(/\./g,'').replace(',','.'))||0;
-  let sal=parseFloat(String(ct.saldo||ct.saldo_quitacao||'0').replace(/\./g,'').replace(',','.'))||0;
-  let taxa=parseFloat(String(ct.taxa||'0').replace(',','.'))||0;
+  let par=parseBR(ct.parcela);
+  let sal=parseBR(ct.saldo||ct.saldo_quitacao);
+  let taxa=parseBR(ct.taxa);
   let cod=String(ct.banco_codigo||ct.codigo||'').padStart(3,'0');
   let rest=parseInt(ct.prazo||ct.prazo_restante||'0')||0;
   let total=parseInt(ct.prazo_original||'0')||0;
@@ -11080,13 +11097,13 @@ function enquadImportarConsulta() {
   const r = (typeof consultaState !== 'undefined' && consultaState && consultaState.result) ? consultaState.result : null;
   if (!r) { alert('Nenhuma consulta unitária aberta. Vá em 🔍 Consulta Unitária e consulte um CPF antes.'); return; }
   const ben = r.beneficiario || {};
-  const benefVal = parseFloat(String(r.margem?.valor_beneficio || ben.valor_beneficio || '0').replace(/\./g, '').replace(',', '.')) || 0;
+  const benefVal = parseBR(r.margem?.valor_beneficio || ben.valor_beneficio || '0');
   enquadState.beneficio = benefVal;
   enquadState.contratos = [];
   for (const ct of (r.contratos || [])) {
-    const par = parseFloat(String(ct.parcela || '0').replace(/\./g, '').replace(',', '.')) || 0;
-    const sal = parseFloat(String(ct.saldo || ct.saldo_quitacao || '0').replace(/\./g, '').replace(',', '.')) || 0;
-    const tx = parseFloat(String(ct.taxa || '0').replace(',', '.')) || 0;
+    const par = parseBR(ct.parcela || '0');
+    const sal = parseBR(ct.saldo || ct.saldo_quitacao || '0');
+    const tx = parseBR(ct.taxa || '0');
     const total = parseInt(ct.prazo_original || '0') || 0;
     const rest = parseInt(ct.prazo || ct.prazo_restante || '0') || 0;
     if (par <= 0) continue;
@@ -11096,8 +11113,8 @@ function enquadImportarConsulta() {
     });
   }
   // Adiciona linhas RMC/RCC se a margem indicar reserva
-  const mrgRmc = parseFloat(String(r.margem?.rmc || '0').replace(/\./g, '').replace(',', '.')) || 0;
-  const mrgRcc = parseFloat(String(r.margem?.rcc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+  const mrgRmc = parseBR(r.margem?.rmc || '0');
+  const mrgRcc = parseBR(r.margem?.rcc || '0');
   if (mrgRmc > 0) enquadState.contratos.push({ banco: 'CARTÃO RMC', parcela: mrgRmc, saldo: 0, taxa: 0, prazoRest: 0, tipo: 'rmc' });
   if (mrgRcc > 0) enquadState.contratos.push({ banco: 'CARTÃO RCC', parcela: mrgRcc, saldo: 0, taxa: 0, prazoRest: 0, tipo: 'rcc' });
   enquadState.prefilledFromCpf = ben.cpf || ben.nome || 'consulta';
