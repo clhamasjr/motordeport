@@ -27,12 +27,32 @@ async function runSql(sql) {
 }
 
 // Busca consultas no periodo (ultimas N consultas, ate 500)
-async function fetchConsultas(filtros = {}) {
+// Aplica isolamento multi-tenant:
+//  - admin                             → ve tudo
+//  - gestor SEM parceiro_id (casa)     → ve tudo
+//  - gestor COM parceiro_id (hospedado)→ ve so do proprio parceiro
+//  - operador                          → ve so as proprias consultas
+async function fetchConsultas(filtros = {}, user = {}) {
   const url = SUPA_URL();
   const key = SUPA_KEY();
-  let query = `${url}/rest/v1/clt_consultas_fila?select=id,cpf,nome_manual,status_geral,bancos,cliente,vinculo,ofertas_count,iniciado_em,concluido_em,criada_por_user_id,criada_por_nome&order=iniciado_em.desc&limit=500`;
+  let query = `${url}/rest/v1/clt_consultas_fila?select=id,cpf,nome_manual,status_geral,bancos,cliente,vinculo,ofertas_count,iniciado_em,concluido_em,criada_por_user_id,criada_por_nome,parceiro_id&order=iniciado_em.desc&limit=500`;
   if (filtros.desdeISO) query += `&iniciado_em=gte.${encodeURIComponent(filtros.desdeISO)}`;
+
+  // Filtro de isolamento por role
+  const role = user.role || 'operador';
+  if (role === 'admin' || (role === 'gestor' && !user.parceiro_id)) {
+    // admin/gestor-da-casa: sem filtro adicional
+  } else if (role === 'gestor' && user.parceiro_id) {
+    // gestor de parceiro hospedado: filtra por parceiro
+    query += `&parceiro_id=eq.${user.parceiro_id}`;
+  } else {
+    // operador (ou qualquer outro role): so as proprias consultas
+    query += `&criada_por_user_id=eq.${user.id || 0}`;
+  }
+
+  // Filtro adicional opcional (admin/gestor pode escolher ver de 1 user especifico)
   if (filtros.userId) query += `&criada_por_user_id=eq.${filtros.userId}`;
+
   const r = await fetch(query, { headers: { apikey: key, Authorization: `Bearer ${key}` }});
   if (!r.ok) return [];
   return await r.json();
@@ -78,7 +98,7 @@ export default async function handler(req) {
       desdeISO = d.toISOString();
     }
 
-    const consultas = await fetchConsultas({ desdeISO });
+    const consultas = await fetchConsultas({ desdeISO }, user);
 
     // Agregacoes
     const total = consultas.length;
@@ -138,7 +158,7 @@ export default async function handler(req) {
     else if (periodo === 'semana') { const d = new Date(agora); d.setDate(d.getDate() - 7); desdeISO = d.toISOString(); }
     else { const d = new Date(agora); d.setDate(d.getDate() - 30); desdeISO = d.toISOString(); }
 
-    const consultas = await fetchConsultas({ desdeISO, userId });
+    const consultas = await fetchConsultas({ desdeISO, userId }, user);
     const lista = consultas.map(c => ({
       id: c.id,
       cpf: c.cpf,

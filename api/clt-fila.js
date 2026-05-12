@@ -875,7 +875,8 @@ export default async function handler(req) {
       vinculo: vinculoInicial, // pre-populado do CAGED se disponivel
       iniciado_em: new Date().toISOString(),
       criada_por_user_id: user?.id || null,
-      criada_por_nome: criadaPorNome
+      criada_por_nome: criadaPorNome,
+      parceiro_id: user?.parceiro_id || null // isolamento multi-tenant
     });
     if (error) return jsonError('Erro criando fila: ' + error, 500, req);
 

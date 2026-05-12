@@ -81,10 +81,10 @@ export async function verifySession(req) {
 
   if (error || !data) return null;
 
-  // Buscar usuario
+  // Buscar usuario (inclui parceiro_id pra isolamento multi-tenant)
   const { data: user, error: userErr } = await dbSelect('users', {
     filters: { id: data.user_id, active: true },
-    select: 'id,username,name,role',
+    select: 'id,username,name,role,parceiro_id,nome_vendedor,nome_parceiro',
     single: true
   });
 
