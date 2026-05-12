@@ -1313,11 +1313,86 @@ function processar(data){
   let mapaArr=ORDEM.map(b=>mapa[b]||{banco:b,n:0,total:0,vcTotal:0}).filter(m=>m.n>0).map(m=>({...m,med:m.n?m.total/m.n:0,vcMed:m.n?m.vcTotal/m.n:0}));
   // taxaDist considera todas as taxas de todos os destinos (empilhadas)
   let taxaDist={};for(let e of elegiveis){for(let d of(e.destinos||[])){let k=String(d.taxa);taxaDist[k]=(taxaDist[k]||0)+1}}
-  return{analise,elegiveis,mapaArr,rmcRcc:rmcAll,taxaDist}
+
+  // ══════ ELEGIBILIDADE INTELIGENTE (nova regra) ══════
+  // Marca cada registro com:
+  //   compPct       — % de comprometimento do cliente (sumEmp + sumRmc + sumRcc) / benef
+  //   compStatus    — 'dentro_40' | 'dentro_45' | 'fora_45'
+  //   resolveExc    — true se ESTE contrato reduz a parcela o suficiente pra trazer cliente pra ≤ 45%
+  //   elegRealOk    — true se cliente é elegível pela nova regra (dentro 45 OU 1 contrato resolve)
+  // Critério: cliente FORA do 45% precisa de pelo menos UM contrato que (a) tem oportunidade no motor (troco>0),
+  // (b) reduz parcela em valor ≥ excedente. O troco mínimo já foi respeitado pelo tryBank.
+  const rmcByCpf={};for(const r of rmcAll)rmcByCpf[r.cpf]=r;
+  const sumEmpByCpf={};
+  for(const a of analise){if(!sumEmpByCpf[a.cpf])sumEmpByCpf[a.cpf]=0;sumEmpByCpf[a.cpf]+=(a.par||0)}
+  const compByCpf={};
+  for(const cpf of new Set(analise.map(x=>x.cpf))){
+    const x=rmcByCpf[cpf]||{};
+    const sumEmp=sumEmpByCpf[cpf]||0;
+    const vRmc=x.vRmc||0;
+    const vRcc=x.vRcc||0;
+    const benef=x.valorBeneficio||(sumEmp>0?sumEmp/0.35:0);
+    if(!benef){compByCpf[cpf]={compPct:0,compStatus:'sem_dados',excedente45:0,benef:0,sumEmp,vRmc,vRcc};continue}
+    const total=sumEmp+vRmc+vRcc;
+    const pct=total/benef*100;
+    const teto45=benef*0.45; // 40% emp + 5% cartao opcional
+    const teto40=benef*0.40;
+    const excedente45=Math.max(0,total-teto45);
+    let st='dentro_40';
+    if(total>teto45)st='fora_45';
+    else if(total>teto40)st='dentro_45';
+    compByCpf[cpf]={compPct:pct,compStatus:st,excedente45,benef,teto40,teto45,sumEmp,vRmc,vRcc,total};
+  }
+  // Pra cada contrato em analise, marca compPct/compStatus e resolveExc
+  for(const reg of analise){
+    const c=compByCpf[reg.cpf];
+    if(!c){reg.compPct=0;reg.compStatus='sem_dados';reg.resolveExc=false;reg.elegRealOk=false;continue}
+    reg.compPct=Math.round(c.compPct*10)/10;
+    reg.compStatus=c.compStatus;
+    // resolveExc: este contrato, se portado, reduz parcela em ≥ excedente45?
+    // Reduzir = parcela atual − parcela nova (saldo * coef_destino com prazo 108m a 1.50%)
+    let reduz=0;
+    if(reg.ok&&reg.sal>0&&reg.par>0){
+      const rcalc=calcReducaoPort({par:reg.par,sal:reg.sal},108);
+      if(rcalc&&rcalc.reducao>0)reduz=rcalc.reducao;
+    }
+    reg.reducaoEstim=Math.round(reduz*100)/100;
+    if(c.compStatus==='fora_45'){
+      reg.resolveExc=reg.ok&&reduz>=c.excedente45-0.01;
+    }else{
+      reg.resolveExc=false; // não aplicável (já dentro)
+    }
+    // Elegibilidade real:
+    // - dentro_40: elegível incondicional (mesmo sem contrato c/ troco — pode ser empréstimo novo)
+    // - dentro_45: elegível se este contrato tem oportunidade (reg.ok)
+    // - fora_45: elegível somente se este contrato resolve sozinho
+    if(c.compStatus==='dentro_40')reg.elegRealOk=true;
+    else if(c.compStatus==='dentro_45')reg.elegRealOk=!!reg.ok;
+    else if(c.compStatus==='fora_45')reg.elegRealOk=!!reg.resolveExc;
+    else reg.elegRealOk=!!reg.ok; // sem_dados → comportamento antigo
+  }
+  // Aplica o mesmo enriquecimento em elegiveis (que são referência aos mesmos objetos de analise)
+  // — já foram tagged acima porque é o mesmo reg.
+  // CPFs cujo cliente é elegível mesmo SEM contrato (dentro_40 sem nenhum contrato portável)
+  const elegCpfs=new Set(elegiveis.map(e=>e.cpf));
+  for(const cpf of Object.keys(compByCpf)){
+    if(compByCpf[cpf].compStatus==='dentro_40'&&!elegCpfs.has(cpf)){
+      // Cliente dentro do 40% sem contrato portável — ainda é elegível pra empréstimo novo.
+      // Cria um registro sintético pra aparecer nos elegíveis com flag _semContrato.
+      const c=compByCpf[cpf];
+      const ana=analise.find(a=>a.cpf===cpf);
+      if(ana){
+        const synth={...ana,_semContrato:true,dest:'-',troco:0,vc:0,taxa:'-',ok:false,destinos:[],
+          compPct:Math.round(c.compPct*10)/10,compStatus:c.compStatus,elegRealOk:true,resolveExc:false,reducaoEstim:0};
+        elegiveis.push(synth);
+      }
+    }
+  }
+  return{analise,elegiveis,mapaArr,rmcRcc:rmcAll,taxaDist,compByCpf}
 }
 
 // ══════ STATE ══════
-let S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel",crmFilter:"",crmQ:"",fTaxa:"",fTrocoMin:0,fTrocoMax:0,fBanco:"",fMargemMin:0,fMargemMax:0,fMargemPctMin:0,fMargemPctMax:0,fCartao:"",fMargemEmpMin:0,fMargemEmpMax:0,fIdadeMin:0,fIdadeMax:0,f1p:"",fInv:"",fVCmin:0,fVCmax:0,fParMin:0,fParMax:0,fSalMin:0,fSalMax:0,fPagasMin:0,fPagasMax:0,fEnquad:""};
+let S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel",crmFilter:"",crmQ:"",fTaxa:"",fTrocoMin:0,fTrocoMax:0,fBanco:"",fMargemMin:0,fMargemMax:0,fMargemPctMin:0,fMargemPctMax:0,fCartao:"",fMargemEmpMin:0,fMargemEmpMax:0,fIdadeMin:0,fIdadeMax:0,f1p:"",fInv:"",fVCmin:0,fVCmax:0,fParMin:0,fParMax:0,fSalMin:0,fSalMax:0,fPagasMin:0,fPagasMax:0,fEnquad:"",fElegReal:"nova"};
 // Setters de filtros dos Elegiveis
 function setFBanco(v){S.fBanco=v||"";S.pg=0;renderApp()}
 function setFTaxa(v){S.fTaxa=v||"";S.pg=0;renderApp()}
@@ -1338,6 +1413,7 @@ function setFIdadeMax(v){S.fIdadeMax=_pI(v);S.pg=0;renderApp()}
 function setF1p(v){S.f1p=v||"";S.pg=0;renderApp()}
 function setFInv(v){S.fInv=v||"";S.pg=0;renderApp()}
 function setFEnquad(v){S.fEnquad=v||"";S.pg=0;renderApp()}
+function setFElegReal(v){S.fElegReal=v||"";S.pg=0;renderApp()}
 function setFVCmin(v){S.fVCmin=_pN(v);S.pg=0;renderApp()}
 function setFVCmax(v){S.fVCmax=_pN(v);S.pg=0;renderApp()}
 function setFParMin(v){S.fParMin=_pN(v);S.pg=0;renderApp()}
@@ -1346,7 +1422,7 @@ function setFSalMin(v){S.fSalMin=_pN(v);S.pg=0;renderApp()}
 function setFSalMax(v){S.fSalMax=_pN(v);S.pg=0;renderApp()}
 function setFPagasMin(v){S.fPagasMin=_pI(v);S.pg=0;renderApp()}
 function setFPagasMax(v){S.fPagasMax=_pI(v);S.pg=0;renderApp()}
-function limparFiltrosEleg(){S.fBanco="";S.fTaxa="";S.fTrocoMin=0;S.fTrocoMax=0;S.fMargemMin=0;S.fMargemMax=0;S.fMargemPctMin=0;S.fMargemPctMax=0;S.fMargemEmpMin=0;S.fMargemEmpMax=0;S.fCartao="";S.fIdadeMin=0;S.fIdadeMax=0;S.f1p="";S.fInv="";S.fVCmin=0;S.fVCmax=0;S.fParMin=0;S.fParMax=0;S.fSalMin=0;S.fSalMax=0;S.fPagasMin=0;S.fPagasMax=0;S.fEnquad="";S.q="";S.pg=0;renderApp()}
+function limparFiltrosEleg(){S.fBanco="";S.fTaxa="";S.fTrocoMin=0;S.fTrocoMax=0;S.fMargemMin=0;S.fMargemMax=0;S.fMargemPctMin=0;S.fMargemPctMax=0;S.fMargemEmpMin=0;S.fMargemEmpMax=0;S.fCartao="";S.fIdadeMin=0;S.fIdadeMax=0;S.f1p="";S.fInv="";S.fVCmin=0;S.fVCmax=0;S.fParMin=0;S.fParMax=0;S.fSalMin=0;S.fSalMax=0;S.fPagasMin=0;S.fPagasMax=0;S.fEnquad="";S.fElegReal="nova";S.q="";S.pg=0;renderApp()}
 // Selecionar TODOS os clientes do filtro atual (nao so da pagina)
 function selAllFiltrados(){
   if(!window._lastFiltEleg||!window._lastFiltEleg.length){alert("Nenhum resultado no filtro atual");return}
@@ -12784,6 +12860,11 @@ if(!D){
     else if(S.f1p==="nao")filtered=filtered.filter(r=>!r.is1p);
     if(S.fInv==="sim")filtered=filtered.filter(r=>!!r.isInv);
     else if(S.fInv==="nao")filtered=filtered.filter(r=>!r.isInv);
+    // ── NOVA REGRA DE ELEGIBILIDADE (motor) ──
+    // 'nova'  = aplica a regra: dentro de 45% OU 1 contrato resolve excedente (default)
+    // 'antiga'= mostra tudo que tem oportunidade (comportamento histórico)
+    // ''      = sem filtro
+    if(S.fElegReal==='nova')filtered=filtered.filter(r=>r.elegRealOk===true);
     // Filtro por STATUS de ENQUADRAMENTO (nova regra 40% global) — calculadoria INTELIGENTE
     if(S.fEnquad){
       const enqByCpf={};
@@ -12815,7 +12896,7 @@ if(!D){
     let cCart=D.elegiveis.filter(e=>{let r=rmcMap[e.cpf];return r&&!r.temCartao&&r.mrgCart>0}).length;
     // Contadores por banco (da expansao bruta)
     let bancoCount={};for(const e of expand)bancoCount[e.dest]=(bancoCount[e.dest]||0)+1;
-    const filtroAtivo=!!(S.fBanco||S.fTaxa||S.fTrocoMin>0||S.fTrocoMax>0||S.fVCmin>0||S.fVCmax>0||S.fParMin>0||S.fParMax>0||S.fSalMin>0||S.fSalMax>0||S.fPagasMin>0||S.fPagasMax>0||S.fMargemMin>0||S.fMargemMax>0||S.fMargemPctMin>0||S.fMargemPctMax>0||S.fMargemEmpMin>0||S.fMargemEmpMax>0||S.fCartao||S.fIdadeMin>0||S.fIdadeMax>0||S.f1p||S.fInv||S.fEnquad||S.q);
+    const filtroAtivo=!!(S.fBanco||S.fTaxa||S.fTrocoMin>0||S.fTrocoMax>0||S.fVCmin>0||S.fVCmax>0||S.fParMin>0||S.fParMax>0||S.fSalMin>0||S.fSalMax>0||S.fPagasMin>0||S.fPagasMax>0||S.fMargemMin>0||S.fMargemMax>0||S.fMargemPctMin>0||S.fMargemPctMax>0||S.fMargemEmpMin>0||S.fMargemEmpMax>0||S.fCartao||S.fIdadeMin>0||S.fIdadeMax>0||S.f1p||S.fInv||S.fEnquad||S.fElegReal&&S.fElegReal!=='nova'||S.q);
     html+=`<div class="search-bar">
       <input type="text" placeholder="Buscar nome/CPF/contrato..." value="${esc(S.q)}" oninput="setQ(this.value)" style="min-width:180px">
       <div style="display:flex;gap:4px;align-items:center;background:var(--card);border:1px solid var(--brd);border-radius:6px;padding:3px">
@@ -12871,6 +12952,13 @@ if(!D){
           {v:"INVIAVEL",l:"⚠ Inviável (excedente alto)"}
         ])
       ].join("");
+      // Toggle Elegibilidade real (regra nova do dono): dentro 45% OU 1 contrato resolve
+      const elegRealBtn=(v,lbl,desc)=>{
+        const ativo=S.fElegReal===v;
+        const c=ativo?'var(--grn)':'var(--t3)';
+        const bg=ativo?'rgba(34,197,94,.12)':'transparent';
+        return `<button class="btn btn-sm" onclick="setFElegReal('${v}')" title="${desc}" style="border-color:${c};color:${c};background:${bg};padding:7px 12px;font-size:11px;font-weight:700">${lbl}</button>`;
+      };
       return `<div style="background:linear-gradient(135deg,rgba(236,72,153,.06),rgba(59,130,246,.03));padding:14px;border-radius:12px;border:1px solid var(--pnk);margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap">
           <span style="font-size:13px;color:var(--pnk);font-weight:800;letter-spacing:.5px">🎯 FILTRAR RESULTADOS</span>
@@ -12878,6 +12966,16 @@ if(!D){
             ${filtroAtivo?`<button class="btn" style="border:1px solid var(--red);color:var(--red);padding:6px 12px;font-size:11px;font-weight:700" onclick="limparFiltrosEleg()">✕ Limpar filtros</button>`:""}
             <span style="font-size:11px;color:var(--t2);background:var(--bg);padding:6px 10px;border-radius:6px;border:1px solid var(--brd);cursor:pointer" onclick="selAllFiltrados()" title="Clique pra selecionar todos">📊 ${N(filtered.length)} linhas • <b style="color:var(--acc)">${N(nCli)} clientes</b> • ${N(nCont)} contratos</span>
             <button class="btn btn-grn" style="padding:7px 14px;font-size:12px;font-weight:800" onclick="selAllFiltrados()" title="Adiciona à seleção TODOS os ${nCli} clientes do filtro atual">✓ Selecionar ${N(nCli)} clientes</button>
+          </div>
+        </div>
+        <div style="background:rgba(34,197,94,.05);border:1px solid rgba(34,197,94,.25);border-radius:8px;padding:10px 12px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:220px">
+            <div style="font-size:11px;color:var(--grn);font-weight:800;letter-spacing:.5px">🎯 ELEGIBILIDADE — NOVA REGRA</div>
+            <div style="font-size:10px;color:var(--t3);margin-top:2px">Dentro do 40% = elegível. Em 45% com 1 port que reduz = elegível. Acima de 45% sem solução = excluído.</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${elegRealBtn('nova','🎯 Nova regra (45% + 1 op)','Cliente até 45% OU com 1 contrato refinanciável que reduz o excedente, respeitando troco mínimo')}
+            ${elegRealBtn('','📋 Todos (sem filtro)','Mostra todos os contratos com qualquer oportunidade no motor')}
           </div>
         </div>
         <div style="display:flex;gap:12px;flex-wrap:wrap">
