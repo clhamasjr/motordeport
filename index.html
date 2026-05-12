@@ -982,11 +982,17 @@ function parseBR(v) {
 }
 
 // Versão COMPLETA: aceita lista de contratos pra calcular redução possível via port/refin
+// REGRA ATUAL DO INSS (hoje, 2026-05-09):
+//   - Empréstimo: ≤ 35% do benefício (vira 40% quando a nova regra entrar em vigor)
+//   - RMC: ≤ 5%
+//   - RCC: ≤ 5%
+//   - Total máximo: 45%
+// Estratégia única de enquadramento: refin/port (NÃO cancelar cartão).
 function calcEnquadramentoPlus(beneficio, sumEmp, sumRmc, sumRcc, contratos, opts) {
   opts = opts || {};
   const tetoEmp35 = beneficio * 0.35;
   const tetoCartao = beneficio * 0.05;
-  const tetoGlobal = beneficio * 0.40;
+  const tetoGlobal = beneficio * 0.45; // 35% emp + 5% RMC + 5% RCC = 45%
   const sumTotal = sumEmp + sumRmc + sumRcc;
   const excedente = Math.max(0, sumTotal - tetoGlobal);
 
@@ -1314,14 +1320,14 @@ function processar(data){
   // taxaDist considera todas as taxas de todos os destinos (empilhadas)
   let taxaDist={};for(let e of elegiveis){for(let d of(e.destinos||[])){let k=String(d.taxa);taxaDist[k]=(taxaDist[k]||0)+1}}
 
-  // ══════ ELEGIBILIDADE INTELIGENTE (nova regra) ══════
+  // ══════ ELEGIBILIDADE INTELIGENTE (regra HOJE: emp 35% + RMC 5% + RCC 5% = 45%) ══════
   // Marca cada registro com:
   //   compPct       — % de comprometimento do cliente (sumEmp + sumRmc + sumRcc) / benef
-  //   compStatus    — 'dentro_40' | 'dentro_45' | 'fora_45'
-  //   resolveExc    — true se ESTE contrato reduz a parcela o suficiente pra trazer cliente pra ≤ 45%
-  //   elegRealOk    — true se cliente é elegível pela nova regra (dentro 45 OU 1 contrato resolve)
-  // Critério: cliente FORA do 45% precisa de pelo menos UM contrato que (a) tem oportunidade no motor (troco>0),
-  // (b) reduz parcela em valor ≥ excedente. O troco mínimo já foi respeitado pelo tryBank.
+  //   compStatus    — 'dentro_regra' | 'fora_regra_resolvivel' | 'fora_regra_inviavel' | 'sem_dados'
+  //   resolveExc    — true se ESTE contrato reduz parcela em ≥ excedente (resolve sozinho)
+  //   elegRealOk    — true se cliente é elegível (dentro de 45% OU 1 port resolve)
+  //   reducaoEstim  — estimativa de redução de parcela via port 108m a 1.50%
+  // Estratégia ÚNICA pra resolver excedente: refin/port (sem cancelar cartão).
   const rmcByCpf={};for(const r of rmcAll)rmcByCpf[r.cpf]=r;
   const sumEmpByCpf={};
   for(const a of analise){if(!sumEmpByCpf[a.cpf])sumEmpByCpf[a.cpf]=0;sumEmpByCpf[a.cpf]+=(a.par||0)}
@@ -1331,59 +1337,59 @@ function processar(data){
     const sumEmp=sumEmpByCpf[cpf]||0;
     const vRmc=x.vRmc||0;
     const vRcc=x.vRcc||0;
+    // Quando não temos valor de benefício na planilha, deriva via teto atual de 35% (regra HOJE)
     const benef=x.valorBeneficio||(sumEmp>0?sumEmp/0.35:0);
-    if(!benef){compByCpf[cpf]={compPct:0,compStatus:'sem_dados',excedente45:0,benef:0,sumEmp,vRmc,vRcc};continue}
+    if(!benef){compByCpf[cpf]={compPct:0,compStatus:'sem_dados',excedente:0,benef:0,sumEmp,vRmc,vRcc};continue}
     const total=sumEmp+vRmc+vRcc;
     const pct=total/benef*100;
-    const teto45=benef*0.45; // 40% emp + 5% cartao opcional
-    const teto40=benef*0.40;
-    const excedente45=Math.max(0,total-teto45);
-    let st='dentro_40';
-    if(total>teto45)st='fora_45';
-    else if(total>teto40)st='dentro_45';
-    compByCpf[cpf]={compPct:pct,compStatus:st,excedente45,benef,teto40,teto45,sumEmp,vRmc,vRcc,total};
+    const teto45=benef*0.45; // 35% emp + 5% RMC + 5% RCC = 45% total
+    const excedente=Math.max(0,total-teto45);
+    compByCpf[cpf]={compPct:pct,compStatus:total<=teto45?'dentro_regra':'fora_regra_pendente',excedente,benef,teto45,sumEmp,vRmc,vRcc,total};
   }
   // Pra cada contrato em analise, marca compPct/compStatus e resolveExc
   for(const reg of analise){
     const c=compByCpf[reg.cpf];
-    if(!c){reg.compPct=0;reg.compStatus='sem_dados';reg.resolveExc=false;reg.elegRealOk=false;continue}
+    if(!c){reg.compPct=0;reg.compStatus='sem_dados';reg.resolveExc=false;reg.elegRealOk=false;reg.reducaoEstim=0;continue}
     reg.compPct=Math.round(c.compPct*10)/10;
-    reg.compStatus=c.compStatus;
-    // resolveExc: este contrato, se portado, reduz parcela em ≥ excedente45?
-    // Reduzir = parcela atual − parcela nova (saldo * coef_destino com prazo 108m a 1.50%)
+    // Estimativa de redução da parcela via port 108m @ 1.50%
     let reduz=0;
     if(reg.ok&&reg.sal>0&&reg.par>0){
       const rcalc=calcReducaoPort({par:reg.par,sal:reg.sal},108);
       if(rcalc&&rcalc.reducao>0)reduz=rcalc.reducao;
     }
     reg.reducaoEstim=Math.round(reduz*100)/100;
-    if(c.compStatus==='fora_45'){
-      reg.resolveExc=reg.ok&&reduz>=c.excedente45-0.01;
-    }else{
-      reg.resolveExc=false; // não aplicável (já dentro)
+    if(c.compStatus==='dentro_regra'){
+      reg.compStatus='dentro_regra';
+      reg.resolveExc=false; // não aplicável
+      reg.elegRealOk=true;  // cliente dentro de 45% — sempre elegível
+    } else if(c.compStatus==='fora_regra_pendente'){
+      // Cliente extrapolou 45%. Só fica elegível se ESTE contrato sozinho resolver.
+      reg.resolveExc=reg.ok&&reduz>=c.excedente-0.01;
+      reg.compStatus=reg.resolveExc?'fora_regra_resolvivel':'fora_regra_inviavel';
+      reg.elegRealOk=!!reg.resolveExc;
+    } else {
+      reg.compStatus='sem_dados';
+      reg.resolveExc=false;
+      reg.elegRealOk=!!reg.ok;
     }
-    // Elegibilidade real:
-    // - dentro_40: elegível incondicional (mesmo sem contrato c/ troco — pode ser empréstimo novo)
-    // - dentro_45: elegível se este contrato tem oportunidade (reg.ok)
-    // - fora_45: elegível somente se este contrato resolve sozinho
-    if(c.compStatus==='dentro_40')reg.elegRealOk=true;
-    else if(c.compStatus==='dentro_45')reg.elegRealOk=!!reg.ok;
-    else if(c.compStatus==='fora_45')reg.elegRealOk=!!reg.resolveExc;
-    else reg.elegRealOk=!!reg.ok; // sem_dados → comportamento antigo
   }
-  // Aplica o mesmo enriquecimento em elegiveis (que são referência aos mesmos objetos de analise)
-  // — já foram tagged acima porque é o mesmo reg.
-  // CPFs cujo cliente é elegível mesmo SEM contrato (dentro_40 sem nenhum contrato portável)
+  // Promove o compStatus do CPF (no compByCpf) pro estado final baseado nos contratos
+  // (se ALGUM contrato resolve, o cliente tá 'fora_regra_resolvivel'; senão, 'fora_regra_inviavel')
+  for(const cpf of Object.keys(compByCpf)){
+    if(compByCpf[cpf].compStatus==='fora_regra_pendente'){
+      const algumResolve=analise.some(a=>a.cpf===cpf&&a.resolveExc);
+      compByCpf[cpf].compStatus=algumResolve?'fora_regra_resolvivel':'fora_regra_inviavel';
+    }
+  }
+  // Registros sintéticos: clientes dentro_regra SEM contrato portável (têm margem livre pra emp novo)
   const elegCpfs=new Set(elegiveis.map(e=>e.cpf));
   for(const cpf of Object.keys(compByCpf)){
-    if(compByCpf[cpf].compStatus==='dentro_40'&&!elegCpfs.has(cpf)){
-      // Cliente dentro do 40% sem contrato portável — ainda é elegível pra empréstimo novo.
-      // Cria um registro sintético pra aparecer nos elegíveis com flag _semContrato.
+    if(compByCpf[cpf].compStatus==='dentro_regra'&&!elegCpfs.has(cpf)){
       const c=compByCpf[cpf];
       const ana=analise.find(a=>a.cpf===cpf);
       if(ana){
         const synth={...ana,_semContrato:true,dest:'-',troco:0,vc:0,taxa:'-',ok:false,destinos:[],
-          compPct:Math.round(c.compPct*10)/10,compStatus:c.compStatus,elegRealOk:true,resolveExc:false,reducaoEstim:0};
+          compPct:Math.round(c.compPct*10)/10,compStatus:'dentro_regra',elegRealOk:true,resolveExc:false,reducaoEstim:0};
         elegiveis.push(synth);
       }
     }
@@ -12994,7 +13000,7 @@ if(!D){
       <span style="font-size:10px;color:var(--t2)">${selected.size} selecionados</span>
     </div>`;
     let pgAllCk=items.length>0&&items.every(r=>selected.has(r.cpf));
-    // Helper: renderiza pill de comprometimento + resolve
+    // Helper: renderiza pill de comprometimento + status (regra HOJE: ≤45%)
     const renderEnqCol=(r)=>{
       if(r._semContrato){
         return `<div style="display:flex;flex-direction:column;gap:2px;align-items:center">
@@ -13005,15 +13011,19 @@ if(!D){
       const pct=r.compPct||0;
       const st=r.compStatus||'sem_dados';
       let pillCor,pillBg,pillTxt,nota,notaCor;
-      if(st==='dentro_40'){pillCor='var(--grn)';pillBg='rgba(34,197,94,.15)';pillTxt=`${pct}%`;nota='✅ cabe 40%';notaCor='var(--grn)'}
-      else if(st==='dentro_45'){pillCor='var(--ylw)';pillBg='rgba(234,179,8,.15)';pillTxt=`${pct}%`;nota='⚠ usa 5% cart.';notaCor='var(--ylw)'}
-      else if(st==='fora_45'){
+      if(st==='dentro_regra'){
+        pillCor='var(--grn)';pillBg='rgba(34,197,94,.15)';pillTxt=`${pct}%`;
+        nota='✅ ≤ 45% (na regra)';notaCor='var(--grn)';
+      }else if(st==='fora_regra_resolvivel'){
+        pillCor='var(--ylw)';pillBg='rgba(234,179,8,.15)';pillTxt=`${pct}%`;
+        nota=r.resolveExc?'✅ ESTE refin resolve':'🔄 cliente tem refin que resolve';
+        notaCor=r.resolveExc?'var(--grn)':'var(--ylw)';
+      }else if(st==='fora_regra_inviavel'){
         pillCor='var(--red)';pillBg='rgba(239,68,68,.15)';pillTxt=`${pct}%`;
-        if(r.resolveExc){nota='✅ ESTE resolve';notaCor='var(--grn)'}
-        else{nota='⚠ não resolve';notaCor='var(--red)'}
+        nota='❌ não há refin que resolve';notaCor='var(--red)';
       }else{pillCor='var(--t3)';pillBg='rgba(150,150,150,.1)';pillTxt='—';nota='sem dados';notaCor='var(--t3)'}
-      const tooltipReducao=r.reducaoEstim>0?` (reduz ~${R$(r.reducaoEstim)})`:'';
-      return `<div style="display:flex;flex-direction:column;gap:2px;align-items:center" title="Comprometimento total do cliente ${tooltipReducao}">
+      const tooltipReducao=r.reducaoEstim>0?` — port reduz ~${R$(r.reducaoEstim)}`:'';
+      return `<div style="display:flex;flex-direction:column;gap:2px;align-items:center" title="Comprometimento total do cliente${tooltipReducao}">
         <span class="pill" style="background:${pillBg};color:${pillCor};font-size:10px;font-weight:800;padding:2px 7px">${pillTxt}</span>
         <span style="font-size:9px;color:${notaCor};font-weight:700">${nota}</span>
       </div>`;
