@@ -1113,8 +1113,9 @@ const BD={
 // PICPAY (380) portado a partir de 1 paga em TODOS os bancos que nao tem restricao (bloqueio) para ele
 const PICPAY_CODE="380";
 // B1P = bancos com portabilidade liberada a partir de 1 paga (inclui PICPAY)
-// ORDEM = bancos ativos no motor. C6/DIGIO/DAYCOVAL desativados por regra (mantidos em BD para reativacao rapida).
-const ORDEM=["QUALI","FACTA","BRB","ICRED"],B1P=["149","422","739","925","380","033","326","290","041","389","121"],ESP_INV=[4,5,6,32,33,34,51,83,92],ESP_AUX=[31,36,91,94],ESP_LOAS=[87,88],ESP_AGE_MIN={21:45},CARTAO={PAN:"623",BMG:"318",Daycoval:"707"};
+// ORDEM = bancos ativos no motor. FACTA/C6/DIGIO/DAYCOVAL desativados por regra (mantidos em BD para reativacao rapida).
+// FACTA desativada em 2026-05-09 a pedido do dono (manter regra FACTA na BD pra retomar facil).
+const ORDEM=["QUALI","BRB","ICRED"],B1P=["149","422","739","925","380","033","326","290","041","389","121"],ESP_INV=[4,5,6,32,33,34,51,83,92],ESP_AUX=[31,36,91,94],ESP_LOAS=[87,88],ESP_AGE_MIN={21:45},CARTAO={PAN:"623",BMG:"318",Daycoval:"707"};
 // Garantia: PICPAY sempre em B1P
 if(!B1P.includes(PICPAY_CODE))B1P.push(PICPAY_CODE);
 function pV(v){if(v==null||v==="")return 0;if(typeof v==="number")return v;let s=String(v).replace(/R\$\s*/g,"").replace(/\s/g,"");if(s.includes(","))return parseFloat(s.replace(/\./g,"").replace(",","."))||0;if(s.includes("."))return parseFloat(s)||0;let n=parseInt(s,10);return isNaN(n)?0:n>99?n/100:n}
