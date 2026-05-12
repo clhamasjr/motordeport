@@ -12994,7 +12994,31 @@ if(!D){
       <span style="font-size:10px;color:var(--t2)">${selected.size} selecionados</span>
     </div>`;
     let pgAllCk=items.length>0&&items.every(r=>selected.has(r.cpf));
-    html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th style="width:30px"><input type="checkbox" class="chk" onclick="selPage()" ${pgAllCk?"checked":""}></th>${TH("nome","Nome")}${TH("cpf","CPF")}${TH("cod","Orig.")}${TH("par","Parcela",1)}${TH("sal","Saldo",1)}${TH("prazo","Prazo")}${TH("dest","Banco Dest.")}${TH("vc","Vlr Cont",1)}${TH("troco","Troco",1)}${TH("taxa","Taxa")}<th>🛒</th></tr></thead><tbody>`;
+    // Helper: renderiza pill de comprometimento + resolve
+    const renderEnqCol=(r)=>{
+      if(r._semContrato){
+        return `<div style="display:flex;flex-direction:column;gap:2px;align-items:center">
+          <span class="pill" style="background:rgba(34,197,94,.15);color:var(--grn);font-size:9px;font-weight:800;padding:2px 7px">${r.compPct||0}%</span>
+          <span style="font-size:9px;color:var(--grn);font-weight:700">📭 sem contrato port</span>
+        </div>`;
+      }
+      const pct=r.compPct||0;
+      const st=r.compStatus||'sem_dados';
+      let pillCor,pillBg,pillTxt,nota,notaCor;
+      if(st==='dentro_40'){pillCor='var(--grn)';pillBg='rgba(34,197,94,.15)';pillTxt=`${pct}%`;nota='✅ cabe 40%';notaCor='var(--grn)'}
+      else if(st==='dentro_45'){pillCor='var(--ylw)';pillBg='rgba(234,179,8,.15)';pillTxt=`${pct}%`;nota='⚠ usa 5% cart.';notaCor='var(--ylw)'}
+      else if(st==='fora_45'){
+        pillCor='var(--red)';pillBg='rgba(239,68,68,.15)';pillTxt=`${pct}%`;
+        if(r.resolveExc){nota='✅ ESTE resolve';notaCor='var(--grn)'}
+        else{nota='⚠ não resolve';notaCor='var(--red)'}
+      }else{pillCor='var(--t3)';pillBg='rgba(150,150,150,.1)';pillTxt='—';nota='sem dados';notaCor='var(--t3)'}
+      const tooltipReducao=r.reducaoEstim>0?` (reduz ~${R$(r.reducaoEstim)})`:'';
+      return `<div style="display:flex;flex-direction:column;gap:2px;align-items:center" title="Comprometimento total do cliente ${tooltipReducao}">
+        <span class="pill" style="background:${pillBg};color:${pillCor};font-size:10px;font-weight:800;padding:2px 7px">${pillTxt}</span>
+        <span style="font-size:9px;color:${notaCor};font-weight:700">${nota}</span>
+      </div>`;
+    };
+    html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th style="width:30px"><input type="checkbox" class="chk" onclick="selPage()" ${pgAllCk?"checked":""}></th>${TH("nome","Nome")}${TH("cpf","CPF")}${TH("cod","Orig.")}${TH("par","Parcela",1)}${TH("sal","Saldo",1)}${TH("prazo","Prazo")}${TH("compPct","Comp. %")}${TH("dest","Banco Dest.")}${TH("vc","Vlr Cont",1)}${TH("troco","Troco",1)}${TH("taxa","Taxa")}<th>🛒</th></tr></thead><tbody>`;
     let lastCpfCon=null;
     for(let ri=0;ri<items.length;ri++){let r=items[ri];let dc=r.dest!=="-"?DC[r.dest]:null;let ck=selected.has(r.cpf);
       // Quando e continuacao do mesmo contrato, aliviamos as celulas repetidas pra ficar visual de "empilhado"
@@ -13005,18 +13029,19 @@ if(!D){
         <td>${mesmoContrato?"":`<input type="checkbox" class="chk" ${ck?"checked":""} onclick="toggleSel('${r.cpf}')">`}</td>
         <td style="${dimStyle}">${mesmoContrato?"↳":esc(r.nome)}</td>
         <td class="mono" style="${dimStyle}">${mesmoContrato?"":esc(r.cpf)}</td>
-        <td>${mesmoContrato?"":`<span class="pill pill-default">${esc(r.cod)}</span>`}</td>
-        <td class="right mono" style="${dimStyle}">${mesmoContrato?"":R$(r.par)}</td>
-        <td class="right mono" style="${dimStyle}">${mesmoContrato?"":R$(r.sal)}</td>
-        <td class="mono" style="${dimStyle}">${mesmoContrato?"":esc(r.prazo)}</td>
-        <td>${dc?`<span class="pill ${pCls[r.dest]}">${r.dest}</span>`:"—"}</td>
-        <td class="right mono" style="color:var(--ylw)">${R$(r.vc)}</td>
-        <td class="right mono" style="color:var(--grn);font-weight:700">${R$(r.troco)}</td>
+        <td>${r._semContrato?'<span class="pill pill-default" style="opacity:.5">—</span>':(mesmoContrato?"":`<span class="pill pill-default">${esc(r.cod)}</span>`)}</td>
+        <td class="right mono" style="${dimStyle}">${r._semContrato?'—':(mesmoContrato?"":R$(r.par))}</td>
+        <td class="right mono" style="${dimStyle}">${r._semContrato?'—':(mesmoContrato?"":R$(r.sal))}</td>
+        <td class="mono" style="${dimStyle}">${r._semContrato?'—':(mesmoContrato?"":esc(r.prazo))}</td>
+        <td>${mesmoContrato?'':renderEnqCol(r)}</td>
+        <td>${r._semContrato?'<span style="font-size:10px;color:var(--grn);font-weight:700">💰 emp. novo</span>':(dc?`<span class="pill ${pCls[r.dest]}">${r.dest}</span>`:"—")}</td>
+        <td class="right mono" style="color:var(--ylw)">${r.vc>0?R$(r.vc):'—'}</td>
+        <td class="right mono" style="color:var(--grn);font-weight:700">${r.troco>0?R$(r.troco):'—'}</td>
         <td>${r.taxa!=="-"?r.taxa+"%":"—"}</td>
-        <td><button class="btn-cart btn-cart-sm" onclick="addToCart(buildCartFromEleg(window._lastFiltEleg[${S.pg*PER+ri}]))">+</button></td>
+        <td>${r._semContrato?'<button class="btn btn-sm" style="font-size:10px;padding:4px 8px;border-color:var(--grn);color:var(--grn)" title="Sem port — só margem livre" disabled>—</button>':`<button class="btn-cart btn-cart-sm" onclick="addToCart(buildCartFromEleg(window._lastFiltEleg[${S.pg*PER+ri}]))">+</button>`}</td>
       </tr>`;
     }
-    if(!items.length)html+=`<tr><td colspan="12" style="padding:40px;text-align:center;color:var(--t3)">${filtroAtivo?"Nenhum resultado com esse filtro — tente afrouxar os critérios":"Nenhum elegível"}</td></tr>`;
+    if(!items.length)html+=`<tr><td colspan="13" style="padding:40px;text-align:center;color:var(--t3)">${filtroAtivo?"Nenhum resultado com esse filtro — tente afrouxar os critérios":"Nenhum elegível"}</td></tr>`;
     html+=`</tbody></table></div>${pgr(filtered.length)}</div>`;
     // Nota sobre contratos sem troco viavel
     const semTroco=(D.analise||[]).filter(r=>!r.ok).length;
