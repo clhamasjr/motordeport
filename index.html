@@ -6389,16 +6389,20 @@ async function reconsultarComC6() {
 // ── Digitação de proposta CLT (modal) ────────────────────────
 let cltDigitState = { open: false, banco: null, oferta: null, ctx: null, dados: {}, loading: false, result: null };
 
-function cltAbrirDigitacao(banco, provider) {
-  // State migrou pra pilha (cltConsultaState.consultas) — pega o result da
-  // consulta selecionada. Bug: antes lia .result direto e ficava silencioso.
-  const filaId = cltConsultaState.selecionadaId || cltConsultaState.filaId;
+function cltAbrirDigitacao(banco, provider, filaIdExplicito) {
+  // O botão de digitar agora passa o filaId EXPLICITO do card clicado (ctx.filaId).
+  // Antes pegava do cltConsultaState.selecionadaId — que ficava preso em consulta
+  // antiga e abria modal com dados ERRADOS (CPF de outra consulta).
+  // Fallback pra selecionadaId mantido pra compatibilidade com chamadas legado.
+  const filaId = filaIdExplicito || cltConsultaState.selecionadaId || cltConsultaState.filaId;
   const item = (cltConsultaState.consultas || []).find(c => c.id === filaId);
   const r = item?.result || cltConsultaState.result; // fallback legado
   if (!r) {
     alert('Não consegui localizar os dados da consulta. Refaça a consulta e tente de novo.');
     return;
   }
+  // Atualiza selecionadaId pra refletir a consulta clicada (corrige state stale)
+  cltConsultaState.selecionadaId = filaId;
   // Pra V8 multi-provider, escolhe oferta com banco+provider especifico
   const oferta = banco === 'v8' && provider
     ? r.ofertas?.find(o => o.banco === banco && o.provider === provider)
@@ -7050,7 +7054,7 @@ function _cltOfertaCard(o, ctx) {
     const labelBtn = o.detalhes && o.detalhes.valorLiquido
       ? '📝 Digitar Proposta'
       : '📝 Simular & Digitar';
-    h += `<button class="btn-acc btn-sm" style="width:100%;margin-top:14px" onclick="cltAbrirDigitacao('${o.banco}'${provArg})">${labelBtn}</button>`;
+    h += `<button class="btn-acc btn-sm" style="width:100%;margin-top:14px" onclick="cltAbrirDigitacao('${o.banco}'${provArg},'${ctx?.filaId || ''}')">${labelBtn}</button>`;
   }
 
   h += '</div>';

@@ -76,8 +76,10 @@ async function patchBanco(id, banco, payload) {
   bancos[banco] = merged;
 
   // Marca conclusao se todos terminaram
+  // 'em_manutencao' tambem eh terminal (banco desativado no catalogo)
+  const STATUS_TERMINAIS = ['ok','falha','bloqueado','pulado','em_manutencao'];
   const todosTerminaram = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6']
-    .every(b => bancos[b] && ['ok','falha','bloqueado','pulado'].includes(bancos[b].status));
+    .every(b => bancos[b] && STATUS_TERMINAIS.includes(bancos[b].status));
   const patch = { bancos };
   if (todosTerminaram && row.status_geral !== 'concluido') {
     patch.status_geral = 'concluido';
