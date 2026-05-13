@@ -226,6 +226,88 @@ export default async function handler(req) {
         };
       }
 
+      else if (banco === 'handbank') {
+        // Handbank/UY3: sem endpoint de criarProposta documentado na API
+        // atual. Operador finaliza digitação no portal Handbank usando
+        // os dados do cliente que ja foram coletados aqui.
+        result = {
+          ok: false,
+          status: 501,
+          data: {
+            erro: 'Handbank/UY3 ainda em modo manual — finalize a digitação no portal Handbank com os dados já coletados. Pra automatizar, precisamos do manual da API Handbank (endpoint criarProposta UY3).',
+            portalUrl: 'https://app.handbank.com.br/',
+            empregadorCnpj: empregador.cnpj || null,
+            matricula: empregador.matricula || null
+          }
+        };
+      }
+
+      else if (banco === 'fintech_qi' || banco === 'fintech_celcoin') {
+        // Fintech do Corban: cria proposta via /Api/V1/Operation/Online-Hiring-Private-Credit
+        const provider = banco === 'fintech_celcoin' ? 'celcoin' : 'qi';
+        // Payload livre — Fintech aceita objeto com dados do cliente + proposta
+        const tel = String(cliente.telefone || '').replace(/\D/g, '');
+        const payload = {
+          action: 'criarOperacao',
+          provider,
+          payload: {
+            workerId: proposta.workerId || null,
+            cpfCliente: cpf,
+            cliente: {
+              cpf, nome: cliente.nome,
+              email: cliente.email,
+              telefone: tel,
+              ddd: cliente.ddd,
+              dataNascimento: cliente.dataNascimento,
+              genero: (cliente.sexo || 'M').toUpperCase().charAt(0),
+              nomeMae: cliente.nomeMae,
+              estadoCivil: cliente.estadoCivil || 'solteiro'
+            },
+            endereco: {
+              cep: endereco.cep,
+              logradouro: endereco.logradouro || endereco.rua,
+              numero: endereco.numero,
+              complemento: endereco.complemento || '',
+              bairro: endereco.bairro,
+              cidade: endereco.cidade,
+              uf: endereco.uf
+            },
+            empregador: {
+              cnpj: empregador.cnpj,
+              matricula: empregador.matricula,
+              valorRenda: empregador.valorRenda
+            },
+            dadosBancarios: {
+              pixKey: bancario.pixKey || cpf,
+              pixKeyType: bancario.pixKeyType || 'cpf',
+              banco: bancario.numeroBanco,
+              agencia: bancario.numeroAgencia,
+              conta: bancario.numeroConta,
+              digitoConta: bancario.digitoConta,
+              formaCredito: bancario.formaCredito || 'pix'
+            },
+            simulacao: {
+              idSimulacao: proposta.idSimulacao || proposta.simulationId || null,
+              tabela: proposta.tabelaId || null,
+              valorLiquido: proposta.valorLiquido,
+              parcelas: proposta.parcelas,
+              valorParcela: proposta.valorParcela
+            }
+          }
+        };
+        result = await callApi('/api/fintechdocorban', payload, auth);
+      }
+
+      else {
+        // Banco nao suportado — retorna erro claro em vez de result undefined
+        return jsonResp({
+          success: false,
+          banco,
+          erro: `Banco '${banco}' nao suportado pra digitacao automatica. Bancos suportados: c6, presencabank, joinbank, v8, mercantil, handbank, fintech_qi, fintech_celcoin.`,
+          dica: 'Use o botao de digitacao manual no portal proprio do banco.'
+        }, 400, req);
+      }
+
       // Extrai info comum do response
       const r = result.data || {};
       const ok = result.ok && (r.propostaNumero || r.operationId || r.propostaId || r.signature || r.id);
