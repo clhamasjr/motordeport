@@ -7327,11 +7327,25 @@ function _renderConsultaBloco(item) {
   }
   h += '</div>';
 
-  // Cards das ofertas (4 colunas no desktop)
-  h += '<div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">';
-  for (const o of (r.ofertas || [])) {
-    h += _cltOfertaCard(o, r);
+  // Separa ofertas: PARADOS (manutenção) no topo, OPERANDO embaixo.
+  // Operando ordena: disponivel → processando → indisponivel (motivo)
+  const ofertasAll = r.ofertas || [];
+  const parados = ofertasAll.filter(o => o.emManutencao);
+  const operando = ofertasAll.filter(o => !o.emManutencao);
+  const prioridade = (o) => o.disponivel ? 0 : (o.processando ? 1 : 2);
+  operando.sort((a, b) => prioridade(a) - prioridade(b));
+
+  // Cards: PARADOS no topo (compacto, fundo apagado) + OPERANDO embaixo (normal)
+  if (parados.length > 0) {
+    h += '<div style="padding:14px 14px 0">';
+    h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">🔧 Bancos parados (' + parados.length + ')</div>';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;opacity:.65">';
+    for (const o of parados) h += _cltOfertaCard(o, r);
+    h += '</div></div>';
   }
+
+  h += '<div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">';
+  for (const o of operando) h += _cltOfertaCard(o, r);
   h += '</div>';
 
   // Resumo do bloco
