@@ -681,6 +681,96 @@ async function processarJoinBank(id, cpf, auth, secret) {
   _registrarAprovacao(v.employerDocument, v.employerName, 'joinbank', null, null, null);
 }
 
+// ─── FINTECH DO CORBAN (QI Tech / Celcoin) ──────────────────────────
+// Substitui o V8 (que saiu da operacao). Usa /api/fintechdocorban.
+async function processarFintech(id, provider, cpf, auth, secret) {
+  const banco = provider === 'celcoin' ? 'fintech_celcoin' : 'fintech_qi';
+  const manut = await _bancoEmManutencao(banco);
+  if (manut) { await _marcarEmManutencao(id, banco, manut); return; }
+  await patchBanco(id, banco, { status: 'processando' });
+
+  // Estrategia: cltCheckEligibility consolidada faz consulta+autorizacao+vinculos
+  // (so funciona auto pro QI — Celcoin precisa SMS pro cliente)
+  const r = await callApi('/api/fintechdocorban', {
+    action: 'cltCheckEligibility',
+    cpf,
+    provider: provider === 'celcoin' ? 'celcoin' : 'qi'
+  }, auth, secret).catch(() => ({ ok: false, data: {} }));
+  const d = r.data || {};
+
+  // Casos:
+  // 1) Sem vinculo → falha
+  // 2) Vinculo + QI + autorizadoAgora=true + dadosWorker → ok com margem
+  // 3) Vinculo + Celcoin + precisaAutorizacao → bloqueado com mensagem clara
+  // 4) Falha generica (env var, erro API, etc)
+  if (!r.ok && d.error?.includes('FINTECH_API_KEY')) {
+    await patchBanco(id, banco, {
+      status: 'falha',
+      mensagem: '⚙️ ' + d.error + ' — admin precisa cadastrar.',
+      _raw_response: d
+    });
+    return;
+  }
+  if (!d.temVinculo) {
+    await patchBanco(id, banco, {
+      status: 'falha',
+      disponivel: false,
+      mensagem: d.mensagem || 'Sem vínculo CLT elegível pra este banco',
+      _raw_response: d
+    });
+    return;
+  }
+  if (provider === 'celcoin' && d.precisaAutorizacao) {
+    await patchBanco(id, banco, {
+      status: 'bloqueado',
+      bloqueado: true,
+      precisaAutorizacao: true,
+      mensagem: 'Cliente precisa autorizar via SMS antes de simular. Operador envia o link.',
+      dados: {
+        empregador: d.vinculo?.empregador,
+        empregadorCnpj: d.vinculo?.cnpj,
+        matricula: d.vinculo?.matricula
+      },
+      _raw_response: d
+    });
+    return;
+  }
+  if (d.disponivel && d.dadosWorker) {
+    // Extrai margem do dadosWorker (estrutura varia conforme provider)
+    const w = d.dadosWorker || {};
+    const margem = parseFloat(
+      w.availableMargin || w.margem_disponivel || w.available_margin ||
+      w.margem || w.margemDisponivel || 0
+    ) || 0;
+    const renda = parseFloat(w.salary || w.salario || w.renda || w.income || 0) || null;
+    await patchBanco(id, banco, {
+      status: 'ok',
+      disponivel: true,
+      mensagem: margem > 0
+        ? `Cliente elegível — margem R$ ${margem.toFixed(2)}`
+        : 'Cliente elegível — margem em consulta',
+      dados: {
+        margemDisponivel: margem,
+        empregador: d.vinculo?.empregador,
+        empregadorCnpj: d.vinculo?.cnpj,
+        matricula: d.vinculo?.matricula,
+        renda,
+        workerId: w.id || w.workerId || w.idWorker || null
+      },
+      _raw_response: d
+    });
+    // Tracking: registra empresa aprovada
+    _registrarAprovacao(d.vinculo?.cnpj, d.vinculo?.empregador, banco, null, null, null);
+    return;
+  }
+
+  await patchBanco(id, banco, {
+    status: 'falha',
+    mensagem: d.mensagem || 'Fintech do Corban não retornou dados',
+    _raw_response: d
+  });
+}
+
 async function processarC6(id, cpf, incluirC6, auth, secret) {
   const manut = await _bancoEmManutencao('c6');
   if (manut) { await _marcarEmManutencao(id, 'c6', manut); return; }
@@ -804,7 +894,9 @@ export default async function handler(req) {
       joinbank: { status: 'pending' },
       mercantil: { status: 'pending' },
       handbank: { status: 'pending' },
-      c6: { status: 'pending' }
+      c6: { status: 'pending' },
+      fintech_qi: { status: 'pending' },
+      fintech_celcoin: { status: 'pending' }
     };
 
     // PRE-POPULA cliente com o que ja sabemos desse CPF (clt_clientes acumulado).
@@ -906,7 +998,7 @@ export default async function handler(req) {
     // o frontend fechar a janela. Cada um roda em paralelo (fetch sem await),
     // mas como o handler `processar` faz await ate terminar, o trabalho roda
     // ate o fim mesmo se o cliente desconectar.
-    const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'mercantil', 'handbank', 'c6'];
+    const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'mercantil', 'handbank', 'c6', 'fintech_qi', 'fintech_celcoin'];
     const baseUrl = APP_URL();
     for (const banco of bancos) {
       // Fire-and-forget mas COM internal-secret (evita 401 de chamadas internas)
@@ -1075,7 +1167,9 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       else if (banco === 'mercantil') await processarMercantil(id, row.cpf, auth, secret);
       else if (banco === 'handbank') await processarHandbank(id, row.cpf, auth, secret);
       else if (banco === 'c6') await processarC6(id, row.cpf, !!row.incluir_c6, auth, secret);
-      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6', 400, req);
+      else if (banco === 'fintech_qi') await processarFintech(id, 'qi', row.cpf, auth, secret);
+      else if (banco === 'fintech_celcoin') await processarFintech(id, 'celcoin', row.cpf, auth, secret);
+      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin', 400, req);
     } catch (e) {
       await patchBanco(id, banco, { status: 'falha', mensagem: 'Erro: ' + e.message });
       return jsonResp({ success: false, error: e.message }, 200, req);
