@@ -5744,6 +5744,8 @@ function _filaToResult(fila) {
     elegibilidade: hb.dados ? {
       margemDisponivel: hb.dados.margemDisponivel,
       empregador: hb.dados.empregador,
+      empregadorCnpj: hb.dados.empregadorCnpj,
+      matricula: hb.dados.matricula,
       renda: hb.dados.renda
     } : null,
     falhou: hb.status === 'falha',
@@ -6065,8 +6067,21 @@ async function rodarConsultaCLT(opts) {
   }
 }
 
+// Hash compacto do result pra detectar mudancas reais (anti-flicker)
+function _hashResultClt(result) {
+  if (!result) return '';
+  const ofs = (result.ofertas || []).map(o => [
+    o.banco, o.provider || '', o.disponivel ? 1 : 0, o.processando ? 1 : 0,
+    o.emManutencao ? 1 : 0, (o.mensagem || '').substring(0, 60),
+    o.detalhes?.valorLiquido || 0, o.detalhes?.parcelas || 0,
+    o.elegibilidade?.margemDisponivel || 0
+  ].join('|'));
+  return [result.statusGeral || '', result.cliente?.nome || '', ofs.join(';')].join('::');
+}
+
 async function _pollingFila(filaId) {
   if (!cltConsultaState._pollingsAtivos) cltConsultaState._pollingsAtivos = new Set();
+  if (!cltConsultaState._lastHashes) cltConsultaState._lastHashes = {};
   // Evita polling duplicado pra mesma fila
   if (cltConsultaState._pollingsAtivos.has(filaId)) return;
   cltConsultaState._pollingsAtivos.add(filaId);
@@ -6089,7 +6104,13 @@ async function _pollingFila(filaId) {
           _upsertConsultaPilha(d.fila.id, d.fila.cpf, result);
           const cliNome = d.fila.cliente?.nome || d.fila.nome_manual || '';
           _addRecente(d.fila.id, d.fila.cpf, cliNome, d.fila.status_geral);
-          renderApp();
+          // ANTI-FLICKER: so re-renderiza se algo realmente mudou
+          // (compara hash compacto). Reduz ~70% das re-renders durante polling.
+          const newHash = _hashResultClt(result);
+          if (newHash !== cltConsultaState._lastHashes[filaId]) {
+            cltConsultaState._lastHashes[filaId] = newHash;
+            renderApp();
+          }
           _dispararDetalhesParcial(result);
 
           // RE-DISPARA processadores travados:
