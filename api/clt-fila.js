@@ -781,6 +781,19 @@ export default async function handler(req) {
     }
     const sexoManual = (body.sexo || '').toUpperCase().startsWith('F') ? 'F'
                      : (body.sexo || '').toUpperCase().startsWith('M') ? 'M' : null;
+    // Telefone manual digitado pelo operador (destrava autorizacao automatica
+    // de bancos que exigem nome+dataNasc+telefone, ex: Handbank UY3)
+    const telefoneManualBruto = (body.telefone || '').toString().replace(/\D/g, '');
+    let telefoneManual = null;
+    if (telefoneManualBruto.length === 10 || telefoneManualBruto.length === 11) {
+      telefoneManual = {
+        ddd: telefoneManualBruto.substring(0, 2),
+        numero: telefoneManualBruto.substring(2),
+        completo: telefoneManualBruto,
+        whatsapp: true,
+        fonte: 'manual_operador'
+      };
+    }
     const incluirC6 = body.incluirC6 !== false; // default true
 
     const inicial = {
@@ -802,6 +815,7 @@ export default async function handler(req) {
     if (nomeManual) clienteInicial.nome = nomeManual;
     if (dataNascManual) clienteInicial.dataNascimento = dataNascManual;
     if (sexoManual) clienteInicial.sexo = sexoManual;
+    if (telefoneManual) clienteInicial.telefones = [telefoneManual];
 
     try {
       const { data: clienteSalvo } = await dbSelect('clt_clientes', {
@@ -810,12 +824,20 @@ export default async function handler(req) {
       if (clienteSalvo) {
         // Reusa: nome (se nao tem manual), dataNasc, sexo, mae, telefones
         if (!clienteInicial.nome && clienteSalvo.nome) clienteInicial.nome = clienteSalvo.nome;
-        if (clienteSalvo.data_nascimento) clienteInicial.dataNascimento = clienteSalvo.data_nascimento;
-        if (clienteSalvo.sexo) clienteInicial.sexo = clienteSalvo.sexo;
+        if (!clienteInicial.dataNascimento && clienteSalvo.data_nascimento) clienteInicial.dataNascimento = clienteSalvo.data_nascimento;
+        if (!clienteInicial.sexo && clienteSalvo.sexo) clienteInicial.sexo = clienteSalvo.sexo;
         if (clienteSalvo.nome_mae) clienteInicial.nomeMae = clienteSalvo.nome_mae;
         if (clienteSalvo.idade) clienteInicial.idade = clienteSalvo.idade;
+        // Telefone manual sempre fica no topo; salvos vao depois (sem duplicar)
         if (Array.isArray(clienteSalvo.telefones) && clienteSalvo.telefones.length > 0) {
-          clienteInicial.telefones = clienteSalvo.telefones;
+          if (!clienteInicial.telefones?.length) {
+            clienteInicial.telefones = clienteSalvo.telefones;
+          } else {
+            const jaTem = new Set(clienteInicial.telefones.map(t => t.completo));
+            for (const t of clienteSalvo.telefones) {
+              if (!jaTem.has(t.completo)) clienteInicial.telefones.push(t);
+            }
+          }
         }
         if (clienteSalvo.email) clienteInicial.emails = [clienteSalvo.email];
       }

@@ -5959,11 +5959,15 @@ async function rodarConsultaCLT(opts) {
   const dataNasc = opts.dataNascimento || (dataNascEl ? (dataNascEl.value || '').trim() : '');
   const sexoEl = document.getElementById('cltSexo');
   const sexo = opts.sexo || (sexoEl ? (sexoEl.value || '').trim() : '');
+  const telEl = document.getElementById('cltTel');
+  const telefone = opts.telefone || (telEl ? (telEl.value || '').replace(/\D/g, '') : '');
+  // Valida telefone (10 ou 11 dígitos com DDD) — silencioso se invalido
+  const telefoneValido = (telefone.length === 10 || telefone.length === 11) ? telefone : '';
   const incluirC6 = opts.incluirC6 !== undefined ? opts.incluirC6 : true;
-  // Se operador preencheu QUALQUER dado manual (nome, data, sexo) ele quer
+  // Se operador preencheu QUALQUER dado manual (nome, data, sexo, telefone) ele quer
   // que esses dados sejam usados — força nova consulta em vez de reaproveitar
   // uma anterior que poderia estar sem esses dados.
-  const temDadosManuais = !!(nomeManual || dataNasc || sexo);
+  const temDadosManuais = !!(nomeManual || dataNasc || sexo || telefoneValido);
   const forceNew = opts.forceNew === true || temDadosManuais;
 
   // ─── DEDUP: se ja tem consulta DESSE CPF na pilha (em andamento OU concluida
@@ -6010,6 +6014,7 @@ async function rodarConsultaCLT(opts) {
   if (nomeManualEl) nomeManualEl.value = '';
   if (dataNascEl) dataNascEl.value = '';
   if (sexoEl) sexoEl.value = '';
+  if (telEl) telEl.value = '';
   renderApp();
 
   try {
@@ -6018,6 +6023,7 @@ async function rodarConsultaCLT(opts) {
     if (nomeManual) body.nome = nomeManual;
     if (dataNasc) body.dataNascimento = dataNasc;
     if (sexo) body.sexo = sexo;
+    if (telefoneValido) body.telefone = telefoneValido;
     const r1 = await fetch('/api/clt-fila', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
@@ -7346,6 +7352,7 @@ function renderCltConsulta() {
   h += '<span style="font-size:11px;color:var(--t3);text-transform:uppercase">Caso falte:</span>';
   h += '<input class="form-input" id="cltDataNasc" type="date" placeholder="Data nascimento" style="flex:1;min-width:140px;font-size:13px;padding:10px 12px">';
   h += '<select class="form-input" id="cltSexo" style="flex:0 0 auto;width:110px;font-size:13px;padding:10px 12px"><option value="">Sexo (auto)</option><option value="M">Masculino</option><option value="F">Feminino</option></select>';
+  h += '<input class="form-input" id="cltTel" type="tel" inputmode="numeric" placeholder="📱 Celular (DDD+9 dígitos)" maxlength="11" style="flex:1;min-width:170px;font-size:13px;padding:10px 12px" oninput="this.value=this.value.replace(/\\D/g,\'\')">';
   h += '</div>';
 
 
@@ -12232,7 +12239,8 @@ const MENU=[
       {k:'cltConsulta',icon:'🔍',label:'Consulta Unitária'},
       {k:'cltCatalogo',icon:'📚',label:'Catálogo de Bancos'},
       {k:'cltAnalise',icon:'🎯',label:'Análise de Cliente'},
-      {k:'cltEmpresasAprovadas',icon:'🏆',label:'Empresas Aprovadas'}
+      {k:'cltEmpresasAprovadas',icon:'🏆',label:'Empresas Aprovadas'},
+      {k:'cltExtrairCaged',icon:'📥',label:'Extrair Base CAGED',needsRole:['gestor','admin']}
     ],
     groups:[
       {group:'Análise em Lote',icon:'📊',items:[
@@ -12671,7 +12679,7 @@ try{renderJobsFloat()}catch{}
 if(!D){
   document.getElementById("headerActions").style.display="none";
   // Aba padrao = home se invalida
-  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltCatalogo","cltAnalise","cltEmpresasAprovadas","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite","prefCatalogo","prefHolerite","fedCatalogo","fedHolerite"].includes(S.tab))S.tab="home";
+  if(!["home","bases","consulta","enquad","enquadLote","est","camp","disp","crm","wppchat","wpp","gestao","admin","cltConsulta","cltCatalogo","cltAnalise","cltEmpresasAprovadas","cltExtrairCaged","cltChats","cltBatch","cltEsteira","cltAutz","cltWebhooks","cltWpp","cltPainel","cltAdminMercantil","govCatalogo","govHolerite","prefCatalogo","prefHolerite","fedCatalogo","fedHolerite"].includes(S.tab))S.tab="home";
   let content='';
   if(S.tab==="consulta")content=renderConsulta();
   else if(S.tab==="enquad")content=renderEnquadramento();
@@ -12701,6 +12709,7 @@ if(!D){
   else if(S.tab==="cltCatalogo")content=renderCltCatalogo();
   else if(S.tab==="cltAnalise")content=renderCltAnalise();
   else if(S.tab==="cltEmpresasAprovadas")content=renderCltEmpresasAprovadas();
+  else if(S.tab==="cltExtrairCaged"&&isGes)content=renderCltExtrairCaged();
   else if(S.tab==="cltAdminMercantil"&&isGes)content=renderCltAdminMercantil();
   else if(S.tab==="govCatalogo")content=renderGovCatalogo();
   else if(S.tab==="govHolerite")content=renderGovHolerite();
@@ -12871,26 +12880,14 @@ if(!D){
     // 'antiga'= mostra tudo que tem oportunidade (comportamento histórico)
     // ''      = sem filtro
     if(S.fElegReal==='nova')filtered=filtered.filter(r=>r.elegRealOk===true);
-    // Filtro por STATUS de ENQUADRAMENTO (nova regra 40% global) — calculadoria INTELIGENTE
+    // Filtro por STATUS de ENQUADRAMENTO — agora usa compStatus calculado pelo motor
     if(S.fEnquad){
-      const enqByCpf={};
-      for(const cpf of new Set(filtered.map(r=>r.cpf))){
-        const x=rmcByCpf[cpf];
-        if(!x){enqByCpf[cpf]={status:'SEM_DADOS'};continue}
-        const contratosCpf=(D.analise||[]).filter(c=>c.cpf===cpf);
-        const sumEmp=contratosCpf.reduce((s,c)=>s+(c.par||0),0);
-        const benef=x.valorBeneficio||(sumEmp>0?sumEmp/0.35:0);
-        if(!benef){enqByCpf[cpf]={status:'SEM_DADOS'};continue}
-        // Passa contratos pra calculadoria considerar redução via port/refin
-        enqByCpf[cpf]=calcEnquadramentoPlus(benef,sumEmp,x.vRmc||0,x.vRcc||0,contratosCpf);
-      }
-      // Meta-status ENQUADRA_40_OK = enquadra com NO MÁXIMO 1 operação
-      // (já enquadra OU cancelar 1 cartão OU port/refin de 1 parcela)
-      const ENQUADRA_40_OK_SET = new Set(['ENQUADRA','ENQUADRA_TROCAR_CARTAO','VIA_CANCELA_CARTAO','VIA_PORT_REDUCAO']);
       filtered=filtered.filter(r=>{
-        const e=enqByCpf[r.cpf]||{status:''};
-        if(S.fEnquad==='ENQUADRA_40_OK')return ENQUADRA_40_OK_SET.has(e.status);
-        return e.status===S.fEnquad;
+        const st=r.compStatus||'sem_dados';
+        if(S.fEnquad==='dentro_regra')return st==='dentro_regra';
+        if(S.fEnquad==='fora_regra_resolvivel')return st==='fora_regra_resolvivel';
+        if(S.fEnquad==='fora_regra_inviavel')return st==='fora_regra_inviavel';
+        return true;
       });
     }
     // Sort
@@ -12946,16 +12943,11 @@ if(!D){
         sel("Cartão",S.fCartao,"setFCartao",[{v:"",l:"Qualquer"},{v:"sem",l:"Sem nenhum cartão"},{v:"sem_rmc",l:"Sem RMC"},{v:"sem_rcc",l:"Sem RCC"},{v:"sem_rmc_ou_rcc",l:"Sem RMC ou RCC (no máx 1)"},{v:"com",l:"Com algum cartão"},{v:"com_rmc",l:"Com RMC"},{v:"com_rcc",l:"Com RCC"}]),
         rng("Idade",S.fIdadeMin,S.fIdadeMax,"setFIdadeMin","setFIdadeMax",1,120),
         sel("Invalidez",S.fInv,"setFInv",[{v:"",l:"Todos"},{v:"sim",l:"Só invalidez"},{v:"nao",l:"Sem invalidez"}]),
-        sel("Enquadramento Nova Regra",S.fEnquad,"setFEnquad",[
+        sel("Enquadramento (45%)",S.fEnquad,"setFEnquad",[
           {v:"",l:"Todos"},
-          {v:"ENQUADRA_40_OK",l:"🎯 Enquadra no 40% (até 1 operação)"},
-          {v:"ENQUADRA",l:"✅ Já enquadra (40%)"},
-          {v:"ENQUADRA_TROCAR_CARTAO",l:"✅ Cabe trocando cartão"},
-          {v:"VIA_CANCELA_CARTAO",l:"💳 Cancelar 1 cartão resolve"},
-          {v:"VIA_PORT_REDUCAO",l:"🔄 Port/refin reduz parcela e enquadra"},
-          {v:"VIA_CARTAO_MAIS_PORT",l:"🔀 Cancelar cartão + port resolve"},
-          {v:"VIA_MULTIPLO",l:"⚙️ Margem livre + cartão + port"},
-          {v:"INVIAVEL",l:"⚠ Inviável (excedente alto)"}
+          {v:"dentro_regra",l:"✅ Dentro da regra (≤ 45%)"},
+          {v:"fora_regra_resolvivel",l:"🔄 Fora — refin resolve"},
+          {v:"fora_regra_inviavel",l:"❌ Fora — refin não resolve"}
         ])
       ].join("");
       // Toggle Elegibilidade real (regra nova do dono): dentro 45% OU 1 contrato resolve
