@@ -9080,6 +9080,240 @@ function renderCltEmpresasAprovadas() {
   return h;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// EXTRAIR BASE CAGED — filtros (idade, sexo, UF, cidade, empresa, CBO,
+// CNAE, tempo de empresa, situação, contato) + count em tempo real
+// + download CSV + envio em lote pra higienização CLT
+// ════════════════════════════════════════════════════════════════════
+let cltCagedState = {
+  loading: false, contando: false, _loaded: false,
+  total: null, modo: null, listou: false,
+  amostra: [], offset: 0, limit: 50,
+  filtros: {
+    uf: '', cidade: '', idade_min: '', idade_max: '', sexo: '',
+    empregador_cnpj: '', empregador_nome: '',
+    cbo: '', cnae: '', tempo_empresa_min_meses: '',
+    ativo: 'true', tem_telefone: false, tem_email: false
+  },
+  exportando: false, higienizando: false,
+  _debounce: null
+};
+
+function cltCagedBody() {
+  const f = cltCagedState.filtros;
+  const body = {};
+  if (f.uf) body.uf = f.uf;
+  if (f.cidade) body.cidade = f.cidade;
+  if (f.idade_min) body.idade_min = parseInt(f.idade_min);
+  if (f.idade_max) body.idade_max = parseInt(f.idade_max);
+  if (f.sexo === 'M' || f.sexo === 'F') body.sexo = f.sexo;
+  if (f.empregador_cnpj) body.empregador_cnpj = f.empregador_cnpj.replace(/\D/g, '');
+  if (f.empregador_nome) body.empregador_nome = f.empregador_nome;
+  if (f.cbo) body.cbo = f.cbo;
+  if (f.cnae) body.cnae = f.cnae;
+  if (f.tempo_empresa_min_meses) body.tempo_empresa_min_meses = parseInt(f.tempo_empresa_min_meses);
+  if (f.ativo === 'true') body.ativo = true;
+  if (f.ativo === 'false') body.ativo = false;
+  if (f.tem_telefone) body.tem_telefone = true;
+  if (f.tem_email) body.tem_email = true;
+  return body;
+}
+
+async function cltCagedContar(exato) {
+  cltCagedState.contando = true; renderApp();
+  try {
+    const r = await fetch('/api/clt-caged-extrair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'contar', exato: !!exato, ...cltCagedBody() })
+    });
+    const d = await r.json();
+    if (d.success) {
+      cltCagedState.total = d.total;
+      cltCagedState.modo = d.modo;
+    } else { alert('Erro: ' + (d.error || 'desconhecido')); }
+  } catch (e) { alert('Erro: ' + e.message); }
+  cltCagedState.contando = false;
+  renderApp();
+}
+
+function cltCagedSetFiltro(k, v) {
+  cltCagedState.filtros[k] = v;
+  if (cltCagedState._debounce) clearTimeout(cltCagedState._debounce);
+  cltCagedState._debounce = setTimeout(() => cltCagedContar(false), 500);
+  renderApp();
+}
+
+async function cltCagedListar() {
+  cltCagedState.loading = true; renderApp();
+  try {
+    const r = await fetch('/api/clt-caged-extrair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'listar', limit: 200, offset: 0, ...cltCagedBody() })
+    });
+    const d = await r.json();
+    if (d.success) {
+      cltCagedState.amostra = d.cpfs || [];
+      cltCagedState.listou = true;
+    } else { alert('Erro: ' + (d.error || 'desconhecido')); }
+  } catch (e) { alert('Erro: ' + e.message); }
+  cltCagedState.loading = false;
+  renderApp();
+}
+
+async function cltCagedExportarCsv() {
+  if (!confirm('Vou gerar CSV com até 50.000 CPFs filtrados. Pode demorar 10-30s. Continuar?')) return;
+  cltCagedState.exportando = true; renderApp();
+  try {
+    const r = await fetch('/api/clt-caged-extrair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'exportarCsv', limit: 50000, ...cltCagedBody() })
+    });
+    const d = await r.json();
+    if (d.success && d.csv) {
+      const blob = new Blob([d.csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = d.filename || 'caged-extracao.csv';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      alert(`✅ Download iniciado: ${d.total_linhas?.toLocaleString('pt-BR') || '?'} CPFs`);
+    } else { alert('Erro: ' + (d.error || 'falha')); }
+  } catch (e) { alert('Erro: ' + e.message); }
+  cltCagedState.exportando = false;
+  renderApp();
+}
+
+async function cltCagedHigienizarLote() {
+  const total = cltCagedState.total;
+  if (!total || total === 0) { alert('Sem CPFs filtrados pra higienizar. Aplique filtros e veja a contagem.'); return; }
+  const limite = Math.min(total, 1000);
+  if (!confirm(`Vou enviar ${limite.toLocaleString('pt-BR')} CPFs (limite 1000 por execução) pra higienização CLT.\n\nIsso consulta TODOS os bancos pra cada CPF (PB/JoinBank/UY3/Fintech/C6).\n\nContinuar?`)) return;
+  cltCagedState.higienizando = true; renderApp();
+  try {
+    const r1 = await fetch('/api/clt-caged-extrair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ action: 'higienizarLote', limit: 1000, ...cltCagedBody() })
+    });
+    const d1 = await r1.json();
+    if (!d1.success || !d1.cpfs?.length) { alert('Erro buscando CPFs: ' + (d1.error || 'vazio')); cltCagedState.higienizando = false; renderApp(); return; }
+    let enviados = 0, erros = 0;
+    for (const c of d1.cpfs) {
+      try {
+        const rf = await fetch('/api/clt-fila', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+          body: JSON.stringify({ action: 'criar', cpf: c.cpf, nome: c.nome, telefone: (c.ddd && c.telefone) ? (c.ddd + c.telefone) : undefined, origem: 'lote' })
+        });
+        const df = await rf.json();
+        if (df.success) enviados++; else erros++;
+      } catch { erros++; }
+      if (enviados % 20 === 0) await new Promise(r => setTimeout(r, 300));
+    }
+    alert(`✅ ${enviados} CPFs enviados pra higienização\n❌ ${erros} falhas\n\nAcompanhe em CLT > Higienização em Lote`);
+  } catch (e) { alert('Erro: ' + e.message); }
+  cltCagedState.higienizando = false;
+  renderApp();
+}
+
+function renderCltExtrairCaged() {
+  if (!cltCagedState._loaded) {
+    cltCagedState._loaded = true;
+    setTimeout(() => cltCagedContar(false), 100);
+  }
+  const f = cltCagedState.filtros;
+  let h = '<div style="max-width:1300px;margin:0 auto;padding:16px" class="fi">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:18px;flex-wrap:wrap;gap:12px">';
+  h += '<div><div style="font-size:22px;font-weight:800">📥 Extrair Base CAGED 2024</div>';
+  h += '<div style="font-size:12px;color:var(--t2);margin-top:4px">43,6 milhões de CPFs CLT do Brasil. Aplique filtros (idade, UF, empresa, CBO, etc) e baixe CSV ou envie em lote pra higienização CLT.</div></div></div>';
+
+  // Filtros
+  h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:18px;margin-bottom:14px">';
+  h += '<div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;font-weight:700">👤 Pessoa</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">';
+  const inp = (k, label, type, placeholder) =>
+    `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase">${label}</label><input class="form-input" type="${type||'text'}" placeholder="${placeholder||''}" value="${f[k]||''}" oninput="cltCagedSetFiltro('${k}',this.value)"></div>`;
+  h += inp('idade_min', 'Idade mín', 'number', 'ex: 25');
+  h += inp('idade_max', 'Idade máx', 'number', 'ex: 60');
+  h += `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase">Sexo</label><select class="form-input" onchange="cltCagedSetFiltro('sexo',this.value)">`;
+  for (const [v,l] of [['','Todos'],['M','Masculino'],['F','Feminino']]) h += `<option value="${v}" ${f.sexo===v?'selected':''}>${l}</option>`;
+  h += `</select></div>`;
+  h += inp('uf', 'Estado (UF)', 'text', 'SP, MG...');
+  h += inp('cidade', 'Cidade', 'text', 'parte do nome');
+  h += '</div>';
+
+  h += '<div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;font-weight:700">🏢 Empresa</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px">';
+  h += inp('empregador_cnpj', 'CNPJ', 'text', 'só números');
+  h += inp('empregador_nome', 'Nome empresa', 'text', 'parte do nome');
+  h += inp('cbo', 'Função (CBO)', 'text', 'ex: 354145');
+  h += inp('cnae', 'Setor (CNAE)', 'text', 'ex: 2790299');
+  h += inp('tempo_empresa_min_meses', 'Tempo casa mín (meses)', 'number', 'ex: 12');
+  h += '</div>';
+
+  h += '<div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;font-weight:700">📋 Situação e contato</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px">';
+  h += `<div><label style="font-size:10px;color:var(--t3);text-transform:uppercase">Situação</label><select class="form-input" onchange="cltCagedSetFiltro('ativo',this.value)">`;
+  for (const [v,l] of [['true','Ativos (vínculo atual)'],['false','Demitidos'],['','Todos']]) h += `<option value="${v}" ${f.ativo===v?'selected':''}>${l}</option>`;
+  h += `</select></div>`;
+  h += `<div style="display:flex;align-items:center;gap:6px;padding-top:18px"><input type="checkbox" id="cgTel" ${f.tem_telefone?'checked':''} onchange="cltCagedSetFiltro('tem_telefone',this.checked)"><label for="cgTel" style="font-size:12px;cursor:pointer">📱 Tem telefone</label></div>`;
+  h += `<div style="display:flex;align-items:center;gap:6px;padding-top:18px"><input type="checkbox" id="cgEml" ${f.tem_email?'checked':''} onchange="cltCagedSetFiltro('tem_email',this.checked)"><label for="cgEml" style="font-size:12px;cursor:pointer">📧 Tem e-mail</label></div>`;
+  h += '</div></div>';
+
+  // Bloco contagem + ações
+  h += '<div style="background:linear-gradient(135deg,rgba(59,130,246,.08),rgba(34,211,238,.04));border:2px solid var(--acc);border-radius:14px;padding:18px;margin-bottom:14px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">';
+  h += '<div>';
+  if (cltCagedState.contando) {
+    h += '<div style="font-size:13px;color:var(--t2)">⏳ Contando CPFs...</div>';
+  } else if (cltCagedState.total !== null) {
+    h += `<div style="font-size:30px;font-weight:900;color:var(--acc);line-height:1">${Number(cltCagedState.total).toLocaleString('pt-BR')}</div>`;
+    h += `<div style="font-size:11px;color:var(--t3);margin-top:2px">CPFs encontrados ${cltCagedState.modo === 'estimado' ? '(estimativa)' : '(exato)'}</div>`;
+    if (cltCagedState.modo === 'estimado' && cltCagedState.total > 0) {
+      h += `<button class="btn btn-sm" style="font-size:10px;margin-top:6px" onclick="cltCagedContar(true)">🎯 Contar exato</button>`;
+    }
+  } else {
+    h += '<div style="font-size:13px;color:var(--t3)">Aplique filtros pra ver a contagem.</div>';
+  }
+  h += '</div>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+  h += `<button class="btn btn-sm" onclick="cltCagedListar()" ${cltCagedState.loading?'disabled':''}>${cltCagedState.loading?'⏳':'👁️ Ver amostra'}</button>`;
+  h += `<button class="btn btn-sm" style="border-color:var(--grn);color:var(--grn)" onclick="cltCagedExportarCsv()" ${cltCagedState.exportando?'disabled':''}>${cltCagedState.exportando?'⏳ Gerando...':'📥 Download CSV'}</button>`;
+  h += `<button class="btn-acc btn-sm" onclick="cltCagedHigienizarLote()" ${cltCagedState.higienizando?'disabled':''}>${cltCagedState.higienizando?'⏳ Enviando...':'🚀 Higienizar lote (1000)'}</button>`;
+  h += '</div></div></div>';
+
+  // Amostra
+  if (cltCagedState.listou && cltCagedState.amostra.length > 0) {
+    h += '<div style="background:var(--card);border:1px solid var(--brd);border-radius:12px;padding:14px;margin-bottom:14px">';
+    h += `<div style="font-size:13px;font-weight:700;margin-bottom:10px">📋 Amostra (${cltCagedState.amostra.length} primeiros)</div>`;
+    h += '<div style="max-height:60vh;overflow:auto;border:1px solid var(--brd);border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:12px">';
+    h += '<thead style="position:sticky;top:0;background:var(--card)"><tr style="border-bottom:1px solid var(--brd)">';
+    h += '<th style="text-align:left;padding:8px">CPF</th><th style="text-align:left;padding:8px">Nome</th><th style="text-align:left;padding:8px">Sexo</th><th style="text-align:left;padding:8px">Nasc</th><th style="text-align:left;padding:8px">Empresa</th><th style="text-align:left;padding:8px">CBO</th><th style="text-align:left;padding:8px">Cidade/UF</th><th style="text-align:left;padding:8px">📱</th>';
+    h += '</tr></thead><tbody>';
+    for (const c of cltCagedState.amostra) {
+      const cpfFmt = (c.cpf||'').replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+      const nasc = c.data_nascimento ? new Date(c.data_nascimento).toLocaleDateString('pt-BR') : '-';
+      h += `<tr style="border-bottom:1px solid var(--brd)">`;
+      h += `<td style="padding:6px 8px;font-family:monospace">${cpfFmt}</td>`;
+      h += `<td style="padding:6px 8px">${esc((c.nome||'').substring(0,30))}</td>`;
+      h += `<td style="padding:6px 8px">${c.sexo||'-'}</td>`;
+      h += `<td style="padding:6px 8px">${nasc}</td>`;
+      h += `<td style="padding:6px 8px">${esc((c.empregador_nome||'').substring(0,25))}</td>`;
+      h += `<td style="padding:6px 8px">${esc(c.cbo||'-')}</td>`;
+      h += `<td style="padding:6px 8px">${esc(c.cidade||'-')}/${c.uf||'-'}</td>`;
+      h += `<td style="padding:6px 8px">${c.ddd && c.telefone ? '✓' : ''}</td>`;
+      h += `</tr>`;
+    }
+    h += '</tbody></table></div></div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
 function renderCltAnalise() {
   const f = cltAnaliseState.filtros;
   let h = '<div style="max-width:1200px;margin:0 auto;padding:16px" class="fi">';
