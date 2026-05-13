@@ -6248,7 +6248,10 @@ function _dispararDetalhesParcial(result, opts) {
     o._calculando = true;
     // Bancos que NAO precisam de clt-simular-detalhe (digitacao manual ou
     // sem fluxo de simulacao automatica): skip silencioso, sem mensagem de erro
-    if (o.banco === 'mercantil') {
+    // Handbank: a simulação automática (simularDetalheUY3) estava
+    // retornando HTML/timeout da API Handbank — operador faz pelo botão
+    // "Simular & Digitar" manual até termos o manual da API.
+    if (o.banco === 'mercantil' || o.banco === 'handbank') {
       o._calculando = false;
       detalhesStore[key] = { skip: true };
       set.delete(key);
