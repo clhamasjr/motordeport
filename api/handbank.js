@@ -353,6 +353,72 @@ export default async function handler(req) {
     }, 200, req);
   }
 
+  // ─── SIMULAR DETALHE UY3 (tabelas + valor liberado + parcelas) ──
+  // Repete /uy3/simulacao_clt passando valor_solicitado pra forcar o
+  // backend a retornar produtos com simulacao. Estrutura exata depende
+  // da API Handbank — captura varios formatos possiveis.
+  if (action === 'simularDetalheUY3') {
+    const cpf = String(body.cpf || '').replace(/\D/g, '');
+    if (!cpf || cpf.length !== 11) return jsonError('cpf invalido', 400, req);
+    const margem = parseFloat(body.margem || 0);
+    // Estima valor solicitado se nao vier: parcela*84*0.7 (proxy de IOF+CET)
+    const valorSolicitado = parseFloat(body.valorSolicitado || (margem > 0 ? margem * 84 * 0.7 : 0));
+    if (!valorSolicitado || valorSolicitado <= 0) {
+      return jsonResp({
+        success: false,
+        mensagem: 'Sem margem nem valor solicitado pra simular'
+      }, 200, req);
+    }
+    const r = await hbCall('POST', '/uy3/simulacao_clt', {
+      banco_consulta: 'uy3',
+      id: null,
+      valor_solicitado: valorSolicitado,
+      cpf,
+      produtos: []
+    });
+    const d = r.data || {};
+    const produtos = d.produtos || d.products || d.tabelas || [];
+    // Tenta extrair simulacao do primeiro produto (formato desconhecido —
+    // captura varios nomes de campo conhecidos)
+    let detalhes = null;
+    if (Array.isArray(produtos) && produtos.length > 0) {
+      const p = produtos[0];
+      detalhes = {
+        valorLiquido: parseFloat(
+          p.valor_liquido || p.valor_desembolso || p.valorLiquido ||
+          p.valor_cliente || p.disbursed_amount || p.net_value || 0
+        ) || null,
+        parcelas: parseInt(
+          p.qtd_parcelas || p.numero_parcelas || p.parcelas ||
+          p.quantidade_parcelas || p.installments || p.term || 0
+        ) || null,
+        valorParcela: parseFloat(
+          p.valor_parcela || p.valorParcela || p.installment_value || 0
+        ) || null,
+        taxaMensal: parseFloat(
+          p.taxa_mensal || p.taxa || p.monthly_rate || p.rate || 0
+        ) || null,
+        cetMensal: parseFloat(
+          p.cet || p.cet_mensal || p.cetMensal || p.cet_monthly || 0
+        ) || null
+      };
+    }
+    return jsonResp({
+      success: !!detalhes?.valorLiquido,
+      cpf,
+      valorSolicitado,
+      margemUsada: margem,
+      detalhes,
+      totalProdutos: produtos.length,
+      mensagem: detalhes?.valorLiquido
+        ? `Simulação OK — ${detalhes.parcelas}x R$ ${detalhes.valorParcela?.toFixed(2)}`
+        : (produtos.length === 0
+          ? 'UY3 não retornou produtos — pode precisar de outro endpoint da API. Envie manual da API Handbank pra refinar.'
+          : 'UY3 retornou produtos mas em formato desconhecido. Envie manual da API Handbank.'),
+      _raw: d
+    }, 200, req);
+  }
+
   // ─── CONSULTAR (proxy generico pra capturar mais endpoints) ───
   // Util enquanto exploramos: passa method+path+body livre.
   // Ex: action:'raw', method:'POST', path:'/uy3/qualquer', payload:{...}

@@ -410,7 +410,42 @@ export default async function handler(req) {
       }, 200, req);
     }
 
-    return jsonError(`Banco invalido: ${banco}. Validos: presencabank, v8, c6, joinbank`, 400, req);
+    // ─── HANDBANK / UY3: simulação detalhada (tabelas) ────────────────
+    if (banco === 'handbank') {
+      const margem = parseFloat(body.margem || 0);
+      if (!margem || margem <= 0) {
+        return jsonResp({ success: false, banco, mensagem: 'Sem margem pra simular' }, 200, req);
+      }
+      const valorSolicitado = parseFloat(body.valorSolicitado || (margem * 84 * 0.7));
+      const r = await callApi('/api/handbank', {
+        action: 'simularDetalheUY3',
+        cpf,
+        margem,
+        valorSolicitado
+      }, auth, secret);
+      const d = r.data || {};
+      if (d.success && d.detalhes?.valorLiquido) {
+        return jsonResp({
+          success: true, banco,
+          detalhes: {
+            valorLiquido: d.detalhes.valorLiquido,
+            parcelas: d.detalhes.parcelas,
+            valorParcela: d.detalhes.valorParcela,
+            taxaMensal: d.detalhes.taxaMensal,
+            cetMensal: d.detalhes.cetMensal,
+            margemDisponivel: margem
+          },
+          totalTabelas: d.totalProdutos || 1
+        }, 200, req);
+      }
+      return jsonResp({
+        success: false, banco,
+        mensagem: d.mensagem || 'UY3 não retornou tabelas. Pode ser necessário manual API Handbank.',
+        _raw: d._raw
+      }, 200, req);
+    }
+
+    return jsonError(`Banco invalido: ${banco}. Validos: presencabank, v8, c6, joinbank, handbank`, 400, req);
 
   } catch (err) {
     return jsonResp({ error: 'Erro interno', message: err.message }, 500, req);

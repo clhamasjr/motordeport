@@ -6209,6 +6209,13 @@ function _dispararDetalhesParcial(result, opts) {
         renda: o.elegibilidade?.renda,
         margem: margemReal > 0 ? margemReal : margemTeorica
       };
+    } else if (o.banco === 'handbank') {
+      // UY3: tem margem real após autorização — passa pro simularDetalheUY3
+      // que faz nova chamada com valor_solicitado pra puxar tabelas
+      const margem = parseFloat(o.elegibilidade?.margemDisponivel || o.dados?.margemDisponivel || 0);
+      if (margem > 0) {
+        payload = { banco: 'handbank', cpf, margem };
+      }
     }
     if (!payload) {
       o._calculando = false;
