@@ -5752,6 +5752,48 @@ function _filaToResult(fila) {
     mensagem: msgDefault(hb, hb.status)
   });
 
+  // Fintech do Corban (QI Tech)
+  const fqi = b.fintech_qi || { status: 'pending' };
+  const fqiF = _statusToFlags(fqi.status);
+  ofertas.push({
+    banco: 'fintech_qi', label: 'Fintech (QI Tech)',
+    disponivel: fqi.status === 'ok' && fqi.disponivel === true,
+    bloqueado: fqi.status === 'bloqueado',
+    precisaAutorizacao: fqi.precisaAutorizacao === true,
+    processando: fqiF.processando,
+    elegibilidade: fqi.dados ? {
+      margemDisponivel: fqi.dados.margemDisponivel,
+      empregador: fqi.dados.empregador,
+      empregadorCnpj: fqi.dados.empregadorCnpj,
+      matricula: fqi.dados.matricula,
+      renda: fqi.dados.renda
+    } : null,
+    emManutencao: fqi.emManutencao === true,
+    falhou: fqi.status === 'falha',
+    mensagem: msgDefault(fqi, fqi.status)
+  });
+
+  // Fintech do Corban (Celcoin)
+  const fcel = b.fintech_celcoin || { status: 'pending' };
+  const fcelF = _statusToFlags(fcel.status);
+  ofertas.push({
+    banco: 'fintech_celcoin', label: 'Fintech (Celcoin)',
+    disponivel: fcel.status === 'ok' && fcel.disponivel === true,
+    bloqueado: fcel.status === 'bloqueado',
+    precisaAutorizacao: fcel.precisaAutorizacao === true,
+    processando: fcelF.processando,
+    elegibilidade: fcel.dados ? {
+      margemDisponivel: fcel.dados.margemDisponivel,
+      empregador: fcel.dados.empregador,
+      empregadorCnpj: fcel.dados.empregadorCnpj,
+      matricula: fcel.dados.matricula,
+      renda: fcel.dados.renda
+    } : null,
+    emManutencao: fcel.emManutencao === true,
+    falhou: fcel.status === 'falha',
+    mensagem: msgDefault(fcel, fcel.status)
+  });
+
   // C6
   const c6 = b.c6 || { status: 'pending' };
   const c6F = _statusToFlags(c6.status);
@@ -6047,6 +6089,8 @@ async function rodarConsultaCLT(opts) {
         { banco: 'joinbank', label: 'QualiBanking', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
         { banco: 'mercantil', label: 'Mercantil', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
         { banco: 'handbank', label: 'Handbank · UY3', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
+        { banco: 'fintech_qi', label: 'Fintech (QI Tech)', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
+        { banco: 'fintech_celcoin', label: 'Fintech (Celcoin)', disponivel: false, processando: true, mensagem: 'Aguardando início...' },
         { banco: 'c6', label: 'C6 Bank', disponivel: false, processando: true, mensagem: 'Aguardando início...' }
       ],
       mensagem: 'Consultando os bancos em paralelo...'
@@ -6771,7 +6815,7 @@ function copiarLinkSelfie() {
 }
 
 function _cltOfertaCard(o, ctx) {
-  const cores = { c6: 'var(--cyan)', presencabank: 'var(--grn)', joinbank: 'var(--pur)', mercantil: 'var(--pur)', v8: 'var(--ylw)' };
+  const cores = { c6: 'var(--cyan)', presencabank: 'var(--grn)', joinbank: 'var(--pur)', mercantil: 'var(--pur)', v8: 'var(--ylw)', fintech_qi: 'var(--ylw)', fintech_celcoin: 'var(--cyan)' };
   const cor = cores[o.banco] || 'var(--t1)';
   let h = `<div style="padding:20px;background:var(--card);border:1px solid var(--brd);border-radius:14px;border-left:4px solid ${cor}">`;
   h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
@@ -13604,10 +13648,14 @@ function exportElegiveisFiltrados(){
     const phs=ph.telefones||[];
     const wps=phs.filter(t=>t.whatsapp);
     const rm=rmcMap[r.cpf]||{};
+    const stLabel={dentro_regra:'Dentro 45%',fora_regra_resolvivel:'Fora — refin resolve',fora_regra_inviavel:'Fora — refin não resolve',sem_dados:'Sem dados'}[r.compStatus||'sem_dados']||'';
     return{
       Nome:r.nome,CPF:r.cpf,'Benefício':r.ben||'',Contrato:r.con||'',
       'Banco Origem':r.cod,Parcela:r.par,'Saldo Quitação':r.sal,Prazo:r.prazo,Pagas:r.pag||'',
       'Destino':r.dest,'Nova Taxa':r.taxa,'Vlr Contrato':r.vc,'Troco':r.troco,
+      'Comp. %':r.compPct||0,'Status Enquadramento':stLabel,
+      'Resolve sozinho':r.resolveExc?'SIM':'',
+      'Redução estim.':r.reducaoEstim||0,
       'Margem Cart Nova':rm.mrgCartNova||0,'Margem Emp Nova':rm.mrgEmpNova||0,'Tem Cartão':rm.temCartao?'SIM':'NÃO',
       'Tel Base 1':r.t1||'','Tel Base 2':r.t2||'','Tel Base 3':r.t3||'',
       'Tel Hig 1':phs[0]?`(${phs[0].ddd}) ${phs[0].telefone}`:'',
