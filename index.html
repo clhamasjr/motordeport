@@ -1358,6 +1358,7 @@ function processar(data){
       if(rcalc&&rcalc.reducao>0)reduz=rcalc.reducao;
     }
     reg.reducaoEstim=Math.round(reduz*100)/100;
+    reg.parcelaNovaEstim=reduz>0?Math.round((reg.par-reduz)*100)/100:0;
     if(c.compStatus==='dentro_regra'){
       reg.compStatus='dentro_regra';
       reg.resolveExc=false; // não aplicável
@@ -1389,7 +1390,7 @@ function processar(data){
       const ana=analise.find(a=>a.cpf===cpf);
       if(ana){
         const synth={...ana,_semContrato:true,dest:'-',troco:0,vc:0,taxa:'-',ok:false,destinos:[],
-          compPct:Math.round(c.compPct*10)/10,compStatus:'dentro_regra',elegRealOk:true,resolveExc:false,reducaoEstim:0};
+          compPct:Math.round(c.compPct*10)/10,compStatus:'dentro_regra',elegRealOk:true,resolveExc:false,reducaoEstim:0,parcelaNovaEstim:0};
         elegiveis.push(synth);
       }
     }
@@ -13106,7 +13107,7 @@ if(!D){
         <span style="font-size:9px;color:${notaCor};font-weight:700">${nota}</span>
       </div>`;
     };
-    html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th style="width:30px"><input type="checkbox" class="chk" onclick="selPage()" ${pgAllCk?"checked":""}></th>${TH("nome","Nome")}${TH("cpf","CPF")}${TH("cod","Orig.")}${TH("par","Parcela",1)}${TH("sal","Saldo",1)}${TH("prazo","Prazo")}${TH("compPct","Comp. %")}${TH("dest","Banco Dest.")}${TH("vc","Vlr Cont",1)}${TH("troco","Troco",1)}${TH("taxa","Taxa")}<th>🛒</th></tr></thead><tbody>`;
+    html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th style="width:30px"><input type="checkbox" class="chk" onclick="selPage()" ${pgAllCk?"checked":""}></th>${TH("nome","Nome")}${TH("cpf","CPF")}${TH("cod","Orig.")}${TH("par","Parcela",1)}<th class="right" title="Nova parcela estimada após port+refin em 108m a 1.50%">Nova Parc.</th>${TH("sal","Saldo",1)}${TH("prazo","Prazo")}${TH("compPct","Comp. %")}${TH("dest","Banco Dest.")}${TH("vc","Vlr Cont",1)}${TH("troco","Troco",1)}${TH("taxa","Taxa")}<th>🛒</th></tr></thead><tbody>`;
     let lastCpfCon=null;
     for(let ri=0;ri<items.length;ri++){let r=items[ri];let dc=r.dest!=="-"?DC[r.dest]:null;let ck=selected.has(r.cpf);
       // Quando e continuacao do mesmo contrato, aliviamos as celulas repetidas pra ficar visual de "empilhado"
@@ -13119,6 +13120,14 @@ if(!D){
         <td class="mono" style="${dimStyle}">${mesmoContrato?"":esc(r.cpf)}</td>
         <td>${r._semContrato?'<span class="pill pill-default" style="opacity:.5">—</span>':(mesmoContrato?"":`<span class="pill pill-default">${esc(r.cod)}</span>`)}</td>
         <td class="right mono" style="${dimStyle}">${r._semContrato?'—':(mesmoContrato?"":R$(r.par))}</td>
+        <td class="right mono" style="${dimStyle}">${(()=>{
+          if(r._semContrato||mesmoContrato)return '';
+          const novaP=r.parcelaNovaEstim||0;
+          const reduz=r.reducaoEstim||0;
+          if(novaP<=0||reduz<=0)return '<span style="color:var(--t3)">—</span>';
+          const tip=`Reduz R$ ${R$(reduz).replace('R$ ','')} (port+refin 108m @ 1.50%)`;
+          return `<span style="color:var(--grn);font-weight:700" title="${tip}">${R$(novaP)}</span><div style="font-size:9px;color:var(--grn);font-weight:600;margin-top:1px">↓ ${R$(reduz)}</div>`;
+        })()}</td>
         <td class="right mono" style="${dimStyle}">${r._semContrato?'—':(mesmoContrato?"":R$(r.sal))}</td>
         <td class="mono" style="${dimStyle}">${r._semContrato?'—':(mesmoContrato?"":esc(r.prazo))}</td>
         <td>${mesmoContrato?'':renderEnqCol(r)}</td>
@@ -13129,7 +13138,7 @@ if(!D){
         <td>${r._semContrato?'<button class="btn btn-sm" style="font-size:10px;padding:4px 8px;border-color:var(--grn);color:var(--grn)" title="Sem port — só margem livre" disabled>—</button>':`<button class="btn-cart btn-cart-sm" onclick="addToCart(buildCartFromEleg(window._lastFiltEleg[${S.pg*PER+ri}]))">+</button>`}</td>
       </tr>`;
     }
-    if(!items.length)html+=`<tr><td colspan="13" style="padding:40px;text-align:center;color:var(--t3)">${filtroAtivo?"Nenhum resultado com esse filtro — tente afrouxar os critérios":"Nenhum elegível"}</td></tr>`;
+    if(!items.length)html+=`<tr><td colspan="14" style="padding:40px;text-align:center;color:var(--t3)">${filtroAtivo?"Nenhum resultado com esse filtro — tente afrouxar os critérios":"Nenhum elegível"}</td></tr>`;
     html+=`</tbody></table></div>${pgr(filtered.length)}</div>`;
     // Nota sobre contratos sem troco viavel
     const semTroco=(D.analise||[]).filter(r=>!r.ok).length;
@@ -13655,6 +13664,7 @@ function exportElegiveisFiltrados(){
       'Destino':r.dest,'Nova Taxa':r.taxa,'Vlr Contrato':r.vc,'Troco':r.troco,
       'Comp. %':r.compPct||0,'Status Enquadramento':stLabel,
       'Resolve sozinho':r.resolveExc?'SIM':'',
+      'Nova Parcela estim.':r.parcelaNovaEstim||0,
       'Redução estim.':r.reducaoEstim||0,
       'Margem Cart Nova':rm.mrgCartNova||0,'Margem Emp Nova':rm.mrgEmpNova||0,'Tem Cartão':rm.temCartao?'SIM':'NÃO',
       'Tel Base 1':r.t1||'','Tel Base 2':r.t2||'','Tel Base 3':r.t3||'',
