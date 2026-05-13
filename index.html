@@ -6129,6 +6129,19 @@ async function _pollingFila(filaId) {
   if (!cltConsultaState._lastHashes) cltConsultaState._lastHashes = {};
   // Evita polling duplicado pra mesma fila
   if (cltConsultaState._pollingsAtivos.has(filaId)) return;
+
+  // OTIMIZACAO ANTI-RECONSULTA:
+  // Se a consulta JÁ ESTÁ CONCLUÍDA no state local, NÃO faz polling.
+  // O state veio do banco via _carregarRecentesDoBanco no bootstrap.
+  // Pra refrescar uma consulta concluida, usuario clica em "Re-tentar"
+  // num banco especifico (que dispara processar com force=true).
+  // Sem isso, toda vez que abria a tela gerava polling de TODAS as
+  // consultas na pilha — saturando rede e DB.
+  const item = (cltConsultaState.consultas || []).find(c => c.id === filaId);
+  if (item?.result?.statusGeral === 'concluido') {
+    return;
+  }
+
   cltConsultaState._pollingsAtivos.add(filaId);
 
   const inicio = Date.now();
