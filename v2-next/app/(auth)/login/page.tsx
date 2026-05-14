@@ -11,10 +11,11 @@ import { api, setToken, ApiError } from '@/lib/api';
 import { toast } from 'sonner';
 import { Loader2, Zap } from 'lucide-react';
 
+// V1 retorna { ok: true, token, user } — não { success: true }
 interface LoginResponse {
-  success: boolean;
+  ok: boolean;
   token?: string;
-  user?: { id: number; username: string; name: string; role: string };
+  user?: { id: number; user: string; name: string; role: string };
   error?: string;
 }
 
@@ -25,14 +26,15 @@ export default function LoginPage() {
 
   const loginMutation = useMutation({
     mutationFn: async (vars: { username: string; password: string }) => {
+      // V1 espera body { action, user, pass } — NÃO username/password
       return api<LoginResponse>('/api/auth', {
         action: 'login',
-        username: vars.username,
-        password: vars.password,
+        user: vars.username,
+        pass: vars.password,
       });
     },
     onSuccess: (data) => {
-      if (data.success && data.token) {
+      if (data.ok && data.token) {
         setToken(data.token);
         toast.success('Login realizado!');
         router.push('/inicio');

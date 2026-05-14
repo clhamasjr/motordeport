@@ -15,14 +15,15 @@ export interface AuthUser {
   nome_parceiro?: string | null;
 }
 
+// V1 retorna { ok: true, user } — não { success: true }
 interface MeResponse {
-  success: boolean;
+  ok: boolean;
   user: AuthUser;
 }
 
 /**
- * Hook que gerencia auth state. Faz GET /api/auth?action=me na primeira
- * carga, redireciona pra /login se não autenticado.
+ * Hook que gerencia auth state. Faz POST /api/auth { action: 'me' } na
+ * primeira carga, redireciona pra /login se não autenticado.
  */
 export function useAuth(opts: { redirectTo?: string } = {}) {
   const router = useRouter();
@@ -38,7 +39,7 @@ export function useAuth(opts: { redirectTo?: string } = {}) {
     queryKey: ['auth', 'me'],
     queryFn: async () => {
       const r = await api<MeResponse>('/api/auth', { action: 'me' });
-      if (!r.success || !r.user) throw new ApiError('Sessão expirada', 401);
+      if (!r.ok || !r.user) throw new ApiError('Sessão expirada', 401);
       return r.user;
     },
     enabled: hasToken,
