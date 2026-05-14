@@ -1,0 +1,8 @@
+User-agent: *
+Disallow: /api/
+Disallow: /clt/
+Disallow: /inss/
+Disallow: /governos/
+Disallow: /prefeituras/
+
+# Sitemap será adicionado quando V2 estiver completo
