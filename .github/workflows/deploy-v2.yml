@@ -1,20 +1,20 @@
 # ════════════════════════════════════════════════════════════════════
-# Deploy automatico do FlowForce V2 (v2-next/) pra VPS Hostinger
+# Build + push da imagem Docker do FlowForce V2 pra GitHub Container Registry
 #
 # Trigger: push em main que mexa em v2-next/
 # Steps:
 #   1. Build Docker image multi-stage
-#   2. Push pra GitHub Container Registry (ghcr.io) — gratuito
-#   3. SSH na VPS → docker service update (zero-downtime)
+#   2. Push pra ghcr.io/clhamasjr/flowforce-v2:latest
 #
-# REQUER (configurar em Settings > Secrets and variables > Actions):
-#   - VPS_HOST          = 168.231.99.208
-#   - VPS_USER          = root  (ou user com sudo + docker)
-#   - VPS_SSH_KEY       = chave privada SSH (gerar com ssh-keygen, copiar pra
-#                         ~/.ssh/authorized_keys da VPS)
-#   - SUPABASE_ANON_KEY = chave anon do Supabase (sera embutida no build)
+# DEPLOY automatico via WATCHTOWER (roda na VPS — monitora ghcr.io
+# a cada 60s e atualiza o servico Swarm sozinho). Zero SSH externo.
+# Antes era SSH push do GitHub Actions, mas Hostinger bloqueia IPs
+# desconhecidos no firewall (i/o timeout).
+#
+# REQUER (Settings > Secrets and variables > Actions):
+#   - SUPABASE_ANON_KEY = chave anon do Supabase (embutida no build)
 # ════════════════════════════════════════════════════════════════════
-name: Deploy V2 (Hostinger Swarm)
+name: Build V2 (Docker)
 
 on:
   push:
@@ -22,7 +22,7 @@ on:
     paths:
       - 'v2-next/**'
       - '.github/workflows/deploy-v2.yml'
-  workflow_dispatch:  # botao manual em Actions
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -34,8 +34,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    outputs:
-      image: ${{ steps.meta.outputs.tags }}
 
     steps:
       - name: Checkout
@@ -75,24 +73,7 @@ jobs:
             NEXT_PUBLIC_SUPABASE_URL=https://xtyvnocvckbvhwvdwdpo.supabase.co
             NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
 
-  deploy-vps:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    steps:
-      - name: SSH + docker service update
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            # Login no GHCR (PAT do user clhamasjr precisa ter read:packages)
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            # Update da service Swarm — zero-downtime (start-first)
-            docker service update \
-              --image ghcr.io/${{ github.repository_owner }}/flowforce-v2:latest \
-              --with-registry-auth \
-              --force \
-              flowforce_app
-            # Mostra status
-            docker service ps flowforce_app --no-trunc | head -5
+      - name: Summary
+        run: |
+          echo "✅ Image pushed: ${{ steps.meta.outputs.tags }}"
+          echo "🔄 Watchtower vai atualizar a VPS em ~60s automaticamente"

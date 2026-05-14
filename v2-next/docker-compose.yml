@@ -60,6 +60,31 @@ services:
         - "traefik.http.middlewares.flowforce-redirect-www.redirectregex.replacement=https://flowforce.tec.br/$${1}"
         - "traefik.http.middlewares.flowforce-redirect-www.redirectregex.permanent=true"
         - "traefik.http.routers.flowforce.middlewares=flowforce-redirect-www"
+        # ─── WATCHTOWER ─────────────────────────────────────────────
+        # Watchtower monitora essa imagem e atualiza sozinho quando ha nova versao.
+        # Substitui o SSH push do GitHub Actions (que era bloqueado pelo firewall Hostinger).
+        - "com.centurylinklabs.watchtower.enable=true"
+
+  # ─── WATCHTOWER: auto-update do flowforce_app ──────────────────────
+  # Verifica ghcr.io a cada 60s. Se ha nova imagem com mesma tag (:latest),
+  # faz pull + recria container (zero-downtime via Swarm rolling update).
+  watchtower:
+    image: containrrr/watchtower:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /root/.docker/config.json:/config.json:ro  # credenciais ghcr.io
+    command:
+      - --interval=60
+      - --label-enable
+      - --cleanup
+      - --rolling-restart
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
 
 # Rede Traefik existente (compartilhada com Evolution, Chatwoot, N8N, etc)
 networks:

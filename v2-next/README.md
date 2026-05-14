@@ -36,12 +36,17 @@ a infra Docker Swarm + Traefik + Postgres já rodando.
   ```
 - Traefik gera certificado SSL automaticamente após DNS propagar.
 
-## Deploy automático (GitHub Actions)
+## Deploy automático (GitHub Actions + Watchtower)
 
 Toda mudança em `v2-next/**` na branch main dispara:
 1. Build da Docker image multi-stage
 2. Push pra GitHub Container Registry (`ghcr.io/clhamasjr/flowforce-v2`)
-3. SSH na VPS → `docker service update` (zero-downtime, start-first)
+3. **Watchtower** (rodando na VPS) detecta nova imagem em ~60s e
+   atualiza o serviço Swarm sozinho — zero SSH externo.
+
+**Por que Watchtower e não SSH push?** A Hostinger tem firewall que
+bloqueia IPs desconhecidos do GitHub Actions Azure (`i/o timeout`).
+Mudamos pra modelo pull onde a própria VPS busca novas imagens.
 
 ### Secrets a configurar no GitHub
 
@@ -49,10 +54,9 @@ Em `Settings > Secrets and variables > Actions`:
 
 | Secret | Valor |
 |---|---|
-| `VPS_HOST` | `168.231.99.208` |
-| `VPS_USER` | `root` |
-| `VPS_SSH_KEY` | chave privada SSH (gerar com `ssh-keygen -t ed25519`, colar a privada aqui e adicionar a pública em `~/.ssh/authorized_keys` da VPS) |
-| `SUPABASE_ANON_KEY` | anon public key do Supabase (Settings > API) |
+| `SUPABASE_ANON_KEY` | anon public key do Supabase (Settings > API → anon public) |
+
+Pronto — só 1 secret necessário.
 
 ## Setup inicial na VPS (1 vez só)
 
