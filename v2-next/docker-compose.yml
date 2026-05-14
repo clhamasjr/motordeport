@@ -14,7 +14,7 @@ services:
   app:
     image: ghcr.io/clhamasjr/flowforce-v2:latest
     networks:
-      - traefik-public
+      - cbdw
     environment:
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: '1'
@@ -47,7 +47,7 @@ services:
       labels:
         # ─── TRAEFIK ────────────────────────────────────────────────
         - "traefik.enable=true"
-        - "traefik.docker.network=traefik-public"
+        - "traefik.docker.network=cbdw"
         # Roteador HTTPS (Traefik gera SSL automatico via Let's Encrypt)
         - "traefik.http.routers.flowforce.rule=Host(`flowforce.tec.br`) || Host(`www.flowforce.tec.br`)"
         - "traefik.http.routers.flowforce.entrypoints=websecure"
@@ -68,6 +68,7 @@ services:
   # ─── WATCHTOWER: auto-update do flowforce_app ──────────────────────
   # Verifica ghcr.io a cada 60s. Se ha nova imagem com mesma tag (:latest),
   # faz pull + recria container (zero-downtime via Swarm rolling update).
+  # NAO precisa estar na rede cbdw — so acessa Docker socket local.
   watchtower:
     image: containrrr/watchtower:latest
     volumes:
@@ -88,5 +89,5 @@ services:
 
 # Rede Traefik existente (compartilhada com Evolution, Chatwoot, N8N, etc)
 networks:
-  traefik-public:
+  cbdw:
     external: true
