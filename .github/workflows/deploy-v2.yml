@@ -1,0 +1,98 @@
+# ════════════════════════════════════════════════════════════════════
+# Deploy automatico do FlowForce V2 (v2-next/) pra VPS Hostinger
+#
+# Trigger: push em main que mexa em v2-next/
+# Steps:
+#   1. Build Docker image multi-stage
+#   2. Push pra GitHub Container Registry (ghcr.io) — gratuito
+#   3. SSH na VPS → docker service update (zero-downtime)
+#
+# REQUER (configurar em Settings > Secrets and variables > Actions):
+#   - VPS_HOST          = 168.231.99.208
+#   - VPS_USER          = root  (ou user com sudo + docker)
+#   - VPS_SSH_KEY       = chave privada SSH (gerar com ssh-keygen, copiar pra
+#                         ~/.ssh/authorized_keys da VPS)
+#   - SUPABASE_ANON_KEY = chave anon do Supabase (sera embutida no build)
+# ════════════════════════════════════════════════════════════════════
+name: Deploy V2 (Hostinger Swarm)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'v2-next/**'
+      - '.github/workflows/deploy-v2.yml'
+  workflow_dispatch:  # botao manual em Actions
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/flowforce-v2
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./v2-next
+          file: ./v2-next/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_BACKEND_URL=https://motordeport.vercel.app
+            NEXT_PUBLIC_SUPABASE_URL=https://xtyvnocvckbvhwvdwdpo.supabase.co
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+
+  deploy-vps:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH + docker service update
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            # Login no GHCR (PAT do user clhamasjr precisa ter read:packages)
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            # Update da service Swarm — zero-downtime (start-first)
+            docker service update \
+              --image ghcr.io/${{ github.repository_owner }}/flowforce-v2:latest \
+              --with-registry-auth \
+              --force \
+              flowforce_app
+            # Mostra status
+            docker service ps flowforce_app --no-trunc | head -5

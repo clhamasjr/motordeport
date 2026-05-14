@@ -1,18 +1,111 @@
-# FlowForce V2 — Next.js Migration
+# FlowForce V2 — Next.js + Hostinger Swarm
 
-Migração do FlowForce (`index.html` JavaScript vanilla na pasta root) pro stack moderno.
+Migração do FlowForce (`index.html` JavaScript vanilla) pro stack moderno
+**hospedado na VPS Hostinger própria** (CBDW: 168.231.99.208), aproveitando
+a infra Docker Swarm + Traefik + Postgres já rodando.
+
+## Por que Hostinger e não Vercel
+
+- ✅ **Custo R$ 0 adicional** — VPS já tá paga (Evolution, Chatwoot, N8N
+  rodam aí)
+- ✅ Sem cold start, sem timeout de função (60s/300s do Vercel não atrapalha)
+- ✅ WebSocket nativo (não depende de Supabase Realtime obrigatório)
+- ✅ Mesma rede que Evolution/N8N → latência 1ms entre serviços
+- ✅ Deploy git push igual Vercel (via GitHub Actions)
 
 ## Stack
 
-- **Next.js 14** App Router
+- **Next.js 14** App Router + standalone build
 - **TypeScript** estrito
 - **Tailwind CSS** + **shadcn/ui** + **Radix UI**
-- **TanStack Query (React Query)** — cache + revalidate (mata polling)
-- **Supabase Realtime** — WebSocket pra eventos do banco
+- **TanStack Query** — cache + revalidate (mata polling)
+- **Supabase** (auth + Postgres + Realtime)
 - **react-hook-form + Zod** — forms + validação
 - **sonner** — toasts
+- **Docker** multi-stage build → image final ~150MB
+- **Traefik** v2/v3 — SSL automático Let's Encrypt
+- **GitHub Actions** — deploy automático on push
 
-## Como rodar local
+## Domínio
+
+- **Produção**: `flowforce.tec.br` (a adquirir)
+- **Apontamento DNS** (registrar no provedor do domínio):
+  ```
+  A     @     168.231.99.208
+  A     www   168.231.99.208
+  ```
+- Traefik gera certificado SSL automaticamente após DNS propagar.
+
+## Deploy automático (GitHub Actions)
+
+Toda mudança em `v2-next/**` na branch main dispara:
+1. Build da Docker image multi-stage
+2. Push pra GitHub Container Registry (`ghcr.io/clhamasjr/flowforce-v2`)
+3. SSH na VPS → `docker service update` (zero-downtime, start-first)
+
+### Secrets a configurar no GitHub
+
+Em `Settings > Secrets and variables > Actions`:
+
+| Secret | Valor |
+|---|---|
+| `VPS_HOST` | `168.231.99.208` |
+| `VPS_USER` | `root` |
+| `VPS_SSH_KEY` | chave privada SSH (gerar com `ssh-keygen -t ed25519`, colar a privada aqui e adicionar a pública em `~/.ssh/authorized_keys` da VPS) |
+| `SUPABASE_ANON_KEY` | anon public key do Supabase (Settings > API) |
+
+## Setup inicial na VPS (1 vez só)
+
+SSH na VPS:
+
+```bash
+ssh root@168.231.99.208
+```
+
+### 1. Garantir que Swarm está ativo
+```bash
+docker info | grep "Swarm: active" || docker swarm init
+```
+
+### 2. Garantir que rede traefik-public existe
+```bash
+docker network ls | grep traefik-public || \
+  docker network create -d overlay --attachable traefik-public
+```
+
+### 3. Configurar variáveis de ambiente do stack
+```bash
+mkdir -p /opt/flowforce
+cat > /opt/flowforce/.env <<'EOF'
+SUPABASE_ANON_KEY=<cola aqui a anon key do Supabase>
+SUPABASE_SERVICE_KEY=<cola aqui a service_role key do Supabase>
+EOF
+chmod 600 /opt/flowforce/.env
+```
+
+### 4. Login no GitHub Container Registry
+Cria um Personal Access Token (PAT) em https://github.com/settings/tokens
+com escopo `read:packages`. Depois:
+```bash
+echo "<seu_token_PAT>" | docker login ghcr.io -u clhamasjr --password-stdin
+```
+
+### 5. Deploy inicial
+```bash
+cd /opt/flowforce
+curl -O https://raw.githubusercontent.com/clhamasjr/motordeport/main/v2-next/docker-compose.yml
+docker stack deploy --with-registry-auth -c docker-compose.yml flowforce
+```
+
+### 6. Verificar
+```bash
+docker service ls | grep flowforce
+docker service logs -f flowforce_app
+```
+
+Após o DNS propagar, abre `https://flowforce.tec.br` — Traefik gera SSL na primeira requisição.
+
+## Como rodar local (dev)
 
 ```bash
 cd v2-next
@@ -24,63 +117,37 @@ npm run dev
 
 Abre http://localhost:3000
 
-## Como deploy Vercel
-
-Cria um novo projeto Vercel apontando pra esta pasta:
-
-1. Vercel Dashboard → New Project → Import repo `clhamasjr/motordeport`
-2. **Root Directory**: `v2-next/`
-3. Framework Preset: Next.js (auto-detectado)
-4. Environment Variables (importar do .env.example):
-   - `NEXT_PUBLIC_BACKEND_URL=https://motordeport.vercel.app`
-   - `NEXT_PUBLIC_SUPABASE_URL=https://xtyvnocvckbvhwvdwdpo.supabase.co`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>` (do Supabase → Settings → API)
-5. Deploy
-
-Domain inicial: `motordeport-v2.vercel.app` (ou nome que escolher).
-Quando V2 estiver estável, redirecionar `motordeport.vercel.app` pra cá.
-
-## Arquitetura
+## Estrutura
 
 ```
 v2-next/
-├── app/                         # App Router (Next.js 14+)
-│   ├── (auth)/login/page.tsx    # Login (em construção)
-│   ├── (app)/                   # Rotas autenticadas com sidebar
-│   │   ├── clt/                 # CLT (consulta, esteira, catálogo, etc)
-│   │   ├── inss/                # INSS (consulta, esteira, propostas)
-│   │   ├── governos/            # SIAPE/Estaduais/Municipais
-│   │   └── layout.tsx           # Sidebar + topbar
-│   ├── layout.tsx               # Root + providers
-│   ├── providers.tsx            # TanStack Query, Toaster
-│   ├── globals.css              # Tailwind base + dark mode
-│   └── page.tsx                 # Landing
-├── components/
-│   ├── ui/                      # shadcn/ui components
-│   └── clt/                     # Componentes específicos CLT
+├── app/                          # App Router
+│   ├── (auth)/login/page.tsx     # Login
+│   ├── (app)/                    # Rotas autenticadas
+│   │   ├── clt/                  # CLT
+│   │   ├── inss/                 # INSS
+│   │   ├── governos/             # Federal/Estadual/Municipal
+│   │   └── layout.tsx            # Sidebar + topbar
+│   ├── layout.tsx                # Root + providers
+│   ├── providers.tsx             # TanStack Query, Toaster
+│   └── globals.css               # Tailwind + dark mode
+├── components/                   # ui/ (shadcn) + clt/ + inss/
 ├── lib/
-│   ├── api.ts                   # Client HTTP pras Edge Functions V1
-│   ├── supabase.ts              # Supabase client + auth
-│   ├── realtime.ts              # WebSocket Realtime
-│   └── utils.ts                 # Helpers (cn, formatCpf, formatBRL...)
-└── hooks/                       # Custom hooks (useAuth, useFila, etc)
+│   ├── api.ts                    # Cliente HTTP pras Edge Functions V1
+│   ├── supabase.ts               # Supabase client + auth
+│   └── utils.ts                  # cn, formatCpf, formatBRL...
+├── Dockerfile                    # Multi-stage build (~150MB final)
+├── docker-compose.yml            # Stack Swarm com labels Traefik
+└── next.config.mjs               # standalone + rewrites /api
 ```
-
-## Estratégia de migração
-
-1. **Backend não muda** — Edge Functions `/api/*.js` permanecem no V1.
-   `next.config.mjs` tem `rewrites` apontando `/api/*` pro deployment V1.
-2. **Frontend migra tela por tela.**
-3. **V1 continua rodando** — parceiros operam no V1 até V2 estar estável.
-4. **Cutover**: quando V2 estável + auth integrado, redirecionar domínio.
 
 ## Status da migração
 
 - [x] Setup base (Next.js + TS + Tailwind + TanStack Query)
-- [x] Layout root + providers
+- [x] Dockerfile + docker-compose Swarm + GitHub Actions
 - [ ] Auth (login com Supabase)
 - [ ] Layout autenticado (sidebar + topbar)
-- [ ] Consulta Unitária CLT (tela mais usada)
+- [ ] Consulta Unitária CLT
 - [ ] Esteira CLT
 - [ ] Catálogo de Bancos CLT
 - [ ] Empresas Aprovadas CLT
@@ -88,6 +155,7 @@ v2-next/
 - [ ] Painel de Consultas CLT
 - [ ] Digitação CLT (modal por banco)
 - [ ] INSS (todas as telas)
-- [ ] Governos / SIAPE
+- [ ] Governos / SIAPE / Estaduais / Municipais
 - [ ] Prefeituras
-- [ ] Cutover do domínio principal
+- [ ] Migração do backend Edge Functions → Next.js API routes (autonomia total)
+- [ ] Cutover do domínio (V2 vira primário)

@@ -1,0 +1,67 @@
+# ════════════════════════════════════════════════════════════════════
+# FlowForce V2 — Stack Docker Swarm na VPS Hostinger (CBDW)
+# Roda na rede Traefik existente, com SSL automatico via Let's Encrypt.
+#
+# Deploy:
+#   docker stack deploy -c docker-compose.yml flowforce
+# Update (apos novo build):
+#   docker service update --image ghcr.io/clhamasjr/flowforce-v2:latest \
+#                         --with-registry-auth flowforce_app
+# ════════════════════════════════════════════════════════════════════
+version: '3.8'
+
+services:
+  app:
+    image: ghcr.io/clhamasjr/flowforce-v2:latest
+    networks:
+      - traefik-public
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: '1'
+      # Backend ainda no Vercel durante a migração (depois muda)
+      NEXT_PUBLIC_BACKEND_URL: https://motordeport.vercel.app
+      # Supabase (mesmo projeto do V1)
+      NEXT_PUBLIC_SUPABASE_URL: https://xtyvnocvckbvhwvdwdpo.supabase.co
+      # Vars sensiveis vem de docker secret/config (configuradas via Portainer)
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      # Auth Supabase (server-side, nao vai pro browser)
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+    deploy:
+      replicas: 2  # Alta disponibilidade — 2 instancias ativas
+      update_config:
+        parallelism: 1  # Atualiza 1 por vez (zero-downtime)
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      labels:
+        # ─── TRAEFIK ────────────────────────────────────────────────
+        - "traefik.enable=true"
+        - "traefik.docker.network=traefik-public"
+        # Roteador HTTPS (Traefik gera SSL automatico via Let's Encrypt)
+        - "traefik.http.routers.flowforce.rule=Host(`flowforce.tec.br`) || Host(`www.flowforce.tec.br`)"
+        - "traefik.http.routers.flowforce.entrypoints=websecure"
+        - "traefik.http.routers.flowforce.tls=true"
+        - "traefik.http.routers.flowforce.tls.certresolver=le"
+        # Servico aponta pra porta 3000 do container
+        - "traefik.http.services.flowforce.loadbalancer.server.port=3000"
+        # Redireciona www → raiz
+        - "traefik.http.middlewares.flowforce-redirect-www.redirectregex.regex=^https?://www\\.flowforce\\.tec\\.br/(.*)"
+        - "traefik.http.middlewares.flowforce-redirect-www.redirectregex.replacement=https://flowforce.tec.br/$${1}"
+        - "traefik.http.middlewares.flowforce-redirect-www.redirectregex.permanent=true"
+        - "traefik.http.routers.flowforce.middlewares=flowforce-redirect-www"
+
+# Rede Traefik existente (compartilhada com Evolution, Chatwoot, N8N, etc)
+networks:
+  traefik-public:
+    external: true
