@@ -9,9 +9,14 @@ FROM node:20-alpine AS deps
 WORKDIR /app
 
 # Apenas instala deps — separado pra cache Docker reusar quando só
-# código mudou (sem mexer em package.json).
+# código mudou (sem mexer em package.json/lock).
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev=false
+# npm ci se tem lock (rápido e determinístico), senão npm install
+RUN if [ -f package-lock.json ]; then \
+      npm ci --no-audit --no-fund; \
+    else \
+      npm install --no-audit --no-fund; \
+    fi
 
 # ─── Stage 2: build ─────────────────────────────────────────────────
 FROM node:20-alpine AS builder
