@@ -52,7 +52,7 @@ services:
         - "traefik.http.routers.flowforce.rule=Host(`flowforce.tec.br`) || Host(`www.flowforce.tec.br`)"
         - "traefik.http.routers.flowforce.entrypoints=websecure"
         - "traefik.http.routers.flowforce.tls=true"
-        - "traefik.http.routers.flowforce.tls.certresolver=le"
+        - "traefik.http.routers.flowforce.tls.certresolver=letsencrypt"
         # Servico aponta pra porta 3000 do container
         - "traefik.http.services.flowforce.loadbalancer.server.port=3000"
         # Redireciona www → raiz
