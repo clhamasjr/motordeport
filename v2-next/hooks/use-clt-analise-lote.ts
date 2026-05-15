@@ -18,6 +18,7 @@ export interface CpfCagedInfo {
   telefone?: string;
   email?: string;
   ativo?: boolean;
+  data_admissao?: string;
   encontrado?: boolean;
 }
 
