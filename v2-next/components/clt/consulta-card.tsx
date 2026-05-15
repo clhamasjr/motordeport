@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -7,9 +8,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useFilaStatus } from '@/hooks/use-clt-fila';
 import { BancoSlug, FilaConsulta } from '@/lib/clt-types';
 import { BancoOfertaCard } from './banco-oferta-card';
+import { ModalDigitar } from './modal-digitar';
 import { formatCpf, formatCnpj, formatDateBR } from '@/lib/utils';
 import { X, Loader2, CheckCircle2 } from 'lucide-react';
-import { toast } from 'sonner';
 
 // Ordem que os cards aparecem (mais usados primeiro)
 const BANCOS_ORDEM: BancoSlug[] = [
@@ -26,6 +27,7 @@ interface Props {
 
 export function ConsultaCard({ filaId, onClose }: Props) {
   const { data: fila, isLoading, error } = useFilaStatus(filaId);
+  const [bancoDigitar, setBancoDigitar] = useState<string | null>(null);
 
   if (isLoading) {
     return (
@@ -163,7 +165,7 @@ export function ConsultaCard({ filaId, onClose }: Props) {
               state={state}
               onSimularDigitar={
                 state.disponivel && state.status === 'ok'
-                  ? () => toast.info('Modal de digitação será migrado no próximo deploy.')
+                  ? () => setBancoDigitar(slug)
                   : undefined
               }
             />
@@ -186,6 +188,14 @@ export function ConsultaCard({ filaId, onClose }: Props) {
           </span>
         </div>
       </CardContent>
+
+      {/* Modal Digitar Proposta */}
+      <ModalDigitar
+        open={!!bancoDigitar}
+        onClose={() => setBancoDigitar(null)}
+        banco={bancoDigitar}
+        consulta={fila}
+      />
     </Card>
   );
 }
