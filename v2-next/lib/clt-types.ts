@@ -28,6 +28,7 @@ export interface BancoState {
   emManutencao?: boolean;
   bloqueado?: boolean;
   precisaAutorizacao?: boolean;
+  requiresLiveness?: boolean;
   linkAutorizacao?: string | null;
   mensagem?: string;
   retryable?: boolean;

@@ -3,9 +3,10 @@
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { BancoState, BancoSlug } from '@/lib/clt-types';
+import { BancoState, BancoSlug, ClienteData } from '@/lib/clt-types';
 import { formatBRL, formatCnpj, cn } from '@/lib/utils';
-import { Loader2, Wrench, AlertCircle, CheckCircle2, Camera, FileText } from 'lucide-react';
+import { Loader2, Wrench, AlertCircle, CheckCircle2, Camera, FileText, RefreshCw } from 'lucide-react';
+import { useGerarLinkSelfieC6, useRecarregarC6 } from '@/hooks/use-clt-c6';
 
 const BANCO_LABEL: Record<BancoSlug, string> = {
   presencabank: 'PresençaBank',
@@ -37,6 +38,9 @@ interface Props {
   banco: BancoSlug;
   state: BancoState;
   onSimularDigitar?: () => void;
+  // Dados do cliente — necessarios pra gerar selfie C6 (so o card C6 usa)
+  cliente?: ClienteData;
+  filaId?: string;
 }
 
 function StatusPill({ state }: { state: BancoState }) {
@@ -70,7 +74,7 @@ function StatusPill({ state }: { state: BancoState }) {
   return <Badge variant="muted">Indisponível</Badge>;
 }
 
-export function BancoOfertaCard({ banco, state, onSimularDigitar }: Props) {
+export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaId }: Props) {
   const label = BANCO_LABEL[banco] || banco;
   const cor = BANCO_COR[banco] || 'border-l-muted';
   const isManutencao = state.emManutencao || state.status === 'em_manutencao';
@@ -81,6 +85,44 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar }: Props) {
   const parcelas = state.dados?.parcelas;
   const valorParcela = state.dados?.valorParcela;
   const disponivel = state.status === 'ok' && state.disponivel;
+
+  // ─── C6: tratamento especial — bloqueado ate cliente fazer selfie ──
+  const gerarSelfie = useGerarLinkSelfieC6();
+  const recarregarC6 = useRecarregarC6();
+  const isC6Bloqueado =
+    banco === 'c6' &&
+    !isManutencao &&
+    (state.bloqueado === true ||
+      state.status === 'bloqueado' ||
+      state.requiresLiveness === true);
+  const isAguardandoSelfie =
+    isC6Bloqueado && state.statusAutorizacao === 'AGUARDANDO_AUTORIZACAO';
+
+  const dispararLiberarC6 = () => {
+    if (!cliente) return;
+    let tel = cliente.telefones?.[0]?.completo || '';
+    if (!cliente.nome || !cliente.dataNascimento) {
+      alert('Pra gerar a selfie do C6 preciso de NOME e DATA DE NASCIMENTO. Refaca a consulta preenchendo o nome.');
+      return;
+    }
+    if (!tel) {
+      const inp = prompt('📱 Telefone do cliente nao foi encontrado nas bases.\n\nDigita o celular pra mandar o link de autorizacao C6 (com DDD, ex: 15998583505):');
+      if (inp === null) return;
+      const digits = String(inp).replace(/\D/g, '');
+      if (digits.length < 10 || digits.length > 11) {
+        alert('Telefone invalido. Use formato: DDD + 9 digitos.');
+        return;
+      }
+      tel = digits;
+    }
+    gerarSelfie.mutate({
+      cpf: cliente.cpf || '',
+      nome: cliente.nome,
+      dataNascimento: cliente.dataNascimento,
+      telefone: tel,
+      filaId,
+    });
+  };
 
   return (
     <Card
@@ -98,8 +140,41 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar }: Props) {
         <StatusPill state={state} />
       </div>
 
+      {/* C6 BLOQUEADO — botoes de gerar selfie + reconsultar */}
+      {isC6Bloqueado && (
+        <div className="space-y-2">
+          <div className="text-xs text-yellow-400">
+            {state.mensagem || '📸 Cliente precisa autorizar a consulta C6 via selfie DataPrev.'}
+          </div>
+          {isAguardandoSelfie && (
+            <Badge variant="warning" className="gap-1 text-[10px]">
+              <Camera className="w-3 h-3" /> Aguardando cliente fazer a selfie
+            </Badge>
+          )}
+          <Button
+            size="sm"
+            className="w-full gap-1"
+            onClick={dispararLiberarC6}
+            disabled={gerarSelfie.isPending}
+          >
+            <Camera className="w-3 h-3" />
+            {gerarSelfie.isPending ? 'Gerando...' : '📸 Gerar Selfie + Enviar WhatsApp'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full gap-1 text-xs"
+            disabled={recarregarC6.isPending || !cliente?.cpf}
+            onClick={() => cliente?.cpf && recarregarC6.mutate({ cpf: cliente.cpf, filaId })}
+          >
+            <RefreshCw className={cn('w-3 h-3', recarregarC6.isPending && 'animate-spin')} />
+            Já autorizou? Reconsultar C6
+          </Button>
+        </div>
+      )}
+
       {/* Mensagem principal */}
-      {isManutencao ? (
+      {isC6Bloqueado ? null : isManutencao ? (
         <div className="text-xs text-muted-foreground">{state.mensagem || '🔧 Em manutenção'}</div>
       ) : disponivel ? (
         <div className="space-y-1.5">

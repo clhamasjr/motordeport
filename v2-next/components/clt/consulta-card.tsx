@@ -150,7 +150,7 @@ export function ConsultaCard({ filaId, onClose }: Props) {
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
               {parados.map(({ slug, state }) => (
-                <BancoOfertaCard key={slug} banco={slug} state={state} />
+                <BancoOfertaCard key={slug} banco={slug} state={state} cliente={cliente} filaId={fila.id} />
               ))}
             </div>
           </div>
@@ -163,6 +163,8 @@ export function ConsultaCard({ filaId, onClose }: Props) {
               key={slug}
               banco={slug}
               state={state}
+              cliente={cliente}
+              filaId={fila.id}
               onSimularDigitar={
                 state.disponivel && state.status === 'ok'
                   ? () => setBancoDigitar(slug)

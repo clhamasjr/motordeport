@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ConsultaForm } from '@/components/clt/consulta-form';
 import { ConsultaCard } from '@/components/clt/consulta-card';
 import { useConsultasRecentes } from '@/hooks/use-clt-fila';
@@ -10,10 +10,32 @@ import { Button } from '@/components/ui/button';
 import { formatCpf, formatDateBR } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 
+const PILHA_KEY = 'flowforce_clt_pilha_v2';
+
+// Lê pilha persistida do localStorage (so client-side, sem quebrar SSR).
+function lerPilhaPersistida(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(PILHA_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
+  } catch { return []; }
+}
+
 export default function ConsultaCltPage() {
-  // Pilha de consultas abertas (ids no estado)
+  // Pilha de consultas abertas — persiste em localStorage pra sobreviver F5
   const [pilha, setPilha] = useState<string[]>([]);
   const { data: recentes = [], isLoading } = useConsultasRecentes(20);
+
+  // Hidrata depois do mount (evita mismatch SSR/client)
+  useEffect(() => { setPilha(lerPilhaPersistida()); }, []);
+
+  // Salva sempre que muda
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem(PILHA_KEY, JSON.stringify(pilha)); } catch {}
+  }, [pilha]);
 
   const adicionarPilha = (id: string) => {
     setPilha((prev) => (prev.includes(id) ? prev : [id, ...prev]));
@@ -21,6 +43,11 @@ export default function ConsultaCltPage() {
 
   const fecharDaPilha = (id: string) => {
     setPilha((prev) => prev.filter((x) => x !== id));
+  };
+
+  const limparTudo = () => {
+    if (pilha.length === 0) return;
+    if (confirm(`Fechar todas as ${pilha.length} consultas abertas?`)) setPilha([]);
   };
 
   return (
@@ -36,9 +63,17 @@ export default function ConsultaCltPage() {
       {/* Form */}
       <ConsultaForm onCreated={adicionarPilha} />
 
-      {/* Pilha — consultas abertas */}
+      {/* Pilha — consultas abertas (persiste em localStorage) */}
       {pilha.length > 0 && (
         <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-muted-foreground">
+              📌 {pilha.length} consulta(s) aberta(s) — fica salvo aqui mesmo se atualizar a tela
+            </div>
+            <Button variant="ghost" size="sm" onClick={limparTudo} className="text-xs h-7">
+              Fechar todas
+            </Button>
+          </div>
           {pilha.map((id) => (
             <ConsultaCard key={id} filaId={id} onClose={() => fecharDaPilha(id)} />
           ))}

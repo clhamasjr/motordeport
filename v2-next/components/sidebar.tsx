@@ -7,7 +7,7 @@ import { AuthUser } from '@/hooks/use-auth';
 import {
   Home, Search, BookOpen, Target, Trophy, Download,
   ListChecks, FileText, MessageSquare, Settings, Building2, Landmark,
-  Briefcase, Zap, ChevronRight,
+  Briefcase, Zap, ChevronRight, Smartphone,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -45,6 +45,7 @@ const NAV: NavGroup[] = [
       { href: '/clt/analise-lote', label: 'Análise em Lote', icon: ListChecks },
       { href: '/clt/esteira', label: 'Esteira', icon: ListChecks },
       { href: '/clt/conversas', label: 'Conversas IA', icon: MessageSquare },
+      { href: '/clt/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['gestor', 'admin'] },
     ],
   },
   {
