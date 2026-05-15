@@ -7,7 +7,7 @@ import { AuthUser } from '@/hooks/use-auth';
 import {
   Home, Search, BookOpen, Target, Trophy, Download,
   ListChecks, FileText, MessageSquare, Settings, Building2, Landmark,
-  Briefcase, Zap, ChevronRight, Smartphone,
+  Briefcase, Zap, ChevronRight, Smartphone, Sparkles,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -30,6 +30,7 @@ const NAV: NavGroup[] = [
     k: 'inss', icon: Briefcase, label: 'INSS',
     items: [
       { href: '/inss/consulta', label: 'Consulta', icon: Search },
+      { href: '/inss/higienizacao', label: 'Higienização (Base)', icon: Sparkles },
       { href: '/inss/esteira', label: 'Esteira', icon: ListChecks },
       { href: '/inss/propostas', label: 'Propostas', icon: FileText },
     ],
