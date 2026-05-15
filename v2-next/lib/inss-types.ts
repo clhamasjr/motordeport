@@ -119,3 +119,78 @@ export interface ConsultaInssView {
   lista?: InssBenefListItem[];
   auto_selected?: string;
 }
+
+// ──────────────────────────────────────────────────────────────────
+// Esteira INSS — tabela `digitacao` (Supabase)
+// ──────────────────────────────────────────────────────────────────
+
+export type DigitacaoStatus =
+  | 'pendente'
+  | 'digitada'
+  | 'analise'
+  | 'aprovada'
+  | 'cip'
+  | 'averbada'
+  | 'paga'
+  | 'recusada'
+  | 'cancelada';
+
+export interface DigitacaoItem {
+  id: number;
+  user_id: number | null;
+  cpf: string;
+  nome: string | null;
+  beneficio: string | null;
+  tipo: string;            // 'portabilidade' | 'novo' | 'cartao' | 'saque' | 'refinanciamento'
+  banco: string;           // 'FACTA' | 'QUALI' | 'BRB' | 'ICRED' | etc
+  status: DigitacaoStatus | string;
+  contrato_origem: string | null;
+  banco_origem: string | null;
+  parcela_origem: number | null;
+  saldo_devedor: number | null;
+  taxa_origem: number | null;
+  prazo_restante: number | null;
+  valor_operacao: number | null;
+  valor_parcela: number | null;
+  taxa_nova: number | null;
+  prazo_novo: number | null;
+  valor_troco: number | null;
+  codigo_tabela: string | null;
+  codigo_af: string | null;
+  id_simulador: string | null;
+  simulation_id: string | null;
+  loan_id: string | null;
+  url_formalizacao: string | null;
+  dados_pessoais: Record<string, unknown> | null;
+  dados_simulacao: Record<string, unknown> | null;
+  observacoes: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface DigitacaoListResponse {
+  ok: boolean;
+  items?: DigitacaoItem[];
+  error?: string;
+}
+
+export interface DigitacaoStatsResponse {
+  ok: boolean;
+  total?: number;
+  counts?: Record<string, number>;
+  error?: string;
+}
+
+export interface DigitacaoUpdateParams {
+  id: number;
+  status?: string;
+  codigo_af?: string;
+  observacoes?: string;
+  url_formalizacao?: string;
+}
+
+export interface EsteiraFiltros {
+  status?: string;
+  banco?: string;
+  cpf?: string;
+}
