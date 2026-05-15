@@ -15,6 +15,11 @@ services:
     image: ghcr.io/clhamasjr/flowforce-v2:latest
     networks:
       - cbdw
+    # Labels DE CONTAINER (lidas pelo Watchtower, que inspeciona container e nao service).
+    # Em Swarm, deploy.labels = labels DO SERVICE; labels (top-level) = labels DOS CONTAINERS.
+    # Watchtower com --label-enable so atualiza container que tem essa label.
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     environment:
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: '1'
@@ -60,10 +65,9 @@ services:
         - "traefik.http.middlewares.flowforce-redirect-www.redirectregex.replacement=https://flowforce.tec.br/$${1}"
         - "traefik.http.middlewares.flowforce-redirect-www.redirectregex.permanent=true"
         - "traefik.http.routers.flowforce.middlewares=flowforce-redirect-www"
-        # ─── WATCHTOWER ─────────────────────────────────────────────
-        # Watchtower monitora essa imagem e atualiza sozinho quando ha nova versao.
-        # Substitui o SSH push do GitHub Actions (que era bloqueado pelo firewall Hostinger).
-        - "com.centurylinklabs.watchtower.enable=true"
+        # NOTA: a label do Watchtower NAO fica aqui (em deploy.labels = labels do
+        # service). Watchtower precisa de label do container — esta no bloco
+        # 'labels' no nivel do service (acima).
 
   # ─── WATCHTOWER: auto-update do flowforce_app ──────────────────────
   # Verifica ghcr.io a cada 60s. Se ha nova imagem com mesma tag (:latest),
