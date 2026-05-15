@@ -42,6 +42,7 @@ const NAV: NavGroup[] = [
       { href: '/clt/analise', label: 'Análise de Cliente', icon: Target },
       { href: '/clt/empresas-aprovadas', label: 'Empresas Aprovadas', icon: Trophy },
       { href: '/clt/extrair-caged', label: 'Extrair Base CAGED', icon: Download, needsRole: ['gestor', 'admin'] },
+      { href: '/clt/analise-lote', label: 'Análise em Lote', icon: ListChecks },
       { href: '/clt/esteira', label: 'Esteira', icon: ListChecks },
       { href: '/clt/conversas', label: 'Conversas IA', icon: MessageSquare },
     ],

@@ -161,9 +161,19 @@ export default function EmpresasAprovadasPage() {
   );
 }
 
+const BANCOS_HIG = [
+  { slug: 'fintech_qi', label: 'Fintech (QI)' },
+  { slug: 'fintech_celcoin', label: 'Fintech (Celcoin)' },
+  { slug: 'handbank', label: 'UY3' },
+  { slug: 'joinbank', label: 'JoinBank' },
+  { slug: 'mercantil', label: 'Mercantil' },
+  { slug: 'c6', label: 'C6' },
+];
+
 function ModalCpfs({ empresa, onClose }: { empresa: { cnpj: string; nome: string } | null; onClose: () => void }) {
   const { data, isLoading } = useCpfsDessaEmpresa(empresa?.cnpj || null);
   const higienizar = useHigienizarLote();
+  const [bancosHig, setBancosHig] = useState<Set<string>>(new Set());
 
   return (
     <Dialog open={!!empresa} onOpenChange={(o) => !o && onClose()}>
@@ -184,22 +194,59 @@ function ModalCpfs({ empresa, onClose }: { empresa: { cnpj: string; nome: string
 
         {data && (
           <>
-            <div className="flex items-center justify-between flex-wrap gap-2 pb-2">
+            <div className="space-y-3 pb-2">
               <div className="text-sm">
                 📊 <b>{data.cpfs.length.toLocaleString('pt-BR')}</b> CPFs ativos no CAGED 2024
               </div>
+
+              {/* Filtro de bancos pra disparar */}
+              <div className="space-y-1.5">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">
+                  🎯 Bancos pra higienizar (vazio = todos)
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {BANCOS_HIG.map(b => (
+                    <button
+                      key={b.slug}
+                      onClick={() => setBancosHig((s) => {
+                        const novo = new Set(s);
+                        if (novo.has(b.slug)) novo.delete(b.slug); else novo.add(b.slug);
+                        return novo;
+                      })}
+                      className={`px-2.5 py-1 text-[11px] rounded-md border transition-colors ${
+                        bancosHig.has(b.slug)
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'border-border hover:bg-secondary'
+                      }`}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                  {bancosHig.size > 0 && (
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]"
+                      onClick={() => setBancosHig(new Set())}>Limpar</Button>
+                  )}
+                </div>
+              </div>
+
               <Button
                 size="sm"
-                className="gap-2"
+                className="gap-2 w-full sm:w-auto"
                 disabled={higienizar.isPending || data.cpfs.length === 0}
                 onClick={() => {
                   const total = data.cpfs.length;
-                  if (!confirm(`Vou enviar ${total} CPFs pra higienização CLT em lote.\n\nIsso consulta TODOS os bancos pra cada CPF. Continuar?`)) return;
-                  higienizar.mutate(data.cpfs);
+                  const labelB = bancosHig.size > 0
+                    ? `nos bancos: ${[...bancosHig].join(', ')}`
+                    : 'em TODOS os bancos disponíveis';
+                  if (!confirm(`Vou enviar ${total} CPFs pra higienização CLT ${labelB}.\n\nContinuar?`)) return;
+                  higienizar.mutate({
+                    cpfs: data.cpfs,
+                    bancos: bancosHig.size > 0 ? [...bancosHig] : undefined,
+                  });
                 }}
               >
                 <Rocket className="w-4 h-4" />
-                {higienizar.isPending ? 'Enviando...' : `Higienizar todos no CLT (${data.cpfs.length})`}
+                {higienizar.isPending ? 'Enviando...' : `Higienizar ${data.cpfs.length} CPFs`}
               </Button>
             </div>
 

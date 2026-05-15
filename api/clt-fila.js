@@ -996,11 +996,20 @@ export default async function handler(req) {
     });
     if (error) return jsonError('Erro criando fila: ' + error, 500, req);
 
-    // DISPARA OS 5 PROCESSADORES NO BACKEND — garantia de execucao mesmo se
+    // DISPARA OS PROCESSADORES NO BACKEND — garantia de execucao mesmo se
     // o frontend fechar a janela. Cada um roda em paralelo (fetch sem await),
     // mas como o handler `processar` faz await ate terminar, o trabalho roda
     // ate o fim mesmo se o cliente desconectar.
-    const bancos = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'mercantil', 'handbank', 'c6', 'fintech_qi', 'fintech_celcoin'];
+    //
+    // Suporta filtro: body.bancos = ['fintech_qi', 'handbank', ...] dispara
+    // SO esses (resto fica em pending). Util pra higienizacao por banco
+    // especifico (Analise em Lote do V2). Sem o param, dispara todos.
+    const TODOS_BANCOS = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'mercantil', 'handbank', 'c6', 'fintech_qi', 'fintech_celcoin'];
+    const filtroSolicitado = Array.isArray(body.bancos) && body.bancos.length > 0 ? body.bancos : null;
+    // 'multicorban' eh enriquecimento — sempre roda mesmo com filtro
+    const bancos = filtroSolicitado
+      ? [...new Set([...filtroSolicitado, 'multicorban'])].filter(b => TODOS_BANCOS.includes(b))
+      : TODOS_BANCOS;
     const baseUrl = APP_URL();
     for (const banco of bancos) {
       // Fire-and-forget mas COM internal-secret (evita 401 de chamadas internas)

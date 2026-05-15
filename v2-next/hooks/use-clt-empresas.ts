@@ -99,21 +99,27 @@ export function useCpfsDessaEmpresa(cnpj: string | null, opts: { apenasAtivos?: 
 /**
  * Higieniza em lote uma lista de CPFs (manda 1 por 1 pra clt-fila).
  * Throttle a cada 20 pra não saturar o backend.
+ * Param opcional bancos[] filtra quais processadores disparam — se vazio, dispara todos.
  */
 export function useHigienizarLote() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (cpfs: Array<{ cpf: string; nome?: string; ddd?: string; telefone?: string }>) => {
+    mutationFn: async (params: {
+      cpfs: Array<{ cpf: string; nome?: string; ddd?: string; telefone?: string }>;
+      bancos?: string[];
+    }) => {
       let enviados = 0, erros = 0;
-      for (const c of cpfs) {
+      for (const c of params.cpfs) {
         try {
-          const r = await api<{ success: boolean }>('/api/clt-fila', {
+          const body: Record<string, unknown> = {
             action: 'criar',
             cpf: c.cpf,
             nome: c.nome,
             telefone: c.ddd && c.telefone ? c.ddd + c.telefone : undefined,
             origem: 'lote',
-          });
+          };
+          if (params.bancos && params.bancos.length > 0) body.bancos = params.bancos;
+          const r = await api<{ success: boolean }>('/api/clt-fila', body);
           if (r.success) enviados++; else erros++;
         } catch {
           erros++;

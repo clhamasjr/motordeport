@@ -25,6 +25,15 @@ const SUPA_KEY = () => process.env.SUPABASE_SERVICE_KEY;
 // Monta filtros PostgREST a partir do body
 function montarFiltros(body) {
   const params = new URLSearchParams();
+  // CPF (eq exato OR in() pra batch lookup do v2 Analise em Lote)
+  if (body.cpf) {
+    const c = String(body.cpf).replace(/\D/g, '').padStart(11, '0').slice(-11);
+    if (c.length === 11) params.append('cpf', `eq.${c}`);
+  }
+  if (Array.isArray(body.cpfs) && body.cpfs.length > 0) {
+    const cs = body.cpfs.map((x) => String(x).replace(/\D/g, '').padStart(11, '0').slice(-11)).filter((x) => x.length === 11);
+    if (cs.length) params.append('cpf', `in.(${cs.join(',')})`);
+  }
   if (body.uf) params.append('uf', `eq.${body.uf.toUpperCase()}`);
   if (body.cidade) params.append('cidade', `ilike.*${body.cidade}*`);
   if (body.empregador_cnpj) {

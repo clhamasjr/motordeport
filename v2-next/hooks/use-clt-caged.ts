@@ -116,19 +116,21 @@ export function useCagedExportCsv() {
 
 export function useCagedHigienizarLote() {
   return useMutation({
-    mutationFn: async (filtros: CagedFiltros) => {
+    mutationFn: async (params: { filtros: CagedFiltros; bancos?: string[] }) => {
       const r1 = await api<BatchResponse>('/api/clt-caged-extrair', {
-        action: 'higienizarLote', limit: 1000, ...filtros,
+        action: 'higienizarLote', limit: 1000, ...params.filtros,
       });
       if (!r1.success || !r1.cpfs?.length) throw new Error(r1.error || 'Sem CPFs');
       let enviados = 0, erros = 0;
       for (const c of r1.cpfs) {
         try {
-          const rf = await api<{ success: boolean }>('/api/clt-fila', {
+          const body: Record<string, unknown> = {
             action: 'criar', cpf: c.cpf, nome: c.nome,
             telefone: c.ddd && c.telefone ? c.ddd + c.telefone : undefined,
             origem: 'lote',
-          });
+          };
+          if (params.bancos && params.bancos.length > 0) body.bancos = params.bancos;
+          const rf = await api<{ success: boolean }>('/api/clt-fila', body);
           if (rf.success) enviados++; else erros++;
         } catch { erros++; }
         if (enviados % 20 === 0) await new Promise((r) => setTimeout(r, 300));

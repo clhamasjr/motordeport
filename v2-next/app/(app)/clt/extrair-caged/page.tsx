@@ -13,8 +13,19 @@ import { Badge } from '@/components/ui/badge';
 import { formatCpf, formatDateBR } from '@/lib/utils';
 import { Download, Eye, Rocket, Loader2, Database } from 'lucide-react';
 
+const BANCOS_DISP = [
+  { slug: 'fintech_qi', label: 'Fintech (QI Tech)' },
+  { slug: 'fintech_celcoin', label: 'Fintech (Celcoin)' },
+  { slug: 'handbank', label: 'Handbank · UY3' },
+  { slug: 'joinbank', label: 'JoinBank' },
+  { slug: 'mercantil', label: 'Mercantil' },
+  { slug: 'c6', label: 'C6 Bank' },
+  { slug: 'presencabank', label: 'PresençaBank' },
+];
+
 export default function ExtrairCagedPage() {
   const [filtros, setFiltros] = useState<CagedFiltros>({ ativo: true });
+  const [bancosDispara, setBancosDispara] = useState<Set<string>>(new Set());
 
   const setF = (k: keyof CagedFiltros, v: unknown) => {
     setFiltros((f) => {
@@ -123,6 +134,37 @@ export default function ExtrairCagedPage() {
         </CardContent>
       </Card>
 
+      {/* Filtro de bancos pra disparo */}
+      <Card>
+        <CardContent className="p-3 space-y-2">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">
+            🎯 Disparar higienização em quais bancos? (vazio = todos)
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {BANCOS_DISP.map(b => (
+              <button
+                key={b.slug}
+                onClick={() => setBancosDispara((s) => {
+                  const novo = new Set(s);
+                  if (novo.has(b.slug)) novo.delete(b.slug); else novo.add(b.slug);
+                  return novo;
+                })}
+                className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
+                  bancosDispara.has(b.slug)
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'border-border hover:bg-secondary'
+                }`}
+              >
+                {b.label}
+              </button>
+            ))}
+            {bancosDispara.size > 0 && (
+              <Button size="sm" variant="ghost" onClick={() => setBancosDispara(new Set())}>Limpar</Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Bloco contagem + ações */}
       <Card className="border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-accent/5">
         <CardContent className="p-4 flex items-center justify-between flex-wrap gap-3">
@@ -162,8 +204,11 @@ export default function ExtrairCagedPage() {
             <Button size="sm" disabled={higienizar.isPending || !total}
               onClick={() => {
                 const lim = Math.min(total || 0, 1000);
-                if (!confirm(`Vou enviar ${lim.toLocaleString('pt-BR')} CPFs (limite 1000) pra higienização CLT.\n\nIsso consulta TODOS os bancos pra cada CPF. Continuar?`)) return;
-                higienizar.mutate(filtros);
+                const labelB = bancosDispara.size > 0
+                  ? `nos bancos: ${[...bancosDispara].join(', ')}`
+                  : 'em TODOS os bancos disponíveis';
+                if (!confirm(`Vou enviar ${lim.toLocaleString('pt-BR')} CPFs (limite 1000) pra higienização CLT ${labelB}.\n\nContinuar?`)) return;
+                higienizar.mutate({ filtros, bancos: bancosDispara.size > 0 ? [...bancosDispara] : undefined });
               }} className="gap-2">
               {higienizar.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
               Higienizar lote (1000)
