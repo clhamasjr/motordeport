@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,10 +19,26 @@ interface LoginResponse {
   error?: string;
 }
 
+// Wrapper Suspense pra useSearchParams() — exigido pelo Next 14 no SSR
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>}>
+      <LoginPageInner />
+    </Suspense>
+  );
+}
+
+function LoginPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const expired = searchParams?.get('expired') === '1';
+
+  // Toast 1x quando chegar redirecionado por sessao expirada
+  useEffect(() => {
+    if (expired) toast.error('Sua sessao expirou. Faca login de novo.');
+  }, [expired]);
 
   const loginMutation = useMutation({
     mutationFn: async (vars: { username: string; password: string }) => {
@@ -71,6 +87,11 @@ export default function LoginPage() {
           </div>
         </CardHeader>
         <CardContent>
+          {expired && (
+            <div className="mb-4 rounded-md border border-yellow-500/30 bg-yellow-500/10 p-3 text-xs text-yellow-200">
+              ⚠ Sua sessao expirou. Entre novamente pra continuar.
+            </div>
+          )}
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="username">Usuário ou e-mail</Label>
