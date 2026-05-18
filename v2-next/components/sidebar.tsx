@@ -41,6 +41,7 @@ const NAV: NavGroup[] = [
       { href: '/inss/conversas', label: 'Sofia (Conversas)', icon: MessageSquare },
       { href: '/inss/sofia-knowledge', label: 'Sofia — Knowledge', icon: BookOpen, needsRole: ['admin'] },
       { href: '/inss/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['admin', 'gestor'] },
+      { href: '/inss/gestao', label: 'Gestão', icon: Settings, needsRole: ['admin', 'gestor'] },
       { href: '/inss/motor-test', label: 'Motor — Testes', icon: Zap, needsRole: ['admin'] },
     ],
   },
