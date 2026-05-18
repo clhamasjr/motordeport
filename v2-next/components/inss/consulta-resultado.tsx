@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { formatCpf, formatBRL } from '@/lib/utils';
 import { ConsultaInssView } from '@/lib/inss-types';
 import { CheckCircle2, AlertTriangle, X } from 'lucide-react';
+import { ConsultaOportunidades } from './consulta-oportunidades';
 
 interface Props {
   cpf: string;
@@ -115,11 +116,16 @@ export function ConsultaResultado({ cpf, view, onClose }: Props) {
           </div>
         )}
 
-        {/* Contratos */}
+        {/* 💰 Oportunidades de Portabilidade — motor roda em cada contrato */}
+        {parsed.contratos && parsed.contratos.length > 0 && (
+          <ConsultaOportunidades parsed={parsed} />
+        )}
+
+        {/* Contratos (visão raw) */}
         {parsed.contratos && parsed.contratos.length > 0 && (
           <div>
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-2">
-              Contratos ({parsed.contratos.length})
+              Contratos — visão raw ({parsed.contratos.length})
             </div>
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-xs">
