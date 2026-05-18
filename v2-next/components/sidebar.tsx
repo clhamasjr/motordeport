@@ -33,6 +33,7 @@ const NAV: NavGroup[] = [
       { href: '/inss/higienizacao', label: 'Higienização (Base)', icon: Sparkles },
       { href: '/inss/esteira', label: 'Esteira', icon: ListChecks },
       { href: '/inss/propostas', label: 'Propostas', icon: FileText },
+      { href: '/inss/motor-test', label: 'Motor — Testes', icon: Zap, needsRole: ['admin'] },
     ],
   },
   {
