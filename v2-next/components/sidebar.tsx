@@ -29,8 +29,9 @@ const NAV: NavGroup[] = [
   {
     k: 'inss', icon: Briefcase, label: 'INSS',
     items: [
-      { href: '/inss/consulta', label: 'Consulta', icon: Search },
-      { href: '/inss/higienizacao', label: 'Higienização (Base)', icon: Sparkles },
+      { href: '/inss/consulta', label: 'Consulta Unitária', icon: Search },
+      { href: '/inss/higienizacao', label: 'Higienização (XLSX)', icon: Sparkles },
+      { href: '/inss/enquadramento', label: 'Enquadramento (Manual)', icon: Target },
       { href: '/inss/esteira', label: 'Esteira', icon: ListChecks },
       { href: '/inss/propostas', label: 'Propostas', icon: FileText },
       { href: '/inss/motor-test', label: 'Motor — Testes', icon: Zap, needsRole: ['admin'] },
