@@ -68,15 +68,40 @@ export interface InssBenefListItem {
   nome?: string;
 }
 
+export interface InssEndereco {
+  endereco?: string;
+  municipio?: string;
+  uf?: string;
+  cep?: string;
+  bairro?: string;
+}
+
+export interface InssBancoPagador {
+  nome?: string;
+  agencia?: string;
+  conta?: string;
+  tipo?: string;
+}
+
+export interface InssCartaoDetalhe {
+  tipo?: string;
+  banco?: string;
+  banco_codigo?: string;
+  numero?: string;
+  margem?: string;
+  limite?: string;
+  competencia_inicial?: string;
+}
+
 export interface InssParsedResult {
   beneficiario: InssBeneficiario;
   beneficio: InssBeneficio;
   margem: InssMargem;
   contratos: InssContrato[];
-  cartoes: InssCartao[];
+  cartoes: InssCartaoDetalhe[];
   telefones: InssTelefone[];
-  endereco?: Record<string, string>;
-  banco?: Record<string, string>;
+  endereco?: InssEndereco;
+  banco?: InssBancoPagador;
 }
 
 export interface InssConsultaResponse {
