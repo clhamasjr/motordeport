@@ -31,9 +31,13 @@ const NAV: NavGroup[] = [
     items: [
       { href: '/inss/consulta', label: 'Consulta Unitária', icon: Search },
       { href: '/inss/higienizacao', label: 'Higienização (XLSX)', icon: Sparkles },
+      { href: '/inss/rmc-rcc', label: 'RMC/RCC + Saque', icon: BookOpen },
       { href: '/inss/enquadramento', label: 'Enquadramento (Manual)', icon: Target },
       { href: '/inss/esteira', label: 'Esteira', icon: ListChecks },
       { href: '/inss/propostas', label: 'Propostas', icon: FileText },
+      { href: '/inss/conversas', label: 'Sofia (Conversas)', icon: MessageSquare },
+      { href: '/inss/sofia-knowledge', label: 'Sofia — Knowledge', icon: BookOpen, needsRole: ['admin'] },
+      { href: '/inss/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['admin', 'gestor'] },
       { href: '/inss/motor-test', label: 'Motor — Testes', icon: Zap, needsRole: ['admin'] },
     ],
   },
