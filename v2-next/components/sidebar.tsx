@@ -30,9 +30,12 @@ const NAV: NavGroup[] = [
     k: 'inss', icon: Briefcase, label: 'INSS',
     items: [
       { href: '/inss/consulta', label: 'Consulta Unitária', icon: Search },
+      { href: '/inss/in100', label: 'IN100 (DataPrev)', icon: Trophy },
       { href: '/inss/higienizacao', label: 'Higienização (XLSX)', icon: Sparkles },
       { href: '/inss/rmc-rcc', label: 'RMC/RCC + Saque', icon: BookOpen },
       { href: '/inss/enquadramento', label: 'Enquadramento (Manual)', icon: Target },
+      { href: '/inss/pipeline', label: 'Pipeline', icon: ListChecks },
+      { href: '/inss/disparo', label: 'Disparo em massa', icon: MessageSquare },
       { href: '/inss/esteira', label: 'Esteira', icon: ListChecks },
       { href: '/inss/propostas', label: 'Propostas', icon: FileText },
       { href: '/inss/conversas', label: 'Sofia (Conversas)', icon: MessageSquare },
