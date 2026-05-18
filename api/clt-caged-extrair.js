@@ -153,21 +153,29 @@ export default async function handler(req) {
     params.set('order', 'data_admissao.desc.nullslast');
     params.set('limit', String(limit));
     params.set('offset', String(offset));
-    const r = await fetch(
-      `${SUPA_URL()}/rest/v1/clt_base_funcionarios?${params.toString()}`,
-      { headers: headers() }
-    );
-    if (!r.ok) {
-      const t = await r.text();
-      return jsonError('Erro consultando CAGED: ' + t.substring(0, 200), 500, req);
+    try {
+      const r = await fetch(
+        `${SUPA_URL()}/rest/v1/clt_base_funcionarios?${params.toString()}`,
+        { headers: headers(), signal: AbortSignal.timeout(25000) }
+      );
+      if (!r.ok) {
+        const t = await r.text();
+        return jsonError('Erro consultando CAGED: ' + t.substring(0, 200), 500, req);
+      }
+      const data = await r.json();
+      return jsonResp({
+        success: true,
+        total_pagina: data.length,
+        offset, limit,
+        cpfs: data
+      }, 200, req);
+    } catch (e) {
+      return jsonResp({
+        success: false,
+        error: 'Tempo esgotado consultando CAGED. Refine os filtros (UF + idade + CBO) e tente novamente.',
+        timeout: true,
+      }, 200, req);
     }
-    const data = await r.json();
-    return jsonResp({
-      success: true,
-      total_pagina: data.length,
-      offset, limit,
-      cpfs: data
-    }, 200, req);
   }
 
   // ─── EXPORTAR CSV: download direto (max 50k linhas) ────────────────
@@ -177,23 +185,29 @@ export default async function handler(req) {
     params.set('select', 'cpf,nome,sexo,data_nascimento,empregador_cnpj,empregador_nome,cbo,data_admissao,data_demissao,ativo,cidade,uf,cidade_empresa,ddd,telefone,email,cnae');
     params.set('order', 'data_admissao.desc.nullslast');
     params.set('limit', String(limit));
-    const r = await fetch(
-      `${SUPA_URL()}/rest/v1/clt_base_funcionarios?${params.toString()}`,
-      { headers: { ...headers(), 'Accept': 'text/csv' } }
-    );
-    if (!r.ok) {
-      const t = await r.text();
-      return jsonError('Erro exportando CSV: ' + t.substring(0, 200), 500, req);
+    try {
+      const r = await fetch(
+        `${SUPA_URL()}/rest/v1/clt_base_funcionarios?${params.toString()}`,
+        { headers: { ...headers(), 'Accept': 'text/csv' }, signal: AbortSignal.timeout(25000) }
+      );
+      if (!r.ok) {
+        const t = await r.text();
+        return jsonError('Erro exportando CSV: ' + t.substring(0, 200), 500, req);
+      }
+      const csv = await r.text();
+      return jsonResp({
+        success: true,
+        filename: `caged-extrair-${new Date().toISOString().substring(0, 10)}.csv`,
+        total_linhas: csv.split('\n').length - 1,
+        csv
+      }, 200, req);
+    } catch (e) {
+      return jsonResp({
+        success: false,
+        error: 'Tempo esgotado exportando CSV. Reduza o limite ou refine filtros.',
+        timeout: true,
+      }, 200, req);
     }
-    const csv = await r.text();
-    // Retorna como JSON pra UI baixar (alternativa: stream direto, mas
-    // edge precisa do download trigger no front)
-    return jsonResp({
-      success: true,
-      filename: `caged-extrair-${new Date().toISOString().substring(0, 10)}.csv`,
-      total_linhas: csv.split('\n').length - 1,
-      csv
-    }, 200, req);
   }
 
   // ─── HIGIENIZAR LOTE: dispara consulta CLT pros CPFs filtrados ─────
@@ -205,20 +219,28 @@ export default async function handler(req) {
     params.set('select', 'cpf,nome,sexo,data_nascimento,ddd,telefone,email,empregador_cnpj,empregador_nome');
     params.set('order', 'data_admissao.desc.nullslast');
     params.set('limit', String(limit));
-    const r = await fetch(
-      `${SUPA_URL()}/rest/v1/clt_base_funcionarios?${params.toString()}`,
-      { headers: headers() }
-    );
-    if (!r.ok) {
-      const t = await r.text();
-      return jsonError('Erro buscando CPFs: ' + t.substring(0, 200), 500, req);
+    try {
+      const r = await fetch(
+        `${SUPA_URL()}/rest/v1/clt_base_funcionarios?${params.toString()}`,
+        { headers: headers(), signal: AbortSignal.timeout(25000) }
+      );
+      if (!r.ok) {
+        const t = await r.text();
+        return jsonError('Erro buscando CPFs: ' + t.substring(0, 200), 500, req);
+      }
+      const cpfs = await r.json();
+      return jsonResp({
+        success: true,
+        total: cpfs.length,
+        cpfs
+      }, 200, req);
+    } catch (e) {
+      return jsonResp({
+        success: false,
+        error: 'Tempo esgotado buscando CPFs pro lote. Refine os filtros e tente novamente.',
+        timeout: true,
+      }, 200, req);
     }
-    const cpfs = await r.json();
-    return jsonResp({
-      success: true,
-      total: cpfs.length,
-      cpfs
-    }, 200, req);
   }
 
   return jsonError(`Action invalida: ${action}. Validas: contar, listar, exportarCsv, higienizarLote`, 400, req);

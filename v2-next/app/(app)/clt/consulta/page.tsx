@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ConsultaForm } from '@/components/clt/consulta-form';
 import { ConsultaCard } from '@/components/clt/consulta-card';
 import { useConsultasRecentes } from '@/hooks/use-clt-fila';
@@ -26,16 +26,36 @@ function lerPilhaPersistida(): string[] {
 export default function ConsultaCltPage() {
   // Pilha de consultas abertas — persiste em localStorage pra sobreviver F5
   const [pilha, setPilha] = useState<string[]>([]);
-  const { data: recentes = [], isLoading } = useConsultasRecentes(20);
+  const [hidratada, setHidratada] = useState(false);
+  const { data: recentes = [], isLoading } = useConsultasRecentes(50);
 
   // Hidrata depois do mount (evita mismatch SSR/client)
-  useEffect(() => { setPilha(lerPilhaPersistida()); }, []);
+  useEffect(() => { setPilha(lerPilhaPersistida()); setHidratada(true); }, []);
 
   // Salva sempre que muda
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || !hidratada) return;
     try { localStorage.setItem(PILHA_KEY, JSON.stringify(pilha)); } catch {}
-  }, [pilha]);
+  }, [pilha, hidratada]);
+
+  // CRITICO: filtra a pilha persistida deixando so IDs que existem na lista
+  // de recentes do backend. Isso elimina os 400/404 antes de eles acontecerem
+  // (sem essa validacao, IDs antigos do localStorage faziam request inutil).
+  // Enquanto recentes ainda esta carregando, NAO renderiza nada (espera).
+  const recentesIds = useMemo(() => new Set(recentes.map((r) => r.id)), [recentes]);
+  const pilhaValida = useMemo(() => {
+    if (isLoading) return [];
+    return pilha.filter((id) => recentesIds.has(id));
+  }, [pilha, recentesIds, isLoading]);
+
+  // Auto-limpa do localStorage os IDs orfaos descobertos na validacao
+  useEffect(() => {
+    if (isLoading || !hidratada) return;
+    if (pilha.length === pilhaValida.length) return; // nada a limpar
+    const orfaos = pilha.length - pilhaValida.length;
+    console.info(`[pilha] removidos ${orfaos} ID(s) orfaos do localStorage`);
+    setPilha(pilhaValida);
+  }, [isLoading, hidratada, pilha, pilhaValida]);
 
   const adicionarPilha = (id: string) => {
     setPilha((prev) => (prev.includes(id) ? prev : [id, ...prev]));
@@ -46,8 +66,8 @@ export default function ConsultaCltPage() {
   };
 
   const limparTudo = () => {
-    if (pilha.length === 0) return;
-    if (confirm(`Fechar todas as ${pilha.length} consultas abertas?`)) setPilha([]);
+    if (pilhaValida.length === 0) return;
+    if (confirm(`Fechar todas as ${pilhaValida.length} consultas abertas?`)) setPilha([]);
   };
 
   return (
@@ -63,18 +83,19 @@ export default function ConsultaCltPage() {
       {/* Form */}
       <ConsultaForm onCreated={adicionarPilha} />
 
-      {/* Pilha — consultas abertas (persiste em localStorage) */}
-      {pilha.length > 0 && (
+      {/* Pilha — consultas abertas (persiste em localStorage, mas so renderiza
+          IDs que ainda existem no backend — evita 400 inutil em IDs antigos) */}
+      {pilhaValida.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="text-xs text-muted-foreground">
-              📌 {pilha.length} consulta(s) aberta(s) — fica salvo aqui mesmo se atualizar a tela
+              📌 {pilhaValida.length} consulta(s) aberta(s) — fica salvo aqui mesmo se atualizar a tela
             </div>
             <Button variant="ghost" size="sm" onClick={limparTudo} className="text-xs h-7">
               Fechar todas
             </Button>
           </div>
-          {pilha.map((id) => (
+          {pilhaValida.map((id) => (
             <ConsultaCard key={id} filaId={id} onClose={() => fecharDaPilha(id)} />
           ))}
         </div>
