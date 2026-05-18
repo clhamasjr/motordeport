@@ -7,6 +7,8 @@ import { formatCpf, formatBRL } from '@/lib/utils';
 import { ConsultaInssView } from '@/lib/inss-types';
 import { CheckCircle2, AlertTriangle, X } from 'lucide-react';
 import { ConsultaOportunidades } from './consulta-oportunidades';
+import { SaqueComplementar } from './saque-complementar';
+import { CalculadoraManual } from './calculadora-manual';
 
 interface Props {
   cpf: string;
@@ -60,9 +62,12 @@ export function ConsultaResultado({ cpf, view, onClose }: Props) {
               {b.idade && <span>{b.idade} anos</span>}
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose} aria-label="Fechar">
-            <X className="size-4" />
-          </Button>
+          <div className="flex gap-2 shrink-0">
+            <CalculadoraManual parsed={parsed} />
+            <Button variant="ghost" size="sm" onClick={onClose} aria-label="Fechar">
+              <X className="size-4" />
+            </Button>
+          </div>
         </div>
 
         {/* KPIs */}
@@ -120,6 +125,9 @@ export function ConsultaResultado({ cpf, view, onClose }: Props) {
         {parsed.contratos && parsed.contratos.length > 0 && (
           <ConsultaOportunidades parsed={parsed} />
         )}
+
+        {/* 💳 Saque Complementar — consulta cartões existentes (BMG / DAYCOVAL) */}
+        <SaqueComplementar cpf={cpf} matricula={b.nb || ben.nb} />
 
         {/* Contratos (visão raw) */}
         {parsed.contratos && parsed.contratos.length > 0 && (
