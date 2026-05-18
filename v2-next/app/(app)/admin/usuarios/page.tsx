@@ -558,7 +558,7 @@ function EditUserModal({ user, onClose }: { user: User | null; onClose: () => vo
     e.preventDefault();
     if (!user) return;
     try {
-      const patch: Record<string, unknown> = { targetUser: user.username };
+      const patch: Parameters<typeof update.mutateAsync>[0] = { targetUser: user.username };
       if (name.trim() && name !== user.name) patch.name = name.trim();
       if (newUsername.trim() && newUsername.toLowerCase() !== user.username) {
         patch.newUsername = newUsername.trim().toLowerCase();
@@ -566,7 +566,7 @@ function EditUserModal({ user, onClose }: { user: User | null; onClose: () => vo
       // role só admin
       if (isAdmin && role !== user.role) patch.role = role;
       if (Object.keys(patch).length > 1) {
-        await update.mutateAsync(patch as Parameters<typeof update.mutateAsync>[0]);
+        await update.mutateAsync(patch);
       }
       // assign parceiro (separado)
       const novoPid = parceiroId ? Number(parceiroId) : null;

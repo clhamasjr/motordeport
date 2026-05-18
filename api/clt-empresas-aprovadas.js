@@ -64,29 +64,41 @@ export default async function handler(req) {
     const { data, error } = await dbQuery('clt_empresas_aprovadas', params.toString());
     if (error) return jsonError(error, 500, req);
 
-    // Pra cada empresa, conta quantos CPFs existem no CAGED dessa empresa
-    // (Limita a 1 query agregada pra todos os CNPJs de uma vez)
+    // Contagem de CPFs no CAGED por empresa: caro (joga 50 CNPJs em IN()
+    // contra tabela de 43M linhas). So roda quando o cliente pede explicitamente
+    // (body.incluirCagedCount=true) — caso contrario, retorna 0 e a UI pede
+    // sob demanda quando o user abrir o detalhe da empresa.
+    const incluirCagedCount = body.incluirCagedCount === true;
     const cnpjs = (data || []).map(e => e.cnpj).filter(Boolean);
     let cagedCounts = {};
-    if (cnpjs.length > 0) {
-      // PostgREST nao tem GROUP BY direto. Usa supabase RPC ou query manual.
-      // Por simplicidade, faz N queries (max 50 — ok pra paginacao). TODO: rpc.
-      const r = await fetch(
-        `${process.env.SUPABASE_URL}/rest/v1/clt_base_funcionarios?select=empregador_cnpj&empregador_cnpj=in.(${cnpjs.join(',')})&limit=10000`,
-        { headers: { apikey: process.env.SUPABASE_SERVICE_KEY, Authorization: 'Bearer ' + process.env.SUPABASE_SERVICE_KEY } }
-      );
-      if (r.ok) {
-        const rows = await r.json();
-        for (const row of rows) {
-          const c = row.empregador_cnpj;
-          cagedCounts[c] = (cagedCounts[c] || 0) + 1;
+    if (incluirCagedCount && cnpjs.length > 0) {
+      // PostgREST nao tem GROUP BY direto. Faz IN() limitado e agrega aqui.
+      // Limit baixo (3000) pra evitar timeout 504 da Vercel Edge (max 30s).
+      try {
+        const r = await fetch(
+          `${process.env.SUPABASE_URL}/rest/v1/clt_base_funcionarios?select=empregador_cnpj&empregador_cnpj=in.(${cnpjs.join(',')})&limit=3000`,
+          {
+            headers: { apikey: process.env.SUPABASE_SERVICE_KEY, Authorization: 'Bearer ' + process.env.SUPABASE_SERVICE_KEY },
+            // Timeout interno: se demorar mais que 8s, desiste e retorna sem contagem
+            signal: AbortSignal.timeout(8000),
+          }
+        );
+        if (r.ok) {
+          const rows = await r.json();
+          for (const row of rows) {
+            const c = row.empregador_cnpj;
+            cagedCounts[c] = (cagedCounts[c] || 0) + 1;
+          }
         }
+      } catch (e) {
+        // Timeout ou erro de rede — segue sem contagem (UI mostra '-')
+        console.warn('[empresas-aprovadas] caged count timeout:', e?.message);
       }
     }
 
     const empresas = (data || []).map(e => ({
       ...e,
-      cpfs_no_caged: cagedCounts[e.cnpj] || 0
+      cpfs_no_caged: incluirCagedCount ? (cagedCounts[e.cnpj] || 0) : null,
     }));
 
     return jsonResp({

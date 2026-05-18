@@ -66,11 +66,22 @@ export function useFilaStatus(filaId: string | null) {
       return r.fila;
     },
     enabled: !!filaId,
+    // CRITICO: nao retentar erros 4xx (ex: ID antigo no localStorage que retorna 404).
+    // Sem isso, RQ tenta 3x cada poll, gerando dezenas de requests 400/404 no console.
+    retry: (failureCount, err: any) => {
+      const status = err?.status || err?.data?.status;
+      // 4xx = erro de cliente (id invalido), nao retenta
+      if (status && status >= 400 && status < 500) return false;
+      return failureCount < 2;
+    },
     refetchInterval: (query) => {
+      // Se ja deu erro, PARA de pollar (senao bate 400/404 a cada 2s pra sempre)
+      if (query.state.error) return false;
       const fila = query.state.data;
       if (!fila) return 1500;
       return fila.status_geral === 'concluido' ? false : 2000;
     },
+    refetchOnWindowFocus: false,
     staleTime: (query) => {
       const fila = query.state.data;
       return fila?.status_geral === 'concluido' ? 30 * 60 * 1000 : 1000;

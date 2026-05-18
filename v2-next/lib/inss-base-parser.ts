@@ -181,8 +181,9 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     const mc = allMC.find((m) => m > te && m < te + 8);
     if (mc !== undefined) cardBlocks.push({ te, mc });
   }
-  let rmcB: { tipo: number; con?: number; cod?: number; val?: number; mc: number } | null = null;
-  let rccB: typeof rmcB = null;
+  type CardB = { tipo: number; con?: number; cod?: number; val?: number; mc: number };
+  let rmcB: CardB | null = null;
+  let rccB: CardB | null = null;
   if (cardBlocks.length >= 1) {
     const { te, mc } = cardBlocks[0];
     rmcB = { tipo: te, con: allCon.find((c) => c > te && c < te + 8), cod: allCod.find((c) => c > te && c < te + 8), val: allVE.find((v) => v > te && v < te + 8), mc };

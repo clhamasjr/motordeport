@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,8 @@ import { BancoSlug, FilaConsulta } from '@/lib/clt-types';
 import { BancoOfertaCard } from './banco-oferta-card';
 import { ModalDigitar } from './modal-digitar';
 import { formatCpf, formatCnpj, formatDateBR } from '@/lib/utils';
-import { X, Loader2, CheckCircle2 } from 'lucide-react';
+import { X, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { ApiError } from '@/lib/api';
 
 // Ordem que os cards aparecem (mais usados primeiro)
 const BANCOS_ORDEM: BancoSlug[] = [
@@ -29,6 +30,18 @@ export function ConsultaCard({ filaId, onClose }: Props) {
   const { data: fila, isLoading, error } = useFilaStatus(filaId);
   const [bancoDigitar, setBancoDigitar] = useState<string | null>(null);
 
+  // Se backend retorna 4xx (id antigo no localStorage que ja sumiu), avisa o pai
+  // pra remover da pilha automaticamente — evita "card de erro" eterno na tela.
+  useEffect(() => {
+    if (!error || !onClose) return;
+    const status = (error as ApiError)?.status;
+    if (status && status >= 400 && status < 500) {
+      // Espera 2s pra usuario ver a mensagem antes de auto-fechar
+      const t = setTimeout(() => onClose(), 2000);
+      return () => clearTimeout(t);
+    }
+  }, [error, onClose]);
+
   if (isLoading) {
     return (
       <Card>
@@ -46,10 +59,24 @@ export function ConsultaCard({ filaId, onClose }: Props) {
   }
 
   if (error || !fila) {
+    const status = (error as ApiError)?.status;
+    const isExpiraId = status === 400 || status === 404;
     return (
-      <Card className="border-destructive/50">
-        <CardContent className="p-4">
-          <div className="text-destructive text-sm">Erro carregando consulta: {error?.message || 'desconhecido'}</div>
+      <Card className="border-destructive/30 bg-destructive/5">
+        <CardContent className="p-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <AlertCircle className="w-4 h-4 text-destructive" />
+            {isExpiraId ? (
+              <span>Consulta antiga não encontrada — fechando automaticamente.</span>
+            ) : (
+              <span>Erro carregando consulta: {error?.message || 'desconhecido'}</span>
+            )}
+          </div>
+          {onClose && (
+            <Button variant="ghost" size="sm" onClick={onClose} className="h-7 gap-1">
+              <X className="w-3.5 h-3.5" /> Fechar
+            </Button>
+          )}
         </CardContent>
       </Card>
     );

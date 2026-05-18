@@ -32,6 +32,11 @@ export interface ListarFiltros {
   orderBy?: 'total_aprovacoes' | 'ultima_aprovacao_em' | 'empregador_nome';
   limit?: number;
   offset?: number;
+  /**
+   * Se true, traz cpfs_no_caged pra cada empresa (conta CAGED 2024 por CNPJ —
+   * query pesada de 43M linhas, pode dar 504). Default false (resposta rapida).
+   */
+  incluirCagedCount?: boolean;
 }
 
 interface ListarResponse {
@@ -53,6 +58,9 @@ export function useEmpresasAprovadas(filtros: ListarFiltros = {}) {
       return r;
     },
     staleTime: 60 * 1000,
+    // Sem retry agressivo se der 504 — backend tava bombando
+    retry: 1,
+    refetchOnWindowFocus: false,
   });
 }
 

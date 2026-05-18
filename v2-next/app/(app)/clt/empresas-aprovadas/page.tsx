@@ -30,6 +30,7 @@ export default function EmpresasAprovadasPage() {
   const [banco, setBanco] = useState('');
   const [uf, setUf] = useState('');
   const [orderBy, setOrderBy] = useState<'total_aprovacoes' | 'ultima_aprovacao_em' | 'empregador_nome'>('total_aprovacoes');
+  const [contarCaged, setContarCaged] = useState(false);
   const [empresaAberta, setEmpresaAberta] = useState<{ cnpj: string; nome: string } | null>(null);
 
   const { data, isLoading, error } = useEmpresasAprovadas({
@@ -37,6 +38,7 @@ export default function EmpresasAprovadasPage() {
     banco: banco || undefined,
     uf: uf || undefined,
     orderBy,
+    incluirCagedCount: contarCaged,
   });
 
   const empresas = data?.empresas || [];
@@ -74,6 +76,17 @@ export default function EmpresasAprovadasPage() {
             <option value="ultima_aprovacao_em">Mais recentes</option>
             <option value="empregador_nome">Nome A-Z</option>
           </select>
+        </CardContent>
+        <CardContent className="px-3 pb-3 pt-0">
+          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={contarCaged}
+              onChange={(e) => setContarCaged(e.target.checked)}
+              className="w-3.5 h-3.5 rounded border-input"
+            />
+            <span>📊 Contar CPFs do CAGED por empresa <span className="text-muted-foreground/70">(query pesada — pode demorar)</span></span>
+          </label>
         </CardContent>
       </Card>
 
@@ -132,22 +145,23 @@ export default function EmpresasAprovadasPage() {
                     <div className="text-[10px] text-muted-foreground/80 mt-1">
                       Última: {formatDateBR(e.ultima_aprovacao_em || '')}
                     </div>
-                    {(e.cpfs_no_caged ?? 0) > 0 && (
+                    {contarCaged && (e.cpfs_no_caged ?? 0) > 0 && (
                       <div className="text-xs font-bold text-bank-c6 mt-1.5">
                         📊 {e.cpfs_no_caged?.toLocaleString('pt-BR')} CPFs no CAGED
                       </div>
                     )}
                   </div>
 
-                  {(e.cpfs_no_caged ?? 0) > 0 && (
-                    <div className="w-full pt-2 border-t border-border">
-                      <Button size="sm" className="gap-2"
-                        onClick={() => setEmpresaAberta({ cnpj: e.cnpj, nome: e.empregador_nome || '' })}>
-                        <Users className="w-4 h-4" />
-                        Ver CPFs no CAGED ({e.cpfs_no_caged?.toLocaleString('pt-BR')})
-                      </Button>
-                    </div>
-                  )}
+                  {/* Botao Ver CPFs sempre disponivel — abre modal e busca CPFs sob demanda */}
+                  <div className="w-full pt-2 border-t border-border">
+                    <Button size="sm" className="gap-2"
+                      onClick={() => setEmpresaAberta({ cnpj: e.cnpj, nome: e.empregador_nome || '' })}>
+                      <Users className="w-4 h-4" />
+                      {contarCaged && (e.cpfs_no_caged ?? 0) > 0
+                        ? `Ver CPFs no CAGED (${e.cpfs_no_caged?.toLocaleString('pt-BR')})`
+                        : 'Ver CPFs no CAGED'}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ))}

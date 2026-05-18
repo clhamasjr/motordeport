@@ -40,7 +40,8 @@ export interface CagedCpf {
 interface ContarResponse {
   success: boolean;
   total: number | null;
-  modo: 'estimado' | 'exato';
+  modo: 'estimated' | 'planned' | 'exato' | 'exact' | 'timeout';
+  warning?: string;
   error?: string;
 }
 
@@ -77,6 +78,15 @@ export function useCagedContar(filtros: CagedFiltros, exato = false) {
       return r;
     },
     staleTime: 30 * 1000,
+    // Tabela CAGED tem 43M linhas — count=exact pode estourar 30s do Edge.
+    // Backend ja faz fallback estimated/timeout. Aqui evitamos retry agressivo
+    // que duplica os 504 no console.
+    retry: (failureCount, err: any) => {
+      const status = err?.status;
+      if (status && (status === 504 || (status >= 400 && status < 500))) return false;
+      return failureCount < 1;
+    },
+    refetchOnWindowFocus: false,
   });
 }
 

@@ -102,26 +102,46 @@ export default async function handler(req) {
   try { body = await req.json(); } catch { body = {}; }
   const action = body.action || 'contar';
 
-  // ─── CONTAR: só count (rápido com count=planned, exato com count=exact) ─
+  // ─── CONTAR: só count com timeout interno pra evitar 504 da Edge ─
+  // - count=estimated: rapidissimo (le do pg_stat_user_tables, ANALYZE)
+  // - count=planned:   ok (planejador estima)
+  // - count=exact:     SLOW em tabela 43M — so quando user pede "exato"
+  // Default mudou de planned -> estimated pra responder em <2s sempre.
   if (action === 'contar') {
     const params = montarFiltros(body);
     params.set('select', 'cpf');
     params.set('limit', '1');
     const exato = body.exato === true;
-    const r = await fetch(
-      `${SUPA_URL()}/rest/v1/clt_base_funcionarios?${params.toString()}`,
-      { method: 'HEAD', headers: headers(exato ? 'exact' : 'planned') }
-    );
-    // Content-Range: 0-0/N
-    const cr = r.headers.get('content-range') || '';
-    const m = cr.match(/\/(\d+|\*)$/);
-    const total = m ? (m[1] === '*' ? null : parseInt(m[1])) : null;
-    return jsonResp({
-      success: true,
-      total,
-      modo: exato ? 'exato' : 'estimado',
-      filtros: body
-    }, 200, req);
+    const countMode = exato ? 'exact' : 'estimated';
+    try {
+      const r = await fetch(
+        `${SUPA_URL()}/rest/v1/clt_base_funcionarios?${params.toString()}`,
+        {
+          method: 'HEAD',
+          headers: headers(countMode),
+          // Aborta em 8s pra retornar 200 com total=null em vez de 504 Edge
+          signal: AbortSignal.timeout(8000),
+        }
+      );
+      const cr = r.headers.get('content-range') || '';
+      const m = cr.match(/\/(\d+|\*)$/);
+      const total = m ? (m[1] === '*' ? null : parseInt(m[1])) : null;
+      return jsonResp({
+        success: true,
+        total,
+        modo: countMode,
+        filtros: body
+      }, 200, req);
+    } catch (e) {
+      // Timeout interno — retorna 200 com total=null (front mostra "muitos")
+      return jsonResp({
+        success: true,
+        total: null,
+        modo: 'timeout',
+        warning: 'Contagem demorou demais — refine os filtros ou clique Exato com filtros estreitos',
+        filtros: body
+      }, 200, req);
+    }
   }
 
   // ─── LISTAR: amostra paginada (max 1000 por chamada) ───────────────

@@ -5,6 +5,7 @@ import {
   CagedFiltros,
   useCagedContar, useCagedListar, useCagedExportCsv, useCagedHigienizarLote,
 } from '@/hooks/use-clt-caged';
+import { useDebounce } from '@/hooks/use-debounce';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -36,13 +37,18 @@ export default function ExtrairCagedPage() {
     });
   };
 
-  const contar = useCagedContar(filtros);
+  // Debounce nos filtros: nao dispara query a cada caractere (causava
+  // dezenas de 504 em cascata na tabela CAGED de 43M linhas)
+  const filtrosDebounced = useDebounce(filtros, 600);
+
+  const contar = useCagedContar(filtrosDebounced);
   const listar = useCagedListar();
   const exportar = useCagedExportCsv();
   const higienizar = useCagedHigienizarLote();
 
   const total = contar.data?.total;
   const modo = contar.data?.modo;
+  const aindaDigitando = JSON.stringify(filtros) !== JSON.stringify(filtrosDebounced);
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-4">
@@ -51,7 +57,8 @@ export default function ExtrairCagedPage() {
           <Database className="w-6 h-6 text-bank-c6" /> Extrair Base CAGED 2024
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          43,6 milhões de CPFs CLT do Brasil. Aplique filtros e baixe CSV ou envie em lote pra higienização CLT.
+          Base completa: <b>43,6 milhões</b> de CPFs CLT do Brasil em 2024 (incluindo demitidos).
+          Por padrão filtramos só os <b>ativos</b> (~27 mi com vínculo no momento). Mude a "Situação" abaixo pra ver demitidos ou todos.
         </p>
       </div>
 
@@ -169,17 +176,35 @@ export default function ExtrairCagedPage() {
       <Card className="border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-accent/5">
         <CardContent className="p-4 flex items-center justify-between flex-wrap gap-3">
           <div>
-            {contar.isLoading ? (
+            {aindaDigitando ? (
               <div className="text-sm text-muted-foreground flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" /> Contando CPFs...
+                <Loader2 className="w-4 h-4 animate-spin" /> Aguardando você terminar de digitar...
               </div>
+            ) : contar.isLoading || contar.isFetching ? (
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" /> Contando CPFs (pode demorar até 8s)...
+              </div>
+            ) : modo === 'timeout' ? (
+              <>
+                <div className="text-2xl font-bold text-yellow-500 leading-none">⏱ Muitos CPFs</div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Contagem demorou demais — refine os filtros (UF, idade, CBO) pra ver o número
+                </div>
+              </>
             ) : total !== null && total !== undefined ? (
               <>
                 <div className="text-3xl font-black text-primary leading-none">
                   {total.toLocaleString('pt-BR')}
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-1">
-                  CPFs encontrados {modo === 'estimado' ? '(estimativa)' : '(exato)'}
+                  CPFs encontrados {modo === 'exato' ? '(exato)' : '(estimativa)'}
+                </div>
+              </>
+            ) : contar.error ? (
+              <>
+                <div className="text-sm text-destructive">⚠ Erro ao contar</div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Refine os filtros e tente de novo
                 </div>
               </>
             ) : (
