@@ -120,8 +120,9 @@ export const BD: Record<string, BancoRegra> = {
   },
 };
 
-// ORDEM = bancos ATIVOS no motor. FACTA/C6/DIGIO/DAYCOVAL desativados.
-export const ORDEM = ['QUALI', 'BRB', 'ICRED'];
+// ORDEM = bancos ATIVOS no motor. FACTA/DIGIO/DAYCOVAL desativados.
+// C6 reativado (mar/2026) — aceita correspondentes BMG 318 e BRB 070 com pgMin=12.
+export const ORDEM = ['QUALI', 'C6', 'BRB', 'ICRED'];
 
 export const PICPAY_CODE = '380';
 export const B1P: string[] = ['149','422','739','925','380','033','326','290','041','389','121'];
@@ -406,6 +407,51 @@ export function calcReducaoPort(
   const reducao = (contrato.par || 0) - novaParc;
   if (reducao <= 0) return null;
   return { reducao, novaParc, taxa: taxaMin, prazo: prazoMaxNovo || 108 };
+}
+
+/**
+ * Calcula a redução de parcela usando um BANCO DESTINO REAL.
+ * Usa a faixa de taxa do banco (taxa mínima) e prazo máximo (108m por padrão).
+ * Pra port+refin: novaParc = saldo × coef(taxa_min_do_banco, 108m).
+ * Só retorna resultado se a redução for positiva — se a taxa atual já é igual
+ * ou menor que a do destino, port não vale.
+ */
+export function calcReducaoNoDestino(
+  parcela: number,
+  saldo: number,
+  destino: BancoSimul,
+  taxaOrigemAtual = 0,
+  prazoMaxNovo = 108,
+): ReducaoResult | null {
+  if (!parcela || !saldo || !destino) return null;
+  const r = BD[destino.banco];
+  if (!r) return null;
+  // Pega a taxa MAIS BAIXA da faixa do banco (best case pro cliente)
+  // Se banco tem coefF fixo (BRB), usa esse coef direto
+  let taxaUsada: number;
+  let coef: number;
+  if (r.coefF) {
+    coef = r.coefF;
+    const t = COEFS.find((x) => x.c === r.coefF);
+    taxaUsada = t ? t.t : 1.85;
+  } else if (r.faixa) {
+    taxaUsada = r.faixa[0]; // taxa mínima da faixa
+    coef = coefFor(taxaUsada, prazoMaxNovo);
+  } else {
+    return null;
+  }
+  // ⚠ Só faz sentido port se taxa atual > taxa destino
+  // Se taxa origem é menor que a destino, cliente piora — pula
+  if (taxaOrigemAtual > 0 && taxaOrigemAtual <= taxaUsada) return null;
+  const novaParc = saldo * coef;
+  const reducao = parcela - novaParc;
+  if (reducao <= 0) return null;
+  return {
+    reducao, novaParc,
+    taxa: taxaUsada,
+    prazo: prazoMaxNovo,
+    banco: destino.banco,
+  };
 }
 
 export type EnquadramentoStatus =

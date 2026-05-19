@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { formatBRL } from '@/lib/utils';
 import { InssParsedResult } from '@/lib/inss-types';
 import {
-  testarTodos, calcReducaoPort, parseBR, pC, pEN, ESP_INV, ESP_AUX,
+  testarTodos, calcReducaoNoDestino, parseBR, pC, pEN, ESP_INV, ESP_AUX,
   type BancoSimul,
 } from '@/lib/inss-motor';
 import {
@@ -32,9 +32,12 @@ interface ContratoCalc {
   prazoTotal: number;
   destinos: BancoSimul[];
   destinoSelecionado: number;
-  reducaoEstim: number;     // refin 108m @ 1.50% — quanto reduz a parcela
-  novaParcEstim: number;    // parcela nova após refin
-  resolveExcedente: boolean; // refin desse contrato sozinho cobre o excedente da nova regra?
+  // Refin no MELHOR banco destino real (taxa < taxa origem)
+  reducaoReal: number;
+  novaParcReal: number;
+  bancoRefin: string | null;     // banco que dá a redução
+  taxaRefin: number | null;      // taxa mínima do destino
+  resolveExcedente: boolean;     // refin REAL cobre o excedente?
   bloqueado: boolean;
   motivoBloqueio?: string;
 }
@@ -155,19 +158,37 @@ function calcularTudo(
       }
     }
 
-    // Refin estimado (108m @ 1.50% — taxa piso INSS)
-    const rcalc = calcReducaoPort({ par: parcela, sal: saldo }, 108);
-    const reducaoEstim = rcalc?.reducao || 0;
-    const novaParcEstim = rcalc?.novaParc || parcela;
+    // ── REFIN REAL: usa o destino com a taxa MAIS BAIXA da faixa ──
+    // Sempre da maior taxa (atual) pra menor (destino).
+    // Só vale port se taxaOrig > taxa_destino.
+    let reducaoReal = 0;
+    let novaParcReal = parcela;
+    let bancoRefin: string | null = null;
+    let taxaRefin: number | null = null;
+    if (!bloqueado && destinos.length > 0 && saldo > 0 && parcela > 0) {
+      // Testa cada destino, escolhe o que dá MAIOR REDUÇÃO
+      let melhorReducao = 0;
+      for (const d of destinos) {
+        const r = calcReducaoNoDestino(parcela, saldo, d, taxaOrig, 108);
+        if (r && r.reducao > melhorReducao) {
+          melhorReducao = r.reducao;
+          reducaoReal = r.reducao;
+          novaParcReal = r.novaParc;
+          bancoRefin = r.banco || d.banco;
+          taxaRefin = r.taxa;
+        }
+      }
+    }
 
-    // Esse contrato sozinho resolve o excedente da nova regra?
-    const resolveExcedente = !bloqueado && excedente > 0 && reducaoEstim >= excedente - 0.01;
+    // Resolve o excedente da nova regra?
+    const resolveExcedente = !bloqueado && excedente > 0 && reducaoReal >= excedente - 0.01;
 
     contratos.push({
       idx: i, contrato, bancoOrigem, codOrigem, parcela, saldo, taxaOrig, prazos,
       pagas, prazoRest: restPg, prazoTotal: totPg,
       destinos, destinoSelecionado: 0,
-      reducaoEstim, novaParcEstim, resolveExcedente,
+      reducaoReal, novaParcReal, bancoRefin, taxaRefin,
+      resolveExcedente,
       bloqueado, motivoBloqueio: motivo,
     });
   }
@@ -274,7 +295,7 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
                 <div className="text-xs text-foreground mt-1">
                   Cliente extrapola em <strong className="font-mono text-red-400">{formatBRL(excedente)}</strong>{' '}
                   na nova regra. Nenhum contrato sozinho reduz parcela suficiente
-                  ({contratos.length > 0 && `melhor reduz ${formatBRL(Math.max(0, ...contratos.map((c) => c.reducaoEstim)))}`}),
+                  ({contratos.length > 0 && `melhor reduz ${formatBRL(Math.max(0, ...contratos.map((c) => c.reducaoReal)))}`}),
                   e {cartoesQueResolvem.length === 0 ? 'cliente não tem cartão pra cancelar' : 'cancelar cartão sozinho também não cobre'}.
                   <div className="mt-1 text-red-400 font-semibold">→ Não tem o que fazer com 1 operação só. Precisaria combinar várias.</div>
                 </div>
@@ -325,12 +346,18 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
                 <RefreshCw className="size-4 text-green-400 shrink-0" />
                 <div className="flex-1 text-xs">
                   <div className="font-semibold text-green-400">
-                    Refin contrato <span className="font-mono">{c.contrato || '?'}</span> ({c.bancoOrigem})
+                    Refin contrato <span className="font-mono">{c.contrato || '?'}</span> ({c.bancoOrigem}{' '}
+                    {c.taxaOrig > 0 && <span className="text-muted-foreground">@ {c.taxaOrig.toFixed(2)}%</span>})
+                    {c.bancoRefin && (
+                      <span className="text-cyan-400 ml-1">
+                        → {c.bancoRefin} {c.taxaRefin && `@ ${c.taxaRefin.toFixed(2)}%`}
+                      </span>
+                    )}
                   </div>
                   <div className="text-muted-foreground">
                     Parcela <strong className="font-mono text-foreground">{formatBRL(c.parcela)}</strong>{' '}
-                    → <strong className="font-mono text-green-400">{formatBRL(c.novaParcEstim)}</strong>{' '}
-                    (reduz <strong className="font-mono">{formatBRL(c.reducaoEstim)}</strong> ≥ excedente{' '}
+                    → <strong className="font-mono text-green-400">{formatBRL(c.novaParcReal)}</strong>{' '}
+                    (reduz <strong className="font-mono">{formatBRL(c.reducaoReal)}</strong> ≥ excedente{' '}
                     {formatBRL(excedente)})
                   </div>
                 </div>
@@ -373,8 +400,8 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
                     <th className="text-right p-2 font-semibold">Parcela</th>
                     <th className="text-right p-2 font-semibold">Saldo (editável)</th>
                     <th className="text-center p-2 font-semibold">Pagas/Prazo</th>
-                    <th className="text-left p-2 font-semibold">→ Destino</th>
-                    <th className="text-right p-2 font-semibold">Refin (108m@1.50%)</th>
+                    <th className="text-left p-2 font-semibold">→ Port (troco)</th>
+                    <th className="text-right p-2 font-semibold">→ Refin 108m (banco)</th>
                     <th className="text-center p-2 font-semibold">Resolve?</th>
                   </tr>
                 </thead>
@@ -430,13 +457,22 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
                             <span className="text-red-400 text-[10px]">{c.motivoBloqueio?.slice(0, 40)}</span>
                           )}
                         </td>
-                        <td className="p-2 text-right font-mono">
-                          {c.reducaoEstim > 0 ? (
-                            <div>
-                              <div className="text-green-400">{formatBRL(c.novaParcEstim)}</div>
-                              <div className="text-[9px] text-green-400/70">↓{formatBRL(c.reducaoEstim)}</div>
+                        <td className="p-2 text-right">
+                          {c.reducaoReal > 0 && c.bancoRefin ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <Badge variant="success" className="text-[9px] font-mono">
+                                {c.bancoRefin} · {c.taxaRefin?.toFixed(2)}%
+                              </Badge>
+                              <span className="font-mono text-green-400 text-xs">{formatBRL(c.novaParcReal)}</span>
+                              <span className="text-[9px] text-green-400/70 font-mono">↓ {formatBRL(c.reducaoReal)}</span>
                             </div>
-                          ) : '—'}
+                          ) : !c.bloqueado && c.taxaOrig > 0 ? (
+                            <span className="text-[10px] text-muted-foreground">
+                              taxa atual ({c.taxaOrig.toFixed(2)}%) já ≤ destino
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </td>
                         <td className="p-2 text-center">
                           {enquadraNovaRegra ? (
