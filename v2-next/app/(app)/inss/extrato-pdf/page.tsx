@@ -31,7 +31,11 @@ export default function ExtratoPdfPage() {
     try {
       const r = await parsePdfInssFromFile(file);
       setExt(r);
-      toast.success(`Extrato de ${r.beneficiario.nome || '(sem nome)'} lido — ${r.contratos.length} contrato(s), ${r.cartoes.length} cartão(ões)`);
+      if (r.tipo !== 'historico_consignado') {
+        toast.error(r.motivo || 'PDF não é um Histórico de Empréstimo Consignado');
+      } else {
+        toast.success(`Extrato de ${r.beneficiario.nome || '(sem nome)'} lido — ${r.contratos.length} contrato(s), ${r.cartoes.length} cartão(ões)`);
+      }
     } catch (e) {
       toast.error('Erro ao ler PDF: ' + (e instanceof Error ? e.message : 'desconhecido'));
     } finally {
@@ -114,7 +118,29 @@ export default function ExtratoPdfPage() {
             </CardContent>
           </Card>
 
-          {/* Cabeçalho beneficiário */}
+          {/* Aviso: PDF é de outro tipo (não é histórico) */}
+          {ext.tipo !== 'historico_consignado' && (
+            <Card className="border-yellow-500/50 bg-yellow-500/5">
+              <CardContent className="p-4 flex items-start gap-3">
+                <AlertCircle className="size-6 text-yellow-400 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <div className="font-bold text-yellow-400">⚠ PDF não é o &quot;Histórico de Empréstimo Consignado&quot;</div>
+                  <div className="text-sm text-foreground mt-1">{ext.motivo}</div>
+                  <div className="text-xs text-muted-foreground mt-2">
+                    Como gerar o PDF certo:
+                    <ol className="list-decimal list-inside mt-1 space-y-0.5">
+                      <li>Acesse <span className="font-mono text-cyan-400">meu.inss.gov.br</span></li>
+                      <li>Vá em <strong>&quot;Consignado&quot; → &quot;Solicitar Histórico de Empréstimo Consignado&quot;</strong></li>
+                      <li>Baixe o PDF gerado e suba aqui</li>
+                    </ol>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Cabeçalho beneficiário (só se for histórico válido) */}
+          {ext.tipo === 'historico_consignado' && (
           <Card>
             <CardContent className="p-4">
               <div className="flex items-start justify-between flex-wrap gap-2">
@@ -154,13 +180,14 @@ export default function ExtratoPdfPage() {
               </div>
             </CardContent>
           </Card>
+          )}
 
           {/* Análise enquadramento NOVA regra */}
-          {analise && <AnaliseCard analise={analise} ext={ext} />}
+          {ext.tipo === 'historico_consignado' && analise && <AnaliseCard analise={analise} ext={ext} />}
 
           {/* Tabelas de detalhes */}
-          {ext.contratos.length > 0 && <ContratosTable ext={ext} />}
-          {ext.cartoes.length > 0 && <CartoesTable ext={ext} />}
+          {ext.tipo === 'historico_consignado' && ext.contratos.length > 0 && <ContratosTable ext={ext} />}
+          {ext.tipo === 'historico_consignado' && ext.cartoes.length > 0 && <CartoesTable ext={ext} />}
         </>
       )}
     </div>

@@ -7,6 +7,9 @@
 //  - Cartões ATIVOS (RMC e RCC) com limite + valor reservado
 //  - Descontos de cartão (histórico — pra ver SALDO DEVEDOR)
 // Roda 100% client-side via pdfjs-dist.
+//
+// IMPORTANTE: os regex são TOLERANTES a caracteres acentuados quebrados.
+// Em vez de "Histórico" usa "Hist\\S+rico" — bate com 'Histórico' e 'Hist?rico'.
 // ──────────────────────────────────────────────────────────────────
 
 // Helper de parsing pt-BR
@@ -33,13 +36,17 @@ export interface InssExtratoBeneficiario {
   contaCorrente?: string;
   bloqueado?: boolean;
   elegivel?: boolean;
-  procurador?: boolean;
-  representanteLegal?: boolean;
-  pensaoAlimenticia?: boolean;
 }
 
 export interface InssExtratoMargens {
-  // Por modalidade
+  baseCalculo: number;
+  totalComprometido: number;
+  maxComprometimentoPermitido: number;
+  margemExtrapoladaTotal: number;
+  margemExtrapoladaEmp: number;
+  margemExtrapoladaRmc: number;
+  margemExtrapoladaRcc: number;
+  // Para retro-compatibilidade
   margemConsignavelEmp: number;
   margemConsignavelRmc: number;
   margemConsignavelRcc: number;
@@ -50,14 +57,6 @@ export interface InssExtratoMargens {
   margemDisponivelRmc: number;
   margemDisponivelRcc: number;
   margemReservadaEmp: number;
-  margemExtrapoladaEmp: number;
-  margemExtrapoladaRmc: number;
-  margemExtrapoladaRcc: number;
-  // Resumo do benefício
-  baseCalculo: number;
-  totalComprometido: number;
-  maxComprometimentoPermitido: number;
-  margemExtrapoladaTotal: number;
 }
 
 export interface InssExtratoContratoEmp {
@@ -74,7 +73,7 @@ export interface InssExtratoContratoEmp {
   valorEmprestado: number;
   valorLiberado: number;
   iof: number;
-  saldoDevedor?: number; // valor pago em refin/port (campo "VALOR PAGO**")
+  saldoDevedor?: number;
   cetMensal?: number;
   cetAnual?: number;
   taxaJurosMensal?: number;
@@ -92,13 +91,10 @@ export interface InssExtratoCartao {
   dataInclusao?: string;
   valorLimite: number;
   valorReservado: number;
-  // Calculado a partir do histórico de descontos
   saldoDevedorAtual: number;
   ultimoDescontoCompetencia?: string;
   ultimoDescontoValorUtilizado: number;
-  /** TRUE se o cartão está sendo USADO ativamente (saldo > 0 ou usando no mês). */
   estaUsando: boolean;
-  /** TRUE se pode ser cancelado sem custo (saldo devedor = 0). */
   podeCancelar: boolean;
 }
 
@@ -116,6 +112,7 @@ export interface InssExtratoDescontoCartao {
 }
 
 export interface InssExtratoResultado {
+  tipo: 'historico_consignado' | 'autenticidade' | 'desconhecido';
   beneficiario: InssExtratoBeneficiario;
   margens: InssExtratoMargens;
   contratos: InssExtratoContratoEmp[];
@@ -123,6 +120,8 @@ export interface InssExtratoResultado {
   descontosCartao: InssExtratoDescontoCartao[];
   geradoEm?: string;
   rawText: string;
+  /** Quando tipo != 'historico_consignado', explica por quê. */
+  motivo?: string;
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -130,9 +129,7 @@ export interface InssExtratoResultado {
 // ──────────────────────────────────────────────────────────────────
 
 export async function parsePdfInssFromFile(file: File): Promise<InssExtratoResultado> {
-  // pdfjs-dist no client
   const pdfjs = await import('pdfjs-dist');
-  // Worker path (Next.js): mantemos sem worker (slow mode) pra evitar setup
   (pdfjs as { GlobalWorkerOptions: { workerSrc: string } }).GlobalWorkerOptions.workerSrc =
     `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -150,184 +147,228 @@ export async function parsePdfInssFromFile(file: File): Promise<InssExtratoResul
 }
 
 export function parseExtratoText(text: string): InssExtratoResultado {
+  const empty: InssExtratoResultado = {
+    tipo: 'desconhecido',
+    beneficiario: { nome: '', nb: '' },
+    margens: empytMargens(),
+    contratos: [], cartoes: [], descontosCartao: [],
+    rawText: text,
+  };
+
+  // Detecta o tipo do PDF — "Histórico de Empréstimo Consignado" tem essas palavras-chave
+  const isHistorico = /Hist\S+rico\s+de\s+Empr\S+stimo\s+Consignado/i.test(text) ||
+    /HIST\S+RICO\s+DE\s+EMPR\S+STIMO\s+CONSIGNADO/i.test(text) ||
+    /CONTRATOS\s+ATIVOS\s+E\s+SUSPENSOS/i.test(text);
+
+  if (!isHistorico) {
+    return {
+      ...empty,
+      tipo: 'autenticidade',
+      motivo: 'Esse PDF parece ser de Autenticidade ou outro tipo de documento, não o "Histórico de Empréstimo Consignado". Faça o download em meu.inss.gov.br → "Consignado" → "Solicitar Histórico".',
+    };
+  }
+
   const beneficiario = extractBeneficiario(text);
   const margens = extractMargens(text);
   const contratos = extractContratosAtivos(text);
   const cartoes = extractCartoesAtivos(text);
   const descontosCartao = extractDescontosCartao(text);
 
-  // Enriquece cartões com info de "estaUsando" e "podeCancelar"
+  // Enriquece cartões com saldo devedor atual + estaUsando + podeCancelar
   for (const c of cartoes) {
     const ds = descontosCartao.filter((d) => d.contrato === c.contrato || d.tipo === c.tipo);
-    ds.sort((a, b) => (b.competencia || '').localeCompare(a.competencia || ''));
+    ds.sort((a, b) => compareCompetencia(b.competencia, a.competencia));
     const ultimo = ds[0];
     if (ultimo) {
       c.saldoDevedorAtual = ultimo.saldoDevedor;
       c.ultimoDescontoCompetencia = ultimo.competencia;
       c.ultimoDescontoValorUtilizado = ultimo.utilizadoNoMes;
     }
-    // estaUsando = saldo devedor > 0 OU utilizado no mês > 0
     c.estaUsando = (c.saldoDevedorAtual || 0) > 0 || (c.ultimoDescontoValorUtilizado || 0) > 0;
-    // podeCancelar = saldo devedor ≤ 0 (cliente não deve nada)
     c.podeCancelar = (c.saldoDevedorAtual || 0) <= 0.01;
   }
 
-  // Geração: extrai data do rodapé
+  // Data de geração no rodapé
   const m = text.match(/(\d{2}\/\d{2}\/\d{4})\s+\d{2}:\d{2}:\d{2}/);
   return {
+    tipo: 'historico_consignado',
     beneficiario, margens, contratos, cartoes, descontosCartao,
     geradoEm: m ? m[1] : undefined,
     rawText: text,
   };
 }
 
-// ──────────────────────────────────────────────────────────────────
-// Sub-parsers
-// ──────────────────────────────────────────────────────────────────
-
-function extractBeneficiario(text: string): InssExtratoBeneficiario {
-  const r: InssExtratoBeneficiario = { nome: '', nb: '' };
-  // Nome: aparece logo após "HISTÓRICO DE EMPRÉSTIMO CONSIGNADO"
-  let m = text.match(/EMPR[��ÉE]STIMO\s+CONSIGNADO\s+([A-Z][A-Z\s]+?)\s+Benef[��É]cio/i);
-  if (m) r.nome = m[1].trim().replace(/\s+/g, ' ');
-  // NB
-  m = text.match(/Benef[��É]cio[\s:]+([\d.\-]+)/i) ||
-      text.match(/N[º°]?\s*Benef[��É]cio[\s:]+([\d.\-]+)/i);
-  if (m) r.nb = m[1].replace(/\D/g, '');
-  // Espécie
-  m = text.match(/Benef[��É]cio\s+([A-Z][A-Z\s]+?)(?:\s+N[º°]|\s+\d)/i);
-  if (m && !m[1].includes('Benef')) r.especie = m[1].trim().replace(/\s+/g, ' ');
-  // Outro padrão
-  m = text.match(/(APOSENTADORIA[A-Z\s]*|PENS[��ÃA]O[A-Z\s]*|AUX[��ÍI]LIO[A-Z\s]*)/i);
-  if (m && !r.especie) r.especie = m[1].trim().replace(/\s+/g, ' ');
-  // Situação
-  m = text.match(/Situa[c��çã]+o[\s:]+(\w+)/i);
-  if (m) r.situacao = m[1].toUpperCase();
-  // Banco/conta
-  m = text.match(/Pago em[\s:]+([A-Z][A-Z\s\.]+?)(?:\s+Ag[��êe]ncia|\s+\d)/i);
-  if (m) r.bancoConta = m[1].trim().replace(/\s+/g, ' ');
-  m = text.match(/Ag[��êe]ncia[\s:]+(\d+)/i);
-  if (m) r.agencia = m[1];
-  m = text.match(/Conta\s+Corrente[\s:]+(\d+)/i);
-  if (m) r.contaCorrente = m[1];
-  // Flags
-  r.bloqueado = /Bloqueado para empr/i.test(text);
-  r.elegivel = /Eleg[��Íi]vel para empr/i.test(text);
-  r.procurador = !/N[��ãa]o possui procurador/i.test(text);
-  r.representanteLegal = !/N[��ãa]o possui representante legal/i.test(text);
-  r.pensaoAlimenticia = !/N[��ãa]o [��ée] pens[��ãa]o aliment[��íi]cia/i.test(text);
-  return r;
-}
-
-function extractMargens(text: string): InssExtratoMargens {
-  // Pega o bloco "VALORES POR MODALIDADE"
-  // Strutura: 6 valores por linha (EMP / RMC / RCC) × 5 linhas
-  const r: InssExtratoMargens = {
+function empytMargens(): InssExtratoMargens {
+  return {
+    baseCalculo: 0, totalComprometido: 0, maxComprometimentoPermitido: 0,
+    margemExtrapoladaTotal: 0,
+    margemExtrapoladaEmp: 0, margemExtrapoladaRmc: 0, margemExtrapoladaRcc: 0,
     margemConsignavelEmp: 0, margemConsignavelRmc: 0, margemConsignavelRcc: 0,
     margemUtilizadaEmp: 0, margemUtilizadaRmc: 0, margemUtilizadaRcc: 0,
     margemDisponivelEmp: 0, margemDisponivelRmc: 0, margemDisponivelRcc: 0,
     margemReservadaEmp: 0,
-    margemExtrapoladaEmp: 0, margemExtrapoladaRmc: 0, margemExtrapoladaRcc: 0,
-    baseCalculo: 0, totalComprometido: 0, maxComprometimentoPermitido: 0,
-    margemExtrapoladaTotal: 0,
   };
-  // VALORES DO BENEFÍCIO
-  let m = text.match(/BASE\s+DE\s+C[��ÁA]LCULO\s+R\$\s*([\d.,]+)/i);
+}
+
+function compareCompetencia(a: string, b: string): number {
+  // Compara "MM/YYYY" — ordena pelo ano/mês
+  const pa = a.match(/(\d{2})\/(\d{4})/);
+  const pb = b.match(/(\d{2})\/(\d{4})/);
+  if (!pa || !pb) return 0;
+  const yearDiff = parseInt(pa[2]) - parseInt(pb[2]);
+  if (yearDiff !== 0) return yearDiff;
+  return parseInt(pa[1]) - parseInt(pb[1]);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Sub-parsers — TODOS resilientes a caracteres acentuados quebrados
+// (usa \S em vez de letras acentuadas específicas)
+// ──────────────────────────────────────────────────────────────────
+
+function extractBeneficiario(text: string): InssExtratoBeneficiario {
+  const r: InssExtratoBeneficiario = { nome: '', nb: '' };
+
+  // ── Nome do beneficiário ──
+  // Estratégia: aparece depois de "EMPRÉSTIMO CONSIGNADO" e antes de "Benefício"
+  // Aceita "Hist\S+rico" / "HIST\S+RICO"
+  let m = text.match(/EMPR\S+STIMO\s+CONSIGNADO\s+([A-Z][A-Z][A-Z\s]+?)(?:\s+Benef|\s+N[ºo]?\s*Benef)/i);
+  if (m) {
+    r.nome = m[1].trim().replace(/\s+/g, ' ');
+  } else {
+    // Fallback: linha em CAPS sozinha (mais de 2 palavras)
+    const linhas = text.split(/\n/);
+    for (const l of linhas) {
+      const trim = l.trim();
+      if (/^[A-Z][A-Z\s]{8,80}$/.test(trim) && trim.split(/\s+/).length >= 2 && !trim.includes('INSS') && !trim.includes('NACIONAL')) {
+        r.nome = trim;
+        break;
+      }
+    }
+  }
+
+  // ── NB ── (Número do benefício)
+  m = text.match(/N[ºo°]?\s*Benef\S+cio[\s:]+([\d.\-]+)/i)
+    || text.match(/Benef\S+cio[\s:]+(\d[\d.\-]{6,})/i);
+  if (m) r.nb = m[1].replace(/\D/g, '');
+
+  // ── Espécie ──
+  // Padrões: "APOSENTADORIA POR IDADE", "PENSAO POR MORTE", "AUXILIO POR INCAPACIDADE", "APOSENTADORIA POR INVALIDEZ PREVIDENCIARIA"
+  m = text.match(/(APOSENTADORIA(?:\s+POR\s+\S+(?:\s+\S+)?(?:\s+\S+)?)?|PENS\S+O\s+POR\s+MORTE|AUX\S+LIO\s+POR\s+\S+(?:\s+\S+)?|BENEF\S+CIO\s+ASSISTENCIAL[A-Z\s]+|LOAS[A-Z\s]*)/i);
+  if (m) {
+    let especie = m[1].trim().replace(/\s+/g, ' ');
+    // Tira sufixo isolado de 1-2 letras (lixo de quebra de linha)
+    especie = especie.replace(/\s+[A-Z]{1,2}$/, '');
+    r.especie = especie;
+  }
+
+  // ── Situação ──
+  m = text.match(/Situa\S+o[\s:]+(\w+)/i);
+  if (m) r.situacao = m[1].toUpperCase();
+
+  // ── Banco conta / agência / conta ──
+  m = text.match(/Pago em[\s:]+([A-Z][A-Z\s\.]+?)(?:\s+Ag\S+ncia|\s+\d|\n)/i);
+  if (m) r.bancoConta = m[1].trim().replace(/\s+/g, ' ');
+  m = text.match(/Ag\S+ncia[\s:]+(\d+)/i);
+  if (m) r.agencia = m[1];
+  m = text.match(/Conta\s+Corrente[\s:]+(\d+)/i);
+  if (m) r.contaCorrente = m[1];
+
+  // Flags
+  r.bloqueado = /Bloqueado para empr/i.test(text);
+  r.elegivel = /Eleg\S+vel\s+para\s+empr/i.test(text);
+
+  return r;
+}
+
+function extractMargens(text: string): InssExtratoMargens {
+  const r = empytMargens();
+
+  // Valores do benefício (resumo final)
+  let m = text.match(/BASE\s+DE\s+C\S+LCULO\s+R\$\s*([\d.,]+)/i);
   if (m) r.baseCalculo = parseBR(m[1]);
+
   m = text.match(/TOTAL\s+COMPROMETIDO\s+R\$\s*([\d.,]+)/i);
   if (m) r.totalComprometido = parseBR(m[1]);
-  m = text.match(/M[��ÁA]XIMO\s+DE\s+COMPROMETIMENTO[\w\s]*\s+R\$\s*([\d.,]+)/i);
+
+  m = text.match(/M\S+XIMO\s+DE\s+COMPROMETIMENTO[\w\s]*R\$\s*([\d.,]+)/i);
   if (m) r.maxComprometimentoPermitido = parseBR(m[1]);
 
-  // Valores por modalidade — captura todos os números na seção
-  // O texto vem mais ou menos assim:
-  // EMPRÉSTIMOS RMC R$567,35 R$0,00 R$567,35 MARGEM DISPONÍVEL* R$0,00 MARGEM RESERVADA R$0,00
-  // MARGEM EXTRAPOLADA*** R$81,05 R$0,00 R$0,00 - R$81,05 MARGEM CONSIGNÁVEL MARGEM UTILIZADA** RCC
-  // Vou usar uma estratégia de capturar a sequência de valores na ordem em que aparecem.
-  const modSec = text.match(/EMPR[��ÉE]STIMOS\s+RMC([\s\S]+?)VALORES\s+DO\s+BENEF[��ÍI]CIO/i);
-  if (modSec) {
-    const valoresStr = modSec[1];
-    const valores = (valoresStr.match(/R\$\s*[\d.,]+/g) || []).map((v) => parseBR(v.replace('R$', '')));
-    // Tipicamente extrai: [utilEmp, utilRmc, utilRcc OU disp/extrap] — ordem varia
-    // Vamos buscar contexto via labels
-    // Margem utilizada (encontra "MARGEM UTILIZADA**" e pega valores depois — mas a ordem varia)
-    // Estratégia mais robusta: usar regex direto em frases conhecidas
+  // Margem extrapolada total (vem em "Valores do Benefício")
+  // Pode aparecer duas vezes — uma na seção VALORES POR MODALIDADE (3 colunas) e outra no resumo
+  // Pega a ÚLTIMA ocorrência que é o total
+  const reExtrap = /MARGEM\s+EXTRAPOLADA[*\s\S]{0,200}R\$\s*([\d.,]+)/gi;
+  let lastMatch: RegExpExecArray | null = null;
+  let allMatches: RegExpExecArray[] = [];
+  while ((lastMatch = reExtrap.exec(text)) !== null) allMatches.push(lastMatch);
+  if (allMatches.length > 0) {
+    // Última ocorrência costuma ser o total (VALORES DO BENEFÍCIO)
+    r.margemExtrapoladaTotal = parseBR(allMatches[allMatches.length - 1][1]);
   }
-  // Padrão direto: cada label seguido de 3 valores (emp/rmc/rcc)
-  const captureRow = (label: RegExp): [number, number, number] => {
-    const reAll = new RegExp(label.source + '[\\s\\S]{0,500}', 'i');
-    const sec = text.match(reAll);
-    if (!sec) return [0, 0, 0];
-    const vals = (sec[0].match(/R\$\s*[\d.,]+/g) || []).slice(0, 3).map((v) => parseBR(v.replace('R$', '')));
-    return [vals[0] || 0, vals[1] || 0, vals[2] || 0];
+
+  // Margens por modalidade (EMP / RMC / RCC) — captura 3 valores depois do label
+  const captureTriple = (re: RegExp): [number, number, number] | null => {
+    const mm = text.match(re);
+    if (!mm) return null;
+    const after = text.substring(mm.index! + mm[0].length, mm.index! + mm[0].length + 200);
+    const vals = (after.match(/R\$\s*[\d.,]+/g) || []).slice(0, 3).map((v) => parseBR(v.replace('R$', '')));
+    if (vals.length < 3) return null;
+    return [vals[0], vals[1], vals[2]];
   };
 
-  // Como a ordem dos campos no PDF é confusa, vou só usar VALORES DO BENEFÍCIO + parcelas explícitas
-  // O dado mais confiável é o "VALOR PARCELA" dos contratos somado e os limites/reservados dos cartões
-  // que já vêm tipados nas próprias seções.
-  void captureRow; // evita warning
+  const consig = captureTriple(/MARGEM\s+CONSIGN\S+VEL/i);
+  if (consig) { [r.margemConsignavelEmp, r.margemConsignavelRmc, r.margemConsignavelRcc] = consig; }
 
-  // Margem extrapolada por modalidade (encontra na seção)
-  m = text.match(/MARGEM\s+EXTRAPOLADA[*\s]*R\$\s*([\d.,]+)\s+R\$\s*([\d.,]+)\s+R\$\s*([\d.,]+)/i);
-  if (m) {
-    r.margemExtrapoladaEmp = parseBR(m[1]);
-    r.margemExtrapoladaRmc = parseBR(m[2]);
-    r.margemExtrapoladaRcc = parseBR(m[3]);
+  const util = captureTriple(/MARGEM\s+UTILIZADA/i);
+  if (util) { [r.margemUtilizadaEmp, r.margemUtilizadaRmc, r.margemUtilizadaRcc] = util; }
+
+  const disp = captureTriple(/MARGEM\s+DISPON\S+VEL/i);
+  if (disp) { [r.margemDisponivelEmp, r.margemDisponivelRmc, r.margemDisponivelRcc] = disp; }
+
+  // Fallback: se base de cálculo vazia mas extrapolada existe, deriva
+  if (r.baseCalculo === 0 && r.margemUtilizadaEmp > 0) {
+    // Aproximação: base ≈ utilizadaEmp / 0.35 (regra ATUAL)
+    // mas só se tiver valor — senão deixa zero
+    r.baseCalculo = Math.round((r.margemUtilizadaEmp / 0.35) * 100) / 100;
   }
-  r.margemExtrapoladaTotal = r.margemExtrapoladaEmp + r.margemExtrapoladaRmc + r.margemExtrapoladaRcc;
+
+  if (r.totalComprometido === 0) {
+    r.totalComprometido = r.margemUtilizadaEmp + r.margemUtilizadaRmc + r.margemUtilizadaRcc;
+  }
 
   return r;
 }
 
 function extractContratosAtivos(text: string): InssExtratoContratoEmp[] {
-  // A seção "CONTRATOS ATIVOS E SUSPENSOS" vem antes de "CONTRATOS EXCLUÍDOS E ENCERRADOS"
-  const sec = text.match(/CONTRATOS\s+ATIVOS\s+E\s+SUSPENSOS[\s\S]+?(?=CONTRATOS\s+EXCLU[��ÍI]DOS|CART[��ÃA]O\s+DE\s+CR[��ÉE]DITO|$)/i);
+  const sec = text.match(/CONTRATOS\s+ATIVOS\s+E\s+SUSPENSOS([\s\S]+?)(?=CONTRATOS\s+EXCLU\S+DOS|CART\S+O\s+DE\s+CR\S+DITO|$)/i);
   if (!sec) return [];
-  const block = sec[0];
+  const block = sec[1];
   const out: InssExtratoContratoEmp[] = [];
 
-  // Cada contrato começa com um número (≥6 dígitos) seguido de código bank (3 dígitos) e nome do banco
-  // Padrão observado: contrato\n cod-bank\n NOME BANCO\n competências\n parcelas\n parcela\n emprestado\n iof\n SITUACAO\n etc
-  // Vou usar uma regex que captura cada bloco até o próximo número de contrato
+  // Padrão: numero_contrato_longo (≥6 dig) + cod_banco_3_dig + nome + datas + qtd + valores
   const re = /(\d{6,})\s+(\d{3})\s*-\s*([A-Z][A-Z\s\/\.&]+?)\s+(\d{2}\/\d{4})\s+(\d{2}\/\d{4})\s+(\d{2,3})\s+R\$\s*([\d.,]+)\s+R\$\s*([\d.,]+)\s+R\$\s*([\d.,]+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(block)) !== null) {
-    const contrato = m[1];
-    const bancoCodigo = m[2];
-    const bancoNome = m[3].trim().replace(/\s+/g, ' ');
-    const inicioDesconto = m[4];
-    const fimDesconto = m[5];
-    const qtdParcelas = parseInt(m[6], 10);
-    const valorParcela = parseBR(m[7]);
-    const valorEmprestado = parseBR(m[8]);
-    const iof = parseBR(m[9]);
-
-    // Pega o pedaço depois do match pra extrair: situação, valor liberado, datas, taxas, valor pago
-    const after = block.substring(m.index, m.index + 1500);
-    const sit = after.match(/(Ativo|Suspenso|Suspens|Exclu[��íi]do|Encerrado)/i);
-    const valLib = after.match(/R\$\s*([\d.,]+)\s+(?:\d+,\d+\s+\d+,\d+|R\$|\d{2}\/\d{2}\/\d{2,4})/);
+    const after = block.substring(m.index, Math.min(m.index + 1500, block.length));
+    const sit = after.match(/(Ativo|Suspenso|Suspens|Exclu\S+do|Encerrado)/i);
+    const valLib = after.match(/R\$\s*([\d.,]+)\s+(?:\d+,\d+|\d{2}\/\d{2})/);
     const taxas = [...after.matchAll(/(\d+,\d+)\s+(\d+,\d+)\s+(\d+,\d+)\s+(\d+,\d+)/g)];
-    const valPago = after.match(/R\$\s*([\d.,]+)\s+(?:R\$\s*[\d.,]+\s+)?(?:Migrado|Averba|sub|R\$|07|01|18)/i);
-    const primDesc = after.match(/(\d{2}\/\d{2}\/\d{2,4})\s*$/m);
 
     out.push({
-      contrato,
-      bancoCodigo,
-      bancoNome,
+      contrato: m[1],
+      bancoCodigo: m[2],
+      bancoNome: m[3].trim().replace(/\s+/g, ' '),
       situacao: sit ? sit[1] : 'Ativo',
-      qtdParcelas,
-      valorParcela,
-      valorEmprestado,
-      valorLiberado: valLib ? parseBR(valLib[1]) : valorEmprestado - iof,
-      iof,
-      inicioDesconto,
-      fimDesconto,
-      saldoDevedor: valPago ? parseBR(valPago[1]) : undefined,
+      qtdParcelas: parseInt(m[6], 10),
+      valorParcela: parseBR(m[7]),
+      valorEmprestado: parseBR(m[8]),
+      iof: parseBR(m[9]),
+      valorLiberado: valLib ? parseBR(valLib[1]) : parseBR(m[8]) - parseBR(m[9]),
+      inicioDesconto: m[4],
+      fimDesconto: m[5],
       cetMensal: taxas[0] ? parseFloat(taxas[0][1].replace(',', '.')) : undefined,
       cetAnual: taxas[0] ? parseFloat(taxas[0][2].replace(',', '.')) : undefined,
       taxaJurosMensal: taxas[0] ? parseFloat(taxas[0][3].replace(',', '.')) : undefined,
       taxaJurosAnual: taxas[0] ? parseFloat(taxas[0][4].replace(',', '.')) : undefined,
-      primeiroDesconto: primDesc ? primDesc[1] : undefined,
     });
   }
   return out;
@@ -335,15 +376,13 @@ function extractContratosAtivos(text: string): InssExtratoContratoEmp[] {
 
 function extractCartoesAtivos(text: string): InssExtratoCartao[] {
   const out: InssExtratoCartao[] = [];
-
-  // Seções RMC e RCC
-  // CART��O DE CR��DITO - RMC ... CART��O DE CR��DITO - RCC ... DESCONTOS DE CART��O
-  const secRmcAtivos = text.match(/CART[��ÃA]O\s+DE\s+CR[��ÉE]DITO\s*-\s*RMC[\s\S]+?CONTRATOS\s+ATIVOS\s+E\s+SUSPENSOS([\s\S]+?)(?=CART[��ÃA]O\s+DE\s+CR[��ÉE]DITO\s*-\s*RCC|DESCONTOS\s+DE\s+CART)/i);
-  const secRccAtivos = text.match(/CART[��ÃA]O\s+DE\s+CR[��ÉE]DITO\s*-\s*RCC[\s\S]+?CONTRATOS\s+ATIVOS\s+E\s+SUSPENSOS([\s\S]+?)(?=DESCONTOS\s+DE\s+CART)/i);
+  // RMC
+  const rmcSec = text.match(/CART\S+O\s+DE\s+CR\S+DITO\s*-\s*RMC[\s\S]+?CONTRATOS\s+ATIVOS\s+E\s+SUSPENSOS([\s\S]+?)(?=CART\S+O\s+DE\s+CR\S+DITO\s*-\s*RCC|DESCONTOS\s+DE\s+CART|$)/i);
+  // RCC
+  const rccSec = text.match(/CART\S+O\s+DE\s+CR\S+DITO\s*-\s*RCC[\s\S]+?CONTRATOS\s+ATIVOS\s+E\s+SUSPENSOS([\s\S]+?)(?=DESCONTOS\s+DE\s+CART|$)/i);
 
   const parse = (block: string, tipo: 'RMC' | 'RCC') => {
-    // Cada linha: numero_cartao banco_codigo - NOME BANCO R$X,XX Ativo Averba... data R$Y,YY ...
-    const re = /(\d{10,})\s+(\d{3})\s*-\s*([A-Z][A-Z\s\/\.&]+?)\s+R\$\s*([\d.,]+)\s*(Ativo|Suspens[oa])\s+([A-Za-z\s]+?)\s+(\d{2}\/\d{2}\/\d{2,4})\s+R\$\s*([\d.,]+)/g;
+    const re = /(\d{10,})\s+(\d{3})\s*-\s*([A-Z][A-Z\s\/\.&]+?)\s+R\$\s*([\d.,]+)\s*(Ativo|Suspens\S+)\s+([A-Za-z\s\S]+?)\s+(\d{2}\/\d{2}\/\d{2,4})\s+R\$\s*([\d.,]+)/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(block)) !== null) {
       out.push({
@@ -353,7 +392,7 @@ function extractCartoesAtivos(text: string): InssExtratoCartao[] {
         bancoNome: m[3].trim().replace(/\s+/g, ' '),
         valorLimite: parseBR(m[4]),
         situacao: m[5],
-        origemAverbacao: m[6].trim(),
+        origemAverbacao: m[6].trim().slice(0, 50),
         dataInclusao: m[7],
         valorReservado: parseBR(m[8]),
         saldoDevedorAtual: 0,
@@ -363,27 +402,24 @@ function extractCartoesAtivos(text: string): InssExtratoCartao[] {
       });
     }
   };
-
-  if (secRmcAtivos) parse(secRmcAtivos[1], 'RMC');
-  if (secRccAtivos) parse(secRccAtivos[1], 'RCC');
+  if (rmcSec) parse(rmcSec[1], 'RMC');
+  if (rccSec) parse(rccSec[1], 'RCC');
   return out;
 }
 
 function extractDescontosCartao(text: string): InssExtratoDescontoCartao[] {
-  // Seção: DESCONTOS DE CARTÃO
-  const sec = text.match(/DESCONTOS\s+DE\s+CART[��ÃA]O[\s\S]+/i);
+  const sec = text.match(/DESCONTOS\s+DE\s+CART\S+O([\s\S]+)/i);
   if (!sec) return [];
-  const block = sec[0];
+  const block = sec[1];
   const out: InssExtratoDescontoCartao[] = [];
 
-  // Padrão observado:
-  // 00551483328042026 389 - BANCO MERCANTIL DO BRASIL S A R$2.023,80 Encerrado 05/2026 R$39,12 R$81,05 Desconto de cart�o (RMC) R$3,60 3,12 44,73 2,46 26,00
-  const re = /(\d{10,})\s+(\d{3})\s*-\s*([A-Z][A-Z\s\/\.&]+?)\s+R\$\s*([\d.,]+)\s*(Ativo|Suspens[oa]|Encerrado|Exclu[��íi]do)\s+(\d{2}\/\d{4})\s+R\$\s*([\d.,]+)\s+R\$\s*([\d.,]+)\s+Desconto\s+de\s+cart[ã��a]o\s*\((RMC|RCC)\)/gi;
+  // Padrão: numero_contrato cod-bank NOME R$saldo SITUACAO MM/YYYY R$utilizado R$desconto Desconto de cart\So (RMC|RCC)
+  const re = /(\d{10,})\s+(\d{3})\s*-\s*([A-Z][A-Z\s\/\.&]+?)\s+R\$\s*([\d.,]+)\s*(Ativo|Suspens\S+|Encerrado|Exclu\S+do)\s+(\d{2}\/\d{4})\s+R\$\s*([\d.,]+)\s+R\$\s*([\d.,]+)\s+Desconto\s+de\s+cart\S+o\s*\((RMC|RCC)\)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(block)) !== null) {
     out.push({
       contrato: m[1],
-      tipo: m[9] as 'RMC' | 'RCC',
+      tipo: m[9].toUpperCase() as 'RMC' | 'RCC',
       bancoNome: m[3].trim().replace(/\s+/g, ' '),
       situacao: m[5],
       competencia: m[6],
@@ -400,23 +436,19 @@ function extractDescontosCartao(text: string): InssExtratoDescontoCartao[] {
 // ──────────────────────────────────────────────────────────────────
 
 export interface AnaliseExtrato {
-  // Valores
   baseCalculo: number;
   totalComprometido: number;
   sumEmp: number;
   sumRmc: number;
   sumRcc: number;
-  // Tetos NOVA regra (40%)
   teto40: number;
   excedenteNovaRegra: number;
   compPctSobre40: number;
   enquadraNovaRegra: boolean;
-  // Soluções
   contratosQueResolvem: { contrato: string; reducaoEstim: number; novaParc: number; bancoNome: string }[];
   cartoesQueResolvem: { contrato: string; tipo: 'RMC' | 'RCC'; valorReservado: number; saldoDevedor: number; podeCancelarSemPagar: boolean; resolve: boolean }[];
 }
 
-// Coef PRICE 108m a 1.50% = 0.018744... (mesmo do motor V2)
 function coefPrice108_150(): number {
   const i = 0.015;
   return i / (1 - Math.pow(1 + i, -108));
@@ -425,7 +457,6 @@ function coefPrice108_150(): number {
 export function analisarEnquadramento(ext: InssExtratoResultado): AnaliseExtrato {
   const baseCalculo = ext.margens.baseCalculo;
   const totalComprometido = ext.margens.totalComprometido;
-  // Soma das parcelas dos contratos ATIVOS
   const sumEmp = ext.contratos.reduce((s, c) => s + (c.valorParcela || 0), 0);
   const sumRmc = ext.cartoes.filter((c) => c.tipo === 'RMC').reduce((s, c) => s + (c.valorReservado || 0), 0);
   const sumRcc = ext.cartoes.filter((c) => c.tipo === 'RCC').reduce((s, c) => s + (c.valorReservado || 0), 0);
@@ -433,18 +464,16 @@ export function analisarEnquadramento(ext: InssExtratoResultado): AnaliseExtrato
   const total = totalComprometido || (sumEmp + sumRmc + sumRcc);
   const excedente = Math.max(0, total - teto40);
   const compPct = baseCalculo > 0 ? (total / baseCalculo) * 100 : 0;
-  const enquadra = total <= teto40 + 0.01;
+  const enquadra = total <= teto40 + 0.01 && baseCalculo > 0;
 
-  // Refin estimado por contrato
   const coef = coefPrice108_150();
   const contratosQueResolvem: AnaliseExtrato['contratosQueResolvem'] = [];
   for (const c of ext.contratos) {
     if (!c.valorParcela || !c.valorEmprestado) continue;
-    // Saldo a refinanciar = valor emprestado (aproximação do saldo)
     const saldoAprox = c.valorEmprestado;
     const novaParc = saldoAprox * coef;
     const reducao = c.valorParcela - novaParc;
-    if (reducao > 0 && reducao >= excedente - 0.01) {
+    if (reducao > 0 && reducao >= excedente - 0.01 && excedente > 0) {
       contratosQueResolvem.push({
         contrato: c.contrato,
         reducaoEstim: Math.round(reducao * 100) / 100,
@@ -453,7 +482,6 @@ export function analisarEnquadramento(ext: InssExtratoResultado): AnaliseExtrato
       });
     }
   }
-  // Cartões que resolvem (e info crítica: podeCancelarSemPagar?)
   const cartoesQueResolvem: AnaliseExtrato['cartoesQueResolvem'] = ext.cartoes.map((c) => ({
     contrato: c.contrato,
     tipo: c.tipo,
@@ -467,7 +495,6 @@ export function analisarEnquadramento(ext: InssExtratoResultado): AnaliseExtrato
     baseCalculo, totalComprometido: total, sumEmp, sumRmc, sumRcc,
     teto40, excedenteNovaRegra: excedente, compPctSobre40: Math.round(compPct * 10) / 10,
     enquadraNovaRegra: enquadra,
-    contratosQueResolvem,
-    cartoesQueResolvem,
+    contratosQueResolvem, cartoesQueResolvem,
   };
 }
