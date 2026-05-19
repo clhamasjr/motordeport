@@ -7,16 +7,49 @@ import { Input } from '@/components/ui/input';
 import { formatBRL } from '@/lib/utils';
 import { InssParsedResult } from '@/lib/inss-types';
 import {
-  testarTodos, calcPortRefin108, parseBR, pC, pEN, ESP_INV, ESP_AUX,
+  testarTodos, calcPortRefin108, parseBR, pC, pEN, ESP_INV, ESP_AUX, BD,
   type BancoSimul, type PortRefin108Result,
 } from '@/lib/inss-motor';
 import {
-  Banknote, TrendingUp, ShoppingCart, Sparkles, AlertTriangle,
+  TrendingUp, Sparkles, AlertTriangle,
   CheckCircle2, XCircle, Scissors, RefreshCw,
 } from 'lucide-react';
 
-// Coef pra estimar empréstimo novo (1.85% piso) e cartão (≈2.92%)
+// Coef pra estimativa rápida (1.85% = teto INSS — taxa de tabela alta)
 const COEF_EMP_185 = 0.02299;
+
+// Diagnóstico do motivo de bloqueio pra contratos que ninguém aceita.
+// Pega o "menos pior" — explica em 1 frase por que cada banco rejeitou.
+function diagnosticarBloqueio(parcela: number, saldo: number, taxaOrig: number, codOrigem: string): string {
+  const motivos: string[] = [];
+  for (const banco of ['QUALI', 'C6', 'BRB', 'ICRED']) {
+    const r = BD[banco];
+    if (!r) continue;
+    if (r.block && r.block.includes(codOrigem)) {
+      motivos.push(`${banco}: bloqueia origem ${codOrigem}`);
+      continue;
+    }
+    if (r.sMin && saldo < r.sMin) {
+      motivos.push(`${banco}: saldo ${saldo.toFixed(0)} < mín ${r.sMin}`);
+      continue;
+    }
+    if (r.taxaOrigemMin && r.taxaOrigemMin[codOrigem] !== undefined) {
+      const minTx = r.taxaOrigemMin[codOrigem];
+      if (!taxaOrig || taxaOrig <= minTx) {
+        motivos.push(`${banco}: taxa orig ${taxaOrig.toFixed(2)}% ≤ mín ${minTx}%`);
+        continue;
+      }
+    }
+    // Se chegou aqui, é por troco mínimo / taxa
+    motivos.push(`${banco}: troco insuficiente ou taxa origem baixa`);
+  }
+  // Se TODOS reclamaram de saldo, simplifica a mensagem
+  if (motivos.every((m) => m.includes('saldo'))) {
+    const minSaldo = Math.min(...Object.values(BD).map((r) => r.sMin || 0).filter((v) => v > 0));
+    return `Saldo R$ ${saldo.toFixed(2)} < mínimo do menor banco (R$ ${minSaldo})`;
+  }
+  return motivos.slice(0, 2).join(' · ');
+}
 
 interface ContratoCalc {
   idx: number;
@@ -151,7 +184,7 @@ function calcularTudo(
       }
       if (!destinos.length) {
         bloqueado = true;
-        motivo = 'Nenhum banco aceita esse contrato';
+        motivo = diagnosticarBloqueio(parcela, saldo, taxaOrig, codOrigem);
       }
     }
 
@@ -235,7 +268,21 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
   const inviavel = !enquadraNovaRegra && totalSolucoes === 0;
 
   // Empréstimo Novo: só faz sentido se ENQUADRA e tem margem livre na nova
-  const empNovoVlr = enquadraNovaRegra && margemLivreNova > 0 ? margemLivreNova / COEF_EMP_185 : 0;
+  // Estimativa rápida pelo teto 1.85% (tabela mais alta = MENOR VC pro cliente mas
+  // MAIS comissão pro correspondente — é a tabela "padrão" do BRB/QUALI)
+  const empNovoVlr185 = enquadraNovaRegra && margemLivreNova > 0 ? margemLivreNova / COEF_EMP_185 : 0;
+  // Testa TODOS os bancos com parcela = margem livre, saldo 0 (sem contrato origem)
+  const idadeNum = parsed.beneficiario?.idade ? parseInt(String(parsed.beneficiario.idade), 10) : null;
+  const especieNum = pEN(parsed.beneficio?.especie || '');
+  const empNovoOpcoes = useMemo(() => {
+    if (!enquadraNovaRegra || margemLivreNova <= 0) return [] as BancoSimul[];
+    try {
+      // saldo=0, pg=0, cd='000' (sem origem), inv=false, restPg=96
+      return testarTodos(margemLivreNova, 0, 0, '000', false, idadeNum, null, 96, especieNum, '', 0);
+    } catch {
+      return [];
+    }
+  }, [enquadraNovaRegra, margemLivreNova, idadeNum, especieNum]);
 
   return (
     <Card className={
@@ -363,15 +410,56 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
 
         {/* Empréstimo Novo (só se ENQUADRA + tem margem livre na nova) */}
         {enquadraNovaRegra && margemLivreNova > 0 && (
-          <div className="rounded-lg border border-orange-500/40 bg-orange-500/5 p-3">
-            <div className="flex items-center justify-between mb-1">
-              <div className="text-[10px] uppercase tracking-wider font-bold text-orange-400">💰 Empréstimo Novo</div>
+          <div className="rounded-lg border border-orange-500/40 bg-orange-500/5 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="text-[10px] uppercase tracking-wider font-bold text-orange-400">💰 Empréstimo Novo</div>
+                <Badge variant="muted" className="text-[9px]">Parcela {formatBRL(margemLivreNova)}/mês</Badge>
+              </div>
               <TrendingUp className="size-4 text-orange-400" />
             </div>
-            <div className="text-2xl font-mono font-bold text-orange-400">{formatBRL(empNovoVlr)}</div>
-            <div className="text-[10px] text-muted-foreground mt-1">
-              Margem livre na nova regra <strong className="font-mono">{formatBRL(margemLivreNova)}</strong> / coef 0.02299 (1.85% piso)
+
+            {/* Estimativa rápida pelo teto 1.85% (tabela alta) */}
+            <div>
+              <div className="text-2xl font-mono font-bold text-orange-400">{formatBRL(empNovoVlr185)}</div>
+              <div className="text-[10px] text-muted-foreground">
+                Estimativa na <strong>tabela 1,85%</strong> (teto INSS) — mais comissão. Use bancos abaixo pra ver o liberado real.
+              </div>
             </div>
+
+            {/* Tabela com bancos disponíveis pelo motor */}
+            {empNovoOpcoes.length > 0 && (
+              <div className="pt-2 border-t border-orange-500/20">
+                <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground mb-1.5">
+                  Valor liberado por banco (taxa mais baixa de cada um):
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                  {empNovoOpcoes.map((b, i) => (
+                    <div
+                      key={b.banco}
+                      className={`rounded-md border p-2 ${
+                        i === 0 ? 'border-green-500/60 bg-green-500/10' : 'border-border bg-card/50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <Badge variant={i === 0 ? 'success' : 'outline'} className="text-[9px] font-mono">
+                          {b.banco}{i === 0 && ' ⭐'}
+                        </Badge>
+                        <span className="text-[9px] font-mono text-muted-foreground">{b.taxa.toFixed(2)}%</span>
+                      </div>
+                      <div className="font-mono font-bold text-sm mt-1 text-foreground">{formatBRL(b.vc)}</div>
+                      {b.troco > 0 && b.troco !== b.vc && (
+                        <div className="text-[9px] text-green-400 font-mono">+ troco {formatBRL(b.troco)}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="text-[9px] text-muted-foreground mt-1.5 italic">
+                  💡 Taxa mais alta (1,85%) = mais comissão de tabela pro correspondente, menos valor liberado pro cliente.
+                  Taxa mais baixa (1,50% / BRB) = mais valor liberado, menos comissão.
+                </div>
+              </div>
+            )}
           </div>
         )}
 
