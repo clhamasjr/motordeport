@@ -66,29 +66,32 @@ async function loginAutomatico() {
     return { ok: false, error: 'MERCANTIL_USER e MERCANTIL_PASS precisam estar setados nas env vars' };
   }
 
-  // Senha vai base64 encoded
-  const senhaB64 = (typeof btoa !== 'undefined') ? btoa(senha) : Buffer.from(senha).toString('base64');
+  // Senha base64: usa Buffer (Node) ou TextEncoder→btoa (Edge) — robusto contra
+  // caracteres unicode/acentos que quebrariam btoa direto.
+  let senhaB64;
+  try {
+    if (typeof Buffer !== 'undefined') {
+      senhaB64 = Buffer.from(senha, 'utf-8').toString('base64');
+    } else {
+      // Edge runtime: encoda pra bytes utf-8 e depois converte char-a-char
+      const bytes = new TextEncoder().encode(senha);
+      let bin = '';
+      for (const b of bytes) bin += String.fromCharCode(b);
+      senhaB64 = btoa(bin);
+    }
+  } catch (e) {
+    return { ok: false, error: 'Falha codificando senha em base64: ' + e.message };
+  }
 
-  // dnaBrowser: fingerprint minimo. Mercantil parece nao validar conteudo
-  // funcional, mas DOES PARSE como JSON — se a string for invalida, devolve
-  // HTTP 500 com erro "Unexpected character" no parse. Por isso validamos:
-  //   1) tenta usar env var MERCANTIL_DNA_BROWSER (se setada e PARSEAVEL)
-  //   2) cai no fallback minimo se nao parsear
-  const fallbackDna = JSON.stringify({
+  // dnaBrowser: SEMPRE usar fallback. O env var MERCANTIL_DNA_BROWSER vinha
+  // causando HTTP 500 "Unexpected character" no parse do servidor do banco
+  // mesmo com JSON estruturalmente valido (provavelmente algum char unicode/
+  // controle escapado errado). Ignoramos a env e usamos string conhecida boa.
+  const dnaBrowser = JSON.stringify({
     VERSION: '2.1.2',
     MFP: { BR: 'chrome', BV: '147', UA },
     UC: { ASYNC_FP: false, ASYNC_DOM_CHECK: true }
   });
-  let dnaBrowser = fallbackDna;
-  const dnaEnv = process.env.MERCANTIL_DNA_BROWSER;
-  if (dnaEnv) {
-    try {
-      JSON.parse(dnaEnv); // se nao throw, eh JSON valido
-      dnaBrowser = dnaEnv;
-    } catch (e) {
-      console.warn('[MERCANTIL_LOGIN] MERCANTIL_DNA_BROWSER tem JSON invalido, usando fallback:', e.message);
-    }
-  }
 
   const payload = {
     loginUsuario: usuario,
@@ -101,6 +104,7 @@ async function loginAutomatico() {
     sessaoIdExterna: '',
     urlReferencia: 'https://meu.bancomercantil.com.br/'
   };
+  const bodyStr = JSON.stringify(payload);
 
   let res, text;
   try {
@@ -117,30 +121,48 @@ async function loginAutomatico() {
         'sec-ch-ua-mobile': '?0',
         'sec-ch-ua-platform': '"Windows"'
       },
-      body: JSON.stringify(payload)
+      body: bodyStr
     });
     text = await res.text();
   } catch (e) {
     return { ok: false, error: 'Falha de rede no login: ' + e.message };
   }
   if (!res.ok) {
-    let erro; try { erro = JSON.parse(text); } catch { erro = { raw: text.substring(0, 500) }; }
-    // Loga detalhado pra debug — runtime logs do Vercel mostram
+    let erro; try { erro = JSON.parse(text); } catch { erro = { raw: text.substring(0, 800) }; }
+    // Detecta caracteres suspeitos no payload (control chars, BOMs, etc)
+    const charsSuspeitos = [];
+    for (let i = 0; i < bodyStr.length; i++) {
+      const c = bodyStr.charCodeAt(i);
+      // ASCII <32 (exceto \t \n \r) e 0x7F-0xA0 sao suspeitos em JSON
+      if ((c < 32 && c !== 9 && c !== 10 && c !== 13) || (c >= 0x7F && c <= 0xA0)) {
+        charsSuspeitos.push({ pos: i, code: '0x' + c.toString(16), near: bodyStr.substring(Math.max(0, i - 10), i + 10) });
+        if (charsSuspeitos.length >= 5) break;
+      }
+    }
+    // Loga detalhado pra debug
     console.log('[MERCANTIL_LOGIN_FAIL]', {
       status: res.status,
       usuario: usuario.substring(0, 4) + '***',
       senhaLen: senha.length,
       senhaB64Len: senhaB64.length,
-      raw: text.substring(0, 500)
+      bodyLen: bodyStr.length,
+      bodyPreview: bodyStr.substring(0, 300),
+      charsSuspeitos,
+      raw: text.substring(0, 800),
     });
+    const mensagemCompleta = erro?.mensagem || erro?.message || erro?.error || erro?.raw?.substring(0, 500) || 'sem detalhes';
     return {
       ok: false,
-      error: 'Login Mercantil HTTP ' + res.status + ': ' + (erro?.mensagem || erro?.message || erro?.error || erro?.raw?.substring(0,150) || 'sem detalhes'),
+      error: 'Login Mercantil HTTP ' + res.status + ': ' + mensagemCompleta.substring(0, 500),
       httpStatus: res.status,
       raw: erro,
+      _payload_preview: bodyStr.substring(0, 400),
+      _payload_len: bodyStr.length,
+      _chars_suspeitos: charsSuspeitos,
       _hint: res.status === 401 ? 'Credenciais rejeitadas — verifique MERCANTIL_USER e MERCANTIL_PASS no Vercel. Tente fazer login manual no portal pra confirmar que estao ativas.'
            : res.status === 403 ? 'Acesso bloqueado — usuario pode estar travado por tentativas erradas. Logue manualmente pra desbloquear.'
            : res.status === 422 ? 'Body invalido — pode ser captcha agora ou campo faltando.'
+           : res.status === 500 ? 'Servidor do Mercantil falhou parseando o JSON enviado. Verifica MERCANTIL_PASS — caractere especial pode estar bagunçando o payload.'
            : null
     };
   }

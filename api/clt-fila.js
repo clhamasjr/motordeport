@@ -459,10 +459,16 @@ async function processarMercantil(id, cpf, auth, secret) {
       _raw_response: mb
     });
   } else {
+    // Preserva mensagem COMPLETA + hints e preview do payload pra debug
+    const msgLong = (mb.error || mb.mensagem || 'Falha consulta Mercantil').toString();
     await patchBanco(id, 'mercantil', {
       status: 'falha',
       disponivel: false,
-      mensagem: mb.mensagem || mb.error || 'Falha consulta Mercantil',
+      mensagem: msgLong.substring(0, 500),
+      mensagem_completa: msgLong,
+      hint: mb._hint || null,
+      payload_preview: mb._payload_preview || null,
+      chars_suspeitos: mb._chars_suspeitos || null,
       _raw_response: mb
     });
   }
