@@ -69,14 +69,26 @@ async function loginAutomatico() {
   // Senha vai base64 encoded
   const senhaB64 = (typeof btoa !== 'undefined') ? btoa(senha) : Buffer.from(senha).toString('base64');
 
-  // dnaBrowser: fingerprint minimo. Mercantil parece nao validar conteudo,
-  // so checa se vem string nao-null. Pegamos de env MERCANTIL_DNA_BROWSER ou
-  // fallback pra um JSON minimo que costuma passar.
-  const dnaBrowser = process.env.MERCANTIL_DNA_BROWSER || JSON.stringify({
+  // dnaBrowser: fingerprint minimo. Mercantil parece nao validar conteudo
+  // funcional, mas DOES PARSE como JSON — se a string for invalida, devolve
+  // HTTP 500 com erro "Unexpected character" no parse. Por isso validamos:
+  //   1) tenta usar env var MERCANTIL_DNA_BROWSER (se setada e PARSEAVEL)
+  //   2) cai no fallback minimo se nao parsear
+  const fallbackDna = JSON.stringify({
     VERSION: '2.1.2',
     MFP: { BR: 'chrome', BV: '147', UA },
     UC: { ASYNC_FP: false, ASYNC_DOM_CHECK: true }
   });
+  let dnaBrowser = fallbackDna;
+  const dnaEnv = process.env.MERCANTIL_DNA_BROWSER;
+  if (dnaEnv) {
+    try {
+      JSON.parse(dnaEnv); // se nao throw, eh JSON valido
+      dnaBrowser = dnaEnv;
+    } catch (e) {
+      console.warn('[MERCANTIL_LOGIN] MERCANTIL_DNA_BROWSER tem JSON invalido, usando fallback:', e.message);
+    }
+  }
 
   const payload = {
     loginUsuario: usuario,
