@@ -146,7 +146,10 @@ export default async function handler(req) {
   if (action === 'list_parceiros') {
     const roleErr = requireRole(currentUser, ['admin', 'gestor']);
     if (roleErr) return roleErr;
-    const { data, error } = await dbSelect('parceiros', { select: 'id,nome,cnpj,active,created_at', order: 'nome.asc' });
+    const { data, error } = await dbSelect('parceiros', {
+      select: 'id,nome,cnpj,active,created_at,responsavel,telefone,email,endereco,cidade,uf,comissao_padrao,observacoes,updated_at',
+      order: 'nome.asc',
+    });
     if (error) return jsonError('Erro ao buscar parceiros', 500, req);
     return json({ ok: true, parceiros: data || [] }, 200, req);
   }
@@ -155,11 +158,25 @@ export default async function handler(req) {
   if (action === 'create_parceiro') {
     const roleErr = requireRole(currentUser, ['admin']);
     if (roleErr) return roleErr;
-    const { nome, cnpj } = body;
+    const { nome, cnpj, responsavel, telefone, email, endereco, cidade, uf, comissao_padrao, observacoes } = body;
     if (!nome || !nome.trim()) return json({ ok: false, error: 'Nome obrigatorio' }, 400, req);
-    const { data, error } = await dbInsert('parceiros', { nome: nome.trim(), cnpj: cnpj || null, active: true, created_by: currentUser.id });
+    const row = {
+      nome: nome.trim(),
+      cnpj: cnpj || null,
+      active: true,
+      created_by: currentUser.id,
+      responsavel: responsavel?.trim() || null,
+      telefone: telefone?.replace(/\D/g, '') || null,
+      email: email?.trim().toLowerCase() || null,
+      endereco: endereco?.trim() || null,
+      cidade: cidade?.trim() || null,
+      uf: uf ? String(uf).toUpperCase().slice(0, 2) : null,
+      comissao_padrao: comissao_padrao !== undefined && comissao_padrao !== null && comissao_padrao !== '' ? Number(comissao_padrao) : null,
+      observacoes: observacoes?.trim() || null,
+    };
+    const { data, error } = await dbInsert('parceiros', row);
     if (error) return jsonError('Erro ao criar parceiro', 500, req);
-    await dbInsert('audit_log', { user_id: currentUser.id, action: 'create_parceiro', details: { nome: nome.trim() } });
+    await dbInsert('audit_log', { user_id: currentUser.id, action: 'create_parceiro', details: { nome: row.nome } });
     return json({ ok: true, parceiro: data }, 200, req);
   }
 
@@ -167,12 +184,23 @@ export default async function handler(req) {
   if (action === 'update_parceiro') {
     const roleErr = requireRole(currentUser, ['admin']);
     if (roleErr) return roleErr;
-    const { parceiroId, nome, cnpj, active } = body;
+    const { parceiroId, nome, cnpj, active, responsavel, telefone, email, endereco, cidade, uf, comissao_padrao, observacoes } = body;
     if (!parceiroId) return json({ ok: false, error: 'parceiroId obrigatorio' }, 400, req);
     const patch = {};
     if (nome !== undefined) patch.nome = String(nome).trim();
     if (cnpj !== undefined) patch.cnpj = cnpj || null;
     if (active !== undefined) patch.active = !!active;
+    if (responsavel !== undefined) patch.responsavel = responsavel ? String(responsavel).trim() : null;
+    if (telefone !== undefined) patch.telefone = telefone ? String(telefone).replace(/\D/g, '') : null;
+    if (email !== undefined) patch.email = email ? String(email).trim().toLowerCase() : null;
+    if (endereco !== undefined) patch.endereco = endereco ? String(endereco).trim() : null;
+    if (cidade !== undefined) patch.cidade = cidade ? String(cidade).trim() : null;
+    if (uf !== undefined) patch.uf = uf ? String(uf).toUpperCase().slice(0, 2) : null;
+    if (comissao_padrao !== undefined) {
+      patch.comissao_padrao = comissao_padrao === null || comissao_padrao === '' ? null : Number(comissao_padrao);
+    }
+    if (observacoes !== undefined) patch.observacoes = observacoes ? String(observacoes).trim() : null;
+    if (!Object.keys(patch).length) return json({ ok: true, mensagem: 'Nada para atualizar' }, 200, req);
     await dbUpdate('parceiros', { id: parceiroId }, patch);
     await dbInsert('audit_log', { user_id: currentUser.id, action: 'update_parceiro', details: { parceiroId, patch } });
     return json({ ok: true, mensagem: 'Parceiro atualizado' }, 200, req);
@@ -318,6 +346,58 @@ export default async function handler(req) {
     await dbInsert('audit_log', { user_id: currentUser.id, action: 'update_role', details: { target: targetUser, role } });
 
     return json({ ok: true, mensagem: 'Role atualizado para ' + role }, 200, req);
+  }
+
+  // ── UPDATE USER (admin OR gestor — gestor so do proprio parceiro) ──
+  if (action === 'update_user') {
+    const roleErr = requireRole(currentUser, ['admin', 'gestor']);
+    if (roleErr) return roleErr;
+
+    const { targetUser, name, role, newUsername } = body;
+    if (!targetUser) return json({ ok: false, error: 'targetUser obrigatorio' }, 400, req);
+    if (targetUser === 'admin') return json({ ok: false, error: 'Nao pode editar o admin master' }, 400, req);
+
+    const { data: target } = await dbSelect('users', {
+      filters: { username: targetUser },
+      select: 'id, username, name, role, parceiro_id, active',
+      single: true
+    });
+    if (!target) return json({ ok: false, error: 'Usuario nao encontrado' }, 400, req);
+
+    // Gestor so pode editar usuarios do proprio parceiro, e nao pode mexer em admins
+    if (currentUser.role === 'gestor') {
+      if (target.role === 'admin') return json({ ok: false, error: 'Gestor nao edita admin' }, 403, req);
+      if (target.parceiro_id !== currentUser.parceiro_id) return json({ ok: false, error: 'Usuario fora do seu parceiro' }, 403, req);
+      // Gestor nao promove ninguem a admin, e nao mexe em outros gestores acima dele
+      if (role && role === 'admin') return json({ ok: false, error: 'Gestor nao promove a admin' }, 403, req);
+    }
+
+    const patch = {};
+    if (name && name.trim()) patch.name = name.trim();
+    if (role && ['admin', 'gestor', 'operador'].includes(role)) {
+      // Gestor so pode definir roles dentro do espectro permitido
+      if (currentUser.role === 'gestor' && role === 'admin') return json({ ok: false, error: 'Gestor nao promove a admin' }, 403, req);
+      patch.role = role;
+    }
+    if (newUsername && newUsername.trim() && newUsername.toLowerCase() !== target.username) {
+      const u2 = newUsername.trim().toLowerCase();
+      if (u2 === 'admin') return json({ ok: false, error: 'Username reservado' }, 400, req);
+      const { data: dup } = await dbSelect('users', { filters: { username: u2 }, single: true });
+      if (dup && dup.id !== target.id) return json({ ok: false, error: 'Username ja existe' }, 400, req);
+      patch.username = u2;
+    }
+    if (!Object.keys(patch).length) return json({ ok: true, mensagem: 'Nada pra atualizar' }, 200, req);
+
+    const { error } = await dbUpdate('users', { id: target.id }, patch);
+    if (error) return jsonError('Erro ao atualizar usuario', 500, req);
+
+    await dbInsert('audit_log', {
+      user_id: currentUser.id,
+      action: 'update_user',
+      details: { target: targetUser, patch }
+    });
+
+    return json({ ok: true, mensagem: 'Usuario atualizado', patch }, 200, req);
   }
 
   // ── RESET PASSWORD (admin only) ────────────────────────────

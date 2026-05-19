@@ -23,6 +23,17 @@ export interface Parceiro {
   cnpj?: string | null;
   active: boolean;
   created_at?: string;
+  updated_at?: string | null;
+  // Perfil estendido (opcionais — preenchidos pelo admin via tela)
+  responsavel?: string | null;
+  telefone?: string | null;
+  email?: string | null;
+  endereco?: string | null;
+  cidade?: string | null;
+  uf?: string | null;
+  /** % comissao padrao (0–100) */
+  comissao_padrao?: number | null;
+  observacoes?: string | null;
 }
 
 // ── Responses ──
@@ -75,6 +86,14 @@ export interface ResetPwParams {
 export interface CreateParceiroParams {
   nome: string;
   cnpj?: string;
+  responsavel?: string;
+  telefone?: string;
+  email?: string;
+  endereco?: string;
+  cidade?: string;
+  uf?: string;
+  comissao_padrao?: number | string;
+  observacoes?: string;
 }
 
 export interface UpdateParceiroParams {
@@ -82,6 +101,14 @@ export interface UpdateParceiroParams {
   nome?: string;
   cnpj?: string | null;
   active?: boolean;
+  responsavel?: string | null;
+  telefone?: string | null;
+  email?: string | null;
+  endereco?: string | null;
+  cidade?: string | null;
+  uf?: string | null;
+  comissao_padrao?: number | null;
+  observacoes?: string | null;
 }
 
 export interface SimpleResponse {
