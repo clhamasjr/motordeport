@@ -7,7 +7,7 @@ import { AuthUser } from '@/hooks/use-auth';
 import {
   Home, Search, BookOpen, Target, Trophy, Download,
   ListChecks, FileText, MessageSquare, Settings, Building2, Landmark,
-  Briefcase, Zap, ChevronRight, Smartphone, Sparkles,
+  Briefcase, Zap, ChevronRight, Smartphone, Sparkles, Activity,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -50,13 +50,13 @@ const NAV: NavGroup[] = [
       { href: '/inss/pipeline', label: 'Pipeline', icon: ListChecks, section: 'operar' },
       { href: '/inss/esteira', label: 'Esteira', icon: ListChecks, section: 'operar' },
       { href: '/inss/propostas', label: 'Propostas', icon: FileText, section: 'operar' },
+      { href: '/inss/gestao', label: 'Painel Operacional', icon: Activity, needsRole: ['admin', 'gestor'], section: 'operar' },
       // ── IA & Disparo ──
       { href: '/inss/conversas', label: 'Sofia (Conversas)', icon: MessageSquare, section: 'ia' },
       { href: '/inss/disparo', label: 'Disparo em massa', icon: MessageSquare, section: 'ia' },
       // ── Config ──
       { href: '/inss/sofia-knowledge', label: 'Sofia — Knowledge', icon: BookOpen, needsRole: ['admin'], section: 'config' },
       { href: '/inss/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['admin', 'gestor'], section: 'config' },
-      { href: '/inss/gestao', label: 'Gestão', icon: Settings, needsRole: ['admin', 'gestor'], section: 'config' },
       { href: '/inss/motor-test', label: 'Motor — Testes', icon: Zap, needsRole: ['admin'], section: 'config' },
     ],
   },
