@@ -92,7 +92,8 @@ export interface CompPorCpf {
   compStatus: CompStatusBase;
   excedente: number;
   benef: number;
-  teto45: number;
+  teto40: number;  // teto NOVA regra (40% do benefício)
+  teto45: number;  // legacy — teto regra ATUAL (45%), mantido pra compat
   sumEmp: number;
   vRmc: number;
   vRcc: number;
@@ -340,18 +341,20 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     const vRcc = x?.vRcc || 0;
     const benef = x?.valorBeneficio || (sumEmp > 0 ? sumEmp / 0.35 : 0);
     if (!benef) {
-      compByCpf[cpf] = { compPct: 0, compStatus: 'sem_dados', excedente: 0, benef: 0, teto45: 0, sumEmp, vRmc, vRcc, total: sumEmp + vRmc + vRcc };
+      compByCpf[cpf] = { compPct: 0, compStatus: 'sem_dados', excedente: 0, benef: 0, teto40: 0, teto45: 0, sumEmp, vRmc, vRcc, total: sumEmp + vRmc + vRcc };
       continue;
     }
     const total = sumEmp + vRmc + vRcc;
     const pct = (total / benef) * 100;
-    const teto45 = benef * 0.45;
-    const excedente = Math.max(0, total - teto45);
+    const teto40 = benef * 0.40;  // NOVA regra (vigente)
+    const teto45 = benef * 0.45;  // legacy regra atual (compat)
+    // Usa o teto NOVO (40%) pra analisar excedente — é a regra que vale
+    const excedente = Math.max(0, total - teto40);
     compByCpf[cpf] = {
       compPct: pct,
-      compStatus: total <= teto45 ? 'dentro_regra' : 'sem_dados', // será refinado abaixo
+      compStatus: total <= teto40 ? 'dentro_regra' : 'sem_dados', // será refinado abaixo (usa teto NOVO)
       excedente,
-      benef, teto45, sumEmp, vRmc, vRcc, total,
+      benef, teto40, teto45, sumEmp, vRmc, vRcc, total,
     };
   }
 
