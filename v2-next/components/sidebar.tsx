@@ -70,6 +70,7 @@ const NAV: NavGroup[] = [
       // ── Operar ──
       { href: '/clt/empresas-aprovadas', label: 'Empresas Aprovadas', icon: Trophy, section: 'operar' },
       { href: '/clt/esteira', label: 'Esteira', icon: ListChecks, section: 'operar' },
+      { href: '/clt/painel', label: 'Painel Operacional', icon: Activity, needsRole: ['admin', 'gestor'], section: 'operar' },
       // ── IA & Disparo ──
       { href: '/clt/conversas', label: 'Conversas IA', icon: MessageSquare, section: 'ia' },
       // ── Config ──

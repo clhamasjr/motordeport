@@ -143,7 +143,116 @@ export default async function handler(req) {
       }, 200, req);
     }
 
-    return jsonError('action invalida. Use: dashboard', 400, req);
+    // ── DASHBOARD CLT: mesma ideia, mas com tabelas do CLT ────
+    if (action === 'dashboardClt') {
+      const now = new Date().toISOString();
+      const today = new Date().toISOString().split('T')[0];
+
+      // 1. Sessoes ativas (igual INSS — eh global)
+      const { data: sessions } = await dbQuery('sessions',
+        `select=user_id,created_at,ip_address&expires_at=gt.${encodeURIComponent(now)}&order=created_at.desc`
+      );
+      // 2. Users
+      const { data: users } = await dbQuery('users',
+        'select=id,username,name,role,active,created_at&order=created_at.asc'
+      );
+      // 3. Consultas CLT (clt_consultas_fila — ultimas 500)
+      const { data: consultas } = await dbQuery('clt_consultas_fila',
+        'select=id,cpf,nome_manual,status_geral,iniciado_em,concluido_em,criada_por_user_id,criada_por_nome&order=iniciado_em.desc&limit=500'
+      );
+      // 4. Propostas CLT (digitacoes — clt_propostas, ultimas 500)
+      const { data: propostas } = await dbQuery('clt_propostas',
+        'select=id,cpf,banco,status,valor_liberado,user_id,criada_por_nome,created_at&order=created_at.desc&limit=500'
+      );
+      // 5. Conversas IA (clt_conversas)
+      const { data: conversas } = await dbQuery('clt_conversas',
+        'select=id,telefone,nome,etapa,pausada_por_humano,banco_escolhido,last_message_at,created_at&order=last_message_at.desc&limit=100'
+      );
+
+      // Build user map
+      const userMap = {};
+      for (const u of (users || [])) userMap[u.id] = u;
+
+      // Sessoes ativas por user
+      const activeUsers = {};
+      for (const s of (sessions || [])) {
+        if (!activeUsers[s.user_id]) activeUsers[s.user_id] = { count: 0, lastAt: s.created_at, ip: s.ip_address };
+        activeUsers[s.user_id].count++;
+      }
+
+      // Propostas por user + por status
+      const propPerUser = {};
+      const propPerStatus = {};
+      let totalValor = 0;
+      for (const p of (propostas || [])) {
+        const uid = p.user_id;
+        if (!propPerUser[uid]) propPerUser[uid] = { total: 0, valor: 0, perStatus: {} };
+        propPerUser[uid].total++;
+        propPerUser[uid].perStatus[p.status] = (propPerUser[uid].perStatus[p.status] || 0) + 1;
+        propPerUser[uid].valor += (p.valor_liberado || 0);
+        propPerStatus[p.status] = (propPerStatus[p.status] || 0) + 1;
+        totalValor += (p.valor_liberado || 0);
+      }
+
+      // Consultas hoje por user
+      const consultasHoje = (consultas || []).filter(c => c.iniciado_em && c.iniciado_em.startsWith(today));
+      const consultasPerUser = {};
+      for (const c of consultasHoje) {
+        const uid = c.criada_por_user_id;
+        if (uid) consultasPerUser[uid] = (consultasPerUser[uid] || 0) + 1;
+      }
+
+      const usersWithActivity = (users || []).filter(u => u.active).map(u => ({
+        id: u.id,
+        user: u.username,
+        name: u.name,
+        role: u.role,
+        online: !!activeUsers[u.id],
+        sessions: activeUsers[u.id]?.count || 0,
+        lastIp: activeUsers[u.id]?.ip || '',
+        propostas: propPerUser[u.id]?.total || 0,
+        propostasValor: propPerUser[u.id]?.valor || 0,
+        consultasHoje: consultasPerUser[u.id] || 0,
+      }));
+
+      // Consultas em andamento (status_geral=processando)
+      const consultasEmAndamento = (consultas || []).filter(c => c.status_geral === 'processando').length;
+      // Consultas hoje (qualquer status)
+      const consultasHojeTotal = consultasHoje.length;
+
+      // Conversas Sofia abertas (nao fechadas)
+      const ETAPAS_FECHADAS = ['fechada_venda', 'fechada_sem_venda'];
+      const conversasAbertas = (conversas || []).filter(c => !ETAPAS_FECHADAS.includes(c.etapa || ''));
+      const conversasPausadas = conversasAbertas.filter(c => c.pausada_por_humano);
+
+      return json({
+        ok: true,
+        users: usersWithActivity,
+        onlineCount: Object.keys(activeUsers).length,
+        consultas: {
+          totalRecentes: (consultas || []).length,
+          hoje: consultasHojeTotal,
+          emAndamento: consultasEmAndamento,
+          recentes: (consultas || []).slice(0, 20).map(c => ({
+            ...c,
+            userName: userMap[c.criada_por_user_id]?.name || c.criada_por_nome || '?',
+          })),
+        },
+        propostas: {
+          total: (propostas || []).length,
+          totalValor,
+          perStatus: propPerStatus,
+        },
+        conversas: {
+          total: (conversas || []).length,
+          abertas: conversasAbertas.length,
+          pausadas: conversasPausadas.length,
+          recentes: conversasAbertas.slice(0, 10),
+        },
+      }, 200, req);
+    }
+
+    return jsonError('action invalida. Use: dashboard, dashboardClt', 400, req);
   } catch (e) {
     return json({ error: 'Erro interno' }, 500, req);
   }
