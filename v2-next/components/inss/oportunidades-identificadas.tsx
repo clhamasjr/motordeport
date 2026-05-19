@@ -1,9 +1,9 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { formatBRL } from '@/lib/utils';
 import { InssParsedResult } from '@/lib/inss-types';
 import {
@@ -69,7 +69,10 @@ interface AnaliseNovaRegra {
   cartoesQueResolvem: SolucaoCartao[];  // cancelar RMC/RCC se valor >= excedente
 }
 
-function calcularTudo(parsed: InssParsedResult): { contratos: ContratoCalc[]; analise: AnaliseNovaRegra } {
+function calcularTudo(
+  parsed: InssParsedResult,
+  saldoOverrides: Record<number, number> = {},
+): { contratos: ContratoCalc[]; analise: AnaliseNovaRegra } {
   const ben = parsed.beneficio || {};
   const b = parsed.beneficiario || {};
   const mrg = parsed.margem || {};
@@ -120,7 +123,9 @@ function calcularTudo(parsed: InssParsedResult): { contratos: ContratoCalc[]; an
   for (let i = 0; i < contratosRaw.length; i++) {
     const c = contratosRaw[i];
     const parcela = parseBR(c.parcela);
-    const saldo = parseBR(c.saldo || c.saldo_quitacao);
+    // Override do user tem precedência sobre o saldo do Multicorban
+    const saldoOriginal = parseBR(c.saldo || c.saldo_quitacao);
+    const saldo = saldoOverrides[i] !== undefined ? saldoOverrides[i] : saldoOriginal;
     if (!parcela || !saldo) continue;
     const taxaOrig = parseBR(c.taxa);
     const codOrigem = pC(c.banco_codigo || '');
@@ -188,7 +193,22 @@ interface Props {
 }
 
 export function OportunidadesIdentificadas({ parsed }: Props) {
-  const { contratos, analise } = useMemo(() => calcularTudo(parsed), [parsed]);
+  const [saldoOverrides, setSaldoOverrides] = useState<Record<number, number>>({});
+  const { contratos, analise } = useMemo(
+    () => calcularTudo(parsed, saldoOverrides),
+    [parsed, saldoOverrides],
+  );
+
+  const ajustarSaldo = (idx: number, valor: number) => {
+    setSaldoOverrides((prev) => ({ ...prev, [idx]: valor }));
+  };
+  const resetSaldo = (idx: number) => {
+    setSaldoOverrides((prev) => {
+      const next = { ...prev };
+      delete next[idx];
+      return next;
+    });
+  };
 
   if (contratos.length === 0 && analise.benef === 0) return null;
 
@@ -336,9 +356,12 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
 
         {/* Tabela de contratos pra contexto */}
         {contratos.length > 0 && (
-          <details className={!enquadraNovaRegra ? '' : 'pt-2'}>
+          <details className={!enquadraNovaRegra ? '' : 'pt-2'} open>
             <summary className="cursor-pointer text-xs font-semibold py-1.5 hover:bg-muted/30 rounded px-2">
               📋 Ver todos os contratos ({contratos.length})
+              <span className="text-[10px] text-muted-foreground font-normal ml-2">
+                — clique no saldo pra editar e recalcular
+              </span>
             </summary>
             <div className="mt-1 overflow-x-auto rounded-md border border-border">
               <table className="w-full text-xs">
@@ -346,45 +369,98 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
                   <tr>
                     <th className="text-left p-2 font-semibold">Contrato</th>
                     <th className="text-left p-2 font-semibold">Origem</th>
+                    <th className="text-right p-2 font-semibold">Taxa atual</th>
                     <th className="text-right p-2 font-semibold">Parcela</th>
-                    <th className="text-right p-2 font-semibold">Saldo</th>
+                    <th className="text-right p-2 font-semibold">Saldo (editável)</th>
                     <th className="text-center p-2 font-semibold">Pagas/Prazo</th>
-                    <th className="text-right p-2 font-semibold">Refin (108m @ 1.50%)</th>
+                    <th className="text-left p-2 font-semibold">→ Destino</th>
+                    <th className="text-right p-2 font-semibold">Refin (108m@1.50%)</th>
                     <th className="text-center p-2 font-semibold">Resolve?</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {contratos.map((c) => (
-                    <tr key={c.idx} className={c.bloqueado ? 'opacity-50' : c.resolveExcedente ? 'bg-green-500/5' : ''}>
-                      <td className="p-2 font-mono">{c.contrato || '—'}</td>
-                      <td className="p-2"><Badge variant="muted" className="text-[10px] font-mono">{c.codOrigem || '?'}</Badge></td>
-                      <td className="p-2 text-right font-mono">{formatBRL(c.parcela)}</td>
-                      <td className="p-2 text-right font-mono">{formatBRL(c.saldo)}</td>
-                      <td className="p-2 text-center font-mono">{c.prazos}</td>
-                      <td className="p-2 text-right font-mono">
-                        {c.reducaoEstim > 0 ? (
-                          <span>
-                            <span className="text-green-400">{formatBRL(c.novaParcEstim)}</span>
-                            <span className="text-[10px] text-green-400/70 ml-1">↓{formatBRL(c.reducaoEstim)}</span>
-                          </span>
-                        ) : c.bloqueado ? (
-                          <span className="text-red-400 text-[10px]">{c.motivoBloqueio?.slice(0, 30)}</span>
-                        ) : '—'}
-                      </td>
-                      <td className="p-2 text-center">
-                        {enquadraNovaRegra ? (
-                          <span className="text-muted-foreground text-[10px]">—</span>
-                        ) : c.resolveExcedente ? (
-                          <Badge variant="success" className="text-[10px]">✓ SIM</Badge>
-                        ) : (
-                          <Badge variant="muted" className="text-[10px]">não</Badge>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {contratos.map((c) => {
+                    const melhorDest = c.destinos && c.destinos[0];
+                    const saldoEditado = saldoOverrides[c.idx] !== undefined;
+                    return (
+                      <tr key={c.idx} className={c.bloqueado ? 'opacity-60' : c.resolveExcedente ? 'bg-green-500/5' : ''}>
+                        <td className="p-2 font-mono">{c.contrato || '—'}</td>
+                        <td className="p-2"><Badge variant="muted" className="text-[10px] font-mono">{c.codOrigem || '?'}</Badge></td>
+                        <td className="p-2 text-right font-mono">
+                          {c.taxaOrig > 0 ? (
+                            <span className="text-yellow-400">{c.taxaOrig.toFixed(2)}%</span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="p-2 text-right font-mono">{formatBRL(c.parcela)}</td>
+                        <td className="p-2 text-right font-mono">
+                          <div className="flex items-center gap-1 justify-end">
+                            <Input
+                              type="number"
+                              step="100"
+                              defaultValue={c.saldo}
+                              onBlur={(e) => {
+                                const v = parseFloat(e.target.value) || 0;
+                                if (v !== c.saldo && v > 0) ajustarSaldo(c.idx, v);
+                              }}
+                              className={`h-7 text-xs font-mono text-right w-28 ${saldoEditado ? 'border-yellow-500/60 bg-yellow-500/5' : ''}`}
+                            />
+                            {saldoEditado && (
+                              <button
+                                onClick={() => resetSaldo(c.idx)}
+                                className="text-[10px] text-muted-foreground hover:text-foreground"
+                                title="Resetar pro saldo original"
+                              >
+                                ↺
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-2 text-center font-mono">{c.prazos}</td>
+                        <td className="p-2">
+                          {melhorDest ? (
+                            <div className="flex flex-col gap-0.5">
+                              <Badge variant="success" className="text-[10px] font-mono w-fit">{melhorDest.banco}</Badge>
+                              <span className="text-[9px] text-cyan-400 font-mono">
+                                {melhorDest.taxa.toFixed(2)}% · troco {formatBRL(melhorDest.troco)}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-red-400 text-[10px]">{c.motivoBloqueio?.slice(0, 40)}</span>
+                          )}
+                        </td>
+                        <td className="p-2 text-right font-mono">
+                          {c.reducaoEstim > 0 ? (
+                            <div>
+                              <div className="text-green-400">{formatBRL(c.novaParcEstim)}</div>
+                              <div className="text-[9px] text-green-400/70">↓{formatBRL(c.reducaoEstim)}</div>
+                            </div>
+                          ) : '—'}
+                        </td>
+                        <td className="p-2 text-center">
+                          {enquadraNovaRegra ? (
+                            <span className="text-muted-foreground text-[10px]">—</span>
+                          ) : c.resolveExcedente ? (
+                            <Badge variant="success" className="text-[10px]">✓ SIM</Badge>
+                          ) : (
+                            <Badge variant="muted" className="text-[10px]">não</Badge>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
+            {Object.keys(saldoOverrides).length > 0 && (
+              <div className="text-[10px] text-yellow-400 mt-1 px-2">
+                ⚠ {Object.keys(saldoOverrides).length} saldo(s) editado(s) manualmente —
+                <button onClick={() => setSaldoOverrides({})} className="ml-1 underline hover:text-foreground">
+                  resetar tudo
+                </button>
+              </div>
+            )}
           </details>
         )}
       </CardContent>
