@@ -9,7 +9,11 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatCpf, formatBRL, formatDateBR } from '@/lib/utils';
 import { ListChecks, Search, RefreshCw, ExternalLink, AlertCircle } from 'lucide-react';
+import { BANCOS_OCULTOS } from '@/lib/clt-bancos';
 
+// Labels — manter TODOS pra renderizar propostas historicas (V8/JoinBank
+// antigas ainda mostram label normal nos badges). Filtro do select abaixo
+// usa BANCO_LABEL_FILTRO (sem ocultos).
 const BANCO_LABEL: Record<string, string> = {
   c6: 'C6',
   presencabank: 'PresençaBank',
@@ -22,6 +26,11 @@ const BANCO_LABEL: Record<string, string> = {
   fintech_qi: 'Fintech QI',
   fintech_celcoin: 'Fintech Celcoin',
 };
+const BANCO_LABEL_FILTRO = Object.fromEntries(
+  Object.entries(BANCO_LABEL).filter(([slug]) =>
+    !BANCOS_OCULTOS.includes(slug as never) && slug !== 'v8',
+  ),
+);
 
 const STATUS_VARIANT: Record<string, 'default' | 'success' | 'warning' | 'destructive' | 'info' | 'muted'> = {
   criada: 'info',
@@ -114,7 +123,7 @@ export default function EsteiraCltPage() {
           <select value={bancoFilter} onChange={(e) => setBancoFilter(e.target.value)}
             className="h-10 px-3 text-sm rounded-md border border-input bg-background">
             <option value="">Todos os bancos</option>
-            {Object.entries(BANCO_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            {Object.entries(BANCO_LABEL_FILTRO).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             className="h-10 px-3 text-sm rounded-md border border-input bg-background">

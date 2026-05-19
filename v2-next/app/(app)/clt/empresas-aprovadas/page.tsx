@@ -12,7 +12,11 @@ import {
 } from '@/components/ui/dialog';
 import { formatCnpj, formatDateBR } from '@/lib/utils';
 import { Trophy, Search, Building2, MapPin, Users, Rocket } from 'lucide-react';
+import { BANCOS_OCULTOS } from '@/lib/clt-bancos';
 
+// Labels CURTOS — manter TODOS aqui (incluindo ocultos) pra renderizar
+// historico de aprovacoes antigas (empresas que ja tinham aprovacao V8/JoinBank
+// ainda mostram badge com label correto). So filtramos o <select> abaixo.
 const BANCO_LABEL: Record<string, string> = {
   handbank: 'UY3',
   joinbank: 'QualiBanking',
@@ -24,6 +28,11 @@ const BANCO_LABEL: Record<string, string> = {
   fintech_qi: 'Fintech QI',
   fintech_celcoin: 'Fintech Celcoin',
 };
+
+// Bancos que aparecem no SELECT de filtro — exclui os ocultos
+const BANCO_LABEL_FILTRO = Object.fromEntries(
+  Object.entries(BANCO_LABEL).filter(([slug]) => !BANCOS_OCULTOS.includes(slug as never)),
+);
 
 export default function EmpresasAprovadasPage() {
   const [busca, setBusca] = useState('');
@@ -64,7 +73,7 @@ export default function EmpresasAprovadasPage() {
           <select value={banco} onChange={(e) => setBanco(e.target.value)}
             className="h-10 px-3 text-sm rounded-md border border-input bg-background">
             <option value="">Todos os bancos</option>
-            {Object.entries(BANCO_LABEL).map(([v, l]) => (
+            {Object.entries(BANCO_LABEL_FILTRO).map(([v, l]) => (
               <option key={v} value={v}>{l}</option>
             ))}
           </select>
@@ -175,14 +184,9 @@ export default function EmpresasAprovadasPage() {
   );
 }
 
-const BANCOS_HIG = [
-  { slug: 'fintech_qi', label: 'Fintech (QI)' },
-  { slug: 'fintech_celcoin', label: 'Fintech (Celcoin)' },
-  { slug: 'handbank', label: 'UY3' },
-  { slug: 'joinbank', label: 'JoinBank' },
-  { slug: 'mercantil', label: 'Mercantil' },
-  { slug: 'c6', label: 'C6' },
-];
+// Bancos pra disparar higienizacao DENTRO do modal de empresa — exclui ocultos
+import { BANCOS_VISIVEIS_OPTS } from '@/lib/clt-bancos';
+const BANCOS_HIG = BANCOS_VISIVEIS_OPTS;
 
 function ModalCpfs({ empresa, onClose }: { empresa: { cnpj: string; nome: string } | null; onClose: () => void }) {
   const { data, isLoading } = useCpfsDessaEmpresa(empresa?.cnpj || null);

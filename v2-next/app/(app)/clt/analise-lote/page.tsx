@@ -9,18 +9,11 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatCpf, formatCnpj, formatDateBR } from '@/lib/utils';
 import { ListChecks, Loader2, Rocket, Upload, Search } from 'lucide-react';
+import { BANCOS_VISIVEIS_OPTS } from '@/lib/clt-bancos';
 
-const BANCOS = [
-  { slug: 'fintech_qi', label: 'Fintech (QI Tech)' },
-  { slug: 'fintech_celcoin', label: 'Fintech (Celcoin)' },
-  { slug: 'handbank', label: 'Handbank · UY3' },
-  { slug: 'joinbank', label: 'JoinBank/QualiBanking' },
-  { slug: 'mercantil', label: 'Mercantil' },
-  { slug: 'c6', label: 'C6 Bank' },
-  { slug: 'presencabank', label: 'PresençaBank' },
-  { slug: 'v8_qi', label: 'V8 (QI Tech)' },
-  { slug: 'v8_celcoin', label: 'V8 (Celcoin)' },
-];
+// Bancos disponiveis pra disparar higienizacao — vem do catalogo central
+// (sem V8, sem JoinBank — que sairam da operacao).
+const BANCOS = BANCOS_VISIVEIS_OPTS;
 
 export default function AnaliseLotePage() {
   const [textoCpfs, setTextoCpfs] = useState('');

@@ -13,13 +13,10 @@ import { formatCpf, formatCnpj, formatDateBR } from '@/lib/utils';
 import { X, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 
-// Ordem que os cards aparecem (mais usados primeiro)
-const BANCOS_ORDEM: BancoSlug[] = [
-  'fintech_qi', 'fintech_celcoin',
-  'handbank', 'joinbank', 'mercantil',
-  'c6', 'presencabank',
-  'v8_qi', 'v8_celcoin',
-];
+// Ordem que os cards aparecem — vem do catalogo central (lib/clt-bancos).
+// Bancos OCULTOS (V8, JoinBank) nao aparecem aqui.
+import { BANCOS_VISIVEIS } from '@/lib/clt-bancos';
+const BANCOS_ORDEM: BancoSlug[] = BANCOS_VISIVEIS;
 
 interface Props {
   filaId: string;

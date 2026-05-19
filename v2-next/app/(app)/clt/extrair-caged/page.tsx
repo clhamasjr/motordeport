@@ -12,16 +12,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { formatCpf, formatDateBR } from '@/lib/utils';
 import { Download, Eye, Rocket, Loader2, Database, Search, RotateCcw } from 'lucide-react';
+import { BANCOS_VISIVEIS_OPTS } from '@/lib/clt-bancos';
 
-const BANCOS_DISP = [
-  { slug: 'fintech_qi', label: 'Fintech (QI Tech)' },
-  { slug: 'fintech_celcoin', label: 'Fintech (Celcoin)' },
-  { slug: 'handbank', label: 'Handbank · UY3' },
-  { slug: 'joinbank', label: 'JoinBank' },
-  { slug: 'mercantil', label: 'Mercantil' },
-  { slug: 'c6', label: 'C6 Bank' },
-  { slug: 'presencabank', label: 'PresençaBank' },
-];
+// Bancos pra disparar higienizacao em lote — catalogo central (sem V8/JoinBank)
+const BANCOS_DISP = BANCOS_VISIVEIS_OPTS;
 
 export default function ExtrairCagedPage() {
   // Filtros que o user esta editando AGORA (não dispara query nenhuma)
