@@ -10,6 +10,7 @@ import {
 } from '@/hooks/use-admin-parceiros';
 import { useAdminUsers } from '@/hooks/use-admin-users';
 import { Parceiro } from '@/lib/admin-types';
+import { ParceiroModal } from '@/components/admin/parceiro-modal';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -246,96 +247,6 @@ function ParceiroRow({
         </div>
       </td>
     </tr>
-  );
-}
-
-function ParceiroModal({
-  open,
-  onClose,
-  parceiro,
-}: {
-  open: boolean;
-  onClose: () => void;
-  parceiro: Parceiro | null;
-}) {
-  const isEdit = !!parceiro;
-  const [nome, setNome] = useState('');
-  const [cnpj, setCnpj] = useState('');
-  const create = useCreateParceiro();
-  const update = useUpdateParceiro();
-
-  const handleOpenChange = (o: boolean) => {
-    if (o) {
-      setNome(parceiro?.nome || '');
-      setCnpj(parceiro?.cnpj || '');
-    } else {
-      onClose();
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!nome.trim()) return;
-    try {
-      if (isEdit && parceiro) {
-        await update.mutateAsync({
-          parceiroId: parceiro.id,
-          nome: nome.trim(),
-          cnpj: cnpj.trim() || null,
-        });
-      } else {
-        await create.mutateAsync({ nome: nome.trim(), cnpj: cnpj.trim() || undefined });
-      }
-      onClose();
-    } catch {
-      // toast no hook
-    }
-  };
-
-  const loading = create.isPending || update.isPending;
-
-  return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? 'Editar parceiro' : 'Novo parceiro'}</DialogTitle>
-          <DialogDescription>
-            {isEdit ? 'Atualize os dados da agência.' : 'Cadastre uma nova agência/correspondente.'}
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="parc-nome">Nome *</Label>
-            <Input
-              id="parc-nome"
-              value={nome}
-              onChange={(e) => setNome(e.target.value)}
-              placeholder="LhamasCred"
-              autoFocus
-              required
-            />
-          </div>
-          <div>
-            <Label htmlFor="parc-cnpj">CNPJ (opcional)</Label>
-            <Input
-              id="parc-cnpj"
-              value={cnpj}
-              onChange={(e) => setCnpj(e.target.value)}
-              placeholder="00.000.000/0000-00"
-              className="font-mono"
-            />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={!nome.trim() || loading}>
-              {loading ? 'Salvando...' : isEdit ? 'Salvar' : 'Criar'}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }
 

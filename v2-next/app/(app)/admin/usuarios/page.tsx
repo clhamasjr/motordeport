@@ -13,7 +13,8 @@ import {
 } from '@/hooks/use-admin-users';
 import { useAdminParceiros } from '@/hooks/use-admin-parceiros';
 import { useAuth } from '@/hooks/use-auth';
-import { User, UserRole } from '@/lib/admin-types';
+import { User, UserRole, Parceiro } from '@/lib/admin-types';
+import { ParceiroModal } from '@/components/admin/parceiro-modal';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -542,6 +543,8 @@ function EditUserModal({ user, onClose }: { user: User | null; onClose: () => vo
   const [newUsername, setNewUsername] = useState('');
   const [role, setRole] = useState<UserRole>('operador');
   const [parceiroId, setParceiroId] = useState<string>('');
+  const [perfilParceiroOpen, setPerfilParceiroOpen] = useState<Parceiro | null>(null);
+  const parceiroSelecionado = parceiroId ? parceiros.find((p) => p.id === Number(parceiroId)) ?? null : null;
 
   const handleOpenChange = (o: boolean) => {
     if (o && user) {
@@ -620,18 +623,44 @@ function EditUserModal({ user, onClose }: { user: User | null; onClose: () => vo
           {role !== 'admin' && (
             <div>
               <Label>Parceiro</Label>
-              <select
-                value={parceiroId}
-                onChange={(e) => setParceiroId(e.target.value)}
-                className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="">— Sem parceiro —</option>
-                {parceirosAtivos.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nome}
-                  </option>
-                ))}
-              </select>
+              <div className="flex gap-2 mt-1">
+                <select
+                  value={parceiroId}
+                  onChange={(e) => setParceiroId(e.target.value)}
+                  className="flex-1 h-10 rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  <option value="">— Sem parceiro —</option>
+                  {parceirosAtivos.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nome}
+                    </option>
+                  ))}
+                </select>
+                {/* Botao pra editar o perfil do parceiro selecionado — so admin */}
+                {isAdmin && parceiroSelecionado && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1 h-10 shrink-0"
+                    onClick={() => setPerfilParceiroOpen(parceiroSelecionado)}
+                    title={`Editar perfil de ${parceiroSelecionado.nome}`}
+                  >
+                    <Edit2 className="size-3.5" />
+                    <span className="hidden sm:inline">Perfil parceiro</span>
+                  </Button>
+                )}
+              </div>
+              {parceiroSelecionado && (
+                <div className="mt-1.5 text-[10px] text-muted-foreground/70 leading-tight">
+                  {parceiroSelecionado.responsavel && <>👤 {parceiroSelecionado.responsavel} · </>}
+                  {parceiroSelecionado.telefone && <>📱 {parceiroSelecionado.telefone} · </>}
+                  {parceiroSelecionado.cidade && <>📍 {parceiroSelecionado.cidade}/{parceiroSelecionado.uf || '?'}</>}
+                  {!parceiroSelecionado.responsavel && !parceiroSelecionado.telefone && !parceiroSelecionado.cidade && (
+                    <span className="italic">Perfil sem dados — clique &quot;Perfil parceiro&quot; pra preencher</span>
+                  )}
+                </div>
+              )}
             </div>
           )}
           <DialogFooter>
@@ -643,6 +672,13 @@ function EditUserModal({ user, onClose }: { user: User | null; onClose: () => vo
             </Button>
           </DialogFooter>
         </form>
+
+        {/* Modal aninhado: editar perfil do parceiro do user */}
+        <ParceiroModal
+          open={!!perfilParceiroOpen}
+          onClose={() => setPerfilParceiroOpen(null)}
+          parceiro={perfilParceiroOpen}
+        />
       </DialogContent>
     </Dialog>
   );

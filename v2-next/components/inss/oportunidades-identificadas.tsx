@@ -71,6 +71,8 @@ interface ContratoCalc {
   destinoSelecionado: number;
   // Port+Refin 108m (operação UNIFICADA) — calculada com coef 108m
   portRefin108: PortRefin108Result | null;
+  // TODOS os destinos calculados (ordenados por troco/redução desc)
+  todosResultados: PortRefin108Result[];
   resolveExcedente: boolean;     // refin no destino 108m cobre o excedente?
   bloqueado: boolean;
   motivoBloqueio?: string;
@@ -193,18 +195,45 @@ function calcularTudo(
     }
 
     // ── PORT + REFIN 108m: operação unificada ──
-    // Pra cada destino, calcula coef 108m + 2 cenários (refin puro + port com troco).
-    // Escolhe o destino com MAIOR redução da parcela.
+    // Pra cada destino, calcula 2 cenários (tabela alta = mais troco/comissão,
+    // tabela baixa = mais redução/cliente).
+    //
+    // ESTRATÉGIA DE ORDENAÇÃO:
+    //   - Cliente ENQUADRADO → port com troco MAIS ALTO (tabela alta, taxa 1.85%)
+    //     prioriza maximizar comissão pro correspondente
+    //   - Cliente NÃO ENQUADRADO → refin com MAIS REDUÇÃO (tabela baixa, taxa min)
+    //     prioriza enquadrar o cliente
     let portRefin108: PortRefin108Result | null = null;
+    let todosCenarios: Array<{ result: PortRefin108Result; trocoEfetivo: number; reducaoEfetiva: number }> = [];
     if (!bloqueado && destinos.length > 0 && saldo > 0 && parcela > 0) {
-      let melhorReducao = -Infinity;
       for (const d of destinos) {
         const r = calcPortRefin108(parcela, saldo, d, taxaOrig);
-        if (r && r.taxaOrigVale && r.refin_reducao > melhorReducao) {
-          melhorReducao = r.refin_reducao;
-          portRefin108 = r;
-        }
+        if (!r || !r.taxaOrigVale) continue;
+        // Se enquadrado: usa cenário ALTO (mais troco). Senão: BAIXO (mais redução).
+        const cenarioEsc = enquadraNovaRegra ? r.tabelaAlta : r.tabelaBaixa;
+        // Reescreve campos legados do result com o cenário escolhido
+        const ajustado: PortRefin108Result = {
+          ...r,
+          taxa: cenarioEsc.taxa,
+          coef: cenarioEsc.coef,
+          refin_novaParc: cenarioEsc.refin_novaParc,
+          refin_reducao: cenarioEsc.refin_reducao,
+          port_novaParc: cenarioEsc.port_novaParc,
+          port_vc: cenarioEsc.port_vc,
+          port_troco: cenarioEsc.port_troco,
+        };
+        todosCenarios.push({
+          result: ajustado,
+          trocoEfetivo: cenarioEsc.port_troco,
+          reducaoEfetiva: cenarioEsc.refin_reducao,
+        });
       }
+      // Ordena: enquadrado por TROCO desc, não-enquadrado por REDUÇÃO desc
+      todosCenarios.sort((a, b) => {
+        if (enquadraNovaRegra) return b.trocoEfetivo - a.trocoEfetivo;
+        return b.reducaoEfetiva - a.reducaoEfetiva;
+      });
+      portRefin108 = todosCenarios[0]?.result || null;
     }
 
     // Resolve o excedente da nova regra?
@@ -216,6 +245,7 @@ function calcularTudo(
       pagas, prazoRest: restPg, prazoTotal: totPg,
       destinos, destinoSelecionado: 0,
       portRefin108,
+      todosResultados: todosCenarios.map((c) => c.result),
       resolveExcedente,
       bloqueado, motivoBloqueio: motivo,
     });
@@ -467,13 +497,78 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
           </div>
         )}
 
+        {/* Oportunidades de TROCO (cliente enquadrado, sem precisar enquadrar) */}
+        {enquadraNovaRegra && (() => {
+          const comTroco = contratos
+            .filter((c) => !c.bloqueado && c.portRefin108 && c.portRefin108.port_troco > 0)
+            .sort((a, b) => (b.portRefin108?.port_troco || 0) - (a.portRefin108?.port_troco || 0));
+          if (comTroco.length === 0) return null;
+          const trocoTotal = comTroco.reduce((s, c) => s + (c.portRefin108?.port_troco || 0), 0);
+          return (
+            <div className="rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="size-4 text-cyan-400" />
+                  <h4 className="font-bold text-sm text-cyan-400">
+                    💰 Port + Refin com TROCO ({comTroco.length} contrato{comTroco.length !== 1 ? 's' : ''})
+                  </h4>
+                </div>
+                <Badge variant="info" className="text-xs font-mono">
+                  Troco total: {formatBRL(trocoTotal)}
+                </Badge>
+              </div>
+              <div className="text-[10px] text-muted-foreground">
+                Cliente já enquadra — esses contratos podem virar dinheiro mantendo a parcela atual.
+                Ordenado do MAIOR troco pro menor. Tabela alta = mais comissão.
+              </div>
+              <div className="space-y-1.5">
+                {comTroco.map((c, i) => {
+                  const r = c.portRefin108!;
+                  return (
+                    <div
+                      key={c.idx}
+                      className={`rounded-md border p-2 flex items-center gap-2 ${
+                        i === 0
+                          ? 'border-cyan-500/60 bg-cyan-500/10'
+                          : 'border-border bg-card/50'
+                      }`}
+                    >
+                      <Badge variant={i === 0 ? 'info' : 'outline'} className="text-[10px] font-mono shrink-0">
+                        #{i + 1}
+                      </Badge>
+                      <div className="flex-1 min-w-0 text-xs">
+                        <div className="font-semibold truncate">
+                          <span className="font-mono">{c.contrato || '—'}</span>
+                          <span className="text-muted-foreground"> · {c.bancoOrigem}</span>
+                          {c.taxaOrig > 0 && <span className="text-yellow-400 ml-1">@ {c.taxaOrig.toFixed(2)}%</span>}
+                          <span className="text-cyan-400 ml-1">→ {r.banco} @ {r.taxa.toFixed(2)}% / 108m</span>
+                        </div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">
+                          Saldo {formatBRL(c.saldo)} · parcela {formatBRL(c.parcela)} mantida ·
+                          novo VC {formatBRL(r.port_vc)}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-[9px] uppercase text-muted-foreground">Troco</div>
+                        <div className="text-base font-mono font-bold text-cyan-400">
+                          {formatBRL(r.port_troco)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Tabela de contratos pra contexto */}
         {contratos.length > 0 && (
           <details className={!enquadraNovaRegra ? '' : 'pt-2'} open>
             <summary className="cursor-pointer text-xs font-semibold py-1.5 hover:bg-muted/30 rounded px-2">
               📋 Ver todos os contratos ({contratos.length})
               <span className="text-[10px] text-muted-foreground font-normal ml-2">
-                — clique no saldo pra editar e recalcular
+                — clique no saldo pra editar e recalcular · ordenado por {enquadraNovaRegra ? 'troco' : 'redução'} desc
               </span>
             </summary>
             <div className="mt-1 overflow-x-auto rounded-md border border-border">
@@ -493,7 +588,18 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {contratos.map((c) => {
+                  {[...contratos].sort((a, b) => {
+                    // Bloqueados vão pro fim
+                    if (a.bloqueado && !b.bloqueado) return 1;
+                    if (!a.bloqueado && b.bloqueado) return -1;
+                    // Sem portRefin108 vai pro fim
+                    if (!a.portRefin108 && b.portRefin108) return 1;
+                    if (a.portRefin108 && !b.portRefin108) return -1;
+                    if (!a.portRefin108 || !b.portRefin108) return 0;
+                    // Enquadrado: por troco desc. Não enquadrado: por redução desc.
+                    if (enquadraNovaRegra) return b.portRefin108.port_troco - a.portRefin108.port_troco;
+                    return b.portRefin108.refin_reducao - a.portRefin108.refin_reducao;
+                  }).map((c) => {
                     const melhorDest = c.destinos && c.destinos[0];
                     const saldoEditado = saldoOverrides[c.idx] !== undefined;
                     return (

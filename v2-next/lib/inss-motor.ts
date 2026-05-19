@@ -490,20 +490,53 @@ export function calcReducaoNoDestino(
  * acomoda nova_parcela em qualquer ponto entre os 2 cenários, e o troco
  * é proporcional).
  */
-export interface PortRefin108Result {
-  banco: string;
+/** Cenário (1 taxa) de port+refin 108m num banco destino. */
+export interface PortRefin108Cenario {
   taxa: number;
-  prazo: number; // sempre 108
   coef: number;
   // Refin puro (parcela reduz ao máximo, sem troco)
   refin_novaParc: number;
   refin_reducao: number;
   // Port mantendo parcela (troco máximo)
-  port_novaParc: number; // = parcela atual
+  port_novaParc: number;
   port_vc: number;
   port_troco: number;
-  // Aprovado?
-  taxaOrigVale: boolean; // taxa atual > taxa destino?
+}
+
+export interface PortRefin108Result {
+  banco: string;
+  prazo: number; // sempre 108
+  /** Cenário de TABELA ALTA (1.85% = teto INSS) — MAIS comissão pro correspondente,
+   *  MAIS troco quando port com parcela mantida, MENOS valor liberado em refin puro. */
+  tabelaAlta: PortRefin108Cenario;
+  /** Cenário de TABELA BAIXA (taxa mínima do destino) — MENOS comissão,
+   *  MENOS troco em port, MAIOR redução em refin (cliente paga menos juros). */
+  tabelaBaixa: PortRefin108Cenario;
+  /** Compat com chamadas antigas — equivale a tabelaAlta. */
+  taxa: number;
+  coef: number;
+  refin_novaParc: number;
+  refin_reducao: number;
+  port_novaParc: number;
+  port_vc: number;
+  port_troco: number;
+  /** Banco destino aceita a taxa de origem? */
+  taxaOrigVale: boolean;
+}
+
+function calcCenario(parcela: number, saldo: number, taxa: number): PortRefin108Cenario {
+  const coef = coefFor(taxa, 108);
+  const refin_novaParc = saldo * coef;
+  const port_vc = parcela / coef;
+  return {
+    taxa,
+    coef,
+    refin_novaParc,
+    refin_reducao: parcela - refin_novaParc,
+    port_novaParc: parcela,
+    port_vc,
+    port_troco: port_vc - saldo,
+  };
 }
 
 export function calcPortRefin108(
@@ -516,40 +549,41 @@ export function calcPortRefin108(
   const r = BD[destino.banco];
   if (!r) return null;
 
-  let taxaUsada: number;
-  let coef108: number;
+  // Define as 2 taxas relevantes (alta e baixa) por tipo de banco
+  let taxaAlta: number;
+  let taxaBaixa: number;
   if (r.coefF) {
-    // BRB tem coefF fixo (96m). Não tem coef 108m oficial — usa PRICE genérico
+    // BRB tem coefF único — taxa fixa. Mesma alta e baixa.
     const t = COEFS.find((x) => x.c === r.coefF);
-    taxaUsada = t ? t.t : 1.85;
-    coef108 = priceCoef(taxaUsada, 108);
+    taxaAlta = t ? t.t : 1.85;
+    taxaBaixa = taxaAlta;
   } else if (r.faixa) {
-    taxaUsada = r.faixa[0];
-    coef108 = coefFor(taxaUsada, 108);
+    taxaAlta = r.faixa[1]; // teto da faixa (= 1.85% normalmente)
+    taxaBaixa = r.faixa[0]; // piso da faixa
   } else {
     return null;
   }
 
   // taxaOrigVale: o banco destino aceita a taxa de origem?
-  // Usa taxaOrigemMinDefault do banco (ou taxaOrigemMin específico se houver).
-  // BRB tem 0 → aceita qualquer taxa origem (mesmo 0).
   const minOrigem = r.taxaOrigemMinDefault ?? 0;
   const taxaOrigVale = minOrigem <= 0 ? true : (taxaOrigemAtual >= minOrigem);
-  const refinNovaParc = saldo * coef108;
-  const refinReducao = parcela - refinNovaParc;
-  const portVc = parcela / coef108;
-  const portTroco = portVc - saldo;
+
+  const tabelaAlta = calcCenario(parcela, saldo, taxaAlta);
+  const tabelaBaixa = calcCenario(parcela, saldo, taxaBaixa);
 
   return {
     banco: destino.banco,
-    taxa: taxaUsada,
     prazo: 108,
-    coef: coef108,
-    refin_novaParc: refinNovaParc,
-    refin_reducao: refinReducao,
-    port_novaParc: parcela,
-    port_vc: portVc,
-    port_troco: portTroco,
+    tabelaAlta,
+    tabelaBaixa,
+    // Compat — campos legados apontam pra tabelaAlta (que era o esperado pra port com troco)
+    taxa: tabelaAlta.taxa,
+    coef: tabelaAlta.coef,
+    refin_novaParc: tabelaAlta.refin_novaParc,
+    refin_reducao: tabelaAlta.refin_reducao,
+    port_novaParc: tabelaAlta.port_novaParc,
+    port_vc: tabelaAlta.port_vc,
+    port_troco: tabelaAlta.port_troco,
     taxaOrigVale,
   };
 }
