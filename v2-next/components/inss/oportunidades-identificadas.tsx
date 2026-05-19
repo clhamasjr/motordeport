@@ -33,15 +33,19 @@ function diagnosticarBloqueio(parcela: number, saldo: number, taxaOrig: number, 
       motivos.push(`${banco}: saldo ${saldo.toFixed(0)} < mín ${r.sMin}`);
       continue;
     }
+    // Taxa mínima da origem (específica do origem ou default do banco)
+    let minTx: number | undefined;
     if (r.taxaOrigemMin && r.taxaOrigemMin[codOrigem] !== undefined) {
-      const minTx = r.taxaOrigemMin[codOrigem];
-      if (!taxaOrig || taxaOrig <= minTx) {
-        motivos.push(`${banco}: taxa orig ${taxaOrig.toFixed(2)}% ≤ mín ${minTx}%`);
-        continue;
-      }
+      minTx = r.taxaOrigemMin[codOrigem];
+    } else if (r.taxaOrigemMinDefault !== undefined) {
+      minTx = r.taxaOrigemMinDefault;
     }
-    // Se chegou aqui, é por troco mínimo / taxa
-    motivos.push(`${banco}: troco insuficiente ou taxa origem baixa`);
+    if (minTx !== undefined && minTx > 0 && (!taxaOrig || taxaOrig < minTx)) {
+      motivos.push(`${banco}: taxa orig ${taxaOrig.toFixed(2)}% < mín ${minTx}%`);
+      continue;
+    }
+    // Se chegou aqui, é por troco mínimo
+    motivos.push(`${banco}: troco < mínimo`);
   }
   // Se TODOS reclamaram de saldo, simplifica a mensagem
   if (motivos.every((m) => m.includes('saldo'))) {

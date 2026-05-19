@@ -56,7 +56,10 @@ export interface BancoRegra {
   blockInv?: boolean;
   espBlock?: number[];
   pgMinMap?: Record<string, number>;
+  /** Taxa mínima da ORIGEM por banco origem (cd → taxa%). Sobrescreve o default. */
   taxaOrigemMin?: Record<string, number>;
+  /** Taxa mínima GLOBAL da origem aceita pelo destino (em %). 0 = qualquer taxa. */
+  taxaOrigemMinDefault?: number;
   priorityFor?: string[];
   priorityRate?: number;
   contractPrefixBlock?: Record<string, string[]>;
@@ -69,7 +72,8 @@ export const BD: Record<string, BancoRegra> = {
     sMin: 2000, tMin: 250, pMin: 0, pgMin: 0, faixa: [1.66, 1.85], coefF: null,
     block: ['359','246','025','047','063','320','394','654','212','626','925','935','753','330','012','752','082','079','329','643','243'],
     pgMinMap: { '070': 12, '623': 12 },
-    taxaOrigemMin: { '422': 1.10, '149': 1.10, '389': 1.10 },
+    // QUALI aceita port com taxa origem >= 1,10% (regra global atual)
+    taxaOrigemMinDefault: 1.10,
     invRules: { minAge: 55, dibAgeRange: [55, 57], dibMinYears: 15 },
   },
   FACTA: {
@@ -83,6 +87,8 @@ export const BD: Record<string, BancoRegra> = {
     block: ['707','121','012','422','925'],
     pgMinMap: { '254': 13, '623': 37, '070': 12, '318': 12 },
     blockInv: true,
+    // C6 aceita port com taxa origem >= 1,35%
+    taxaOrigemMinDefault: 1.35,
     priorityFor: ['329','149','935','643'],
     priorityRate: 1.55,
     contractPrefixBlock: { '329': ['FIN','QUA','FDC'] },
@@ -90,6 +96,8 @@ export const BD: Record<string, BancoRegra> = {
   BRB: {
     sMin: 3000, tMin: 250, pMin: 0, pgMin: 0, faixa: null, coefF: 0.02299,
     block: ['070','623','935','149','012','071','925','380','079'],
+    // BRB aceita port com QUALQUER taxa origem (sem mínimo)
+    taxaOrigemMinDefault: 0,
     invRules: { minAge: 60 },
   },
   DIGIO: {
@@ -109,6 +117,8 @@ export const BD: Record<string, BancoRegra> = {
     sMin: 3000, vcMax: 100000, tMin: 100, pMin: 0, pgMin: 0, faixa: [1.50, 1.85], coefF: null,
     block: ['329','643','935'],
     pgMinMap: { '623': 1, '336': 1 },
+    // ICRED aceita port com taxa origem >= 1,10%
+    taxaOrigemMinDefault: 1.10,
     vcMaxByAge: [
       { ageMax: 61, vcMax: 100000 }, { ageMax: 62, vcMax: 90000 },
       { ageMax: 63, vcMax: 80000 }, { ageMax: 64, vcMax: 70000 },
@@ -274,9 +284,23 @@ export function bankAccepts(
   if (r.sMin && s < r.sMin) return false;
   const pgR = i1 ? 1 : (r.pgMinMap && r.pgMinMap[cd] ? r.pgMinMap[cd] : r.pgMin);
   if (pgR && pg < pgR) return false;
-  if (r.taxaOrigemMin && r.taxaOrigemMin[cd] !== undefined) {
-    const minTx = r.taxaOrigemMin[cd];
-    if (!taxaOrig || taxaOrig <= minTx) return false;
+  // Taxa mínima da origem que o destino aceita:
+  //   1. Se há regra específica por origem (taxaOrigemMin[cd]), usa essa
+  //   2. Senão, se há taxaOrigemMinDefault, usa essa
+  //   3. Senão, sem restrição de taxa origem
+  // Atenção: pra empréstimo NOVO (cd='000', taxaOrig=0), pula a verificação —
+  // não há contrato de origem, não há taxa a comparar.
+  if (cd && cd !== '000') {
+    let minTx: number | undefined;
+    if (r.taxaOrigemMin && r.taxaOrigemMin[cd] !== undefined) {
+      minTx = r.taxaOrigemMin[cd];
+    } else if (r.taxaOrigemMinDefault !== undefined) {
+      minTx = r.taxaOrigemMinDefault;
+    }
+    if (minTx !== undefined && minTx > 0) {
+      // Taxa origem precisa ser >= mínima (não estritamente maior — = aceita)
+      if (!taxaOrig || taxaOrig < minTx) return false;
+    }
   }
   if (age !== null) {
     if (age > IDADE_MAX) return false;
@@ -506,7 +530,11 @@ export function calcPortRefin108(
     return null;
   }
 
-  const taxaOrigVale = taxaOrigemAtual > 0 ? taxaOrigemAtual > taxaUsada : true;
+  // taxaOrigVale: o banco destino aceita a taxa de origem?
+  // Usa taxaOrigemMinDefault do banco (ou taxaOrigemMin específico se houver).
+  // BRB tem 0 → aceita qualquer taxa origem (mesmo 0).
+  const minOrigem = r.taxaOrigemMinDefault ?? 0;
+  const taxaOrigVale = minOrigem <= 0 ? true : (taxaOrigemAtual >= minOrigem);
   const refinNovaParc = saldo * coef108;
   const refinReducao = parcela - refinNovaParc;
   const portVc = parcela / coef108;
