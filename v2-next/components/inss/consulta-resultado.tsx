@@ -11,6 +11,8 @@ import {
 import { OportunidadesIdentificadas } from './oportunidades-identificadas';
 import { SaqueComplementar } from './saque-complementar';
 import { CalculadoraManual } from './calculadora-manual';
+import { In100Button } from './in100-button';
+import { WhatsAppButton } from './whatsapp-button';
 import { parseBR } from '@/lib/inss-motor';
 
 interface Props {
@@ -54,7 +56,18 @@ export function ConsultaResultado({ cpf, view, onClose, onReConsult }: Props) {
               {b.rg && <span className="font-mono text-muted-foreground/60">RG {b.rg}</span>}
             </div>
           </div>
-          <div className="flex gap-2 shrink-0">
+          <div className="flex gap-2 shrink-0 flex-wrap">
+            <WhatsAppButton
+              telefones={parsed.telefones}
+              nome={b.nome}
+              cpf={cpf}
+              compact
+            />
+            <In100Button
+              cpf={cpf}
+              beneficio={b.nb || ben.nb}
+              compact
+            />
             <CalculadoraManual parsed={parsed} />
             {onReConsult && (
               <Button variant="outline" size="sm" onClick={onReConsult} title="Recarregar">
@@ -156,11 +169,32 @@ export function ConsultaResultado({ cpf, view, onClose, onReConsult }: Props) {
                 <span className="text-green-400">Telefones ({parsed.telefones.length})</span>
               </div>
               <div className="flex flex-wrap gap-1.5 font-mono text-xs">
-                {parsed.telefones.map((t, i) => (
-                  <Badge key={i} variant="outline" className="py-1 px-2">
-                    ({t.ddd}) {t.numero}
-                  </Badge>
-                ))}
+                {parsed.telefones.map((t, i) => {
+                  const ddd = (t.ddd || '').replace(/\D/g, '');
+                  const num = (t.numero || '').replace(/\D/g, '');
+                  const primeiroNome = (b.nome || '').split(' ')[0] || '';
+                  const valido = ddd && num;
+                  const url = valido
+                    ? `https://wa.me/55${ddd}${num}?text=${encodeURIComponent(`Olá ${primeiroNome}, tudo bem? Sou da LhamasCred e identifiquei algumas oportunidades pro seu benefício INSS. Posso te explicar?`)}`
+                    : null;
+                  return url ? (
+                    <a
+                      key={i}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 rounded-md border border-green-500/40 bg-green-500/5 hover:bg-green-500/10 px-2 py-1 transition"
+                      title="Abrir conversa WhatsApp"
+                    >
+                      <span className="text-green-400 text-[10px]">💬</span>
+                      <span>({ddd}) {num}</span>
+                    </a>
+                  ) : (
+                    <Badge key={i} variant="outline" className="py-1 px-2">
+                      ({t.ddd}) {t.numero}
+                    </Badge>
+                  );
+                })}
               </div>
             </CardContent>
           </Card>
