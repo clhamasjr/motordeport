@@ -288,8 +288,12 @@ export function bankAccepts(
   //   1. Se há regra específica por origem (taxaOrigemMin[cd]), usa essa
   //   2. Senão, se há taxaOrigemMinDefault, usa essa
   //   3. Senão, sem restrição de taxa origem
-  // Atenção: pra empréstimo NOVO (cd='000', taxaOrig=0), pula a verificação —
-  // não há contrato de origem, não há taxa a comparar.
+  //
+  // Casos especiais:
+  // - cd='000' (empréstimo novo, sem origem): pula verificação
+  // - taxaOrig=0 (taxa desconhecida do extrato): NÃO REJEITA — assume que vale
+  //   port. Antes era bloqueado, mas isso filtrava demais clientes válidos
+  //   quando o Multicorban/PDF não retornava a taxa.
   if (cd && cd !== '000') {
     let minTx: number | undefined;
     if (r.taxaOrigemMin && r.taxaOrigemMin[cd] !== undefined) {
@@ -297,9 +301,9 @@ export function bankAccepts(
     } else if (r.taxaOrigemMinDefault !== undefined) {
       minTx = r.taxaOrigemMinDefault;
     }
-    if (minTx !== undefined && minTx > 0) {
-      // Taxa origem precisa ser >= mínima (não estritamente maior — = aceita)
-      if (!taxaOrig || taxaOrig < minTx) return false;
+    if (minTx !== undefined && minTx > 0 && taxaOrig > 0) {
+      // Taxa origem precisa ser >= mínima. Se taxaOrig=0 (desconhecida), deixa passar.
+      if (taxaOrig < minTx) return false;
     }
   }
   if (age !== null) {
@@ -565,8 +569,13 @@ export function calcPortRefin108(
   }
 
   // taxaOrigVale: o banco destino aceita a taxa de origem?
+  //   - Se banco tem taxaOrigemMinDefault=0 (BRB) → aceita qualquer taxa
+  //   - Se taxaOrigemAtual=0 (taxa desconhecida) → assume que vale, NÃO bloqueia
+  //   - Senão, taxa origem precisa ser >= mínima do destino
   const minOrigem = r.taxaOrigemMinDefault ?? 0;
-  const taxaOrigVale = minOrigem <= 0 ? true : (taxaOrigemAtual >= minOrigem);
+  const taxaOrigVale = minOrigem <= 0
+    ? true
+    : (taxaOrigemAtual <= 0 ? true : taxaOrigemAtual >= minOrigem);
 
   const tabelaAlta = calcCenario(parcela, saldo, taxaAlta);
   const tabelaBaixa = calcCenario(parcela, saldo, taxaBaixa);

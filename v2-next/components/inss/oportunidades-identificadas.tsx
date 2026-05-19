@@ -40,7 +40,8 @@ function diagnosticarBloqueio(parcela: number, saldo: number, taxaOrig: number, 
     } else if (r.taxaOrigemMinDefault !== undefined) {
       minTx = r.taxaOrigemMinDefault;
     }
-    if (minTx !== undefined && minTx > 0 && (!taxaOrig || taxaOrig < minTx)) {
+    // Só rejeita se temos taxaOrig conhecida E é menor que o mínimo
+    if (minTx !== undefined && minTx > 0 && taxaOrig > 0 && taxaOrig < minTx) {
       motivos.push(`${banco}: taxa orig ${taxaOrig.toFixed(2)}% < mín ${minTx}%`);
       continue;
     }
@@ -195,22 +196,34 @@ function calcularTudo(
     }
 
     // ── PORT + REFIN 108m: operação unificada ──
-    // Pra cada destino, calcula 2 cenários (tabela alta = mais troco/comissão,
-    // tabela baixa = mais redução/cliente).
+    // Cada destino tem 2 tabelas:
+    //   tabelaAlta = teto da faixa (1.85% normalmente) = MAIS comissão correspondente
+    //   tabelaBaixa = piso da faixa = MAIS troco/redução pro cliente
     //
-    // ESTRATÉGIA DE ORDENAÇÃO:
-    //   - Cliente ENQUADRADO → port com troco MAIS ALTO (tabela alta, taxa 1.85%)
-    //     prioriza maximizar comissão pro correspondente
-    //   - Cliente NÃO ENQUADRADO → refin com MAIS REDUÇÃO (tabela baixa, taxa min)
-    //     prioriza enquadrar o cliente
+    // ESTRATÉGIA DE ESCOLHA:
+    //   - Cliente ENQUADRADO: prioriza tabelaAlta (max comissão) SE troco >= R$250.
+    //     Se troco_alta < 250, fallback pra tabelaBaixa pra dar troco mínimo.
+    //   - Cliente NÃO ENQUADRADO: usa tabelaBaixa (max redução pra enquadrar).
+    //
+    // Sempre escolhe o destino com MELHOR resultado dentro da estratégia.
+    const TROCO_MIN_ENQUADRADO = 250;
     let portRefin108: PortRefin108Result | null = null;
     let todosCenarios: Array<{ result: PortRefin108Result; trocoEfetivo: number; reducaoEfetiva: number }> = [];
     if (!bloqueado && destinos.length > 0 && saldo > 0 && parcela > 0) {
       for (const d of destinos) {
         const r = calcPortRefin108(parcela, saldo, d, taxaOrig);
         if (!r || !r.taxaOrigVale) continue;
-        // Se enquadrado: usa cenário ALTO (mais troco). Senão: BAIXO (mais redução).
-        const cenarioEsc = enquadraNovaRegra ? r.tabelaAlta : r.tabelaBaixa;
+        // Escolhe cenário conforme estratégia
+        let cenarioEsc: typeof r.tabelaAlta;
+        if (enquadraNovaRegra) {
+          // Tenta tabelaAlta primeiro. Se troco < R$250, fallback tabelaBaixa
+          cenarioEsc = r.tabelaAlta.port_troco >= TROCO_MIN_ENQUADRADO
+            ? r.tabelaAlta
+            : r.tabelaBaixa;
+        } else {
+          // Não enquadra: usa baixa pra max redução
+          cenarioEsc = r.tabelaBaixa;
+        }
         // Reescreve campos legados do result com o cenário escolhido
         const ajustado: PortRefin108Result = {
           ...r,
