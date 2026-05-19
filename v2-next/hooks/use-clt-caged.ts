@@ -67,20 +67,21 @@ interface BatchResponse {
   error?: string;
 }
 
-export function useCagedContar(filtros: CagedFiltros, exato = false) {
+export function useCagedContar(filtros: CagedFiltros | null, exato = false) {
   return useQuery({
     queryKey: ['clt', 'caged', 'contar', filtros, exato],
     queryFn: async () => {
       const r = await api<ContarResponse>('/api/clt-caged-extrair', {
-        action: 'contar', exato, ...filtros,
+        action: 'contar', exato, ...(filtros || {}),
       });
       if (!r.success) throw new Error(r.error || 'Erro contagem');
       return r;
     },
+    // SO roda quando o user explicitamente passou filtros aplicados
+    // (ex: clicou em "Pesquisar"). Sem isso, a tela ficava bombando a
+    // tabela CAGED de 43M a cada caractere digitado.
+    enabled: filtros !== null,
     staleTime: 30 * 1000,
-    // Tabela CAGED tem 43M linhas — count=exact pode estourar 30s do Edge.
-    // Backend ja faz fallback estimated/timeout. Aqui evitamos retry agressivo
-    // que duplica os 504 no console.
     retry: (failureCount, err: any) => {
       const status = err?.status;
       if (status && (status === 504 || (status >= 400 && status < 500))) return false;

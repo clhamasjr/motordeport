@@ -11,11 +11,21 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 
+type Section = 'consultar' | 'operar' | 'ia' | 'config';
+
+const SECTION_LABEL: Record<Section, string> = {
+  consultar: 'Consultar',
+  operar: 'Operar',
+  ia: 'IA & Disparo',
+  config: 'Config',
+};
+
 interface NavItem {
   href: string;
   label: string;
   icon: React.ElementType;
   needsRole?: ('admin' | 'gestor' | 'operador')[];
+  section?: Section;
 }
 
 interface NavGroup {
@@ -25,38 +35,47 @@ interface NavGroup {
   items: NavItem[];
 }
 
+// Ordem das sections dentro de cada grupo (consultar -> operar -> ia -> config)
 const NAV: NavGroup[] = [
   {
     k: 'inss', icon: Briefcase, label: 'INSS',
     items: [
-      { href: '/inss/consulta', label: 'Consulta Unitária', icon: Search },
-      { href: '/inss/in100', label: 'IN100 (DataPrev)', icon: Trophy },
-      { href: '/inss/higienizacao', label: 'Higienização (XLSX)', icon: Sparkles },
-      { href: '/inss/rmc-rcc', label: 'RMC/RCC + Saque', icon: BookOpen },
-      { href: '/inss/enquadramento', label: 'Enquadramento (Manual)', icon: Target },
-      { href: '/inss/pipeline', label: 'Pipeline', icon: ListChecks },
-      { href: '/inss/disparo', label: 'Disparo em massa', icon: MessageSquare },
-      { href: '/inss/esteira', label: 'Esteira', icon: ListChecks },
-      { href: '/inss/propostas', label: 'Propostas', icon: FileText },
-      { href: '/inss/conversas', label: 'Sofia (Conversas)', icon: MessageSquare },
-      { href: '/inss/sofia-knowledge', label: 'Sofia — Knowledge', icon: BookOpen, needsRole: ['admin'] },
-      { href: '/inss/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['admin', 'gestor'] },
-      { href: '/inss/gestao', label: 'Gestão', icon: Settings, needsRole: ['admin', 'gestor'] },
-      { href: '/inss/motor-test', label: 'Motor — Testes', icon: Zap, needsRole: ['admin'] },
+      // ── Consultar ──
+      { href: '/inss/consulta', label: 'Consulta Unitária', icon: Search, section: 'consultar' },
+      { href: '/inss/in100', label: 'IN100 (DataPrev)', icon: Trophy, section: 'consultar' },
+      { href: '/inss/enquadramento', label: 'Enquadramento (Manual)', icon: Target, section: 'consultar' },
+      { href: '/inss/rmc-rcc', label: 'RMC/RCC + Saque', icon: BookOpen, section: 'consultar' },
+      // ── Operar ──
+      { href: '/inss/higienizacao', label: 'Higienização (XLSX)', icon: Sparkles, section: 'operar' },
+      { href: '/inss/pipeline', label: 'Pipeline', icon: ListChecks, section: 'operar' },
+      { href: '/inss/esteira', label: 'Esteira', icon: ListChecks, section: 'operar' },
+      { href: '/inss/propostas', label: 'Propostas', icon: FileText, section: 'operar' },
+      // ── IA & Disparo ──
+      { href: '/inss/conversas', label: 'Sofia (Conversas)', icon: MessageSquare, section: 'ia' },
+      { href: '/inss/disparo', label: 'Disparo em massa', icon: MessageSquare, section: 'ia' },
+      // ── Config ──
+      { href: '/inss/sofia-knowledge', label: 'Sofia — Knowledge', icon: BookOpen, needsRole: ['admin'], section: 'config' },
+      { href: '/inss/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['admin', 'gestor'], section: 'config' },
+      { href: '/inss/gestao', label: 'Gestão', icon: Settings, needsRole: ['admin', 'gestor'], section: 'config' },
+      { href: '/inss/motor-test', label: 'Motor — Testes', icon: Zap, needsRole: ['admin'], section: 'config' },
     ],
   },
   {
     k: 'clt', icon: Building2, label: 'CLT',
     items: [
-      { href: '/clt/consulta', label: 'Consulta Unitária', icon: Search },
-      { href: '/clt/catalogo', label: 'Catálogo de Bancos', icon: BookOpen },
-      { href: '/clt/analise', label: 'Análise de Cliente', icon: Target },
-      { href: '/clt/empresas-aprovadas', label: 'Empresas Aprovadas', icon: Trophy },
-      { href: '/clt/extrair-caged', label: 'Extrair Base CAGED', icon: Download, needsRole: ['gestor', 'admin'] },
-      { href: '/clt/analise-lote', label: 'Análise em Lote', icon: ListChecks },
-      { href: '/clt/esteira', label: 'Esteira', icon: ListChecks },
-      { href: '/clt/conversas', label: 'Conversas IA', icon: MessageSquare },
-      { href: '/clt/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['gestor', 'admin'] },
+      // ── Consultar ──
+      { href: '/clt/consulta', label: 'Consulta Unitária', icon: Search, section: 'consultar' },
+      { href: '/clt/analise-lote', label: 'Análise em Lote', icon: ListChecks, section: 'consultar' },
+      { href: '/clt/analise', label: 'Análise de Cliente', icon: Target, section: 'consultar' },
+      // ── Operar ──
+      { href: '/clt/empresas-aprovadas', label: 'Empresas Aprovadas', icon: Trophy, section: 'operar' },
+      { href: '/clt/esteira', label: 'Esteira', icon: ListChecks, section: 'operar' },
+      // ── IA & Disparo ──
+      { href: '/clt/conversas', label: 'Conversas IA', icon: MessageSquare, section: 'ia' },
+      // ── Config ──
+      { href: '/clt/catalogo', label: 'Catálogo de Bancos', icon: BookOpen, section: 'config' },
+      { href: '/clt/extrair-caged', label: 'Extrair Base CAGED', icon: Download, needsRole: ['gestor', 'admin'], section: 'config' },
+      { href: '/clt/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['gestor', 'admin'], section: 'config' },
     ],
   },
   {
@@ -138,23 +157,45 @@ export function Sidebar({ user }: { user: AuthUser }) {
               </button>
               {isOpen && (
                 <div className="mt-1 space-y-0.5">
-                  {visibleItems.map((item) => {
-                    const ItemIcon = item.icon;
-                    const active = pathname === item.href;
-                    return (
-                      <Link
-                        key={item.href}
-                        href={item.href}
-                        className={cn(
-                          'flex items-center gap-3 pl-6 pr-3 py-1.5 rounded-md text-sm transition-colors',
-                          active ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-secondary text-muted-foreground hover:text-foreground',
+                  {(() => {
+                    // Agrupa visibleItems por section (preservando ordem original)
+                    const sections: Array<{ section: Section | null; items: NavItem[] }> = [];
+                    let last: Section | null | undefined = undefined;
+                    for (const item of visibleItems) {
+                      const s = item.section ?? null;
+                      if (s !== last) {
+                        sections.push({ section: s, items: [] });
+                        last = s;
+                      }
+                      sections[sections.length - 1].items.push(item);
+                    }
+                    return sections.map((sec, idx) => (
+                      <div key={idx}>
+                        {sec.section && (
+                          <div className="pl-6 pr-3 pt-2 pb-0.5 text-[9px] uppercase tracking-wider text-muted-foreground/60 font-semibold">
+                            {SECTION_LABEL[sec.section]}
+                          </div>
                         )}
-                      >
-                        <ItemIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span className="truncate">{item.label}</span>
-                      </Link>
-                    );
-                  })}
+                        {sec.items.map((item) => {
+                          const ItemIcon = item.icon;
+                          const active = pathname === item.href;
+                          return (
+                            <Link
+                              key={item.href}
+                              href={item.href}
+                              className={cn(
+                                'flex items-center gap-3 pl-6 pr-3 py-1.5 rounded-md text-sm transition-colors',
+                                active ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-secondary text-muted-foreground hover:text-foreground',
+                              )}
+                            >
+                              <ItemIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                              <span className="truncate">{item.label}</span>
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    ));
+                  })()}
                 </div>
               )}
             </div>

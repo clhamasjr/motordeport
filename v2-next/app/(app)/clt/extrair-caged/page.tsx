@@ -5,14 +5,13 @@ import {
   CagedFiltros,
   useCagedContar, useCagedListar, useCagedExportCsv, useCagedHigienizarLote,
 } from '@/hooks/use-clt-caged';
-import { useDebounce } from '@/hooks/use-debounce';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { formatCpf, formatDateBR } from '@/lib/utils';
-import { Download, Eye, Rocket, Loader2, Database } from 'lucide-react';
+import { Download, Eye, Rocket, Loader2, Database, Search, RotateCcw } from 'lucide-react';
 
 const BANCOS_DISP = [
   { slug: 'fintech_qi', label: 'Fintech (QI Tech)' },
@@ -25,7 +24,10 @@ const BANCOS_DISP = [
 ];
 
 export default function ExtrairCagedPage() {
+  // Filtros que o user esta editando AGORA (não dispara query nenhuma)
   const [filtros, setFiltros] = useState<CagedFiltros>({ ativo: true });
+  // Filtros que foram "Aplicados" via botao Pesquisar (esses sim disparam query)
+  const [filtrosAplicados, setFiltrosAplicados] = useState<CagedFiltros | null>(null);
   const [bancosDispara, setBancosDispara] = useState<Set<string>>(new Set());
 
   const setF = (k: keyof CagedFiltros, v: unknown) => {
@@ -37,18 +39,27 @@ export default function ExtrairCagedPage() {
     });
   };
 
-  // Debounce nos filtros: nao dispara query a cada caractere (causava
-  // dezenas de 504 em cascata na tabela CAGED de 43M linhas)
-  const filtrosDebounced = useDebounce(filtros, 600);
-
-  const contar = useCagedContar(filtrosDebounced);
+  // Query SO roda quando user clica em "Pesquisar" (filtrosAplicados !== null).
+  // O hook tem enabled: filtros !== null embutido — passamos null pra nao disparar.
+  const contar = useCagedContar(filtrosAplicados);
   const listar = useCagedListar();
   const exportar = useCagedExportCsv();
   const higienizar = useCagedHigienizarLote();
 
   const total = contar.data?.total;
   const modo = contar.data?.modo;
-  const aindaDigitando = JSON.stringify(filtros) !== JSON.stringify(filtrosDebounced);
+  const filtrosMudaram = useMemo(
+    () => filtrosAplicados !== null && JSON.stringify(filtros) !== JSON.stringify(filtrosAplicados),
+    [filtros, filtrosAplicados],
+  );
+
+  function aplicarFiltros() {
+    setFiltrosAplicados({ ...filtros });
+  }
+  function limparFiltros() {
+    setFiltros({ ativo: true });
+    setFiltrosAplicados(null);
+  }
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-4">
@@ -172,15 +183,34 @@ export default function ExtrairCagedPage() {
         </CardContent>
       </Card>
 
-      {/* Bloco contagem + ações */}
+      {/* Botoes Pesquisar + Limpar — query SO roda quando clica Pesquisar */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <Button onClick={aplicarFiltros} className="gap-2" size="lg" disabled={contar.isFetching}>
+          <Search className="w-4 h-4" />
+          {contar.isFetching ? 'Pesquisando...' : 'Pesquisar com os filtros'}
+        </Button>
+        <Button onClick={limparFiltros} variant="outline" className="gap-2" size="lg"
+          disabled={filtrosAplicados === null && Object.keys(filtros).length <= 1}>
+          <RotateCcw className="w-4 h-4" /> Limpar filtros
+        </Button>
+        {filtrosAplicados !== null && filtrosMudaram && (
+          <div className="text-xs text-yellow-500">
+            ⚠ Você mudou os filtros — clique <b>Pesquisar</b> de novo pra ver o resultado atualizado
+          </div>
+        )}
+        {filtrosAplicados === null && (
+          <div className="text-xs text-muted-foreground">
+            👆 Ajuste os filtros acima e clique <b>Pesquisar</b> pra contar os CPFs
+          </div>
+        )}
+      </div>
+
+      {/* Bloco contagem + ações — so aparece quando ja pesquisou */}
+      {filtrosAplicados !== null && (
       <Card className="border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-accent/5">
         <CardContent className="p-4 flex items-center justify-between flex-wrap gap-3">
           <div>
-            {aindaDigitando ? (
-              <div className="text-sm text-muted-foreground flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" /> Aguardando você terminar de digitar...
-              </div>
-            ) : contar.isLoading || contar.isFetching ? (
+            {contar.isLoading || contar.isFetching ? (
               <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" /> Contando CPFs (pode demorar até 8s)...
               </div>
@@ -214,26 +244,28 @@ export default function ExtrairCagedPage() {
 
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" disabled={listar.isPending}
-              onClick={() => listar.mutate(filtros)} className="gap-2">
+              onClick={() => listar.mutate(filtrosAplicados!)} className="gap-2">
               {listar.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
               Ver amostra
             </Button>
             <Button variant="outline" size="sm" disabled={exportar.isPending || !total}
               onClick={() => {
+                if (!filtrosAplicados) return;
                 if (!confirm('Vou gerar CSV com até 50.000 CPFs filtrados. Pode demorar 10-30s. Continuar?')) return;
-                exportar.mutate(filtros);
+                exportar.mutate(filtrosAplicados);
               }} className="gap-2 border-green-500/50 text-green-400">
               {exportar.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
               Download CSV
             </Button>
             <Button size="sm" disabled={higienizar.isPending || !total}
               onClick={() => {
+                if (!filtrosAplicados) return;
                 const lim = Math.min(total || 0, 1000);
                 const labelB = bancosDispara.size > 0
                   ? `nos bancos: ${[...bancosDispara].join(', ')}`
                   : 'em TODOS os bancos disponíveis';
                 if (!confirm(`Vou enviar ${lim.toLocaleString('pt-BR')} CPFs (limite 1000) pra higienização CLT ${labelB}.\n\nContinuar?`)) return;
-                higienizar.mutate({ filtros, bancos: bancosDispara.size > 0 ? [...bancosDispara] : undefined });
+                higienizar.mutate({ filtros: filtrosAplicados, bancos: bancosDispara.size > 0 ? [...bancosDispara] : undefined });
               }} className="gap-2">
               {higienizar.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
               Higienizar lote (1000)
@@ -241,6 +273,7 @@ export default function ExtrairCagedPage() {
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* Amostra */}
       {listar.data?.cpfs && listar.data.cpfs.length > 0 && (

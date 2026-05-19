@@ -141,7 +141,14 @@ export default function ConsultaCltPage() {
                         <Badge variant="info" className="text-[10px]">⏳</Badge>
                       )}
                       <div className="min-w-0 flex-1">
-                        <div className="font-medium text-sm truncate">{c.nome || '(sem nome)'}</div>
+                        <div className="font-medium text-sm truncate flex items-center gap-2">
+                          {c.nome || '(sem nome)'}
+                          {c.criada_por_nome && (
+                            <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                              👤 {c.criada_por_nome}
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs text-muted-foreground">
                           CPF {formatCpf(c.cpf)} · {formatDateBR(c.iniciado_em)}
                         </div>
