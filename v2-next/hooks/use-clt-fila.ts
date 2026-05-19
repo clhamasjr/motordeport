@@ -96,29 +96,66 @@ export function useFilaStatus(filaId: string | null) {
 
 /**
  * Lista de consultas recentes (últimas N do user/parceiro).
- * Cache 30s, revalida ao focar.
+ *
+ * ATENCAO ao backend (api/clt-fila.js):
+ *  - action válidas: criar, processar, status, listar, complementarCliente
+ *  - 'recentes' NÃO existe — bate 400 "Action invalida"
+ * Por isso usamos 'listar' (igual o V1 faz em _carregarRecentesDoBanco).
+ *
+ * Resposta vem em `items[]` com { id, cpf, status_geral, iniciado_em,
+ * nome_manual, cliente: {nome}, criada_por_nome, ... }
  */
-interface RecentesResponse {
+interface ListarItem {
+  id: string;
+  cpf: string;
+  nome_manual?: string | null;
+  cliente?: { nome?: string } | null;
+  status_geral: string;
+  iniciado_em: string;
+  criada_por_nome?: string | null;
+  criada_por_user_id?: number | null;
+}
+interface ListarResponse {
   success: boolean;
-  consultas?: Array<{
-    id: string;
-    cpf: string;
-    nome?: string;
-    status_geral: string;
-    iniciado_em: string;
-  }>;
+  items?: ListarItem[];
+  error?: string;
+}
+
+export interface ConsultaRecente {
+  id: string;
+  cpf: string;
+  nome: string;
+  status_geral: string;
+  iniciado_em: string;
+  criada_por_nome?: string;
+  criada_por_user_id?: number | null;
 }
 
 export function useConsultasRecentes(limit = 20) {
   return useQuery({
     queryKey: ['clt', 'recentes', limit],
-    queryFn: async () => {
-      const r = await api<RecentesResponse>('/api/clt-fila', {
-        action: 'recentes',
+    queryFn: async (): Promise<ConsultaRecente[]> => {
+      const r = await api<ListarResponse>('/api/clt-fila', {
+        action: 'listar',
         limit,
       });
-      return r.consultas || [];
+      if (!r.success) throw new Error(r.error || 'Falha ao listar');
+      return (r.items || []).map((it) => ({
+        id: it.id,
+        cpf: it.cpf,
+        nome: it.cliente?.nome || it.nome_manual || '',
+        status_geral: it.status_geral,
+        iniciado_em: it.iniciado_em,
+        criada_por_nome: it.criada_por_nome || undefined,
+        criada_por_user_id: it.criada_por_user_id ?? null,
+      }));
     },
     staleTime: 30 * 1000,
+    refetchOnWindowFocus: false,
+    retry: (failureCount, err: any) => {
+      const status = err?.status;
+      if (status && status >= 400 && status < 500) return false;
+      return failureCount < 1;
+    },
   });
 }
