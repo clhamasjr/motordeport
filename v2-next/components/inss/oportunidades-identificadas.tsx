@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,12 +8,15 @@ import { formatBRL } from '@/lib/utils';
 import { InssParsedResult } from '@/lib/inss-types';
 import {
   testarTodos, calcReducaoPort, parseBR, pC, pEN, ESP_INV, ESP_AUX,
-  type BancoSimul, COEFS,
+  type BancoSimul,
 } from '@/lib/inss-motor';
-import { ChevronDown, ChevronUp, Banknote, TrendingUp, ShoppingCart, Sparkles, AlertTriangle } from 'lucide-react';
+import {
+  Banknote, TrendingUp, ShoppingCart, Sparkles, AlertTriangle,
+  CheckCircle2, XCircle, Scissors, RefreshCw,
+} from 'lucide-react';
 
-// COEF do V1 — usado pra estimar empréstimo novo (taxa 1.85% piso INSS)
-const COEF_NOVO = 0.02299;
+// Coef pra estimar empréstimo novo (1.85% piso) e cartão (≈2.92%)
+const COEF_EMP_185 = 0.02299;
 
 interface ContratoCalc {
   idx: number;
@@ -29,48 +32,54 @@ interface ContratoCalc {
   prazoTotal: number;
   destinos: BancoSimul[];
   destinoSelecionado: number;
-  novaParc: number; // nova parcela no destino selecionado (mantém quando port pura, reduz quando refin)
-  reducao: number;  // reducaoEstim em 108m a 1.50% (refin)
+  reducaoEstim: number;     // refin 108m @ 1.50% — quanto reduz a parcela
+  novaParcEstim: number;    // parcela nova após refin
+  resolveExcedente: boolean; // refin desse contrato sozinho cobre o excedente da nova regra?
   bloqueado: boolean;
   motivoBloqueio?: string;
-  // Comprometimento atual do cliente (calculado uma vez)
-  clientesTodoTomado?: boolean;
 }
 
-interface Props {
-  parsed: InssParsedResult;
+interface SolucaoCartao {
+  tipo: 'RMC' | 'RCC';
+  valor: number;
+  resolve: boolean;
 }
 
-// Determina se o cliente está TODO TOMADO (regra atual 45%).
-function isClienteTodoTomado(parsed: InssParsedResult): boolean {
-  const ben = parsed.beneficio || {};
-  const mrg = parsed.margem || {};
-  const benef = parseBR(ben.base_calculo) || parseBR(ben.valor) || 0;
-  if (!benef) return false;
-  const tetoCartao = benef * 0.05;
-  const sumEmp = parseBR(mrg.parcelas);
-  const mrgRmcLivre = parseBR(mrg.rmc);
-  const mrgRccLivre = parseBR(mrg.rcc);
-  const cartoes = parsed.cartoes || [];
-  const temRmc = (mrg.rmc != null && mrgRmcLivre < tetoCartao - 0.01) ||
-    cartoes.some((c) => (c.tipo || '').toUpperCase().includes('RMC'));
-  const temRcc = (mrg.rcc != null && mrgRccLivre < tetoCartao - 0.01) ||
-    cartoes.some((c) => (c.tipo || '').toUpperCase().includes('RCC'));
-  const sumRmc = temRmc ? Math.max(0, tetoCartao - mrgRmcLivre) : 0;
-  const sumRcc = temRcc ? Math.max(0, tetoCartao - mrgRccLivre) : 0;
-  const total = sumEmp + sumRmc + sumRcc;
-  // "Todo tomado" = comprometimento ≥ 44% (margem de erro 1%)
-  return total / benef >= 0.44;
+interface AnaliseNovaRegra {
+  // Inputs
+  benef: number;
+  sumEmp: number;
+  sumRmc: number;
+  sumRcc: number;
+  total: number;
+  compPct: number;
+
+  // Tetos NOVA regra (40% total)
+  teto40Total: number;     // 40% benefício
+  tetoEmpComCartao: number; // 35% (se tiver cartão)
+  tetoCartao: number;      // 5% (se tiver cartão)
+
+  // Estado NOVA
+  enquadraNovaRegra: boolean;
+  excedente: number;       // total - teto40Total se positivo
+  margemLivreNova: number; // teto40Total - total se positivo
+
+  // Soluções pra enquadrar (só se NÃO enquadra)
+  contratosQueResolvem: ContratoCalc[]; // contratos cujo refin sozinho cobre o excedente
+  cartoesQueResolvem: SolucaoCartao[];  // cancelar RMC/RCC se valor >= excedente
 }
 
-function calcular(parsed: InssParsedResult): ContratoCalc[] {
+function calcularTudo(parsed: InssParsedResult): { contratos: ContratoCalc[]; analise: AnaliseNovaRegra } {
   const ben = parsed.beneficio || {};
   const b = parsed.beneficiario || {};
+  const mrg = parsed.margem || {};
   const esp = ben.especie || '';
   const eN = pEN(esp);
   const isInv = ESP_INV.includes(eN);
   const isAux = ESP_AUX.includes(eN) || String(esp).toUpperCase().includes('AUXIL');
   const idade = b.idade ? parseInt(String(b.idade), 10) : null;
+
+  // DIB → anos de benefício
   let bY: number | null = null;
   if (ben.ddb) {
     const m = String(ben.ddb).match(/(\d{2})[/-](\d{2})[/-](\d{4})/);
@@ -82,24 +91,43 @@ function calcular(parsed: InssParsedResult): ContratoCalc[] {
     }
   }
 
-  const todoTomado = isClienteTodoTomado(parsed);
-  const contratos = parsed.contratos || [];
-  const out: ContratoCalc[] = [];
+  // ── Análise da nova regra (40% total) ──
+  const benef = parseBR(ben.base_calculo) || parseBR(ben.valor) || 0;
+  const sumEmp = parseBR(mrg.parcelas);
+  const tetoCartao = benef * 0.05;
+  const mrgRmcLivre = parseBR(mrg.rmc);
+  const mrgRccLivre = parseBR(mrg.rcc);
+  const cartoes = parsed.cartoes || [];
+  const temRmc = (mrg.rmc != null && mrgRmcLivre < tetoCartao - 0.01) ||
+    cartoes.some((c) => (c.tipo || '').toUpperCase().includes('RMC'));
+  const temRcc = (mrg.rcc != null && mrgRccLivre < tetoCartao - 0.01) ||
+    cartoes.some((c) => (c.tipo || '').toUpperCase().includes('RCC'));
+  const sumRmc = temRmc ? Math.max(0, tetoCartao - mrgRmcLivre) : 0;
+  const sumRcc = temRcc ? Math.max(0, tetoCartao - mrgRccLivre) : 0;
+  const total = sumEmp + sumRmc + sumRcc;
+  const compPct = benef > 0 ? (total / benef) * 100 : 0;
 
-  for (let i = 0; i < contratos.length; i++) {
-    const c = contratos[i];
+  const teto40Total = benef * 0.40;
+  const tetoEmpComCartao = benef * 0.35;
+  const enquadraNovaRegra = total <= teto40Total + 0.01;
+  const excedente = Math.max(0, total - teto40Total);
+  const margemLivreNova = Math.max(0, teto40Total - total);
+
+  // ── Roda motor pra cada contrato ──
+  const contratosRaw = parsed.contratos || [];
+  const contratos: ContratoCalc[] = [];
+
+  for (let i = 0; i < contratosRaw.length; i++) {
+    const c = contratosRaw[i];
     const parcela = parseBR(c.parcela);
     const saldo = parseBR(c.saldo || c.saldo_quitacao);
     if (!parcela || !saldo) continue;
     const taxaOrig = parseBR(c.taxa);
     const codOrigem = pC(c.banco_codigo || '');
-
-    // ── Parse correto de prazo (V1: c.prazo = restante, c.prazo_original = total) ──
     const restPg = parseInt(String(c.prazo || '0'), 10) || 0;
     const totPg = parseInt(String(c.prazo_original || '0'), 10) || 0;
     const pagas = Math.max(0, totPg - restPg);
     const prazos = totPg > 0 ? `${pagas}/${totPg}` : (restPg > 0 ? `?/${restPg}` : '—');
-
     const contrato = c.contrato || '';
     const bancoOrigem = c.banco || codOrigem || '?';
 
@@ -118,257 +146,248 @@ function calcular(parsed: InssParsedResult): ContratoCalc[] {
       }
       if (!destinos.length) {
         bloqueado = true;
-        motivo = 'Nenhum banco aceita esse contrato (regras de origem, taxa, idade ou troco mín.)';
+        motivo = 'Nenhum banco aceita esse contrato';
       }
     }
 
-    // Nova parcela estimada da PORT mantida (V1: parcela igual à atual → port mantém)
-    // E também redução via refin 108m a 1.50% (alternativa)
-    const reducaoRes = calcReducaoPort({ par: parcela, sal: saldo }, 108);
-    const novaParcRefin = reducaoRes?.novaParc || 0;
-    const reducao = reducaoRes?.reducao || 0;
+    // Refin estimado (108m @ 1.50% — taxa piso INSS)
+    const rcalc = calcReducaoPort({ par: parcela, sal: saldo }, 108);
+    const reducaoEstim = rcalc?.reducao || 0;
+    const novaParcEstim = rcalc?.novaParc || parcela;
 
-    // ── REGRA NOVA: cliente todo tomado SÓ pode portar se REDUZIR a parcela ──
-    // Port pura mantém parcela igual → não destrava nada → bloqueia se em 45%
-    // Só vai pra frente se há refin 108m que reduza significativamente
-    if (!bloqueado && todoTomado) {
-      if (reducao < parcela * 0.05) {
-        // Refin não reduz pelo menos 5% da parcela atual — não vale a pena pra cliente em 45%
-        bloqueado = true;
-        motivo = 'Cliente todo tomado (45%) — port só ajuda se reduzir parcela. Aqui mantém igual.';
-        destinos = [];
-      }
-    }
+    // Esse contrato sozinho resolve o excedente da nova regra?
+    const resolveExcedente = !bloqueado && excedente > 0 && reducaoEstim >= excedente - 0.01;
 
-    out.push({
+    contratos.push({
       idx: i, contrato, bancoOrigem, codOrigem, parcela, saldo, taxaOrig, prazos,
       pagas, prazoRest: restPg, prazoTotal: totPg,
       destinos, destinoSelecionado: 0,
-      novaParc: novaParcRefin || parcela, reducao,
+      reducaoEstim, novaParcEstim, resolveExcedente,
       bloqueado, motivoBloqueio: motivo,
-      clientesTodoTomado: todoTomado,
     });
   }
-  return out;
+
+  // Soluções de cartão
+  const cartoesQueResolvem: SolucaoCartao[] = [];
+  if (sumRmc > 0) cartoesQueResolvem.push({ tipo: 'RMC', valor: sumRmc, resolve: sumRmc >= excedente - 0.01 });
+  if (sumRcc > 0) cartoesQueResolvem.push({ tipo: 'RCC', valor: sumRcc, resolve: sumRcc >= excedente - 0.01 });
+
+  const analise: AnaliseNovaRegra = {
+    benef, sumEmp, sumRmc, sumRcc, total, compPct,
+    teto40Total, tetoEmpComCartao, tetoCartao,
+    enquadraNovaRegra, excedente, margemLivreNova,
+    contratosQueResolvem: contratos.filter((c) => c.resolveExcedente),
+    cartoesQueResolvem,
+  };
+
+  return { contratos, analise };
+}
+
+interface Props {
+  parsed: InssParsedResult;
 }
 
 export function OportunidadesIdentificadas({ parsed }: Props) {
-  const todos = useMemo(() => calcular(parsed), [parsed]);
-  const [open, setOpen] = useState(true);
-  const [selDestinos, setSelDestinos] = useState<Record<number, number>>({});
+  const { contratos, analise } = useMemo(() => calcularTudo(parsed), [parsed]);
 
-  const elegiveis = todos.filter((c) => !c.bloqueado);
-  const bloqueados = todos.filter((c) => c.bloqueado);
+  if (contratos.length === 0 && analise.benef === 0) return null;
 
-  // Empréstimo novo: estima sobre margem livre
-  const mrgLivre = parseBR(parsed.margem?.disponivel);
-  const empNovoVlr = mrgLivre > 0 ? mrgLivre / COEF_NOVO : 0;
+  const {
+    benef, total, compPct, teto40Total, enquadraNovaRegra, excedente, margemLivreNova,
+    contratosQueResolvem, cartoesQueResolvem,
+  } = analise;
 
-  // Totais Port: soma dos VCs dos destinos selecionados
-  const totalVc = elegiveis.reduce((s, c) => {
-    const idx = selDestinos[c.idx] ?? 0;
-    const d = c.destinos[idx];
-    return s + (d?.vc || 0);
-  }, 0);
-  const totalTroco = elegiveis.reduce((s, c) => {
-    const idx = selDestinos[c.idx] ?? 0;
-    const d = c.destinos[idx];
-    return s + (d?.troco || 0);
-  }, 0);
+  const numSolucoesContrato = contratosQueResolvem.length;
+  const numSolucoesCartao = cartoesQueResolvem.filter((c) => c.resolve).length;
+  const totalSolucoes = numSolucoesContrato + numSolucoesCartao;
+  const inviavel = !enquadraNovaRegra && totalSolucoes === 0;
 
-  if (todos.length === 0) return null;
-
-  const clienteTodoTomado = todos[0]?.clientesTodoTomado || false;
+  // Empréstimo Novo: só faz sentido se ENQUADRA e tem margem livre na nova
+  const empNovoVlr = enquadraNovaRegra && margemLivreNova > 0 ? margemLivreNova / COEF_EMP_185 : 0;
 
   return (
-    <Card className="border-cyan-500/30 bg-cyan-500/5">
+    <Card className={
+      inviavel ? 'border-red-500/40 bg-red-500/5'
+      : !enquadraNovaRegra ? 'border-yellow-500/40 bg-yellow-500/5'
+      : 'border-green-500/30 bg-green-500/5'
+    }>
       <CardContent className="p-4 space-y-3">
+        {/* Header */}
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
             <Sparkles className="size-5 text-cyan-400" />
-            <h3 className="font-bold text-base">Oportunidades Identificadas</h3>
+            <h3 className="font-bold text-base">Enquadramento na NOVA regra do INSS (40%)</h3>
           </div>
-          <div className="text-right text-xs">
-            <span className="text-muted-foreground">Potencial total:</span>{' '}
-            <strong className="font-mono text-green-400">{formatBRL(empNovoVlr + totalVc)}</strong>
-          </div>
+          <Badge
+            variant={inviavel ? 'destructive' : !enquadraNovaRegra ? 'warning' : 'success'}
+            className="text-xs"
+          >
+            {compPct.toFixed(1)}% / 40%
+          </Badge>
         </div>
 
-        {/* Aviso CRÍTICO quando cliente está todo tomado */}
-        {clienteTodoTomado && (
-          <div className="rounded-md bg-red-500/10 border border-red-500/40 p-3 text-xs">
+        {/* Status principal */}
+        {enquadraNovaRegra ? (
+          <div className="rounded-md bg-green-500/10 border border-green-500/40 p-3 text-sm">
             <div className="flex items-start gap-2">
-              <AlertTriangle className="size-5 text-red-400 shrink-0 mt-0.5" />
+              <CheckCircle2 className="size-5 text-green-400 shrink-0 mt-0.5" />
               <div>
-                <div className="font-bold text-red-400 mb-1">⚠ Cliente todo tomado (45%)</div>
-                <div className="text-foreground">
-                  Sem margem livre pra empréstimo novo, cartão novo ou port que mantenha parcela.
-                  <strong className="text-red-400"> Só pode portar contratos cujo refin REDUZA a parcela em pelo menos 5%</strong> —
-                  os demais ficam marcados como inviáveis.
+                <div className="font-bold text-green-400">✅ Cliente ENQUADRADO na nova regra</div>
+                <div className="text-xs text-foreground mt-1">
+                  Comprometimento total <strong className="font-mono">{formatBRL(total)}</strong> de{' '}
+                  <strong className="font-mono">{formatBRL(teto40Total)}</strong> (40%).
+                  {margemLivreNova > 0 ? (
+                    <> Sobra <strong className="font-mono text-green-400">{formatBRL(margemLivreNova)}</strong> de margem livre.</>
+                  ) : (
+                    <> No limite — sem margem livre pra novas operações.</>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : inviavel ? (
+          <div className="rounded-md bg-red-500/10 border border-red-500/40 p-3 text-sm">
+            <div className="flex items-start gap-2">
+              <XCircle className="size-5 text-red-400 shrink-0 mt-0.5" />
+              <div>
+                <div className="font-bold text-red-400">❌ INVIÁVEL — sem operação isolada que enquadre</div>
+                <div className="text-xs text-foreground mt-1">
+                  Cliente extrapola em <strong className="font-mono text-red-400">{formatBRL(excedente)}</strong>{' '}
+                  na nova regra. Nenhum contrato sozinho reduz parcela suficiente
+                  ({contratos.length > 0 && `melhor reduz ${formatBRL(Math.max(0, ...contratos.map((c) => c.reducaoEstim)))}`}),
+                  e {cartoesQueResolvem.length === 0 ? 'cliente não tem cartão pra cancelar' : 'cancelar cartão sozinho também não cobre'}.
+                  <div className="mt-1 text-red-400 font-semibold">→ Não tem o que fazer com 1 operação só. Precisaria combinar várias.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-md bg-yellow-500/10 border border-yellow-500/40 p-3 text-sm">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="size-5 text-yellow-400 shrink-0 mt-0.5" />
+              <div>
+                <div className="font-bold text-yellow-400">
+                  ⚠ Cliente VAI EXTRAPOLAR — excedente {formatBRL(excedente)}
+                </div>
+                <div className="text-xs text-foreground mt-1">
+                  Precisa de UMA operação que cubra esse valor. <strong className="text-green-400">{totalSolucoes}</strong> solução{totalSolucoes !== 1 ? 'ões' : ''} disponível{totalSolucoes !== 1 ? 'is' : ''}:
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* 2 cards principais */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {/* Empréstimo Novo */}
-          <div className={`rounded-lg border p-3 ${mrgLivre <= 0 ? 'border-red-500/40 bg-red-500/5' : 'border-orange-500/40 bg-orange-500/5'}`}>
-            <div className="flex items-center justify-between mb-1">
-              <div className={`text-[10px] uppercase tracking-wider font-bold ${mrgLivre <= 0 ? 'text-red-400' : 'text-orange-400'}`}>💰 Empréstimo Novo</div>
-              <TrendingUp className={`size-4 ${mrgLivre <= 0 ? 'text-red-400' : 'text-orange-400'}`} />
+        {/* Soluções isoladas pra enquadrar (só se NÃO enquadra mas tem solução) */}
+        {!enquadraNovaRegra && totalSolucoes > 0 && (
+          <div className="space-y-2">
+            <div className="text-xs uppercase tracking-wider font-bold text-muted-foreground">
+              Soluções pra enquadrar (escolha 1):
             </div>
-            <div className={`text-2xl font-mono font-bold ${mrgLivre <= 0 ? 'text-red-400' : 'text-orange-400'}`}>{formatBRL(empNovoVlr)}</div>
+
+            {/* Cancelar cartão */}
+            {cartoesQueResolvem.filter((c) => c.resolve).map((c) => (
+              <div key={c.tipo} className="rounded-md border border-cyan-500/40 bg-cyan-500/5 p-2.5 flex items-center gap-2">
+                <Scissors className="size-4 text-cyan-400 shrink-0" />
+                <div className="flex-1 text-xs">
+                  <div className="font-semibold text-cyan-400">Cancelar cartão {c.tipo}</div>
+                  <div className="text-muted-foreground">
+                    Libera <strong className="font-mono text-foreground">{formatBRL(c.valor)}</strong>{' '}
+                    (≥ excedente <strong className="font-mono">{formatBRL(excedente)}</strong>) — cliente passa a usar emp ≤ 40%.
+                  </div>
+                </div>
+                <Badge variant="success" className="text-[10px]">RESOLVE</Badge>
+              </div>
+            ))}
+
+            {/* Refin contratos */}
+            {contratosQueResolvem.map((c) => (
+              <div key={c.idx} className="rounded-md border border-green-500/40 bg-green-500/5 p-2.5 flex items-center gap-2">
+                <RefreshCw className="size-4 text-green-400 shrink-0" />
+                <div className="flex-1 text-xs">
+                  <div className="font-semibold text-green-400">
+                    Refin contrato <span className="font-mono">{c.contrato || '?'}</span> ({c.bancoOrigem})
+                  </div>
+                  <div className="text-muted-foreground">
+                    Parcela <strong className="font-mono text-foreground">{formatBRL(c.parcela)}</strong>{' '}
+                    → <strong className="font-mono text-green-400">{formatBRL(c.novaParcEstim)}</strong>{' '}
+                    (reduz <strong className="font-mono">{formatBRL(c.reducaoEstim)}</strong> ≥ excedente{' '}
+                    {formatBRL(excedente)})
+                  </div>
+                </div>
+                <Badge variant="success" className="text-[10px]">RESOLVE</Badge>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Empréstimo Novo (só se ENQUADRA + tem margem livre na nova) */}
+        {enquadraNovaRegra && margemLivreNova > 0 && (
+          <div className="rounded-lg border border-orange-500/40 bg-orange-500/5 p-3">
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-[10px] uppercase tracking-wider font-bold text-orange-400">💰 Empréstimo Novo</div>
+              <TrendingUp className="size-4 text-orange-400" />
+            </div>
+            <div className="text-2xl font-mono font-bold text-orange-400">{formatBRL(empNovoVlr)}</div>
             <div className="text-[10px] text-muted-foreground mt-1">
-              {mrgLivre <= 0 ? (
-                <span className="text-red-400">⚠ Sem margem livre — cliente não pode pegar emp novo</span>
-              ) : (
-                <>Margem livre <strong className="font-mono">{formatBRL(mrgLivre)}</strong> / coef. 0.02299 (1.85% piso)</>
-              )}
+              Margem livre na nova regra <strong className="font-mono">{formatBRL(margemLivreNova)}</strong> / coef 0.02299 (1.85% piso)
             </div>
           </div>
+        )}
 
-          {/* Portabilidade */}
-          <div className="rounded-lg border border-green-500/40 bg-green-500/5 p-3">
-            <div className="flex items-center justify-between mb-1">
-              <div className="text-[10px] uppercase tracking-wider font-bold text-green-400">🔄 Portabilidade</div>
-              <Banknote className="size-4 text-green-400" />
-            </div>
-            <div className="text-2xl font-mono font-bold text-green-400">{formatBRL(totalVc)}</div>
-            <div className="flex justify-between mt-1 text-[10px] text-muted-foreground">
-              <span>
-                <strong className="text-foreground">{elegiveis.length}</strong> de{' '}
-                <strong>{todos.length}</strong> contrato(s) elegível(eis)
-              </span>
-              <span>
-                Troco: <strong className="font-mono text-green-400">{formatBRL(totalTroco)}</strong>
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Tabela detalhada — colapsável */}
-        <div>
-          <button
-            onClick={() => setOpen(!open)}
-            className="w-full flex items-center justify-between text-xs font-semibold py-1.5 hover:bg-muted/30 rounded px-2 transition-colors"
-          >
-            <span>📋 Detalhe Portabilidade (todos os contratos)</span>
-            {open ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
-          </button>
-          {open && (
+        {/* Tabela de contratos pra contexto */}
+        {contratos.length > 0 && (
+          <details className={!enquadraNovaRegra ? '' : 'pt-2'}>
+            <summary className="cursor-pointer text-xs font-semibold py-1.5 hover:bg-muted/30 rounded px-2">
+              📋 Ver todos os contratos ({contratos.length})
+            </summary>
             <div className="mt-1 overflow-x-auto rounded-md border border-border">
               <table className="w-full text-xs">
                 <thead className="bg-muted/30">
                   <tr>
                     <th className="text-left p-2 font-semibold">Contrato</th>
                     <th className="text-left p-2 font-semibold">Origem</th>
-                    <th className="text-right p-2 font-semibold">Taxa atual</th>
                     <th className="text-right p-2 font-semibold">Parcela</th>
                     <th className="text-right p-2 font-semibold">Saldo</th>
                     <th className="text-center p-2 font-semibold">Pagas/Prazo</th>
-                    <th className="text-left p-2 font-semibold">→ Destino</th>
-                    <th className="text-right p-2 font-semibold">Nova taxa</th>
-                    <th className="text-right p-2 font-semibold">Vlr Contrato</th>
-                    <th className="text-right p-2 font-semibold">Troco</th>
+                    <th className="text-right p-2 font-semibold">Refin (108m @ 1.50%)</th>
+                    <th className="text-center p-2 font-semibold">Resolve?</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {todos.map((c) => (
-                    <LinhaContrato
-                      key={c.idx}
-                      c={c}
-                      destinoIdx={selDestinos[c.idx] ?? 0}
-                      onChangeDestino={(i) => setSelDestinos((prev) => ({ ...prev, [c.idx]: i }))}
-                    />
+                  {contratos.map((c) => (
+                    <tr key={c.idx} className={c.bloqueado ? 'opacity-50' : c.resolveExcedente ? 'bg-green-500/5' : ''}>
+                      <td className="p-2 font-mono">{c.contrato || '—'}</td>
+                      <td className="p-2"><Badge variant="muted" className="text-[10px] font-mono">{c.codOrigem || '?'}</Badge></td>
+                      <td className="p-2 text-right font-mono">{formatBRL(c.parcela)}</td>
+                      <td className="p-2 text-right font-mono">{formatBRL(c.saldo)}</td>
+                      <td className="p-2 text-center font-mono">{c.prazos}</td>
+                      <td className="p-2 text-right font-mono">
+                        {c.reducaoEstim > 0 ? (
+                          <span>
+                            <span className="text-green-400">{formatBRL(c.novaParcEstim)}</span>
+                            <span className="text-[10px] text-green-400/70 ml-1">↓{formatBRL(c.reducaoEstim)}</span>
+                          </span>
+                        ) : c.bloqueado ? (
+                          <span className="text-red-400 text-[10px]">{c.motivoBloqueio?.slice(0, 30)}</span>
+                        ) : '—'}
+                      </td>
+                      <td className="p-2 text-center">
+                        {enquadraNovaRegra ? (
+                          <span className="text-muted-foreground text-[10px]">—</span>
+                        ) : c.resolveExcedente ? (
+                          <Badge variant="success" className="text-[10px]">✓ SIM</Badge>
+                        ) : (
+                          <Badge variant="muted" className="text-[10px]">não</Badge>
+                        )}
+                      </td>
+                    </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-        </div>
-
-        {/* Botões de ação */}
-        {elegiveis.length > 0 && (
-          <div className="flex justify-end">
-            <Button size="sm" disabled className="gap-1 opacity-60" title="Carrinho de digitação — Fase 3">
-              <ShoppingCart className="size-4" />
-              Adicionar Todos Elegíveis ({elegiveis.length})
-            </Button>
-          </div>
-        )}
-
-        {bloqueados.length > 0 && (
-          <details className="text-xs">
-            <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-              ⚠ {bloqueados.length} contrato(s) bloqueado(s) — clique pra ver motivo
-            </summary>
-            <div className="mt-2 space-y-1">
-              {bloqueados.map((c) => (
-                <div key={c.idx} className="text-[11px] rounded-md bg-red-500/5 border border-red-500/20 p-2">
-                  <div className="font-mono font-semibold">
-                    {c.contrato || '(s/ nº)'} · {c.bancoOrigem} · {formatBRL(c.parcela)} / {formatBRL(c.saldo)}
-                  </div>
-                  <div className="text-red-400">{c.motivoBloqueio}</div>
-                </div>
-              ))}
             </div>
           </details>
         )}
       </CardContent>
     </Card>
-  );
-}
-
-function LinhaContrato({
-  c, destinoIdx, onChangeDestino,
-}: {
-  c: ContratoCalc;
-  destinoIdx: number;
-  onChangeDestino: (i: number) => void;
-}) {
-  const dest = c.bloqueado ? null : c.destinos[destinoIdx];
-  return (
-    <tr className={c.bloqueado ? 'opacity-40' : 'hover:bg-muted/20'}>
-      <td className="p-2 font-mono">{c.contrato || '—'}</td>
-      <td className="p-2">
-        <Badge variant="muted" className="text-[10px] font-mono">{c.codOrigem || '?'}</Badge>
-      </td>
-      <td className="p-2 text-right font-mono">{c.taxaOrig > 0 ? `${c.taxaOrig.toFixed(2)}%` : '—'}</td>
-      <td className="p-2 text-right font-mono">{formatBRL(c.parcela)}</td>
-      <td className="p-2 text-right font-mono">{formatBRL(c.saldo)}</td>
-      <td className="p-2 text-center font-mono">{c.prazos}</td>
-      <td className="p-2">
-        {c.bloqueado ? (
-          <span className="text-red-400 text-[10px]">{c.motivoBloqueio?.slice(0, 30)}...</span>
-        ) : c.destinos.length === 1 ? (
-          <Badge variant="success" className="text-[10px] font-mono">{dest?.banco}</Badge>
-        ) : (
-          <select
-            value={destinoIdx}
-            onChange={(e) => onChangeDestino(Number(e.target.value))}
-            className="h-7 text-[11px] rounded-md border border-input bg-background px-1.5 font-mono"
-          >
-            {c.destinos.map((d, i) => (
-              <option key={i} value={i}>
-                {d.banco} {i === 0 ? '⭐' : ''}
-              </option>
-            ))}
-          </select>
-        )}
-      </td>
-      <td className="p-2 text-right font-mono">
-        {dest ? <span className="text-green-400">{dest.taxa.toFixed(2)}%</span> : '—'}
-      </td>
-      <td className="p-2 text-right font-mono">
-        {dest ? <span className="text-cyan-400 font-semibold">{formatBRL(dest.vc)}</span> : '—'}
-      </td>
-      <td className="p-2 text-right font-mono">
-        {dest && dest.troco > 0 ? (
-          <span className="text-green-400 font-bold">{formatBRL(dest.troco)}</span>
-        ) : '—'}
-      </td>
-    </tr>
   );
 }
