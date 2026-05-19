@@ -7,10 +7,10 @@ import { Button } from '@/components/ui/button';
 import { formatBRL } from '@/lib/utils';
 import { InssParsedResult } from '@/lib/inss-types';
 import {
-  testarTodos, calcReducaoPort, parseBR, pC, pP, pEN, ESP_INV, ESP_AUX,
-  type BancoSimul,
+  testarTodos, calcReducaoPort, parseBR, pC, pEN, ESP_INV, ESP_AUX,
+  type BancoSimul, COEFS,
 } from '@/lib/inss-motor';
-import { ChevronDown, ChevronUp, Banknote, TrendingUp, ShoppingCart, Sparkles, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Banknote, TrendingUp, ShoppingCart, Sparkles, AlertTriangle } from 'lucide-react';
 
 // COEF do V1 — usado pra estimar empréstimo novo (taxa 1.85% piso INSS)
 const COEF_NOVO = 0.02299;
@@ -26,16 +26,41 @@ interface ContratoCalc {
   prazos: string;
   pagas: number;
   prazoRest: number;
+  prazoTotal: number;
   destinos: BancoSimul[];
-  destinoSelecionado: number; // índice em destinos
-  novaParc: number;
-  reducao: number;
+  destinoSelecionado: number;
+  novaParc: number; // nova parcela no destino selecionado (mantém quando port pura, reduz quando refin)
+  reducao: number;  // reducaoEstim em 108m a 1.50% (refin)
   bloqueado: boolean;
   motivoBloqueio?: string;
+  // Comprometimento atual do cliente (calculado uma vez)
+  clientesTodoTomado?: boolean;
 }
 
 interface Props {
   parsed: InssParsedResult;
+}
+
+// Determina se o cliente está TODO TOMADO (regra atual 45%).
+function isClienteTodoTomado(parsed: InssParsedResult): boolean {
+  const ben = parsed.beneficio || {};
+  const mrg = parsed.margem || {};
+  const benef = parseBR(ben.base_calculo) || parseBR(ben.valor) || 0;
+  if (!benef) return false;
+  const tetoCartao = benef * 0.05;
+  const sumEmp = parseBR(mrg.parcelas);
+  const mrgRmcLivre = parseBR(mrg.rmc);
+  const mrgRccLivre = parseBR(mrg.rcc);
+  const cartoes = parsed.cartoes || [];
+  const temRmc = (mrg.rmc != null && mrgRmcLivre < tetoCartao - 0.01) ||
+    cartoes.some((c) => (c.tipo || '').toUpperCase().includes('RMC'));
+  const temRcc = (mrg.rcc != null && mrgRccLivre < tetoCartao - 0.01) ||
+    cartoes.some((c) => (c.tipo || '').toUpperCase().includes('RCC'));
+  const sumRmc = temRmc ? Math.max(0, tetoCartao - mrgRmcLivre) : 0;
+  const sumRcc = temRcc ? Math.max(0, tetoCartao - mrgRccLivre) : 0;
+  const total = sumEmp + sumRmc + sumRcc;
+  // "Todo tomado" = comprometimento ≥ 44% (margem de erro 1%)
+  return total / benef >= 0.44;
 }
 
 function calcular(parsed: InssParsedResult): ContratoCalc[] {
@@ -57,6 +82,7 @@ function calcular(parsed: InssParsedResult): ContratoCalc[] {
     }
   }
 
+  const todoTomado = isClienteTodoTomado(parsed);
   const contratos = parsed.contratos || [];
   const out: ContratoCalc[] = [];
 
@@ -67,8 +93,13 @@ function calcular(parsed: InssParsedResult): ContratoCalc[] {
     if (!parcela || !saldo) continue;
     const taxaOrig = parseBR(c.taxa);
     const codOrigem = pC(c.banco_codigo || '');
-    const [restPg, totPg, pagas] = c.prazos ? pP(c.prazos) : [0, 0, 0];
-    const prazos = c.prazos || `${restPg}/${totPg}`;
+
+    // ── Parse correto de prazo (V1: c.prazo = restante, c.prazo_original = total) ──
+    const restPg = parseInt(String(c.prazo || '0'), 10) || 0;
+    const totPg = parseInt(String(c.prazo_original || '0'), 10) || 0;
+    const pagas = Math.max(0, totPg - restPg);
+    const prazos = totPg > 0 ? `${pagas}/${totPg}` : (restPg > 0 ? `?/${restPg}` : '—');
+
     const contrato = c.contrato || '';
     const bancoOrigem = c.banco || codOrigem || '?';
 
@@ -91,13 +122,31 @@ function calcular(parsed: InssParsedResult): ContratoCalc[] {
       }
     }
 
+    // Nova parcela estimada da PORT mantida (V1: parcela igual à atual → port mantém)
+    // E também redução via refin 108m a 1.50% (alternativa)
     const reducaoRes = calcReducaoPort({ par: parcela, sal: saldo }, 108);
-    const novaParc = reducaoRes?.novaParc || 0;
+    const novaParcRefin = reducaoRes?.novaParc || 0;
     const reducao = reducaoRes?.reducao || 0;
 
+    // ── REGRA NOVA: cliente todo tomado SÓ pode portar se REDUZIR a parcela ──
+    // Port pura mantém parcela igual → não destrava nada → bloqueia se em 45%
+    // Só vai pra frente se há refin 108m que reduza significativamente
+    if (!bloqueado && todoTomado) {
+      if (reducao < parcela * 0.05) {
+        // Refin não reduz pelo menos 5% da parcela atual — não vale a pena pra cliente em 45%
+        bloqueado = true;
+        motivo = 'Cliente todo tomado (45%) — port só ajuda se reduzir parcela. Aqui mantém igual.';
+        destinos = [];
+      }
+    }
+
     out.push({
-      idx: i, contrato, bancoOrigem, codOrigem, parcela, saldo, taxaOrig, prazos, pagas: pagas || 0, prazoRest: restPg || 0,
-      destinos, destinoSelecionado: 0, novaParc, reducao, bloqueado, motivoBloqueio: motivo,
+      idx: i, contrato, bancoOrigem, codOrigem, parcela, saldo, taxaOrig, prazos,
+      pagas, prazoRest: restPg, prazoTotal: totPg,
+      destinos, destinoSelecionado: 0,
+      novaParc: novaParcRefin || parcela, reducao,
+      bloqueado, motivoBloqueio: motivo,
+      clientesTodoTomado: todoTomado,
     });
   }
   return out;
@@ -129,6 +178,8 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
 
   if (todos.length === 0) return null;
 
+  const clienteTodoTomado = todos[0]?.clientesTodoTomado || false;
+
   return (
     <Card className="border-cyan-500/30 bg-cyan-500/5">
       <CardContent className="p-4 space-y-3">
@@ -143,17 +194,38 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
           </div>
         </div>
 
+        {/* Aviso CRÍTICO quando cliente está todo tomado */}
+        {clienteTodoTomado && (
+          <div className="rounded-md bg-red-500/10 border border-red-500/40 p-3 text-xs">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="size-5 text-red-400 shrink-0 mt-0.5" />
+              <div>
+                <div className="font-bold text-red-400 mb-1">⚠ Cliente todo tomado (45%)</div>
+                <div className="text-foreground">
+                  Sem margem livre pra empréstimo novo, cartão novo ou port que mantenha parcela.
+                  <strong className="text-red-400"> Só pode portar contratos cujo refin REDUZA a parcela em pelo menos 5%</strong> —
+                  os demais ficam marcados como inviáveis.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* 2 cards principais */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {/* Empréstimo Novo */}
-          <div className="rounded-lg border border-orange-500/40 bg-orange-500/5 p-3">
+          <div className={`rounded-lg border p-3 ${mrgLivre <= 0 ? 'border-red-500/40 bg-red-500/5' : 'border-orange-500/40 bg-orange-500/5'}`}>
             <div className="flex items-center justify-between mb-1">
-              <div className="text-[10px] uppercase tracking-wider font-bold text-orange-400">💰 Empréstimo Novo</div>
-              <TrendingUp className="size-4 text-orange-400" />
+              <div className={`text-[10px] uppercase tracking-wider font-bold ${mrgLivre <= 0 ? 'text-red-400' : 'text-orange-400'}`}>💰 Empréstimo Novo</div>
+              <TrendingUp className={`size-4 ${mrgLivre <= 0 ? 'text-red-400' : 'text-orange-400'}`} />
             </div>
-            <div className="text-2xl font-mono font-bold text-orange-400">{formatBRL(empNovoVlr)}</div>
+            <div className={`text-2xl font-mono font-bold ${mrgLivre <= 0 ? 'text-red-400' : 'text-orange-400'}`}>{formatBRL(empNovoVlr)}</div>
             <div className="text-[10px] text-muted-foreground mt-1">
-              Margem livre <strong className="font-mono">{formatBRL(mrgLivre)}</strong> / coef. 0.02299 (1.85% piso)
+              {mrgLivre <= 0 ? (
+                <span className="text-red-400">⚠ Sem margem livre — cliente não pode pegar emp novo</span>
+              ) : (
+                <>Margem livre <strong className="font-mono">{formatBRL(mrgLivre)}</strong> / coef. 0.02299 (1.85% piso)</>
+              )}
             </div>
           </div>
 

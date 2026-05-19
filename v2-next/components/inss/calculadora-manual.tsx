@@ -137,7 +137,11 @@ function SimPort({ parsed, idade }: { parsed: InssParsedResult; idade: number | 
       setSaldo(String(parseBR(c.saldo || c.saldo_quitacao)));
       setCodOrigem(String(c.banco_codigo || '318').padStart(3, '0'));
       setTaxaOrig(String(parseBR(c.taxa) || 1.85));
-      if (c.prazos) {
+      // V1 Multicorban: c.prazo = restante, c.prazo_original = total
+      const restPg = parseInt(String(c.prazo || '0'), 10) || 0;
+      const totPg = parseInt(String(c.prazo_original || '0'), 10) || 0;
+      if (totPg > restPg) setPagas(String(totPg - restPg));
+      else if (c.prazos) {
         const m = String(c.prazos).match(/(\d+)\s*[/\\]\s*(\d+)/);
         if (m) setPagas(String((+m[2]) - (+m[1])));
       }

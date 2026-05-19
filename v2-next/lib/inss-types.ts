@@ -35,14 +35,18 @@ export interface InssMargem {
 export interface InssContrato {
   contrato?: string;
   banco?: string;
+  banco_nome?: string;
   banco_codigo?: string;
   taxa?: string;
   valor?: string;
+  valor_averbado?: string;
   parcela?: string;
-  prazos?: string;
-  prazo_original?: string;
+  prazo?: string;           // prazo restante (V1 Multicorban)
+  prazos?: string;          // legacy — preferir 'prazo' + 'prazo_original'
+  prazo_original?: string;  // prazo total
   saldo?: string;
   saldo_quitacao?: string;
+  data_averbacao?: string;
   competencia_inicial?: string;
   competencia_final?: string;
 }
