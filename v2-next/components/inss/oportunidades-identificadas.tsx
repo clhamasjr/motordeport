@@ -7,8 +7,8 @@ import { Input } from '@/components/ui/input';
 import { formatBRL } from '@/lib/utils';
 import { InssParsedResult } from '@/lib/inss-types';
 import {
-  testarTodos, calcReducaoNoDestino, parseBR, pC, pEN, ESP_INV, ESP_AUX,
-  type BancoSimul,
+  testarTodos, calcPortRefin108, parseBR, pC, pEN, ESP_INV, ESP_AUX,
+  type BancoSimul, type PortRefin108Result,
 } from '@/lib/inss-motor';
 import {
   Banknote, TrendingUp, ShoppingCart, Sparkles, AlertTriangle,
@@ -32,12 +32,9 @@ interface ContratoCalc {
   prazoTotal: number;
   destinos: BancoSimul[];
   destinoSelecionado: number;
-  // Refin no MELHOR banco destino real (taxa < taxa origem)
-  reducaoReal: number;
-  novaParcReal: number;
-  bancoRefin: string | null;     // banco que dá a redução
-  taxaRefin: number | null;      // taxa mínima do destino
-  resolveExcedente: boolean;     // refin REAL cobre o excedente?
+  // Port+Refin 108m (operação UNIFICADA) — calculada com coef 108m
+  portRefin108: PortRefin108Result | null;
+  resolveExcedente: boolean;     // refin no destino 108m cobre o excedente?
   bloqueado: boolean;
   motivoBloqueio?: string;
 }
@@ -158,36 +155,30 @@ function calcularTudo(
       }
     }
 
-    // ── REFIN REAL: usa o destino com a taxa MAIS BAIXA da faixa ──
-    // Sempre da maior taxa (atual) pra menor (destino).
-    // Só vale port se taxaOrig > taxa_destino.
-    let reducaoReal = 0;
-    let novaParcReal = parcela;
-    let bancoRefin: string | null = null;
-    let taxaRefin: number | null = null;
+    // ── PORT + REFIN 108m: operação unificada ──
+    // Pra cada destino, calcula coef 108m + 2 cenários (refin puro + port com troco).
+    // Escolhe o destino com MAIOR redução da parcela.
+    let portRefin108: PortRefin108Result | null = null;
     if (!bloqueado && destinos.length > 0 && saldo > 0 && parcela > 0) {
-      // Testa cada destino, escolhe o que dá MAIOR REDUÇÃO
-      let melhorReducao = 0;
+      let melhorReducao = -Infinity;
       for (const d of destinos) {
-        const r = calcReducaoNoDestino(parcela, saldo, d, taxaOrig, 108);
-        if (r && r.reducao > melhorReducao) {
-          melhorReducao = r.reducao;
-          reducaoReal = r.reducao;
-          novaParcReal = r.novaParc;
-          bancoRefin = r.banco || d.banco;
-          taxaRefin = r.taxa;
+        const r = calcPortRefin108(parcela, saldo, d, taxaOrig);
+        if (r && r.taxaOrigVale && r.refin_reducao > melhorReducao) {
+          melhorReducao = r.refin_reducao;
+          portRefin108 = r;
         }
       }
     }
 
     // Resolve o excedente da nova regra?
-    const resolveExcedente = !bloqueado && excedente > 0 && reducaoReal >= excedente - 0.01;
+    const resolveExcedente = !bloqueado && excedente > 0 &&
+      !!portRefin108 && portRefin108.refin_reducao >= excedente - 0.01;
 
     contratos.push({
       idx: i, contrato, bancoOrigem, codOrigem, parcela, saldo, taxaOrig, prazos,
       pagas, prazoRest: restPg, prazoTotal: totPg,
       destinos, destinoSelecionado: 0,
-      reducaoReal, novaParcReal, bancoRefin, taxaRefin,
+      portRefin108,
       resolveExcedente,
       bloqueado, motivoBloqueio: motivo,
     });
@@ -295,7 +286,7 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
                 <div className="text-xs text-foreground mt-1">
                   Cliente extrapola em <strong className="font-mono text-red-400">{formatBRL(excedente)}</strong>{' '}
                   na nova regra. Nenhum contrato sozinho reduz parcela suficiente
-                  ({contratos.length > 0 && `melhor reduz ${formatBRL(Math.max(0, ...contratos.map((c) => c.reducaoReal)))}`}),
+                  ({contratos.length > 0 && `melhor reduz ${formatBRL(Math.max(0, ...contratos.map((c) => c.portRefin108?.refin_reducao || 0)))}`}),
                   e {cartoesQueResolvem.length === 0 ? 'cliente não tem cartão pra cancelar' : 'cancelar cartão sozinho também não cobre'}.
                   <div className="mt-1 text-red-400 font-semibold">→ Não tem o que fazer com 1 operação só. Precisaria combinar várias.</div>
                 </div>
@@ -346,19 +337,22 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
                 <RefreshCw className="size-4 text-green-400 shrink-0" />
                 <div className="flex-1 text-xs">
                   <div className="font-semibold text-green-400">
-                    Refin contrato <span className="font-mono">{c.contrato || '?'}</span> ({c.bancoOrigem}{' '}
+                    Port + Refin contrato <span className="font-mono">{c.contrato || '?'}</span> ({c.bancoOrigem}{' '}
                     {c.taxaOrig > 0 && <span className="text-muted-foreground">@ {c.taxaOrig.toFixed(2)}%</span>})
-                    {c.bancoRefin && (
+                    {c.portRefin108 && (
                       <span className="text-cyan-400 ml-1">
-                        → {c.bancoRefin} {c.taxaRefin && `@ ${c.taxaRefin.toFixed(2)}%`}
+                        → {c.portRefin108.banco} @ {c.portRefin108.taxa.toFixed(2)}% / 108m
                       </span>
                     )}
                   </div>
                   <div className="text-muted-foreground">
                     Parcela <strong className="font-mono text-foreground">{formatBRL(c.parcela)}</strong>{' '}
-                    → <strong className="font-mono text-green-400">{formatBRL(c.novaParcReal)}</strong>{' '}
-                    (reduz <strong className="font-mono">{formatBRL(c.reducaoReal)}</strong> ≥ excedente{' '}
+                    → <strong className="font-mono text-green-400">{formatBRL(c.portRefin108?.refin_novaParc || 0)}</strong>{' '}
+                    (reduz <strong className="font-mono">{formatBRL(c.portRefin108?.refin_reducao || 0)}</strong> ≥ excedente{' '}
                     {formatBRL(excedente)})
+                    {c.portRefin108 && c.portRefin108.port_troco > 0 && (
+                      <> · ou pegar troco <strong className="font-mono text-cyan-400">{formatBRL(c.portRefin108.port_troco)}</strong> mantendo parcela atual</>
+                    )}
                   </div>
                 </div>
                 <Badge variant="success" className="text-[10px]">RESOLVE</Badge>
@@ -400,8 +394,9 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
                     <th className="text-right p-2 font-semibold">Parcela</th>
                     <th className="text-right p-2 font-semibold">Saldo (editável)</th>
                     <th className="text-center p-2 font-semibold">Pagas/Prazo</th>
-                    <th className="text-left p-2 font-semibold">→ Port (troco)</th>
-                    <th className="text-right p-2 font-semibold">→ Refin 108m (banco)</th>
+                    <th className="text-left p-2 font-semibold">→ Port+Refin 108m</th>
+                    <th className="text-right p-2 font-semibold">Refin (reduz parc.)</th>
+                    <th className="text-right p-2 font-semibold">Port (com troco)</th>
                     <th className="text-center p-2 font-semibold">Resolve?</th>
                   </tr>
                 </thead>
@@ -446,33 +441,42 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
                         </td>
                         <td className="p-2 text-center font-mono">{c.prazos}</td>
                         <td className="p-2">
-                          {melhorDest ? (
+                          {c.portRefin108 ? (
                             <div className="flex flex-col gap-0.5">
-                              <Badge variant="success" className="text-[10px] font-mono w-fit">{melhorDest.banco}</Badge>
-                              <span className="text-[9px] text-cyan-400 font-mono">
-                                {melhorDest.taxa.toFixed(2)}% · troco {formatBRL(melhorDest.troco)}
+                              <Badge variant="success" className="text-[10px] font-mono w-fit">
+                                {c.portRefin108.banco} · {c.portRefin108.taxa.toFixed(2)}%
+                              </Badge>
+                              <span className="text-[9px] text-muted-foreground font-mono">
+                                108m · de {c.taxaOrig.toFixed(2)}% → {c.portRefin108.taxa.toFixed(2)}%
                               </span>
                             </div>
+                          ) : melhorDest && c.taxaOrig > 0 ? (
+                            <span className="text-[10px] text-muted-foreground">
+                              taxa {c.taxaOrig.toFixed(2)}% ≤ destinos
+                            </span>
                           ) : (
-                            <span className="text-red-400 text-[10px]">{c.motivoBloqueio?.slice(0, 40)}</span>
+                            <span className="text-red-400 text-[10px]">{c.motivoBloqueio?.slice(0, 40) || '—'}</span>
                           )}
                         </td>
                         <td className="p-2 text-right">
-                          {c.reducaoReal > 0 && c.bancoRefin ? (
+                          {c.portRefin108 ? (
                             <div className="flex flex-col items-end gap-0.5">
-                              <Badge variant="success" className="text-[9px] font-mono">
-                                {c.bancoRefin} · {c.taxaRefin?.toFixed(2)}%
-                              </Badge>
-                              <span className="font-mono text-green-400 text-xs">{formatBRL(c.novaParcReal)}</span>
-                              <span className="text-[9px] text-green-400/70 font-mono">↓ {formatBRL(c.reducaoReal)}</span>
+                              <span className="font-mono text-green-400 text-xs">{formatBRL(c.portRefin108.refin_novaParc)}</span>
+                              <span className="text-[9px] text-green-400/70 font-mono">
+                                ↓ {formatBRL(c.portRefin108.refin_reducao)}/mês
+                              </span>
                             </div>
-                          ) : !c.bloqueado && c.taxaOrig > 0 ? (
-                            <span className="text-[10px] text-muted-foreground">
-                              taxa atual ({c.taxaOrig.toFixed(2)}%) já ≤ destino
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
+                          ) : (<span className="text-muted-foreground">—</span>)}
+                        </td>
+                        <td className="p-2 text-right">
+                          {c.portRefin108 && c.portRefin108.port_troco > 0 ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="font-mono text-cyan-400 text-xs">{formatBRL(c.portRefin108.port_troco)}</span>
+                              <span className="text-[9px] text-muted-foreground font-mono">
+                                parc R$ {formatBRL(c.portRefin108.port_novaParc)}
+                              </span>
+                            </div>
+                          ) : (<span className="text-muted-foreground">—</span>)}
                         </td>
                         <td className="p-2 text-center">
                           {enquadraNovaRegra ? (

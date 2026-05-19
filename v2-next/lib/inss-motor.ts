@@ -228,13 +228,13 @@ export function cBY(dib: unknown): number | null {
 // COEFICIENTES PRICE
 // ──────────────────────────────────────────────────────────────────
 
-function priceCoef(taxaPct: number, n: number): number {
+export function priceCoef(taxaPct: number, n: number): number {
   const i = (taxaPct || 0) / 100;
   if (i <= 0 || n <= 0) return 0;
   return i / (1 - Math.pow(1 + i, -n));
 }
 
-function coefFor(taxaPct: number, n: number): number {
+export function coefFor(taxaPct: number, n: number): number {
   const tbl = n === 108 ? COEFS_108 : COEFS;
   const exact = tbl.find((c) => Math.abs(c.t - taxaPct) < 0.001);
   if (exact) return exact.c;
@@ -451,6 +451,78 @@ export function calcReducaoNoDestino(
     taxa: taxaUsada,
     prazo: prazoMaxNovo,
     banco: destino.banco,
+  };
+}
+
+/**
+ * Calcula PORT + REFIN em 108m no banco destino — operação completa.
+ * Diferente do `tryBank` (que usa 96m), aqui o prazo é 108m (nova regra).
+ *
+ * Retorna 2 cenários da MESMA operação:
+ *   • REFIN PURO: nova_parcela = saldo × coef_108m (parcela reduz, troco = 0)
+ *   • PORT MANTENDO PARCELA: parcela atual, troco = (parcela/coef_108m) - saldo
+ *
+ * Cliente escolhe na proposta qual fluxo seguir (na port real, o banco
+ * acomoda nova_parcela em qualquer ponto entre os 2 cenários, e o troco
+ * é proporcional).
+ */
+export interface PortRefin108Result {
+  banco: string;
+  taxa: number;
+  prazo: number; // sempre 108
+  coef: number;
+  // Refin puro (parcela reduz ao máximo, sem troco)
+  refin_novaParc: number;
+  refin_reducao: number;
+  // Port mantendo parcela (troco máximo)
+  port_novaParc: number; // = parcela atual
+  port_vc: number;
+  port_troco: number;
+  // Aprovado?
+  taxaOrigVale: boolean; // taxa atual > taxa destino?
+}
+
+export function calcPortRefin108(
+  parcela: number,
+  saldo: number,
+  destino: BancoSimul,
+  taxaOrigemAtual = 0,
+): PortRefin108Result | null {
+  if (!parcela || !saldo || !destino) return null;
+  const r = BD[destino.banco];
+  if (!r) return null;
+
+  let taxaUsada: number;
+  let coef108: number;
+  if (r.coefF) {
+    // BRB tem coefF fixo (96m). Não tem coef 108m oficial — usa PRICE genérico
+    const t = COEFS.find((x) => x.c === r.coefF);
+    taxaUsada = t ? t.t : 1.85;
+    coef108 = priceCoef(taxaUsada, 108);
+  } else if (r.faixa) {
+    taxaUsada = r.faixa[0];
+    coef108 = coefFor(taxaUsada, 108);
+  } else {
+    return null;
+  }
+
+  const taxaOrigVale = taxaOrigemAtual > 0 ? taxaOrigemAtual > taxaUsada : true;
+  const refinNovaParc = saldo * coef108;
+  const refinReducao = parcela - refinNovaParc;
+  const portVc = parcela / coef108;
+  const portTroco = portVc - saldo;
+
+  return {
+    banco: destino.banco,
+    taxa: taxaUsada,
+    prazo: 108,
+    coef: coef108,
+    refin_novaParc: refinNovaParc,
+    refin_reducao: refinReducao,
+    port_novaParc: parcela,
+    port_vc: portVc,
+    port_troco: portTroco,
+    taxaOrigVale,
   };
 }
 
