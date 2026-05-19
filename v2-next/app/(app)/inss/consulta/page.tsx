@@ -29,7 +29,7 @@ export default function ConsultaInssPage() {
       <div>
         <h1 className="text-2xl font-bold">🔍 INSS — Consulta de Oportunidades</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Consulta direto no Multicorban — extrato completo, margens, contratos e enquadramento na regra
+          Consulta direta no INSS — extrato completo, margens, contratos e enquadramento na regra
           atual de 45%.
         </p>
       </div>

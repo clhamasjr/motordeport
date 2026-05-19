@@ -69,7 +69,7 @@ export function calcEnquadramento(parsed: InssParsedResult): EnquadramentoResult
   };
 }
 
-// ── Mutation: consulta CPF no Multicorban (V1 endpoint) ──
+// ── Mutation: consulta CPF no INSS (endpoint V1) ──
 export function useConsultaInss() {
   return useMutation({
     mutationFn: async (cpf: string): Promise<ConsultaInssView> => {

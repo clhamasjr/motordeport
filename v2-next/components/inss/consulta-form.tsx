@@ -56,7 +56,7 @@ export function ConsultaForm({ onResult }: Props) {
           </Button>
         </form>
         <p className="text-[10px] text-muted-foreground mt-2">
-          Consulta direto no Multicorban. Pode levar 5-15s na primeira consulta (login do scraper).
+          Consulta direta no INSS. Pode levar 5-15s na primeira consulta.
         </p>
       </CardContent>
     </Card>

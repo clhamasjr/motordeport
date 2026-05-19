@@ -135,7 +135,7 @@ export default function EnquadramentoManualPage() {
               autoFocus
             />
             <div className="text-[10px] text-muted-foreground mt-1">
-              Base de cálculo do INSS. Pode pegar do extrato Multicorban.
+              Base de cálculo do INSS. Pode pegar do extrato.
             </div>
           </div>
           <div className="md:col-span-2 flex items-end gap-2 flex-wrap">
