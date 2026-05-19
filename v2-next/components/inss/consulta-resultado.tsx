@@ -6,8 +6,7 @@ import { Button } from '@/components/ui/button';
 import { formatCpf, formatBRL } from '@/lib/utils';
 import { ConsultaInssView } from '@/lib/inss-types';
 import {
-  CheckCircle2, AlertTriangle, X, Wallet, MapPin, CreditCard,
-  Phone, FileText, RefreshCw,
+  X, Wallet, MapPin, CreditCard, Phone, FileText, RefreshCw,
 } from 'lucide-react';
 import { OportunidadesIdentificadas } from './oportunidades-identificadas';
 import { SaqueComplementar } from './saque-complementar';
@@ -22,25 +21,15 @@ interface Props {
 }
 
 export function ConsultaResultado({ cpf, view, onClose, onReConsult }: Props) {
-  const { parsed, enquadramento } = view;
+  const { parsed } = view;
   const b = parsed.beneficiario || {};
   const ben = parsed.beneficio || {};
   const mrg = parsed.margem || {};
   const endereco = parsed.endereco || {};
   const bancoPag = parsed.banco || {};
 
-  const enqStatus = enquadramento?.compStatus;
-  const enqCor =
-    enqStatus === 'dentro_regra'
-      ? 'border-green-500/50 bg-green-500/5'
-      : enqStatus === 'fora_regra_resolvivel'
-      ? 'border-yellow-500/50 bg-yellow-500/5'
-      : enqStatus === 'fora_regra_inviavel'
-      ? 'border-destructive/50 bg-destructive/5'
-      : 'border-border';
-
   return (
-    <Card className={enqCor}>
+    <Card className="border-border">
       <CardContent className="p-5 space-y-4">
         {/* Header rico */}
         <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -88,54 +77,7 @@ export function ConsultaResultado({ cpf, view, onClose, onReConsult }: Props) {
           <Kpi label="RCC livre" value={formatBRL(parseBR(mrg.rcc))} cor="text-pink-400" />
         </div>
 
-        {/* Enquadramento — banner top */}
-        {enquadramento && (
-          <div className={`rounded-lg border p-3 ${enqCor}`}>
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
-                {enqStatus === 'dentro_regra' ? (
-                  <CheckCircle2 className="size-5 text-green-400" />
-                ) : (
-                  <AlertTriangle className="size-5 text-yellow-400" />
-                )}
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                    Enquadramento — regra atual 45%
-                  </div>
-                  <div className="text-sm font-semibold">
-                    {enqStatus === 'dentro_regra'
-                      ? '✅ Dentro da regra (≤ 45%)'
-                      : '⚠ Extrapolando — precisa refin'}
-                  </div>
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                  Comprometimento
-                </div>
-                <div className={`text-2xl font-mono font-bold ${enqStatus === 'dentro_regra' ? 'text-green-400' : 'text-red-400'}`}>
-                  {enquadramento.compPct}% <span className="text-sm text-muted-foreground">/ 45%</span>
-                </div>
-                <div className="text-[10px] text-muted-foreground font-mono">
-                  {formatBRL(enquadramento.total)} de {formatBRL(enquadramento.teto45)}
-                </div>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2 mt-3">
-              <MiniKpi label="Base cálculo" value={formatBRL(enquadramento.benef)} />
-              <MiniKpi label="Parcelas emp" value={formatBRL(enquadramento.sumEmp)} cor="text-red-400" />
-              {enquadramento.sumRmc > 0 && <MiniKpi label="RMC compromet." value={formatBRL(enquadramento.sumRmc)} cor="text-purple-400" />}
-              {enquadramento.sumRcc > 0 && <MiniKpi label="RCC compromet." value={formatBRL(enquadramento.sumRcc)} cor="text-pink-400" />}
-              {enquadramento.excedente > 0 ? (
-                <MiniKpi label="⚠ Excedente" value={formatBRL(enquadramento.excedente)} cor="text-red-400" />
-              ) : (
-                <MiniKpi label="✅ Folga" value={formatBRL(Math.max(0, enquadramento.teto45 - enquadramento.total))} cor="text-green-400" />
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ✨ Oportunidades Identificadas — totais + detalhamento */}
+        {/* ✨ Análise NOVA regra INSS (40%) — único card de enquadramento */}
         <OportunidadesIdentificadas parsed={parsed} />
 
         {/* 💳 Saque Complementar */}
@@ -273,15 +215,6 @@ function Kpi({ label, value, cor }: { label: string; value: string; cor: string 
     <div className="rounded-lg border border-border bg-card/50 p-2">
       <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">{label}</div>
       <div className={`text-base font-mono font-bold mt-0.5 ${cor}`}>{value}</div>
-    </div>
-  );
-}
-
-function MiniKpi({ label, value, cor = 'text-foreground' }: { label: string; value: string; cor?: string }) {
-  return (
-    <div className="text-[10px]">
-      <div className="text-muted-foreground uppercase tracking-wider font-semibold">{label}</div>
-      <div className={`font-mono font-semibold mt-0.5 ${cor}`}>{value}</div>
     </div>
   );
 }
