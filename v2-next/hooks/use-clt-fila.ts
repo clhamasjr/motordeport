@@ -53,7 +53,12 @@ export function useCriarConsultaCLT() {
  * No futuro, substituído por Supabase Realtime (subscribe na tabela
  * clt_consultas_fila filtrando por id) — sem necessidade de polling.
  */
+// UUID v4 + permite outros formatos longos. Bloqueia "", "undefined", "null",
+// numeros, etc — que viravam request com `id` ruim e voltavam 400 do backend
+const ID_VALIDO_RE = /^[0-9a-fA-F-]{8,}$/;
+
 export function useFilaStatus(filaId: string | null) {
+  const idValido = !!filaId && typeof filaId === 'string' && ID_VALIDO_RE.test(filaId);
   return useQuery({
     queryKey: ['clt', 'fila', filaId],
     queryFn: async (): Promise<FilaConsulta> => {
@@ -65,7 +70,7 @@ export function useFilaStatus(filaId: string | null) {
       if (!r.success || !r.fila) throw new Error(r.error || 'Fila não encontrada');
       return r.fila;
     },
-    enabled: !!filaId,
+    enabled: idValido,
     // CRITICO: nao retentar erros 4xx (ex: ID antigo no localStorage que retorna 404).
     // Sem isso, RQ tenta 3x cada poll, gerando dezenas de requests 400/404 no console.
     retry: (failureCount, err: any) => {
