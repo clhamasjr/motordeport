@@ -68,26 +68,26 @@ const NAV: NavGroup[] = [
     items: [
       // ── Consultar ──
       { href: '/clt/consulta', label: 'Consulta Unitária', icon: Search, section: 'consultar' },
-      { href: '/clt/analise-lote', label: 'Análise em Lote', icon: ListChecks, section: 'consultar' },
       { href: '/clt/analise', label: 'Análise de Cliente', icon: Target, section: 'consultar' },
+      { href: '/clt/catalogo', label: 'Catálogo de Bancos', icon: BookOpen, section: 'consultar' },
       // ── Operar ──
+      { href: '/clt/analise-lote', label: 'Análise em Lote', icon: ListChecks, section: 'operar' },
       { href: '/clt/empresas-aprovadas', label: 'Empresas Aprovadas', icon: Trophy, section: 'operar' },
-      { href: '/clt/esteira', label: 'Esteira', icon: ListChecks, section: 'operar' },
-      { href: '/clt/painel', label: 'Painel Operacional', icon: Activity, needsRole: ['admin', 'gestor'], section: 'operar' },
+      { href: '/clt/extrair-caged', label: 'Extrair Base CAGED', icon: Download, needsRole: ['gestor', 'admin'], section: 'operar' },
       // ── IA & Disparo ──
       { href: '/clt/conversas', label: 'Conversas IA', icon: MessageSquare, section: 'ia' },
-      { href: '/clt/autorizacoes', label: 'Autorizações LGPD', icon: FileText, section: 'ia' },
+      { href: '/clt/esteira', label: 'Esteira', icon: ListChecks, section: 'ia' },
+      { href: '/clt/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['gestor', 'admin'], section: 'ia' },
       // ── Config ──
-      { href: '/clt/catalogo', label: 'Catálogo de Bancos', icon: BookOpen, section: 'config' },
-      { href: '/clt/extrair-caged', label: 'Extrair Base CAGED', icon: Download, needsRole: ['gestor', 'admin'], section: 'config' },
-      { href: '/clt/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['gestor', 'admin'], section: 'config' },
+      { href: '/clt/autorizacoes', label: 'Autorizações LGPD', icon: FileText, section: 'config' },
+      { href: '/clt/painel', label: 'Painel Operacional', icon: Activity, needsRole: ['admin', 'gestor'], section: 'config' },
     ],
   },
   {
     k: 'gov', icon: Landmark, label: 'Governos',
     items: [
-      { href: '/governos/federal', label: 'Federal (SIAPE)', icon: FileText },
-      { href: '/governos/estaduais', label: 'Estaduais', icon: FileText },
+      { href: '/governos/catalogo', label: 'Catálogo de Convênios', icon: BookOpen },
+      { href: '/governos/holerite', label: 'Análise de Holerite', icon: FileText },
     ],
   },
   {
