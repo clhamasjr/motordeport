@@ -87,7 +87,8 @@ export const BD: Record<string, BancoRegra> = {
   C6: {
     sMin: 2000, tMin: 50, pMin: 0, pgMin: 0, faixa: [1.55, 1.85], coefF: null,
     block: ['707','121','012','422','925'],
-    pgMinMap: { '254': 13, '623': 37, '070': 12, '318': 12 },
+    // pgMin específico por origem. FACTA (149) acima de 12 pagas.
+    pgMinMap: { '254': 13, '623': 37, '070': 12, '318': 12, '149': 12 },
     blockInv: true,
     // C6 aceita port com taxa origem >= 1,35%
     taxaOrigemMinDefault: 1.35,
