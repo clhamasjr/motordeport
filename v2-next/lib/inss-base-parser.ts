@@ -416,7 +416,7 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
       // Reconstrói candidatos BancoSimul a partir dos destinos
       for (const d of reg.destinos) {
         const bSim: BancoSimul = { banco: d.banco, troco: d.troco, vc: d.vc, taxa: typeof d.taxa === 'number' ? d.taxa : parseFloat(String(d.taxa)) || 0 };
-        const r = calcPortRefin108(reg.par, reg.sal, bSim, reg.taxaOrig);
+        const r = calcPortRefin108(reg.par, reg.sal, bSim, reg.taxaOrig, reg.cod);
         if (!r || !r.taxaOrigVale) continue;
 
         // Escolhe tabela conforme enquadramento

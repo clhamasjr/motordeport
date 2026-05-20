@@ -229,7 +229,7 @@ function calcularTudo(
     let todosCenarios: Array<{ result: PortRefin108Result; trocoEfetivo: number; reducaoEfetiva: number }> = [];
     if (!bloqueado && destinos.length > 0 && saldo > 0 && parcela > 0) {
       for (const d of destinos) {
-        const r = calcPortRefin108(parcela, saldo, d, taxaOrig);
+        const r = calcPortRefin108(parcela, saldo, d, taxaOrig, codOrigem);
         if (!r || !r.taxaOrigVale) continue;
         // Escolhe cenário conforme estratégia
         let cenarioEsc: typeof r.tabelaAlta;

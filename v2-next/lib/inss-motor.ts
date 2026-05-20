@@ -72,7 +72,9 @@ export const BD: Record<string, BancoRegra> = {
     sMin: 2000, tMin: 250, pMin: 0, pgMin: 0, faixa: [1.66, 1.85], coefF: null,
     block: ['359','246','025','047','063','320','394','654','212','626','925','935','753','330','012','752','082','079','329','643','243'],
     pgMinMap: { '070': 12, '623': 12 },
-    // QUALI aceita port com taxa origem >= 1,10% (regra global atual)
+    // QUALI voltou a comprar SAFRA (422), FACTA (149) e MERCANTIL (389) —
+    // aceita esses 3 SEM restrição de taxa origem. Pros demais, mín 1,10%.
+    taxaOrigemMin: { '422': 0, '149': 0, '389': 0 },
     taxaOrigemMinDefault: 1.10,
     invRules: { minAge: 55, dibAgeRange: [55, 57], dibMinYears: 15 },
   },
@@ -548,6 +550,9 @@ export function calcPortRefin108(
   saldo: number,
   destino: BancoSimul,
   taxaOrigemAtual = 0,
+  /** Código do banco origem (3 dígitos). Permite checagem específica via
+   *  taxaOrigemMin[cd] sobrescrevendo taxaOrigemMinDefault. */
+  codOrigem = '',
 ): PortRefin108Result | null {
   if (!parcela || !saldo || !destino) return null;
   const r = BD[destino.banco];
@@ -569,10 +574,15 @@ export function calcPortRefin108(
   }
 
   // taxaOrigVale: o banco destino aceita a taxa de origem?
-  //   - Se banco tem taxaOrigemMinDefault=0 (BRB) → aceita qualquer taxa
+  //   - Se há regra específica taxaOrigemMin[cd], usa essa (pode ser 0)
+  //   - Senão, usa taxaOrigemMinDefault (regra global do banco)
   //   - Se taxaOrigemAtual=0 (taxa desconhecida) → assume que vale, NÃO bloqueia
-  //   - Senão, taxa origem precisa ser >= mínima do destino
-  const minOrigem = r.taxaOrigemMinDefault ?? 0;
+  let minOrigem = 0;
+  if (codOrigem && r.taxaOrigemMin && r.taxaOrigemMin[codOrigem] !== undefined) {
+    minOrigem = r.taxaOrigemMin[codOrigem];
+  } else if (r.taxaOrigemMinDefault !== undefined) {
+    minOrigem = r.taxaOrigemMinDefault;
+  }
   const taxaOrigVale = minOrigem <= 0
     ? true
     : (taxaOrigemAtual <= 0 ? true : taxaOrigemAtual >= minOrigem);
