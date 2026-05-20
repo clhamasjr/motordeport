@@ -58,6 +58,14 @@ function ddMmYyToIso(s) {
   return m ? `${m[3]}-${m[2]}-${m[1]}` : s;
 }
 
+// Catalogo completo de bancos CLT — usado pra checar "todos terminaram".
+// Tem que casar com a lista usada em 'criar' (linha ~1013).
+const TODOS_BANCOS_CLT = [
+  'presencabank', 'multicorban', 'v8_qi', 'v8_celcoin',
+  'joinbank', 'mercantil', 'handbank', 'c6',
+  'fintech_qi', 'fintech_celcoin',
+];
+
 // Atualiza UM banco no jsonb bancos sem sobrescrever os outros.
 // Quando status muda pra terminal (ok/falha/bloqueado/manual_aguardando)
 // limpa flags transitorias (processando) automaticamente — evita ficarem
@@ -75,11 +83,14 @@ async function patchBanco(id, banco, payload) {
   }
   bancos[banco] = merged;
 
-  // Marca conclusao se todos terminaram
-  // 'em_manutencao' tambem eh terminal (banco desativado no catalogo)
-  const STATUS_TERMINAIS = ['ok','falha','bloqueado','pulado','em_manutencao'];
-  const todosTerminaram = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6']
-    .every(b => bancos[b] && STATUS_TERMINAIS.includes(bancos[b].status));
+  // Marca conclusao quando TODOS os bancos disparados terminaram.
+  // 'em_manutencao' tambem eh terminal (banco desativado no catalogo).
+  // Considera SO os bancos presentes em `bancos` (foram disparados nessa
+  // consulta — pode ter filtro de bancos especificos via body.bancos).
+  const STATUS_TERMINAIS = ['ok','falha','bloqueado','pulado','em_manutencao','manual_aguardando'];
+  const bancosPresentes = TODOS_BANCOS_CLT.filter(b => bancos[b]);
+  const todosTerminaram = bancosPresentes.length > 0 &&
+    bancosPresentes.every(b => STATUS_TERMINAIS.includes(bancos[b].status));
   const patch = { bancos };
   if (todosTerminaram && row.status_geral !== 'concluido') {
     patch.status_geral = 'concluido';
@@ -894,18 +905,17 @@ export default async function handler(req) {
     }
     const incluirC6 = body.incluirC6 !== false; // default true
 
-    const inicial = {
-      presencabank: { status: 'pending' },
-      multicorban: { status: 'pending' },
-      v8_qi: { status: 'pending' },
-      v8_celcoin: { status: 'pending' },
-      joinbank: { status: 'pending' },
-      mercantil: { status: 'pending' },
-      handbank: { status: 'pending' },
-      c6: { status: 'pending' },
-      fintech_qi: { status: 'pending' },
-      fintech_celcoin: { status: 'pending' }
-    };
+    // Filtro de bancos: body.bancos = ['fintech_qi', 'handbank', ...] dispara
+    // SO esses (multicorban sempre roda — eh enriquecimento).
+    // O `inicial` so deve conter os bancos que VAO rodar — caso contrario
+    // o status_geral nunca vai pra 'concluido' (banco em pending eterno).
+    const filtroSolicitadoBancos = Array.isArray(body.bancos) && body.bancos.length > 0
+      ? [...new Set([...body.bancos, 'multicorban'])].filter(b => TODOS_BANCOS_CLT.includes(b))
+      : TODOS_BANCOS_CLT;
+
+    const inicial = Object.fromEntries(
+      filtroSolicitadoBancos.map(b => [b, { status: 'pending' }])
+    );
 
     // PRE-POPULA cliente com o que ja sabemos desse CPF (clt_clientes acumulado).
     // Assim mesmo que o PB ou MC nao tragam dados nessa consulta, o V8 ainda
@@ -1007,15 +1017,10 @@ export default async function handler(req) {
     // mas como o handler `processar` faz await ate terminar, o trabalho roda
     // ate o fim mesmo se o cliente desconectar.
     //
-    // Suporta filtro: body.bancos = ['fintech_qi', 'handbank', ...] dispara
-    // SO esses (resto fica em pending). Util pra higienizacao por banco
-    // especifico (Analise em Lote do V2). Sem o param, dispara todos.
-    const TODOS_BANCOS = ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'joinbank', 'mercantil', 'handbank', 'c6', 'fintech_qi', 'fintech_celcoin'];
-    const filtroSolicitado = Array.isArray(body.bancos) && body.bancos.length > 0 ? body.bancos : null;
-    // 'multicorban' eh enriquecimento — sempre roda mesmo com filtro
-    const bancos = filtroSolicitado
-      ? [...new Set([...filtroSolicitado, 'multicorban'])].filter(b => TODOS_BANCOS.includes(b))
-      : TODOS_BANCOS;
+    // Bancos que serao disparados — ja calculado em filtroSolicitadoBancos
+    // logo apos `inicial`. Usa a mesma variavel pra garantir consistencia:
+    // bancos disparados == chaves do inicial == bancos que patchBanco checa.
+    const bancos = filtroSolicitadoBancos;
     const baseUrl = APP_URL();
     for (const banco of bancos) {
       // Fire-and-forget mas COM internal-secret (evita 401 de chamadas internas)
