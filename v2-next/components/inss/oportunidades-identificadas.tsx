@@ -231,32 +231,67 @@ function calcularTudo(
       for (const d of destinos) {
         const r = calcPortRefin108(parcela, saldo, d, taxaOrig, codOrigem);
         if (!r || !r.taxaOrigVale) continue;
-        // Escolhe cenário conforme estratégia
-        let cenarioEsc: typeof r.tabelaAlta;
+        // Escolhe cenário conforme estratégia:
+        //   - Cliente ENQUADRADO: tabelaAlta (mais comissão) se troco >= 250, senão baixa
+        //   - Cliente NÃO ENQUADRADO: reduz EXATAMENTE o excedente (e troco resultante)
+        let refin_novaParc: number;
+        let refin_reducao: number;
+        let port_novaParc: number;
+        let port_vc: number;
+        let port_troco: number;
+        let taxaUsada: number;
+        let coefUsado: number;
+
         if (enquadraNovaRegra) {
-          // Tenta tabelaAlta primeiro. Se troco < R$250, fallback tabelaBaixa
-          cenarioEsc = r.tabelaAlta.port_troco >= TROCO_MIN_ENQUADRADO
+          const cenarioEsc = r.tabelaAlta.port_troco >= TROCO_MIN_ENQUADRADO
             ? r.tabelaAlta
             : r.tabelaBaixa;
+          taxaUsada = cenarioEsc.taxa;
+          coefUsado = cenarioEsc.coef;
+          refin_novaParc = cenarioEsc.refin_novaParc;
+          refin_reducao = cenarioEsc.refin_reducao;
+          port_novaParc = cenarioEsc.port_novaParc;
+          port_vc = cenarioEsc.port_vc;
+          port_troco = cenarioEsc.port_troco;
         } else {
-          // Não enquadra: usa baixa pra max redução
-          cenarioEsc = r.tabelaBaixa;
+          // FORA DA REGRA: tenta reduzir SÓ o excedente. Se VC < saldo, não viável
+          // (banco não cobre o saldo) — cai pra refin puro tabelaBaixa (reduz mais).
+          const cenarioBase = r.tabelaBaixa;
+          taxaUsada = cenarioBase.taxa;
+          coefUsado = cenarioBase.coef;
+          const novaParcAlvo = Math.max(0, parcela - excedente);
+          const vcAlvo = coefUsado > 0 ? novaParcAlvo / coefUsado : 0;
+          if (vcAlvo >= saldo) {
+            // Viável: reduz exato e gera troco
+            refin_novaParc = novaParcAlvo;
+            refin_reducao = parcela - novaParcAlvo;
+            port_novaParc = novaParcAlvo;
+            port_vc = vcAlvo;
+            port_troco = vcAlvo - saldo;
+          } else {
+            // Não viável: cai pra refin puro (reduz máximo, sem troco)
+            refin_novaParc = cenarioBase.refin_novaParc;
+            refin_reducao = cenarioBase.refin_reducao;
+            port_novaParc = cenarioBase.refin_novaParc;
+            port_vc = saldo;
+            port_troco = 0;
+          }
         }
-        // Reescreve campos legados do result com o cenário escolhido
+
         const ajustado: PortRefin108Result = {
           ...r,
-          taxa: cenarioEsc.taxa,
-          coef: cenarioEsc.coef,
-          refin_novaParc: cenarioEsc.refin_novaParc,
-          refin_reducao: cenarioEsc.refin_reducao,
-          port_novaParc: cenarioEsc.port_novaParc,
-          port_vc: cenarioEsc.port_vc,
-          port_troco: cenarioEsc.port_troco,
+          taxa: taxaUsada,
+          coef: coefUsado,
+          refin_novaParc,
+          refin_reducao,
+          port_novaParc,
+          port_vc,
+          port_troco,
         };
         todosCenarios.push({
           result: ajustado,
-          trocoEfetivo: cenarioEsc.port_troco,
-          reducaoEfetiva: cenarioEsc.refin_reducao,
+          trocoEfetivo: port_troco,
+          reducaoEfetiva: refin_reducao,
         });
       }
       // Ordena: enquadrado por TROCO desc, não-enquadrado por REDUÇÃO desc
@@ -461,33 +496,35 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
               </div>
             ))}
 
-            {/* Refin contratos */}
-            {contratosQueResolvem.map((c) => (
-              <div key={c.idx} className="rounded-md border border-green-500/40 bg-green-500/5 p-2.5 flex items-center gap-2">
-                <RefreshCw className="size-4 text-green-400 shrink-0" />
-                <div className="flex-1 text-xs">
-                  <div className="font-semibold text-green-400">
-                    Port + Refin contrato <span className="font-mono">{c.contrato || '?'}</span> ({c.bancoOrigem}{' '}
-                    {c.taxaOrig > 0 && <span className="text-muted-foreground">@ {c.taxaOrig.toFixed(2)}%</span>})
-                    {c.portRefin108 && (
+            {/* Refin contratos — campos já calculados com redução exata + troco resultante */}
+            {contratosQueResolvem.map((c) => {
+              if (!c.portRefin108) return null;
+              const r = c.portRefin108;
+              return (
+                <div key={c.idx} className="rounded-md border border-green-500/40 bg-green-500/5 p-2.5 flex items-center gap-2">
+                  <RefreshCw className="size-4 text-green-400 shrink-0" />
+                  <div className="flex-1 text-xs">
+                    <div className="font-semibold text-green-400">
+                      Port + Refin contrato <span className="font-mono">{c.contrato || '?'}</span> ({c.bancoOrigem}{' '}
+                      {c.taxaOrig > 0 && <span className="text-muted-foreground">@ {c.taxaOrig.toFixed(2)}%</span>})
                       <span className="text-cyan-400 ml-1">
-                        → {c.portRefin108.banco} @ {c.portRefin108.taxa.toFixed(2)}% / 108m
+                        → {r.banco} @ {r.taxa.toFixed(2)}% / 108m
                       </span>
-                    )}
+                    </div>
+                    <div className="text-muted-foreground">
+                      Parcela <strong className="font-mono text-foreground">{formatBRL(c.parcela)}</strong>{' '}
+                      → <strong className="font-mono text-green-400">{formatBRL(r.refin_novaParc)}</strong>{' '}
+                      (reduz <strong className="font-mono">{formatBRL(r.refin_reducao)}</strong>)
+                      {r.port_troco > 0 && (
+                        <> · troco <strong className="font-mono text-cyan-400">{formatBRL(r.port_troco)}</strong>{' '}
+                        (VC {formatBRL(r.port_vc)} − saldo {formatBRL(c.saldo)})</>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-muted-foreground">
-                    Parcela <strong className="font-mono text-foreground">{formatBRL(c.parcela)}</strong>{' '}
-                    → <strong className="font-mono text-green-400">{formatBRL(c.portRefin108?.refin_novaParc || 0)}</strong>{' '}
-                    (reduz <strong className="font-mono">{formatBRL(c.portRefin108?.refin_reducao || 0)}</strong> ≥ excedente{' '}
-                    {formatBRL(excedente)})
-                    {c.portRefin108 && c.portRefin108.port_troco > 0 && (
-                      <> · ou pegar troco <strong className="font-mono text-cyan-400">{formatBRL(c.portRefin108.port_troco)}</strong> mantendo parcela atual</>
-                    )}
-                  </div>
+                  <Badge variant="success" className="text-[10px]">RESOLVE</Badge>
                 </div>
-                <Badge variant="success" className="text-[10px]">RESOLVE</Badge>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

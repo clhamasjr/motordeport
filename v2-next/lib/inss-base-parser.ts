@@ -419,18 +419,57 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
         const r = calcPortRefin108(reg.par, reg.sal, bSim, reg.taxaOrig, reg.cod);
         if (!r || !r.taxaOrigVale) continue;
 
-        // Escolhe tabela conforme enquadramento
-        let cenarioEsc = r.tabelaBaixa;
-        let tabelaUsada: 'alta' | 'baixa' = 'baixa';
+        // Calcula valores do cenário escolhido (mesma lógica da consulta unitária)
+        let refin_novaParc: number;
+        let refin_reducao: number;
+        let port_novaParc: number;
+        let port_vc: number;
+        let port_troco: number;
+        let taxaUsada: number;
+        let coefUsado: number;
+        let tabelaUsada: 'alta' | 'baixa';
+
         if (enquadrado) {
-          if (r.tabelaAlta.port_troco >= TROCO_MIN_ENQUADRADO) {
-            cenarioEsc = r.tabelaAlta;
-            tabelaUsada = 'alta';
+          // Cliente JÁ ENQUADRA: tabelaAlta (mais comissão) se troco>=250, senão baixa
+          const cenarioEsc = r.tabelaAlta.port_troco >= TROCO_MIN_ENQUADRADO
+            ? r.tabelaAlta
+            : r.tabelaBaixa;
+          tabelaUsada = cenarioEsc === r.tabelaAlta ? 'alta' : 'baixa';
+          taxaUsada = cenarioEsc.taxa;
+          coefUsado = cenarioEsc.coef;
+          refin_novaParc = cenarioEsc.refin_novaParc;
+          refin_reducao = cenarioEsc.refin_reducao;
+          port_novaParc = cenarioEsc.port_novaParc;
+          port_vc = cenarioEsc.port_vc;
+          port_troco = cenarioEsc.port_troco;
+        } else {
+          // FORA DA REGRA: reduz EXATAMENTE o excedente, troco = sobra do VC
+          const cenarioBase = r.tabelaBaixa;
+          tabelaUsada = 'baixa';
+          taxaUsada = cenarioBase.taxa;
+          coefUsado = cenarioBase.coef;
+          const exced = c.excedente;
+          const novaParcAlvo = Math.max(0, reg.par - exced);
+          const vcAlvo = coefUsado > 0 ? novaParcAlvo / coefUsado : 0;
+          if (vcAlvo >= reg.sal) {
+            // Viável: reduz exato e gera troco
+            refin_novaParc = novaParcAlvo;
+            refin_reducao = reg.par - novaParcAlvo;
+            port_novaParc = novaParcAlvo;
+            port_vc = vcAlvo;
+            port_troco = vcAlvo - reg.sal;
+          } else {
+            // VC < saldo: cai pra refin puro (max redução, sem troco)
+            refin_novaParc = cenarioBase.refin_novaParc;
+            refin_reducao = cenarioBase.refin_reducao;
+            port_novaParc = cenarioBase.refin_novaParc;
+            port_vc = reg.sal;
+            port_troco = 0;
           }
         }
 
-        const trocoEf = cenarioEsc.port_troco;
-        const reducaoEf = cenarioEsc.refin_reducao;
+        const trocoEf = port_troco;
+        const reducaoEf = refin_reducao;
         // Critério de "melhor": enquadrado por troco desc, não-enquadrado por redução desc
         const candScore = enquadrado ? trocoEf : reducaoEf;
         const melhorScore = melhor ? (enquadrado ? melhor.troco : melhor.reducao) : -Infinity;
@@ -439,13 +478,13 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
           melhor = {
             pr108: {
               ...r,
-              taxa: cenarioEsc.taxa,
-              coef: cenarioEsc.coef,
-              refin_novaParc: cenarioEsc.refin_novaParc,
-              refin_reducao: cenarioEsc.refin_reducao,
-              port_novaParc: cenarioEsc.port_novaParc,
-              port_vc: cenarioEsc.port_vc,
-              port_troco: cenarioEsc.port_troco,
+              taxa: taxaUsada,
+              coef: coefUsado,
+              refin_novaParc,
+              refin_reducao,
+              port_novaParc,
+              port_vc,
+              port_troco,
             },
             tabelaUsada,
             troco: trocoEf,
