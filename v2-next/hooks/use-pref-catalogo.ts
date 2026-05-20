@@ -12,6 +12,58 @@ import type {
 } from '@/lib/pref-types';
 import { toast } from 'sonner';
 
+// ─── Tipos da análise de holerite ──────────────────────────────
+export interface HoleriteDadosExtraidos {
+  nome?: string | null;
+  cpf?: string | null;
+  matricula?: string | null;
+  orgao?: string | null;
+  convenio_sugerido?: string | null;
+  municipio?: string | null;
+  uf?: string | null;
+  cargo?: string | null;
+  regime_previdenciario?: 'RGPS' | 'RPPS' | 'AMBOS' | 'INDEFINIDO';
+  tipo_vinculo?: 'ativo' | 'aposentado' | 'pensionista' | 'indefinido';
+  data_nascimento?: string | null;
+  idade?: number | null;
+  competencia?: string | null;
+  salario_bruto?: number | null;
+  salario_liquido?: number | null;
+  total_descontos?: number | null;
+  margem_consignavel_disponivel?: number | null;
+  margem_cartao_disponivel?: number | null;
+  descontos_consignados?: Array<{ descricao: string; valor: number }>;
+  observacoes?: string | null;
+}
+
+export interface BancoCruzado {
+  banco_id: number;
+  banco_slug?: string;
+  banco_nome: string;
+  regras?: Record<string, unknown>;
+  motivo?: string;
+  observacoes?: string[];
+}
+
+export interface AnalisarHoleriteResponse {
+  ok: boolean;
+  analise_id?: string;
+  dados_extraidos?: HoleriteDadosExtraidos;
+  convenio?: PrefConvenio | null;
+  convenio_confianca?: 'alta' | 'media' | 'baixa' | 'usuario';
+  bancos_atendem?: BancoCruzado[];
+  bancos_nao_atendem?: BancoCruzado[];
+  duracao_ms?: number;
+  error?: string;
+}
+
+export interface AnalisarHoleritePayload {
+  arquivo_base64: string;
+  arquivo_nome: string;
+  arquivo_tipo: string;
+  convenio_slug?: string;
+}
+
 /**
  * Lista TODOS os convênios de prefeituras (ativos). Cache 5min — base muda raramente.
  * Agrupamento por Estado/Cidade é feito client-side nas telas.
@@ -108,6 +160,21 @@ export function useDeleteBancoConvenio(convenioSlug: string) {
     onSuccess: () => {
       toast.success('Banco removido do convênio');
       qc.invalidateQueries({ queryKey: ['pref', 'convenio', convenioSlug] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** Análise de holerite: upload PDF/imagem em base64, IA extrai dados + cruza com bancos. */
+export function useAnalisarHolerite() {
+  return useMutation({
+    mutationFn: async (payload: AnalisarHoleritePayload) => {
+      const r = await api<AnalisarHoleriteResponse>('/api/pref', {
+        action: 'analisarHolerite',
+        ...payload,
+      });
+      if (!r.ok) throw new Error(r.error || 'Falha ao analisar holerite');
+      return r;
     },
     onError: (e: Error) => toast.error(e.message),
   });

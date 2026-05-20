@@ -88,13 +88,13 @@ const NAV: NavGroup[] = [
     items: [
       { href: '/governos/federal', label: 'Federal (SIAPE)', icon: FileText },
       { href: '/governos/estaduais', label: 'Estaduais', icon: FileText },
-      { href: '/governos/municipais', label: 'Municipais', icon: FileText },
     ],
   },
   {
     k: 'pref', icon: Building2, label: 'Prefeituras',
     items: [
       { href: '/prefeituras/catalogo', label: 'Catálogo', icon: BookOpen },
+      { href: '/prefeituras/holerite', label: 'Análise de Holerite', icon: FileText },
     ],
   },
   {
