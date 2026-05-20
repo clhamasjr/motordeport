@@ -4,6 +4,9 @@ out/
 build/
 dist/
 
+# TS incremental build cache
+tsconfig.tsbuildinfo
+
 # Dependencies
 node_modules/
 
