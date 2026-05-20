@@ -4,27 +4,33 @@
 
 @layer base {
   :root {
-    /* Tema escuro como V1 (dark mode é o default do FlowForce) */
-    --background: 222 47% 11%;
-    --foreground: 210 20% 98%;
-    --card: 222 47% 14%;
-    --card-foreground: 210 20% 98%;
-    --popover: 222 47% 14%;
-    --popover-foreground: 210 20% 98%;
-    --primary: 217 91% 60%;
-    --primary-foreground: 222 47% 11%;
-    --secondary: 217 32% 17%;
-    --secondary-foreground: 210 20% 98%;
-    --muted: 217 32% 17%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 188 86% 53%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 20% 98%;
-    --border: 217 32% 22%;
-    --input: 217 32% 22%;
-    --ring: 217 91% 60%;
-    --radius: 0.75rem;
+    /* Aurora dark — base profundo, accents vivos */
+    --background: 230 35% 6%;
+    --foreground: 210 40% 98%;
+    --card: 230 30% 9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 230 32% 8%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217 100% 65%;
+    --primary-foreground: 230 35% 6%;
+    --secondary: 230 25% 14%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 230 25% 14%;
+    --muted-foreground: 215 25% 70%;
+    --accent: 280 90% 70%;
+    --accent-foreground: 230 35% 6%;
+    --destructive: 0 84% 65%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 230 30% 18%;
+    --input: 230 30% 16%;
+    --ring: 217 100% 65%;
+    --radius: 0.875rem;
+
+    /* Aurora gradient stops */
+    --aurora-1: 217 100% 60%;  /* azul */
+    --aurora-2: 280 90% 65%;   /* roxo */
+    --aurora-3: 188 95% 60%;   /* cyan */
+    --aurora-4: 320 85% 65%;   /* magenta sutil */
   }
 }
 
@@ -32,8 +38,135 @@
   * {
     @apply border-border;
   }
-  body {
+  html, body {
     @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    -webkit-font-smoothing: antialiased;
   }
+  body {
+    background-image:
+      radial-gradient(at 8% 12%, hsl(var(--aurora-1) / 0.18) 0px, transparent 50%),
+      radial-gradient(at 92% 8%, hsl(var(--aurora-2) / 0.14) 0px, transparent 50%),
+      radial-gradient(at 50% 100%, hsl(var(--aurora-3) / 0.12) 0px, transparent 50%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+}
+
+@layer utilities {
+  /* Glass surfaces */
+  .glass {
+    background-color: hsl(var(--card) / 0.55);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    border: 1px solid hsl(var(--border) / 0.7);
+  }
+  .glass-strong {
+    background-color: hsl(var(--card) / 0.78);
+    backdrop-filter: blur(28px) saturate(160%);
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    border: 1px solid hsl(var(--border) / 0.8);
+  }
+  .glass-subtle {
+    background-color: hsl(var(--card) / 0.35);
+    backdrop-filter: blur(12px) saturate(120%);
+    -webkit-backdrop-filter: blur(12px) saturate(120%);
+    border: 1px solid hsl(var(--border) / 0.5);
+  }
+
+  /* Glow */
+  .glow-primary {
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.4),
+                0 10px 40px -10px hsl(var(--primary) / 0.55);
+  }
+  .glow-accent {
+    box-shadow: 0 0 0 1px hsl(var(--accent) / 0.4),
+                0 10px 40px -10px hsl(var(--accent) / 0.55);
+  }
+  .glow-hover {
+    transition: box-shadow .25s ease, transform .25s ease, border-color .25s ease;
+  }
+  .glow-hover:hover {
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.35),
+                0 20px 60px -20px hsl(var(--primary) / 0.5);
+    border-color: hsl(var(--primary) / 0.45);
+    transform: translateY(-1px);
+  }
+
+  /* Gradient text (titles) */
+  .text-gradient {
+    background: linear-gradient(135deg, hsl(var(--aurora-1)) 0%, hsl(var(--aurora-3)) 60%, hsl(var(--aurora-2)) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* Border-gradient (1px gradient outline) */
+  .border-gradient {
+    position: relative;
+    background-clip: padding-box;
+    border: 1px solid transparent;
+  }
+  .border-gradient::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, hsl(var(--aurora-1) / 0.6), hsl(var(--aurora-2) / 0.6), hsl(var(--aurora-3) / 0.6));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* Scrollbar discreto */
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: hsl(var(--primary) / 0.5); }
+}
+
+/* Aurora floating background — fica fixo, animação lenta */
+@keyframes aurora-float {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%      { transform: translate3d(2%, -3%, 0) scale(1.05); }
+  66%      { transform: translate3d(-3%, 2%, 0) scale(0.98); }
+}
+
+.aurora-bg {
+  position: fixed;
+  inset: -10%;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+.aurora-bg::before,
+.aurora-bg::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.55;
+  will-change: transform;
+}
+.aurora-bg::before {
+  top: -10%;
+  left: -10%;
+  width: 60%;
+  height: 60%;
+  background: radial-gradient(circle, hsl(var(--aurora-1) / 0.55) 0%, transparent 70%);
+  animation: aurora-float 22s ease-in-out infinite;
+}
+.aurora-bg::after {
+  bottom: -10%;
+  right: -10%;
+  width: 55%;
+  height: 55%;
+  background: radial-gradient(circle, hsl(var(--aurora-2) / 0.45) 0%, transparent 70%);
+  animation: aurora-float 28s ease-in-out infinite reverse;
+}
+
+/* Respeita reduce-motion */
+@media (prefers-reduced-motion: reduce) {
+  .aurora-bg::before, .aurora-bg::after { animation: none; }
 }

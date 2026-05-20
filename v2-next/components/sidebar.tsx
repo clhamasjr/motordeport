@@ -113,15 +113,15 @@ export function Sidebar({ user }: { user: AuthUser }) {
   };
 
   return (
-    <aside className="w-64 border-r border-border bg-card flex flex-col flex-shrink-0">
+    <aside className="w-64 glass-strong border-r border-border/60 flex flex-col flex-shrink-0 relative z-10">
       {/* Logo */}
-      <div className="p-4 border-b border-border">
-        <Link href="/inicio" className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Zap className="w-4 h-4 text-primary" />
+      <div className="p-4 border-b border-border/60">
+        <Link href="/inicio" className="flex items-center gap-3 group">
+          <div className="w-9 h-9 rounded-lg bg-aurora flex items-center justify-center ring-1 ring-primary/30 shadow-[0_0_22px_-4px_hsl(var(--primary)/.7)] group-hover:shadow-[0_0_28px_-2px_hsl(var(--accent)/.7)] transition-shadow">
+            <Zap className="w-4 h-4 text-primary-foreground" />
           </div>
           <div>
-            <div className="font-bold text-sm leading-tight">FlowForce</div>
+            <div className="font-bold text-sm leading-tight text-gradient">FlowForce</div>
             <div className="text-[10px] text-muted-foreground uppercase tracking-wider">V2 · Plataforma de crédito</div>
           </div>
         </Link>
@@ -133,7 +133,9 @@ export function Sidebar({ user }: { user: AuthUser }) {
           href="/inicio"
           className={cn(
             'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
-            pathname === '/inicio' ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-secondary',
+            pathname === '/inicio'
+              ? 'bg-aurora-subtle text-foreground font-medium ring-1 ring-primary/30 shadow-[0_0_18px_-6px_hsl(var(--primary)/.55)]'
+              : 'hover:bg-secondary/60 text-muted-foreground hover:text-foreground',
           )}
         >
           <Home className="w-4 h-4" />
@@ -184,8 +186,10 @@ export function Sidebar({ user }: { user: AuthUser }) {
                               key={item.href}
                               href={item.href}
                               className={cn(
-                                'flex items-center gap-3 pl-6 pr-3 py-1.5 rounded-md text-sm transition-colors',
-                                active ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-secondary text-muted-foreground hover:text-foreground',
+                                'flex items-center gap-3 pl-6 pr-3 py-1.5 rounded-md text-sm transition-all',
+                                active
+                                  ? 'bg-aurora-subtle text-foreground font-medium ring-1 ring-primary/30 shadow-[0_0_14px_-6px_hsl(var(--primary)/.5)]'
+                                  : 'hover:bg-secondary/50 text-muted-foreground hover:text-foreground',
                               )}
                             >
                               <ItemIcon className="w-3.5 h-3.5 flex-shrink-0" />
@@ -204,7 +208,7 @@ export function Sidebar({ user }: { user: AuthUser }) {
       </nav>
 
       {/* Versão */}
-      <div className="p-3 border-t border-border">
+      <div className="p-3 border-t border-border/60">
         <div className="text-[10px] text-muted-foreground text-center">
           V2 · Beta · {process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA?.substring(0, 7) || 'dev'}
         </div>

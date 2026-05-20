@@ -11,16 +11,19 @@ export default function GestaoInssPage() {
   const { data, isLoading, error } = useGestaoDashboard();
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Activity className="size-6 text-orange-400" />
-          INSS — Gestão Operacional
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Painel admin/gestor: usuários ativos, consultas do dia, produção (digitações), audit log,
-          chats Sofia. Atualiza a cada 60s.
-        </p>
+    <div className="max-w-7xl mx-auto p-6 space-y-5">
+      <div className="flex items-start gap-4">
+        <div className="w-12 h-12 rounded-xl bg-aurora flex items-center justify-center ring-1 ring-primary/30 shadow-[0_0_28px_-6px_hsl(var(--accent)/.7)] flex-shrink-0">
+          <Activity className="size-6 text-primary-foreground" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">
+            <span className="text-gradient">INSS</span> · Painel Operacional
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Usuários ativos, consultas do dia, produção, audit log, chats Sofia. Atualiza a cada 60s.
+          </p>
+        </div>
       </div>
 
       {isLoading && <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-32" />)}</div>}
@@ -191,10 +194,10 @@ export default function GestaoInssPage() {
 
 function Kpi({ label, value, cor, isText }: { label: string; value: number | string; cor: string; isText?: boolean }) {
   return (
-    <Card>
-      <CardContent className="p-3">
+    <Card variant="gradient" interactive>
+      <CardContent className="p-4 relative">
         <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{label}</div>
-        <div className={`${isText ? 'text-base' : 'text-2xl'} font-mono font-bold mt-1 ${cor}`}>{value}</div>
+        <div className={`${isText ? 'text-base' : 'text-3xl'} font-mono font-bold mt-1.5 ${cor}`}>{value}</div>
       </CardContent>
     </Card>
   );

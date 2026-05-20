@@ -9,11 +9,14 @@ export function Topbar({ user }: { user: AuthUser }) {
   const { logout } = useAuth();
 
   return (
-    <header className="h-14 border-b border-border bg-card flex items-center px-4 gap-4 flex-shrink-0">
-      {/* Search global (placeholder) */}
+    <header className="h-14 glass-subtle border-b border-border/60 flex items-center px-4 gap-4 flex-shrink-0 sticky top-0 z-20">
+      {/* Search global */}
       <div className="flex-1 max-w-md relative">
-        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-        <Input placeholder="Buscar CPF ou nome..." className="pl-9 h-9" />
+        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+        <Input
+          placeholder="Buscar CPF ou nome..."
+          className="pl-9 h-9 bg-background/40 backdrop-blur-md border-border/60 focus-visible:border-primary/50 focus-visible:ring-primary/30"
+        />
       </div>
 
       {/* User pill */}
@@ -25,8 +28,8 @@ export function Topbar({ user }: { user: AuthUser }) {
             {user.nome_parceiro && ` · ${user.nome_parceiro}`}
           </div>
         </div>
-        <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center">
-          <UserIcon className="w-4 h-4 text-primary" />
+        <div className="w-9 h-9 rounded-full bg-aurora flex items-center justify-center ring-1 ring-primary/30 shadow-[0_0_18px_-4px_hsl(var(--primary)/.6)]">
+          <UserIcon className="w-4 h-4 text-primary-foreground" />
         </div>
         <Button variant="ghost" size="icon" onClick={logout} title="Sair">
           <LogOut className="w-4 h-4" />
