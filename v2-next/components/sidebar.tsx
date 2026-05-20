@@ -102,6 +102,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: '/admin/usuarios', label: 'Usuários', icon: Settings, needsRole: ['admin'] },
       { href: '/admin/parceiros', label: 'Parceiros', icon: Building2, needsRole: ['admin'] },
+      { href: '/admin/manutencao', label: 'Manutenção', icon: Zap, needsRole: ['admin', 'gestor'] },
     ],
   },
 ];
