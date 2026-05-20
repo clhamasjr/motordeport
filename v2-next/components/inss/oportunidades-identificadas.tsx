@@ -94,15 +94,19 @@ interface AnaliseNovaRegra {
   total: number;
   compPct: number;
 
+  // Cliente tem algum cartão (RMC ou RCC)?
+  temAlgumCartao: boolean;
+
   // Tetos NOVA regra (40% total)
   teto40Total: number;     // 40% benefício
-  tetoEmpComCartao: number; // 35% (se tiver cartão)
-  tetoCartao: number;      // 5% (se tiver cartão)
+  tetoEmpComCartao: number; // 35% (legacy — sempre 35%)
+  tetoEmpReal: number;     // teto EMP que VALE pra esse cliente: 35% (com cartão) ou 40% (sem)
+  tetoCartao: number;      // 5% (quando aplicável)
 
   // Estado NOVA
   enquadraNovaRegra: boolean;
   excedente: number;       // total - teto40Total se positivo
-  margemLivreNova: number; // teto40Total - total se positivo
+  margemLivreNova: number; // tetoEmpReal - sumEmp se positivo (margem PRA EMPRÉSTIMO)
 
   // Soluções pra enquadrar (só se NÃO enquadra)
   contratosQueResolvem: ContratoCalc[]; // contratos cujo refin sozinho cobre o excedente
@@ -134,7 +138,13 @@ function calcularTudo(
     }
   }
 
-  // ── Análise da nova regra (40% total) ──
+  // ── Análise da nova regra INSS (vigente) ──
+  //
+  // REGRA:
+  //   - Cliente COM PELO MENOS 1 cartão (RMC ou RCC): 35% emp + 5% cartão = 40%
+  //   - Cliente SEM CARTÃO NENHUM: 40% INTEIRO pra empréstimo
+  //
+  // Em ambos: teto TOTAL = 40% da base de cálculo. Diferença é o split.
   const benef = parseBR(ben.base_calculo) || parseBR(ben.valor) || 0;
   const sumEmp = parseBR(mrg.parcelas);
   const tetoCartao = benef * 0.05;
@@ -150,11 +160,19 @@ function calcularTudo(
   const total = sumEmp + sumRmc + sumRcc;
   const compPct = benef > 0 ? (total / benef) * 100 : 0;
 
+  // Tem ALGUM cartão? (RMC ou RCC qualquer)
+  const temAlgumCartao = temRmc || temRcc;
+
   const teto40Total = benef * 0.40;
-  const tetoEmpComCartao = benef * 0.35;
-  const enquadraNovaRegra = total <= teto40Total + 0.01;
+  // Teto de empréstimo: 35% se tem cartão; 40% se NÃO tem nenhum cartão
+  const tetoEmpReal = temAlgumCartao ? benef * 0.35 : benef * 0.40;
+  const tetoEmpComCartao = benef * 0.35; // legacy — usado em outros lugares
+  const enquadraNovaRegra = total <= teto40Total + 0.01 && sumEmp <= tetoEmpReal + 0.01;
   const excedente = Math.max(0, total - teto40Total);
-  const margemLivreNova = Math.max(0, teto40Total - total);
+  // Margem livre pra novas operações de empréstimo:
+  //  - sem cartão: pode usar 40% inteiro pra emp → livre = 40% - sumEmp
+  //  - com cartão: limite emp é 35% → livre = 35% - sumEmp
+  const margemLivreNova = Math.max(0, tetoEmpReal - sumEmp);
 
   // ── Roda motor pra cada contrato ──
   const contratosRaw = parsed.contratos || [];
@@ -271,7 +289,8 @@ function calcularTudo(
 
   const analise: AnaliseNovaRegra = {
     benef, sumEmp, sumRmc, sumRcc, total, compPct,
-    teto40Total, tetoEmpComCartao, tetoCartao,
+    temAlgumCartao,
+    teto40Total, tetoEmpComCartao, tetoEmpReal, tetoCartao,
     enquadraNovaRegra, excedente, margemLivreNova,
     contratosQueResolvem: contratos.filter((c) => c.resolveExcedente),
     cartoesQueResolvem,
@@ -305,7 +324,8 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
   if (contratos.length === 0 && analise.benef === 0) return null;
 
   const {
-    benef, total, compPct, teto40Total, enquadraNovaRegra, excedente, margemLivreNova,
+    benef, total, compPct, teto40Total, tetoEmpReal, temAlgumCartao,
+    enquadraNovaRegra, excedente, margemLivreNova,
     contratosQueResolvem, cartoesQueResolvem,
   } = analise;
 
@@ -343,6 +363,15 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
           <div className="flex items-center gap-2">
             <Sparkles className="size-5 text-cyan-400" />
             <h3 className="font-bold text-base">Enquadramento na NOVA regra do INSS (40%)</h3>
+            <Badge
+              variant={temAlgumCartao ? 'muted' : 'info'}
+              className="text-[10px]"
+              title={temAlgumCartao
+                ? 'Cliente tem cartão (RMC ou RCC) — teto emp = 35% + 5% cartão'
+                : 'Cliente SEM cartão — pode usar os 40% inteiros pra empréstimo'}
+            >
+              {temAlgumCartao ? '📇 com cartão: 35% emp + 5% cartão' : '💸 sem cartão: 40% só emp'}
+            </Badge>
           </div>
           <Badge
             variant={inviavel ? 'destructive' : !enquadraNovaRegra ? 'warning' : 'success'}
@@ -363,7 +392,14 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
                   Comprometimento total <strong className="font-mono">{formatBRL(total)}</strong> de{' '}
                   <strong className="font-mono">{formatBRL(teto40Total)}</strong> (40%).
                   {margemLivreNova > 0 ? (
-                    <> Sobra <strong className="font-mono text-green-400">{formatBRL(margemLivreNova)}</strong> de margem livre.</>
+                    <>
+                      {' '}Sobra <strong className="font-mono text-green-400">{formatBRL(margemLivreNova)}</strong> de
+                      margem livre pra EMPRÉSTIMO{' '}
+                      <span className="text-muted-foreground">
+                        (teto emp {temAlgumCartao ? '35%' : '40%'} ={' '}
+                        <span className="font-mono">{formatBRL(tetoEmpReal)}</span>)
+                      </span>.
+                    </>
                   ) : (
                     <> No limite — sem margem livre pra novas operações.</>
                   )}
@@ -458,10 +494,19 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
         {/* Empréstimo Novo (só se ENQUADRA + tem margem livre na nova) */}
         {enquadraNovaRegra && margemLivreNova > 0 && (
           <div className="rounded-lg border border-orange-500/40 bg-orange-500/5 p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <div className="text-[10px] uppercase tracking-wider font-bold text-orange-400">💰 Empréstimo Novo</div>
                 <Badge variant="muted" className="text-[9px]">Parcela {formatBRL(margemLivreNova)}/mês</Badge>
+                <Badge
+                  variant={temAlgumCartao ? 'muted' : 'info'}
+                  className="text-[9px]"
+                  title={temAlgumCartao
+                    ? 'Cliente já tem cartão — margem emp limitada a 35%'
+                    : 'Cliente sem cartão — pode usar 40% inteiro em empréstimo'}
+                >
+                  {temAlgumCartao ? 'teto 35% (com cartão)' : 'teto 40% (sem cartão)'}
+                </Badge>
               </div>
               <TrendingUp className="size-4 text-orange-400" />
             </div>

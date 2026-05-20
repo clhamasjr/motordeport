@@ -106,8 +106,14 @@ export interface CompPorCpf {
   compStatus: CompStatusBase;
   excedente: number;
   benef: number;
-  teto40: number;  // teto NOVA regra (40% do benefício)
-  teto45: number;  // legacy — teto regra ATUAL (45%), mantido pra compat
+  teto40: number;       // teto NOVA regra (40% do benefício) — total
+  teto45: number;       // legacy — teto regra ATUAL (45%), mantido pra compat
+  /** Teto de empréstimo REAL pra esse cliente:
+   *  - 35% se tem ALGUM cartão (RMC ou RCC)
+   *  - 40% se NÃO tem cartão nenhum */
+  tetoEmpReal: number;
+  /** Cliente tem RMC ou RCC? */
+  temAlgumCartao: boolean;
   sumEmp: number;
   vRmc: number;
   vRcc: number;
@@ -355,22 +361,32 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     const sumEmp = sumEmpByCpf[cpf] || 0;
     const vRmc = x?.vRmc || 0;
     const vRcc = x?.vRcc || 0;
-    const benef = x?.valorBeneficio || (sumEmp > 0 ? sumEmp / 0.35 : 0);
+    const temAlgumCartao = !!(x?.temRmc || x?.temRcc);
+    const benef = x?.valorBeneficio || (sumEmp > 0 ? sumEmp / (temAlgumCartao ? 0.35 : 0.40) : 0);
     if (!benef) {
-      compByCpf[cpf] = { compPct: 0, compStatus: 'sem_dados', excedente: 0, benef: 0, teto40: 0, teto45: 0, sumEmp, vRmc, vRcc, total: sumEmp + vRmc + vRcc };
+      compByCpf[cpf] = {
+        compPct: 0, compStatus: 'sem_dados', excedente: 0, benef: 0,
+        teto40: 0, teto45: 0, tetoEmpReal: 0, temAlgumCartao,
+        sumEmp, vRmc, vRcc, total: sumEmp + vRmc + vRcc,
+      };
       continue;
     }
     const total = sumEmp + vRmc + vRcc;
     const pct = (total / benef) * 100;
-    const teto40 = benef * 0.40;  // NOVA regra (vigente)
-    const teto45 = benef * 0.45;  // legacy regra atual (compat)
-    // Usa o teto NOVO (40%) pra analisar excedente — é a regra que vale
+    const teto40 = benef * 0.40;  // NOVA regra (vigente) — total
+    const teto45 = benef * 0.45;  // legacy (compat)
+    // Teto EMP REAL: 35% se tem cartão, 40% se não tem
+    const tetoEmpReal = temAlgumCartao ? benef * 0.35 : benef * 0.40;
+    // Excedente: total > 40% do benef (regra global). Se sumEmp > tetoEmpReal,
+    // também é excedente (sem cartão e sumEmp > 40% — impossível, mas defensivo).
     const excedente = Math.max(0, total - teto40);
+    const enquadra = total <= teto40 + 0.01 && sumEmp <= tetoEmpReal + 0.01;
     compByCpf[cpf] = {
       compPct: pct,
-      compStatus: total <= teto40 ? 'dentro_regra' : 'sem_dados', // será refinado abaixo (usa teto NOVO)
+      compStatus: enquadra ? 'dentro_regra' : 'sem_dados', // refinado abaixo
       excedente,
-      benef, teto40, teto45, sumEmp, vRmc, vRcc, total,
+      benef, teto40, teto45, tetoEmpReal, temAlgumCartao,
+      sumEmp, vRmc, vRcc, total,
     };
   }
 
