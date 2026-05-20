@@ -10,7 +10,8 @@ import {
 } from '@/components/ui/dialog';
 import { formatBRL } from '@/lib/utils';
 import {
-  testarTodos, calcReducaoPort, parseBR, ORDEM, type BancoSimul,
+  testarTodos, calcPortRefin108, parseBR,
+  type BancoSimul, type PortRefin108Result,
 } from '@/lib/inss-motor';
 import { InssParsedResult } from '@/lib/inss-types';
 import { Calculator, ArrowRightLeft, Banknote, TrendingDown } from 'lucide-react';
@@ -114,7 +115,7 @@ function SimNovoEmp({ margemLivre, valor, idade }: { margemLivre: number; valor:
         <Label>Parcela mensal (R$)</Label>
         <Input value={parcela} onChange={(e) => setParcela(e.target.value)} placeholder="500,00" className="font-mono" />
       </div>
-      <ResultadoBancos destinos={result} reducao={null} legenda="Valor liberado por banco" />
+      <ResultadoBancos destinos={result} pr108={null} saldo={0} legenda="Valor liberado por banco" />
     </div>
   );
 }
@@ -153,10 +154,24 @@ function SimPort({ parsed, idade }: { parsed: InssParsedResult; idade: number | 
     const s = parseFloat(saldo.replace(',', '.')) || 0;
     const pg = parseInt(pagas, 10) || 0;
     const tx = parseFloat(taxaOrig.replace(',', '.')) || 0;
-    if (p <= 0 || s <= 0) return { destinos: [] as BancoSimul[], reducao: null };
+    if (p <= 0 || s <= 0) return { destinos: [] as BancoSimul[], pr108: null as PortRefin108Result | null };
     const destinos = testarTodos(p, s, pg, codOrigem, false, idade, null, 60, 41, '', tx);
-    const reducao = calcReducaoPort({ par: p, sal: s }, 108);
-    return { destinos, reducao };
+    // Calcula PR108 no MELHOR destino (com tabela alta = mais comissão/troco)
+    let pr108: PortRefin108Result | null = null;
+    for (const d of destinos) {
+      const r = calcPortRefin108(p, s, d, tx, codOrigem);
+      if (!r || !r.taxaOrigVale) continue;
+      // Usa tabela alta como cenário padrão (mais comissão pro correspondente)
+      const cenario = r.tabelaAlta;
+      const ajustado: PortRefin108Result = {
+        ...r,
+        taxa: cenario.taxa, coef: cenario.coef,
+        refin_novaParc: cenario.refin_novaParc, refin_reducao: cenario.refin_reducao,
+        port_novaParc: cenario.port_novaParc, port_vc: cenario.port_vc, port_troco: cenario.port_troco,
+      };
+      if (!pr108 || cenario.port_troco > pr108.port_troco) pr108 = ajustado;
+    }
+    return { destinos, pr108 };
   }, [parcela, saldo, pagas, codOrigem, taxaOrig, idade]);
 
   return (
@@ -184,7 +199,7 @@ function SimPort({ parsed, idade }: { parsed: InssParsedResult; idade: number | 
         <Field label="Banco origem (3 dig)" value={codOrigem} onChange={setCodOrigem} />
         <Field label="Taxa origem (%)" value={taxaOrig} onChange={setTaxaOrig} />
       </div>
-      <ResultadoBancos destinos={result.destinos} reducao={result.reducao} legenda="Bancos destino aceitos" />
+      <ResultadoBancos destinos={result.destinos} pr108={result.pr108} saldo={parseFloat(saldo.replace(',', '.')) || 0} legenda="Bancos destino aceitos" />
     </div>
   );
 }
@@ -192,16 +207,21 @@ function SimPort({ parsed, idade }: { parsed: InssParsedResult; idade: number | 
 function SimRefin() {
   const [parcela, setParcela] = useState('');
   const [saldo, setSaldo] = useState('');
+  // Usa BRB como destino fixo (1.85% / coef PRICE 108m) — refin simples
   const result = useMemo(() => {
     const p = parseFloat(parcela.replace(',', '.')) || 0;
     const s = parseFloat(saldo.replace(',', '.')) || 0;
     if (p <= 0 || s <= 0) return null;
-    return calcReducaoPort({ par: p, sal: s }, 108);
+    // Tenta C6 destino (1.55% melhor que BRB pro cliente)
+    const dummyDest: BancoSimul = { banco: 'C6', troco: 0, vc: 0, taxa: 1.55 };
+    const r = calcPortRefin108(p, s, dummyDest, 1.85, '');
+    if (!r) return null;
+    return { novaParc: r.tabelaBaixa.refin_novaParc, reducao: r.tabelaBaixa.refin_reducao };
   }, [parcela, saldo]);
   return (
     <div className="space-y-3">
       <div className="text-xs text-muted-foreground">
-        Refinanciamento simples — recalcula parcela em 108 meses a 1.50% (taxa piso INSS).
+        Refinanciamento simples — recalcula parcela em 108 meses a 1.55% (taxa C6).
       </div>
       <div className="grid grid-cols-2 gap-2">
         <Field label="Parcela atual (R$)" value={parcela} onChange={setParcela} />
@@ -270,13 +290,14 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
 }
 
 function ResultadoBancos({
-  destinos, reducao, legenda,
+  destinos, pr108, saldo, legenda,
 }: {
   destinos: BancoSimul[];
-  reducao: { novaParc: number; reducao: number } | null;
+  pr108: PortRefin108Result | null;
+  saldo: number;
   legenda: string;
 }) {
-  if (!destinos.length && !reducao) {
+  if (!destinos.length && !pr108) {
     return (
       <div className="rounded-md border border-border bg-card/50 p-3 text-xs text-muted-foreground text-center">
         Preencha os campos pra ver o resultado.
@@ -309,7 +330,7 @@ function ResultadoBancos({
                 </div>
                 <div className="grid grid-cols-2 gap-1 text-[10px]">
                   <div>
-                    <div className="text-muted-foreground uppercase font-semibold">Troco</div>
+                    <div className="text-muted-foreground uppercase font-semibold">Troco 96m</div>
                     <div className="font-mono font-semibold text-green-400">
                       <Banknote className="size-3 inline mr-0.5" />
                       {formatBRL(d.troco)}
@@ -328,16 +349,26 @@ function ResultadoBancos({
           })}
         </div>
       )}
-      {reducao && (
-        <div className="rounded-md border border-cyan-500/40 bg-cyan-500/5 p-2 flex items-center gap-3">
-          <TrendingDown className="size-4 text-cyan-400" />
-          <div className="flex-1">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-              Nova parcela (estim. 108m @ 1.50%)
+      {pr108 && (
+        <div className="rounded-md border border-cyan-500/40 bg-cyan-500/5 p-3 space-y-2">
+          <div className="flex items-center justify-between flex-wrap gap-1">
+            <div className="text-[10px] uppercase tracking-wider text-cyan-400 font-bold flex items-center gap-1">
+              <TrendingDown className="size-3.5" />
+              Port + Refin 108m em {pr108.banco} @ {pr108.taxa.toFixed(2)}%
             </div>
-            <div className="text-sm font-mono font-bold text-cyan-400">
-              {formatBRL(reducao.novaParc)}{' '}
-              <span className="text-[10px] text-green-400">(↓ {formatBRL(reducao.reducao)}/mês)</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md bg-background/40 p-2">
+              <div className="text-[9px] uppercase text-muted-foreground font-semibold">Refin (reduz parcela)</div>
+              <div className="font-mono font-bold text-green-400">{formatBRL(pr108.refin_novaParc)}</div>
+              <div className="text-[9px] text-green-400/70 font-mono">↓ {formatBRL(pr108.refin_reducao)}/mês</div>
+            </div>
+            <div className="rounded-md bg-background/40 p-2">
+              <div className="text-[9px] uppercase text-muted-foreground font-semibold">Port (parcela atual, com troco)</div>
+              <div className="font-mono font-bold text-cyan-400">{formatBRL(pr108.port_troco)}</div>
+              <div className="text-[9px] text-muted-foreground font-mono">
+                VC {formatBRL(pr108.port_vc)} − saldo {formatBRL(saldo)}
+              </div>
             </div>
           </div>
         </div>
