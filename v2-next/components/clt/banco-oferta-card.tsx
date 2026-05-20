@@ -5,8 +5,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { BancoState, BancoSlug, ClienteData } from '@/lib/clt-types';
 import { formatBRL, formatCnpj, cn } from '@/lib/utils';
-import { Loader2, Wrench, AlertCircle, CheckCircle2, Camera, FileText, RefreshCw } from 'lucide-react';
+import { Loader2, Wrench, AlertCircle, CheckCircle2, Camera, FileText, RefreshCw, Smartphone } from 'lucide-react';
 import { useGerarLinkSelfieC6, useRecarregarC6 } from '@/hooks/use-clt-c6';
+import { useMercantilSolicitarSMS, useMercantilVerificarAutorizacao } from '@/hooks/use-clt-mercantil';
 
 const BANCO_LABEL: Record<BancoSlug, string> = {
   presencabank: 'PresençaBank',
@@ -124,6 +125,52 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
     });
   };
 
+  // ─── Mercantil: tratamento especial — bloqueado ate cliente autorizar SMS ──
+  const mercantilSolicitarSMS = useMercantilSolicitarSMS();
+  const mercantilVerificar = useMercantilVerificarAutorizacao();
+  const isMercantilBloqueado =
+    banco === 'mercantil' &&
+    !isManutencao &&
+    (state.bloqueado === true || state.status === 'bloqueado') &&
+    state.precisaAutorizacao === true;
+
+  const dispararSmsMercantil = () => {
+    if (!state.operacaoId) {
+      alert('Sem operacaoId — refaça a consulta CLT pra Mercantil retornar o ID.');
+      return;
+    }
+    let tel = cliente?.telefones?.[0]?.completo || '';
+    if (!tel) {
+      const inp = prompt('📱 Telefone do cliente não encontrado nas bases.\n\nDigite o celular pra disparar o SMS de autorização Mercantil (com DDD, ex: 15998583505):');
+      if (inp === null) return;
+      const digits = String(inp).replace(/\D/g, '');
+      if (digits.length < 10 || digits.length > 11) {
+        alert('Telefone inválido. Use DDD + 9 dígitos.');
+        return;
+      }
+      tel = digits;
+    }
+    const semCountry = tel.startsWith('55') && tel.length >= 12 ? tel.substring(2) : tel;
+    const ddd = semCountry.substring(0, 2);
+    const num = semCountry.substring(2);
+    const nomeCli = state.nomeCliente || cliente?.nome || 'o cliente';
+    if (!confirm(`Mercantil vai enviar SMS pra (${ddd}) ${num} com link de autorização DataPrev.\n\nCliente: ${nomeCli}\n\nConfirma?`)) return;
+    mercantilSolicitarSMS.mutate({
+      filaId,
+      operacaoId: state.operacaoId,
+      telefone: tel,
+      nomeCliente: nomeCli,
+    });
+  };
+
+  const verificarMercantil = () => {
+    if (!cliente?.cpf) {
+      alert('Sem CPF do cliente — refaça a consulta.');
+      return;
+    }
+    mercantilVerificar.mutate({ cpf: cliente.cpf, filaId });
+  };
+
   return (
     <Card
       className={cn(
@@ -173,8 +220,46 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
         </div>
       )}
 
+      {/* MERCANTIL BLOQUEADO — botões SMS + verificar autorização */}
+      {isMercantilBloqueado && (
+        <div className="space-y-2">
+          <div className="text-xs text-yellow-400 flex items-start gap-1">
+            <Smartphone className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>📲 Aguardando autorização do cliente</span>
+          </div>
+          <div className="text-[11px] text-muted-foreground/80">
+            {state.nomeCliente || cliente?.nome || 'Cliente'} já está cadastrado no Mercantil — precisa autorizar consulta DataPrev via SMS.
+          </div>
+          <Button
+            size="sm"
+            className="w-full gap-1"
+            onClick={dispararSmsMercantil}
+            disabled={mercantilSolicitarSMS.isPending || !state.operacaoId}
+            title={!state.operacaoId ? 'Refaça a consulta — sem operacaoId' : 'Mercantil envia SMS oficial com link bml.b.br'}
+          >
+            <Smartphone className="w-3 h-3" />
+            {mercantilSolicitarSMS.isPending ? 'Enviando SMS...' : '📲 Solicitar SMS pro Cliente'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full gap-1 text-xs"
+            onClick={verificarMercantil}
+            disabled={mercantilVerificar.isPending || !cliente?.cpf}
+          >
+            <RefreshCw className={cn('w-3 h-3', mercantilVerificar.isPending && 'animate-spin')} />
+            Já autorizou? Verificar
+          </Button>
+          {!state.operacaoId && (
+            <div className="text-[10px] text-destructive/80">
+              ⚠ Sem operacaoId — refaça a consulta pra recuperar
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Mensagem principal */}
-      {isC6Bloqueado ? null : isManutencao ? (
+      {isC6Bloqueado || isMercantilBloqueado ? null : isManutencao ? (
         <div className="text-xs text-muted-foreground">{state.mensagem || '🔧 Em manutenção'}</div>
       ) : disponivel ? (
         <div className="space-y-1.5">

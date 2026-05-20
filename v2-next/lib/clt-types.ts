@@ -37,6 +37,12 @@ export interface BancoState {
   statusAutorizacao?: string;
   ja_autorizado?: boolean;
   atualizado_em?: string;
+  // Mercantil: id da operação retornado por iniciarOperacao (necessário pra
+  // chamar solicitarAutorizacao via SMS)
+  operacaoId?: string | null;
+  // Nome retornado pelo banco em operações que precisam autorização (Mercantil
+  // retorna nome do cliente antes de qualquer simulação)
+  nomeCliente?: string | null;
   dados?: {
     margemDisponivel?: number;
     margemBase?: number;
