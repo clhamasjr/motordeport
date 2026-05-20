@@ -10,8 +10,11 @@ import {
   type BancoSimul,
 } from '@/lib/inss-motor';
 import {
-  calcReducaoPort,
+  calcPortRefin108,
+  type PortRefin108Result,
 } from '@/lib/inss-motor';
+
+const TROCO_MIN_ENQUADRADO = 250;
 
 // ──────────────────────────────────────────────────────────────────
 // Tipos da base processada
@@ -47,7 +50,7 @@ export interface ElegivelRow {
   taxaOrig: number;
   valorBeneficio: number;
   dest: string;
-  troco: number;
+  troco: number;       // troco do testarTodos (96m, melhor destino)
   vc: number;
   taxa: number | string;
   ok: boolean;
@@ -60,8 +63,19 @@ export interface ElegivelRow {
   compStatus?: CompStatusBase;
   resolveExc?: boolean;
   elegRealOk?: boolean;
-  reducaoEstim?: number;
+  reducaoEstim?: number;        // redução parcela (refin 108m no destino real)
   parcelaNovaEstim?: number;
+  // ── PORT + REFIN 108m no destino real ──
+  portRefin108?: {
+    banco: string;
+    taxa: number;
+    coef: number;
+    refin_novaParc: number;
+    refin_reducao: number;
+    port_troco: number;          // troco mantendo parcela atual em 108m
+    port_vc: number;
+    tabelaUsada: 'alta' | 'baixa'; // qual tabela do banco foi escolhida
+  };
   _semContrato?: boolean;
 }
 
@@ -281,6 +295,8 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
       if (!con && par === 0 && sal === 0) continue;
       const i1 = B1P.includes(cod);
       const todosDest: BancoSimul[] = testarTodos(par, sal, pag, cod, isInv, idade, bY, rest, eN, con, txOrig);
+      // Ordena destinos por TROCO desc (melhor troco primeiro)
+      todosDest.sort((a, b) => (b.troco || 0) - (a.troco || 0));
       const res = todosDest.length ? todosDest[0] : null;
       const reg: ElegivelRow = {
         nome, cpf, ben, esp, con, cod,
@@ -359,6 +375,15 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
   }
 
   // Marca cada reg com compStatus/elegRealOk/reducaoEstim/parcelaNovaEstim
+  //
+  // Estratégia de escolha de tabela (mesma da consulta unitária):
+  //   - Cliente ENQUADRADO (≤40% pela nova regra): prioriza tabelaAlta (1.85%
+  //     = mais comissão pro correspondente) SE troco_alta >= R$250.
+  //     Senão, fallback tabelaBaixa pra garantir troco aceitável.
+  //   - Cliente NÃO ENQUADRADO: usa tabelaBaixa (max redução pra enquadrar).
+  //
+  // Roda calcPortRefin108 contra TODOS os destinos elegíveis (testarTodos já
+  // filtrou por banco) e escolhe o melhor pelo critério (troco ou redução).
   for (const reg of analise) {
     const c = compByCpf[reg.cpf];
     if (!c) {
@@ -367,14 +392,70 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
       continue;
     }
     reg.compPct = Math.round(c.compPct * 10) / 10;
-    let reduz = 0;
-    if (reg.ok && reg.sal > 0 && reg.par > 0) {
-      const rc = calcReducaoPort({ par: reg.par, sal: reg.sal }, 108);
-      if (rc && rc.reducao > 0) reduz = rc.reducao;
+
+    const enquadrado = c.compStatus === 'dentro_regra';
+    let melhor: { pr108: PortRefin108Result; tabelaUsada: 'alta' | 'baixa'; troco: number; reducao: number } | null = null;
+
+    if (reg.ok && reg.sal > 0 && reg.par > 0 && reg.destinos && reg.destinos.length > 0) {
+      // Reconstrói candidatos BancoSimul a partir dos destinos
+      for (const d of reg.destinos) {
+        const bSim: BancoSimul = { banco: d.banco, troco: d.troco, vc: d.vc, taxa: typeof d.taxa === 'number' ? d.taxa : parseFloat(String(d.taxa)) || 0 };
+        const r = calcPortRefin108(reg.par, reg.sal, bSim, reg.taxaOrig);
+        if (!r || !r.taxaOrigVale) continue;
+
+        // Escolhe tabela conforme enquadramento
+        let cenarioEsc = r.tabelaBaixa;
+        let tabelaUsada: 'alta' | 'baixa' = 'baixa';
+        if (enquadrado) {
+          if (r.tabelaAlta.port_troco >= TROCO_MIN_ENQUADRADO) {
+            cenarioEsc = r.tabelaAlta;
+            tabelaUsada = 'alta';
+          }
+        }
+
+        const trocoEf = cenarioEsc.port_troco;
+        const reducaoEf = cenarioEsc.refin_reducao;
+        // Critério de "melhor": enquadrado por troco desc, não-enquadrado por redução desc
+        const candScore = enquadrado ? trocoEf : reducaoEf;
+        const melhorScore = melhor ? (enquadrado ? melhor.troco : melhor.reducao) : -Infinity;
+
+        if (!melhor || candScore > melhorScore) {
+          melhor = {
+            pr108: {
+              ...r,
+              taxa: cenarioEsc.taxa,
+              coef: cenarioEsc.coef,
+              refin_novaParc: cenarioEsc.refin_novaParc,
+              refin_reducao: cenarioEsc.refin_reducao,
+              port_novaParc: cenarioEsc.port_novaParc,
+              port_vc: cenarioEsc.port_vc,
+              port_troco: cenarioEsc.port_troco,
+            },
+            tabelaUsada,
+            troco: trocoEf,
+            reducao: reducaoEf,
+          };
+        }
+      }
     }
+
+    const reduz = melhor ? Math.max(0, melhor.reducao) : 0;
     reg.reducaoEstim = Math.round(reduz * 100) / 100;
     reg.parcelaNovaEstim = reduz > 0 ? Math.round((reg.par - reduz) * 100) / 100 : 0;
-    if (c.compStatus === 'dentro_regra') {
+    if (melhor) {
+      reg.portRefin108 = {
+        banco: melhor.pr108.banco,
+        taxa: Math.round(melhor.pr108.taxa * 100) / 100,
+        coef: melhor.pr108.coef,
+        refin_novaParc: Math.round(melhor.pr108.refin_novaParc * 100) / 100,
+        refin_reducao: Math.round(melhor.pr108.refin_reducao * 100) / 100,
+        port_troco: Math.round(melhor.pr108.port_troco * 100) / 100,
+        port_vc: Math.round(melhor.pr108.port_vc * 100) / 100,
+        tabelaUsada: melhor.tabelaUsada,
+      };
+    }
+
+    if (enquadrado) {
       reg.compStatus = 'dentro_regra';
       reg.resolveExc = false;
       reg.elegRealOk = true;

@@ -133,7 +133,20 @@ export function ElegiveisTable() {
         );
       });
     }
-    return arr;
+
+    // Ordena: enquadrados POR TROCO desc primeiro, não-enquadrados por REDUÇÃO desc
+    const sorted = [...arr].sort((a, b) => {
+      const aEnq = a.compStatus === 'dentro_regra';
+      const bEnq = b.compStatus === 'dentro_regra';
+      const aScore = aEnq
+        ? (a.portRefin108?.port_troco || a.troco || 0)
+        : (a.reducaoEstim || 0);
+      const bScore = bEnq
+        ? (b.portRefin108?.port_troco || b.troco || 0)
+        : (b.reducaoEstim || 0);
+      return bScore - aScore;
+    });
+    return sorted;
   }, [base, f, rmcByCpf]);
 
   const items = filtered.slice(pg * PER_PAGE, (pg + 1) * PER_PAGE);
@@ -145,7 +158,15 @@ export function ElegiveisTable() {
   const contratosFiltro = filtered.length;
 
   const kpis = useMemo(() => {
-    const trocoTotal = filtered.reduce((s, r) => s + (r.troco || 0), 0);
+    // Troco total: usa port_troco do 108m quando disponível (enquadrados),
+    // senão usa o troco do 96m do testarTodos
+    const trocoTotal = filtered.reduce((s, r) => {
+      const enquadrado = r.compStatus === 'dentro_regra';
+      const troco = enquadrado
+        ? (r.portRefin108?.port_troco || r.troco || 0)
+        : (r.troco || 0);
+      return s + troco;
+    }, 0);
     const vcTotal = filtered.reduce((s, r) => s + (r.vc || 0), 0);
     return { trocoTotal, vcTotal, clientes: cpfsFiltroNum, contratos: contratosFiltro };
   }, [filtered, cpfsFiltroNum, contratosFiltro]);
@@ -155,12 +176,16 @@ export function ElegiveisTable() {
     if (!filtered.length) return;
     const header = [
       'CPF', 'Nome', 'Benefício', 'Contrato', 'Banco origem', 'Parcela', 'Nova parcela estim.', 'Saldo', 'Prazo', 'Pagas',
-      'Idade', 'Taxa origem', 'Banco destino', 'Vlr Contrato', 'Troco', 'Taxa nova',
+      'Idade', 'Taxa origem', 'Banco destino', 'Tabela', 'Vlr Contrato', 'Troco 96m', 'Troco 108m', 'Taxa nova',
       'Comp. %', 'Status enquadramento', 'Resolve sozinho', 'Redução estim.', 'Tel 1', 'Tel 2', 'Tel 3',
     ];
     const rows = filtered.map((r) => [
       r.cpf, r.nome, r.ben || '', r.con || '', r.cod, r.par, r.parcelaNovaEstim || '', r.sal, r.prazo, r.pag,
-      String(r.idade), r.taxaOrig || '', r.dest, r.vc, r.troco, r.taxa,
+      String(r.idade), r.taxaOrig || '',
+      r.portRefin108?.banco || r.dest,
+      r.portRefin108?.tabelaUsada || '',
+      r.vc, r.troco, r.portRefin108?.port_troco || '',
+      r.portRefin108?.taxa ?? r.taxa,
       r.compPct || '', r.compStatus || '', r.resolveExc ? 'SIM' : '', r.reducaoEstim || '',
       r.t1 || '', r.t2 || '', r.t3 || '',
     ]);
@@ -194,7 +219,7 @@ export function ElegiveisTable() {
           <div className="flex-1 min-w-0">
             <div className="text-xs font-bold text-green-400 uppercase tracking-wider">🎯 Elegibilidade — Nova regra</div>
             <div className="text-[11px] text-muted-foreground mt-0.5">
-              Dentro de 45% = elegível. Excedente só elegível se 1 port resolver. Acima sem solução = excluído.
+              Dentro de 40% (nova regra) = elegível. Excedente só elegível se 1 port resolver. Acima sem solução = excluído.
             </div>
           </div>
           <div className="flex gap-1.5">
@@ -369,12 +394,20 @@ function ElegivelRowRender({ row: r, checked, onToggle }: { row: ElegivelRow; ch
     : r.compStatus === 'fora_regra_inviavel' ? 'text-red-400 bg-red-500/15 border-red-500/40'
     : 'text-muted-foreground bg-muted/20 border-border';
   const compTxt =
-    r.compStatus === 'dentro_regra' ? '✅ ≤ 45%'
+    r.compStatus === 'dentro_regra' ? '✅ ≤ 40%'
     : r.compStatus === 'fora_regra_resolvivel' ? (r.resolveExc ? '🔄 ESTE resolve' : '🔄 outro resolve')
     : r.compStatus === 'fora_regra_inviavel' ? '❌ sem solução'
     : 'sem dados';
+  // Quando enquadrado, mostra TROCO da port 108m (port_troco). Senão mostra redução.
+  const enquadrado = r.compStatus === 'dentro_regra';
   const novaP = r.parcelaNovaEstim || 0;
   const reduz = r.reducaoEstim || 0;
+  const trocoMostrar = enquadrado
+    ? (r.portRefin108?.port_troco || r.troco || 0)
+    : (r.troco || 0);
+  const tabelaTag = r.portRefin108?.tabelaUsada;
+  const taxaUsada = r.portRefin108?.taxa ?? (typeof r.taxa === 'number' ? r.taxa : 0);
+  const destinoUsado = r.portRefin108?.banco || r.dest;
   return (
     <tr className={`hover:bg-muted/20 ${checked ? 'bg-blue-500/5' : ''}`}>
       <td className="p-2 text-center">
@@ -410,15 +443,28 @@ function ElegivelRowRender({ row: r, checked, onToggle }: { row: ElegivelRow; ch
       <td className="p-2">
         {r._semContrato ? (
           <span className="text-[10px] text-green-400 font-semibold">💰 emp. novo</span>
-        ) : r.dest !== '-' ? (
-          <Badge variant="outline" className="text-[10px] font-mono">{r.dest}</Badge>
+        ) : destinoUsado && destinoUsado !== '-' ? (
+          <div className="flex flex-col gap-0.5">
+            <Badge variant="outline" className="text-[10px] font-mono w-fit">{destinoUsado}</Badge>
+            {tabelaTag && (
+              <Badge
+                variant={tabelaTag === 'alta' ? 'success' : 'info'}
+                className="text-[9px] w-fit"
+                title={tabelaTag === 'alta' ? 'Tabela alta (1.85% teto) — mais comissão' : 'Tabela baixa — mais troco/redução cliente'}
+              >
+                {tabelaTag === 'alta' ? '↑ alta' : '↓ baixa'}
+              </Badge>
+            )}
+          </div>
         ) : '—'}
       </td>
       <td className="p-2 text-right font-mono">{r.vc > 0 ? formatBRL(r.vc) : '—'}</td>
       <td className="p-2 text-right font-mono">
-        {r.troco > 0 ? <span className="text-green-400 font-semibold">{formatBRL(r.troco)}</span> : '—'}
+        {trocoMostrar > 0 ? (
+          <span className="text-green-400 font-semibold">{formatBRL(trocoMostrar)}</span>
+        ) : '—'}
       </td>
-      <td className="p-2 font-mono">{r.taxa !== '-' ? `${r.taxa}%` : '—'}</td>
+      <td className="p-2 font-mono">{taxaUsada > 0 ? `${taxaUsada.toFixed(2)}%` : '—'}</td>
     </tr>
   );
 }
