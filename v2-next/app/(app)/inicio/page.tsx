@@ -82,16 +82,29 @@ export default function InicioPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Em breve</CardTitle>
-          <CardDescription>O que vem nos próximos deploys</CardDescription>
+          <CardTitle>Status da migração</CardTitle>
+          <CardDescription>O que já tá rodando aqui no V2 e o que ainda vem</CardDescription>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-1">
-          <div>✅ Login + layout + sidebar</div>
-          <div>⏳ Consulta CLT com Realtime (sem polling)</div>
-          <div>⏳ Esteira + Empresas Aprovadas + Catálogo</div>
-          <div>⏳ INSS completo</div>
-          <div>⏳ Governos / SIAPE / Estaduais / Municipais</div>
-          <div>⏳ Migração backend pra Next.js API routes (autonomia total)</div>
+          <div className="font-semibold text-foreground/80 pt-1">✅ CLT — completo</div>
+          <div className="pl-4">✅ Consulta unitária + Análise em lote + Análise de cliente</div>
+          <div className="pl-4">✅ Empresas Aprovadas + Esteira + Catálogo de bancos</div>
+          <div className="pl-4">✅ Extrair Base CAGED (com botão Pesquisar)</div>
+          <div className="pl-4">✅ Conversas IA Sofia + Conexão WhatsApp + Autorizações LGPD</div>
+          <div className="pl-4">✅ Painel Operacional (KPIs + usuários online)</div>
+
+          <div className="font-semibold text-foreground/80 pt-2">⚙️ Admin — completo</div>
+          <div className="pl-4">✅ Usuários + Parceiros (perfil completo: contato, endereço, comissão)</div>
+
+          <div className="font-semibold text-foreground/80 pt-2">🟡 INSS — migração em curso (outro chat)</div>
+          <div className="pl-4">⏳ Consulta + Higienização + Pipeline + Esteira já rodando</div>
+          <div className="pl-4">⏳ Sofia (Conversas) + Disparo em massa em ajuste</div>
+
+          <div className="font-semibold text-foreground/80 pt-2">⏳ Roadmap</div>
+          <div className="pl-4">⏳ Governos / SIAPE / Estaduais / Municipais</div>
+          <div className="pl-4">⏳ Prefeituras (catálogo já existe, falta operação)</div>
+          <div className="pl-4">⏳ Consulta CLT com Supabase Realtime (substituir polling)</div>
+          <div className="pl-4">⏳ Migrar backend Vercel → Next.js API routes (autonomia total da VPS)</div>
         </CardContent>
       </Card>
     </div>

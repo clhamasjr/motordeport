@@ -76,6 +76,7 @@ const NAV: NavGroup[] = [
       { href: '/clt/painel', label: 'Painel Operacional', icon: Activity, needsRole: ['admin', 'gestor'], section: 'operar' },
       // ── IA & Disparo ──
       { href: '/clt/conversas', label: 'Conversas IA', icon: MessageSquare, section: 'ia' },
+      { href: '/clt/autorizacoes', label: 'Autorizações LGPD', icon: FileText, section: 'ia' },
       // ── Config ──
       { href: '/clt/catalogo', label: 'Catálogo de Bancos', icon: BookOpen, section: 'config' },
       { href: '/clt/extrair-caged', label: 'Extrair Base CAGED', icon: Download, needsRole: ['gestor', 'admin'], section: 'config' },
