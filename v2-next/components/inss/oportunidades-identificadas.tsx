@@ -141,15 +141,15 @@ function calcularTudo(
 
   // ── Análise da nova regra INSS (vigente) ──
   //
-  // REGRA:
-  //   - Cliente COM OS 2 CARTÕES AVERBADOS (RMC + RCC ambos ativos):
-  //     35% emp + 5% cartão = 40% total
-  //   - Cliente SEM os 2 cartões averbados (faltando pelo menos 1):
-  //     40% INTEIRO pra empréstimo
+  // REGRA (CORRETA):
+  //   - Cliente COM PELO MENOS 1 cartão averbado (RMC OU RCC):
+  //     teto emp = 35% (cliente já está no esquema 35% emp + 5% cartão)
+  //   - Cliente SEM CARTÃO NENHUM:
+  //     teto emp = 40% INTEIRO pra empréstimo (pode usar 5% do cartão como emp)
   //
-  // Detecção: usa SÓ a margem livre como fonte de verdade. Se margem livre
-  // do cartão < teto, significa que tá sendo usado. Cartões antigos no array
-  // parsed.cartoes podem vir como histórico e não devem afetar a regra.
+  // Em ambos: teto TOTAL = 40% da base de cálculo.
+  // Detecção: SÓ pela margem livre (fonte de verdade). Cartões antigos no array
+  // parsed.cartoes podem ser histórico — ignorados.
   const benef = parseBR(ben.base_calculo) || parseBR(ben.valor) || 0;
   const sumEmp = parseBR(mrg.parcelas);
   const tetoCartao = benef * 0.05;
@@ -162,15 +162,12 @@ function calcularTudo(
   const total = sumEmp + sumRmc + sumRcc;
   const compPct = benef > 0 ? (total / benef) * 100 : 0;
 
-  // Tem os DOIS cartões averbados? (RMC E RCC ambos)
-  const temAmbosCartoes = temRmc && temRcc;
-  // Pra compat com props existentes — temAlgumCartao = mesma coisa que temAmbos
-  // (sem cartão completo, regra é 40% só emp)
-  const temAlgumCartao = temAmbosCartoes;
+  // Tem PELO MENOS 1 cartão averbado? (RMC OU RCC)
+  const temAlgumCartao = temRmc || temRcc;
 
   const teto40Total = benef * 0.40;
-  // Teto de empréstimo: 35% se TEM AMBOS os cartões; 40% caso contrário
-  const tetoEmpReal = temAmbosCartoes ? benef * 0.35 : benef * 0.40;
+  // Teto emp: 35% se tem QUALQUER cartão; 40% se NÃO tem nenhum
+  const tetoEmpReal = temAlgumCartao ? benef * 0.35 : benef * 0.40;
   const tetoEmpComCartao = benef * 0.35; // legacy
   const enquadraNovaRegra = total <= teto40Total + 0.01 && sumEmp <= tetoEmpReal + 0.01;
   const excedente = Math.max(0, total - teto40Total);

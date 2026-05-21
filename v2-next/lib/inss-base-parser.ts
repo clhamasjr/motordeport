@@ -362,11 +362,10 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     const sumEmp = sumEmpByCpf[cpf] || 0;
     const vRmc = x?.vRmc || 0;
     const vRcc = x?.vRcc || 0;
-    // Regra: precisa ter AMBOS RMC e RCC averbados pra usar 35%+5%
-    // Senão, é 40% inteiro pra emp
-    const temAmbosCartoes = !!(x?.temRmc && x?.temRcc);
-    const temAlgumCartao = temAmbosCartoes; // alias pra compat
-    const benef = x?.valorBeneficio || (sumEmp > 0 ? sumEmp / (temAmbosCartoes ? 0.35 : 0.40) : 0);
+    // Regra: PELO MENOS 1 cartão averbado (RMC OU RCC) → 35% emp + 5% cartão
+    // Senão (sem cartão nenhum), 40% inteiro pra emp
+    const temAlgumCartao = !!(x?.temRmc || x?.temRcc);
+    const benef = x?.valorBeneficio || (sumEmp > 0 ? sumEmp / (temAlgumCartao ? 0.35 : 0.40) : 0);
     if (!benef) {
       compByCpf[cpf] = {
         compPct: 0, compStatus: 'sem_dados', excedente: 0, benef: 0,
@@ -380,7 +379,7 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     const teto40 = benef * 0.40;  // NOVA regra (vigente) — total
     const teto45 = benef * 0.45;  // legacy (compat)
     // Teto EMP REAL: 35% se tem cartão, 40% se não tem
-    const tetoEmpReal = temAmbosCartoes ? benef * 0.35 : benef * 0.40;
+    const tetoEmpReal = temAlgumCartao ? benef * 0.35 : benef * 0.40;
     // Excedente: total > 40% do benef (regra global). Se sumEmp > tetoEmpReal,
     // também é excedente (sem cartão e sumEmp > 40% — impossível, mas defensivo).
     const excedente = Math.max(0, total - teto40);

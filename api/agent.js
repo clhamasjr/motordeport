@@ -746,16 +746,15 @@ function extractOportunidades(parsed) {
   const benef = _parseBR(ben.base_calculo) || _parseBR(ben.valor) || 0;
   const sumEmp = _parseBR(mrg.parcelas);
 
-  // Cliente tem AMBOS os cartoes (RMC e RCC) averbados?
-  // - SIM: teto emp = 35% + 5% cartao = 40%
-  // - NAO (falta pelo menos 1): teto emp = 40% inteiro
+  // Cliente tem PELO MENOS 1 cartao averbado (RMC OU RCC)?
+  // - SIM: ja esta no esquema 35% emp + 5% cartao = 40% total
+  // - NAO (sem cartao nenhum): teto emp = 40% inteiro
   // Detecta APENAS pela margem livre (fonte de verdade) — ignora parsed.cartoes
   // (que pode trazer cartoes antigos do historico).
   const temRmc = mrg.rmc != null && mrgRmc < (benef * 0.05) - 0.01;
   const temRcc = mrg.rcc != null && mrgRcc < (benef * 0.05) - 0.01;
-  const temAmbosCartoes = temRmc && temRcc;
-  const temAlgumCartao = temAmbosCartoes; // alias
-  const tetoEmpReal = temAmbosCartoes ? benef * 0.35 : benef * 0.40;
+  const temAlgumCartao = temRmc || temRcc;
+  const tetoEmpReal = temAlgumCartao ? benef * 0.35 : benef * 0.40;
   const teto40Total = benef * 0.40;
 
   // Soma cartoes utilizados
