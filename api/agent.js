@@ -335,6 +335,85 @@ function autoFillFromPipeline(convData) {
   if (d.dtNasc && !d.data_nascimento) d.data_nascimento = d.dtNasc;
   if (d.ben && !d.beneficio) d.beneficio = d.ben;
   if (d.t1 && !d.telefone) d.telefone = d.t1;
+  // Aplica defaults inteligentes (sexo pelo nome, RG orgao/uf, email aleatorio, etc)
+  return autoFillDefaults(d);
+}
+
+// Deduzir sexo pelo PRIMEIRO nome (heuristica + lista de excecoes)
+// Regra: termina em 'a' ou 'e' → F; termina em 'o' ou consoante → M
+// Excecoes M com terminacao 'a'/'e': Jaime, Felipe, Joice, Vicente, Andre, Jose, Joel
+function deduzirSexo(nomeCompleto) {
+  if (!nomeCompleto) return null;
+  const primeiro = String(nomeCompleto).trim().split(/\s+/)[0].toLowerCase();
+  if (!primeiro) return null;
+  // Excecoes masculinas com terminacao 'a'/'e'
+  const masc = ['jose', 'andre', 'felipe', 'vicente', 'jaime', 'joel', 'isaque',
+                'enrique', 'henrique', 'davi', 'levi', 'noe', 'aristides', 'silas',
+                'dione', 'gilmar', 'edgar', 'ricardo', 'eduardo', 'fernando',
+                'leonardo', 'gustavo', 'mauricio', 'fabricio', 'patricio'];
+  if (masc.includes(primeiro)) return 'M';
+  // Excecoes femininas com terminacao diferente
+  const fem = ['carmen', 'mirian', 'miriam', 'jaqueline', 'jacqueline', 'jaqueline',
+               'helen', 'ester', 'esther', 'raquel', 'beatris', 'beatriz',
+               'alis', 'iris', 'ines', 'mercedes', 'rute', 'rute'];
+  if (fem.includes(primeiro)) return 'F';
+  // Heuristica por terminacao
+  const ultLetra = primeiro.slice(-1);
+  if (ultLetra === 'a' || ultLetra === 'e') return 'F';
+  return 'M';
+}
+
+// Extrai numero do endereco a partir da string (ex: "RUA TAL, 123" → 123)
+// Multicorban traz endereco como string unica. Tenta extrair o numero.
+function extrairNumeroEndereco(endStr) {
+  if (!endStr) return null;
+  const s = String(endStr);
+  // Padrao 1: ", 123" ou ", N 456" ou ", Nº 789"
+  let m = s.match(/[,\s](?:n\s*[º°.]?\s*|num\s*[º°.]?\s*)?(\d{1,6})\b/i);
+  if (m && m[1]) return m[1];
+  // Padrao 2: numero no fim
+  m = s.match(/(\d{1,6})\s*$/);
+  if (m && m[1]) return m[1];
+  return null;
+}
+
+// Defaults inteligentes para campos FACTA — minimiza o que Sofia precisa perguntar
+function autoFillDefaults(convData) {
+  const d = { ...convData };
+  const auto = new Set(Array.isArray(d._autoFilled) ? d._autoFilled : []);
+
+  // Sexo: deduz pelo nome se nao tem
+  if (!d.sexo) {
+    const sx = deduzirSexo(d.nome_completo || d.nome);
+    if (sx) { d.sexo = sx; auto.add('sexo'); }
+  }
+
+  // Estado civil: default "Solteiro" (cliente confirma se for outro)
+  if (!d.estado_civil) { d.estado_civil = 'Solteiro'; auto.add('estado_civil'); }
+
+  // RG orgao: SSP (padrao nacional)
+  if (!d.rg_orgao) { d.rg_orgao = 'SSP'; auto.add('rg_orgao'); }
+
+  // RG UF: usa UF do endereco se temos
+  if (!d.rg_uf && d.uf) { d.rg_uf = d.uf; auto.add('rg_uf'); }
+
+  // Numero do endereco: tenta extrair do logradouro
+  if (!d.numero_end && d.endereco) {
+    const num = extrairNumeroEndereco(d.endereco);
+    if (num) { d.numero_end = num; auto.add('numero_end'); }
+  }
+
+  // Email: gera aleatorio cpf@lhamascred.com.br se cliente nao tem
+  // (muito cliente INSS nao tem email)
+  if (!d.email && d.cpf) {
+    const cpfClean = String(d.cpf).replace(/\D/g, '');
+    if (cpfClean.length === 11) {
+      d.email = `cliente${cpfClean}@lhamascred.com.br`;
+      auto.add('email');
+    }
+  }
+
+  d._autoFilled = Array.from(auto);
   return d;
 }
 
@@ -1075,6 +1154,9 @@ export default async function handler(req) {
             _oportunidades: motor.oportunidades,
             _enquadramento: motor.enquadramento || null,
           };
+          // Aplica defaults inteligentes: sexo pelo nome, estado_civil=Solteiro,
+          // rg_orgao=SSP, rg_uf=uf, numero_end extraido do endereco, email gerado
+          conv.data = autoFillDefaults(conv.data);
           // Define campaignType baseado na melhor oportunidade
           const melhor = motor.oportunidades.sort((a, b) => (b.valor || 0) - (a.valor || 0))[0];
           if (melhor) {
@@ -1194,6 +1276,16 @@ Use VALORES EXATOS do motor. SÓ a melhor opção. *Negrito* nos números. Termi
         if (missing.length === 0) contextParts.push(`\n⚡ TODOS OS DADOS COMPLETOS! Avise o cliente e dispare [ACAO:DIGITAR_PROPOSTA]`);
         else if (missing.length <= 5) contextParts.push(`\n🔜 Quase lá! Faltam apenas ${missing.length} campos.`);
         contextParts.push(`\n⚠️ REGRA CRÍTICA: Se o campo está em "DADOS QUE JÁ TEMOS" você NUNCA pode pedir de novo. Repetir é falha grave. Peça APENAS os campos em "FALTAM".`);
+        // Lista campos preenchidos por DEFAULT (sexo deduzido pelo nome, estado civil
+        // = solteiro, etc) — Sofia DEVE confirmar de forma natural ao fechar
+        const autoFilled = Array.isArray(conv.data?._autoFilled) ? conv.data._autoFilled : [];
+        if (autoFilled.length > 0) {
+          const sensiveis = autoFilled.filter((f) => ['sexo', 'estado_civil'].includes(f));
+          if (sensiveis.length > 0) {
+            const valoresAuto = sensiveis.map((f) => `${f}=${conv.data[f]}`).join(', ');
+            contextParts.push(`\n💡 DEFAULTS APLICADOS (confirme suavemente com cliente ANTES do [ACAO:DIGITAR_PROPOSTA], sem pedir formalmente — só "anotei como X, se for diferente me avisa"): ${valoresAuto}`);
+          }
+        }
       }
       contextParts.push(`\nMensagem do cliente: "${text}"`);
 
