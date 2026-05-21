@@ -1013,12 +1013,24 @@ export default async function handler(req) {
       // Regra: se a conversa JA TEM dados de cliente (veio de campanha via action=dispatch),
       // NAO precisa pedir CPF nem consultar motor — Sofia ja tem tudo que precisa.
       const jaTemDadosCliente = !!(conv.data && (conv.data.cpf || conv.data.beneficio || conv.data.troco || conv.data.margem_disponivel || conv.data._oportunidades));
+      // Re-consulta motor se conversa antiga ainda nao tem dados novos do Multicorban
+      // (clientes consultados ANTES do upgrade que adicionou agencia/rg/endereco)
+      const faltaDadosMulticorban = conv.motorConsultado && conv.data && conv.data.cpf &&
+        (!conv.data.agencia && !conv.data.rg_numero && !conv.data.endereco);
+      if (faltaDadosMulticorban) {
+        conv.motorConsultado = false; // permite re-consulta com o CPF que ja temos
+      }
       // So consulta motor se: cliente mandou CPF + valido + motor ainda nao foi consultado + NAO tem dados previos
-      const cpfDetectado = extractCPF(text);
-      if (cpfDetectado && isValidCPF(cpfDetectado) && !conv.motorConsultado && !jaTemDadosCliente) {
+      const cpfDoTexto = extractCPF(text);
+      const cpfDetectado = cpfDoTexto || (faltaDadosMulticorban ? conv.data.cpf : null);
+      const ehReconsulta = faltaDadosMulticorban && !cpfDoTexto;
+      if (cpfDetectado && isValidCPF(cpfDetectado) && !conv.motorConsultado && (!jaTemDadosCliente || faltaDadosMulticorban)) {
         const appUrl = process.env.APP_URL || 'https://motordeport.vercel.app';
-        // Consulta assincrona — envia mensagem "deixa eu consultar" enquanto processa
-        try { await sendMsg(instance, number, '🔍 Consultando aqui na base... só 1 minutinho...'); } catch {}
+        // Re-consulta silenciosa nao avisa cliente. So mensagem quando cliente
+        // realmente mandou CPF agora.
+        if (!ehReconsulta) {
+          try { await sendMsg(instance, number, '🔍 Consultando aqui na base... só 1 minutinho...'); } catch {}
+        }
         let motor;
         try {
           motor = await consultarMotorSofia(cpfDetectado, appUrl);
