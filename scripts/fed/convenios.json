@@ -211,11 +211,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Valor mínimo de troco R$ 50,00\nValor mínimo de operação refin pra refinanciar - R$ 2.000,00",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "São necessários 6 parcelas pagas.\nPara refin da port é permitido somente após 12 parcelas do contrato portado",
             "qtd_contratos": "9 contratos por matrícula e por consignatária.",
@@ -238,7 +238,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -351,11 +351,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "troco mínimo de R$ 100",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "Permitido somente após 3 parcelas pagas liquidadas (política Safra)",
             "qtd_contratos": "09 Contratos por CPF",
@@ -377,7 +377,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -485,11 +485,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "100",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "6% de parcelas pagas",
             "qtd_contratos": "Limitada a 9 operações por matrícula",
@@ -511,7 +511,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -619,11 +619,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "3,5% ou 100,00",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "6 parcelas pagas",
             "qtd_contratos": "10 LINHAS POR MATRICULA / BANCO, RESPEITANDO A SEGUINTE REGRA:\n➢ 09 LINHAS PARA EMPRÉSTIMOS.\n➢ 01 LINHA PARA CARTÃO DE CRÉDITO.\nOBS.: CASO O SERVIDOR JÁ TENHA TOMADO AS 10 LINHAS PARA EMPRÉSTIMOS, NÃO SERÁ POSSIVEL REALIZAR A OPERAÇÃO DE CARTÃO DE CRÉDITO.",
@@ -646,7 +646,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -759,11 +759,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Refin: R$ 300,00.",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "Necessário 01 parcela paga e baixada em sistema.",
             "qtd_contratos": "07 contratos por matrícula",
@@ -785,7 +785,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -893,11 +893,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Refin R$ 300,00",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "É permitido o refinanciamento de contratos, desde que possuam uma quantidade mínima de 10 (dez) parcelas pagas;\n\nÉ permitido refinanciar contrato com mínimo de 5 (cinco) parcelas pagas, com valor financiado a partir de R$ 5.000,00 (cinco mil reais);",
             "qtd_contratos": "É permitido que o Cliente possua até 9 (nove) descontos por matrícula\nem seu contracheque na rubrica Banrisul, limitando-se a 10 (dez)\noperações de empréstimos por CPF.",
@@ -919,7 +919,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -1027,11 +1027,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "-",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "8 parcelas pagas",
             "qtd_contratos": "É permitido 8 (oito) contratos por “Matrícula”.",
@@ -1053,7 +1053,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -1161,11 +1161,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "500",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "18 parcerlas pagas",
             "qtd_contratos": "-",
@@ -1187,7 +1187,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -1295,11 +1295,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Menor valor entre R$ 1,000,00 ou 5% do valor financiado",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "Mínimo de 6 (seis) parcelas pagas nos prazos de 96 e 84 meses ou 6,20% nos demais prazos",
             "qtd_contratos": "9 por matrícula por IF",
@@ -1321,7 +1321,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -1429,11 +1429,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Valor mínimo de parcela: R$ 30,00\n\nValor mínimo de AF: Não possui\n\nFAIXA DE AF LÍQUIDO\nDe R$ 300,00 a R$ 2.999,99 \nDe R$ 3.000,00 a R$ 14.999,99\nDe R$ 15.000,00 a R$ 34.999,99\nDe R$ 35.000,00 a R$ 69.999,99\nDe R$ 70.000,00 a R$ 99.999,99\nDe R$ 100.000,00 a R$ 220.000,00",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "REFIN SABEMI: Conforme regras vigentes de Produtos (Validar na simulação)",
             "qtd_contratos": "8 operações por matrícula",
@@ -1456,7 +1456,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -1569,11 +1569,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Líquido Mínimo Refin de Carteira: R$ 250,00\nLíquido Mínimo Refin de Port: R$ 250,00",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "Não possui",
             "qtd_contratos": "9 Contratos por matricula/ Banco respeitando a seguinte regra: 8 linhas de consignado e 1 para cartão. Caso o servidor tome as 9 linhas de empréstimo Não poderá fazer o cartão consignado.",
@@ -1595,7 +1595,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -1703,11 +1703,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Não faz",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "Não faz",
             "qtd_contratos": "Limitado a margem consignável",
@@ -1729,7 +1729,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -1837,11 +1837,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Troco minimo 10% do valor ja pago",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "06 parcelas pagas",
             "qtd_contratos": "Limitado a 9 contratos",
@@ -1863,7 +1863,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -2105,11 +2105,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Não faz",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "Não faz",
             "qtd_contratos": "Limite de 10 contratos por CPF",
@@ -2131,7 +2131,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -2239,11 +2239,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Não faz",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "Não faz",
             "qtd_contratos": "9 Contrato por Matricula",
@@ -2265,7 +2265,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -2373,11 +2373,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Não faz",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "Não faz",
             "qtd_contratos": "9 Contrato por Matricula",
@@ -2399,7 +2399,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -2507,11 +2507,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Não faz",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "Não faz",
             "qtd_contratos": "10 linhas por matrícula \n➢ 09 linhas para empréstimos. ➢ 01 linha para cartão de\ncrédito.",
@@ -2533,7 +2533,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -2641,11 +2641,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Não faz",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "Liberado troco mínimo de R$:100,00",
             "qtd_contratos": "19 LINHAS POR MATRICULA / BANCO, RESPEITANDO A SEGUINTE REGRA:\n➢ 09 LINHAS PARA EMPRÉSTIMOS.\n➢ 01 LINHA PARA CARTÃO DE CRÉDITO.\n➢ 09 LINHAS PARA CARTÃO DE BENEFÍCIO\nOBS.: CASO O SERVIDOR JÁ TENHA TOMADO AS 10 LINHAS PARA EMPRÉSTIMOS, NÃO SERÁ\nPOSSIVEL REALIZAR A OPERAÇÃO DE CARTÃO DE CRÉDITO.",
@@ -2667,7 +2667,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {
@@ -2859,11 +2859,11 @@
           },
           "idade_min": null,
           "idade_max": null,
-          "margem_utilizavel": 0.35,
+          "margem_utilizavel": 0.4,
           "taxa_minima_port": null,
           "atributos": {
             "valor_minimo": "Não faz",
-            "margem_utilizavel": "0.35",
+            "margem_utilizavel": "0.4",
             "data_corte": "Dia 10",
             "min_parcelas_refin": "-",
             "qtd_contratos": "O cliente pode ter até 9 contratos por consignatária/matrícula, por instituição, desde\nque tenha margem disponível. Para refinanciamento, o limite é de 6 contratos ativos\ncom o PB. Acima disso, é necessário fazer junção de contratos.",
@@ -2885,7 +2885,7 @@
             },
             {
               "label": "Margem Utilizável",
-              "valor": "0.35",
+              "valor": "0.4",
               "secao": "principal"
             },
             {

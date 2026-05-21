@@ -247,10 +247,15 @@ async function analisarHolerite(body, req, auth) {
     }
 
     let bancosAtendem = [], bancosNaoAtendem = [], simulacaoPort = [];
+    let enquadramento = null;
     if (convenio) {
       const cruzamento = await cruzarHoleriteComBancos(convenio.id, dados);
       bancosAtendem = cruzamento.atendem;
       bancosNaoAtendem = cruzamento.nao_atendem;
+
+      // Calcula enquadramento de margem (teto SIAPE 40% / militar 70%).
+      // Detecta estouro se a soma dos consignados ja averbados ultrapassar o teto.
+      enquadramento = calcularEnquadramento(dados, convenio);
 
       // Se tem contratos do extrato, simula portabilidade contrato-a-contrato
       const contratosEmprestimo = (dados.contratos_ativos || []).filter(c => c.tipo === 'emprestimo');
@@ -262,7 +267,7 @@ async function analisarHolerite(body, req, auth) {
             `orgao=eq.SIAPE&operacao_tipo=eq.portabilidade&limit=1`, { single: true });
           if (r.data) convenioPortId = r.data.id;
         }
-        simulacaoPort = await simularPortabilidade(convenioPortId, contratosEmprestimo);
+        simulacaoPort = await simularPortabilidade(convenioPortId, contratosEmprestimo, enquadramento);
       }
     }
 
@@ -285,6 +290,7 @@ async function analisarHolerite(body, req, auth) {
       bancos_atendem: bancosAtendem,
       bancos_nao_atendem: bancosNaoAtendem,
       simulacao_port: simulacaoPort,
+      enquadramento,
       duracao_ms: Date.now() - t0,
     }, 200, req);
   } catch (e) {
@@ -524,7 +530,76 @@ function calcularSaldoDevedor(pmt, n, i) {
   return pmt * (1 - Math.pow(1 + i, -n)) / i;
 }
 
-async function simularPortabilidade(convenioId, contratos) {
+// ── Calcula enquadramento de margem do servidor ────────────────
+// Teto SIAPE: 40% emp. (sobe pra 40% inteiro quando nao tem RMC+RCC averbados).
+// Quando TEM ambos cartoes averbados: emp ate 35% + 5% RMC + 5% RCC = 45% total (regra antiga)
+// Hoje, com o novo teto de 40% e ambos cartoes: ele esta "estourando" 5% e precisa
+// portar c/ reducao pra encaixar (35% emp + 5% + 5% = 45%, mas o teto sao 40% → -5%).
+//
+// Para militares (Marinha/Exercito/Aeronautica) o teto e maior (70%) e a regra
+// segue a politica especifica de cada Forca.
+function calcularEnquadramento(dados, convenio) {
+  const salarioBruto = Number(dados.salario_bruto) || null;
+  const contratos = Array.isArray(dados.contratos_ativos) ? dados.contratos_ativos : [];
+  if (!salarioBruto || contratos.length === 0) return null;
+
+  // Determina teto e margens reservadas por categoria
+  const isMilitar = convenio?.categoria === 'militar';
+  const tetoMargem = isMilitar ? 0.70 : 0.40; // SIAPE = 40%, militar = 70%
+  // No SIAPE com ambos cartoes averbados, eles "guardam" 5%+5% = 10% (regra)
+  const reservaCartoesPct = 0.05; // cada cartao reserva 5%
+
+  // Separa contratos por tipo
+  const empContratos = contratos.filter(c => c.tipo === 'emprestimo');
+  const rmcContratos = contratos.filter(c => c.tipo === 'rmc');
+  const rccContratos = contratos.filter(c => c.tipo === 'rcc');
+
+  const sumPmt = (arr) => arr.reduce((s, c) => s + (Number(c.parcela_valor) || 0), 0);
+  const pmtEmprestimos = sumPmt(empContratos);
+  const pmtRmc = sumPmt(rmcContratos);
+  const pmtRcc = sumPmt(rccContratos);
+  const totalConsignado = pmtEmprestimos + pmtRmc + pmtRcc;
+
+  const temRmc = rmcContratos.length > 0;
+  const temRcc = rccContratos.length > 0;
+  const temAmbosCartoes = temRmc && temRcc;
+
+  const margemTeto = salarioBruto * tetoMargem;
+  // Margem util pra EMPRESTIMO = teto total - reserva dos cartoes averbados
+  const margemReservadaCartoes = (temRmc ? reservaCartoesPct : 0) * salarioBruto
+                               + (temRcc ? reservaCartoesPct : 0) * salarioBruto;
+  const margemUtilEmprestimo = Math.max(0, margemTeto - margemReservadaCartoes);
+
+  // Estouro: total consignado > teto OU emprestimos > margem util de emp
+  const valorEstouroTotal = Math.max(0, totalConsignado - margemTeto);
+  const valorEstouroEmprestimo = Math.max(0, pmtEmprestimos - margemUtilEmprestimo);
+  // Considera o maior estouro como o problema a resolver
+  const valorEstouro = Math.max(valorEstouroTotal, valorEstouroEmprestimo);
+  const estourou = valorEstouro > 0.01;
+
+  const pctConsumido = salarioBruto > 0 ? (totalConsignado / salarioBruto) : 0;
+
+  return {
+    salario_bruto: salarioBruto,
+    teto_pct: tetoMargem,                              // 0.40 SIAPE / 0.70 militar
+    teto_valor: Number(margemTeto.toFixed(2)),
+    margem_util_emprestimo_valor: Number(margemUtilEmprestimo.toFixed(2)),
+    pmt_emprestimos: Number(pmtEmprestimos.toFixed(2)),
+    pmt_rmc: Number(pmtRmc.toFixed(2)),
+    pmt_rcc: Number(pmtRcc.toFixed(2)),
+    total_consignado: Number(totalConsignado.toFixed(2)),
+    tem_rmc: temRmc,
+    tem_rcc: temRcc,
+    tem_ambos_cartoes: temAmbosCartoes,
+    estourou,
+    valor_estouro: Number(valorEstouro.toFixed(2)),
+    valor_estouro_emprestimo: Number(valorEstouroEmprestimo.toFixed(2)),
+    pct_consumido: Number(pctConsumido.toFixed(4)),
+    qtd_emprestimos: empContratos.length,
+  };
+}
+
+async function simularPortabilidade(convenioId, contratos, enquadramento) {
   if (!Array.isArray(contratos) || contratos.length === 0) return [];
   const { data: rels, error } = await dbQuery(
     'fed_banco_convenio',
@@ -533,6 +608,11 @@ async function simularPortabilidade(convenioId, contratos) {
   if (error || !rels || rels.length === 0) return [];
 
   const norm = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/\p{Diacritic}/gu, '').trim();
+
+  // Rateia o estouro de margem entre os contratos de emprestimo proporcionalmente
+  // (cada contrato contribui pela sua participacao no total de empréstimos).
+  const pmtEmprTotal = contratos.reduce((s, c) => s + (Number(c.parcela_valor) || 0), 0);
+  const valorEstouro = enquadramento?.estourou ? enquadramento.valor_estouro : 0;
 
   const result = [];
   for (const c of contratos) {
@@ -544,6 +624,15 @@ async function simularPortabilidade(convenioId, contratos) {
 
     // SALDO DEVEDOR REAL com taxa origem 1,80% a.m.
     const saldoDevedor = calcularSaldoDevedor(parcela, restantes, TAXA_ORIGEM_PADRAO);
+
+    // ── Calcula parcela ALVO pra enquadrar (se estourou) ──
+    // Rateio: este contrato cobre (parcela/pmtEmprTotal) * valor_estouro do estouro.
+    let reducaoNecessaria = 0;
+    let parcelaAlvo = parcela;
+    if (valorEstouro > 0 && pmtEmprTotal > 0) {
+      reducaoNecessaria = (parcela / pmtEmprTotal) * valorEstouro;
+      parcelaAlvo = Math.max(0, parcela - reducaoNecessaria);
+    }
 
     const sugestoes = [];
     for (const r of rels) {
@@ -585,6 +674,21 @@ async function simularPortabilidade(convenioId, contratos) {
         }
       }
 
+      // Cenario C — PORT PRA ENQUADRAR: usa parcela_alvo (reduzida pra eliminar
+      // o estouro). Calcula qual prazo o banco destino precisa praticar pra
+      // que essa parcela menor cubra o saldo devedor com a taxa do banco.
+      // Formula: n = -log(1 - saldoDevedor*i/PMT) / log(1+i)
+      let prazoEnquadrar = null, enquadra = false;
+      if (valorEstouro > 0 && taxa && parcelaAlvo > 0 && saldoDevedor > 0) {
+        const ratio = saldoDevedor * taxa / parcelaAlvo;
+        if (ratio < 1) {
+          prazoEnquadrar = -Math.log(1 - ratio) / Math.log(1 + taxa);
+          // Considera que "enquadra" quando o prazo necessario nao excede o
+          // prazo total original do contrato (banco geralmente nao estende +)
+          enquadra = totais > 0 ? prazoEnquadrar <= totais + 0.5 : true;
+        }
+      }
+
       sugestoes.push({
         banco_id: r.banco_id,
         banco_slug: r.fed_bancos?.slug,
@@ -596,6 +700,11 @@ async function simularPortabilidade(convenioId, contratos) {
         // Refin de port com troco (mantem parcela, prazo total)
         novo_pv_refin: novoPV ? Number(novoPV.toFixed(2)) : null,
         troco_estimado: troco != null ? Number(troco.toFixed(2)) : null,
+        // Port pra enquadrar (reduz parcela ate caber no teto)
+        parcela_alvo_enquadramento: valorEstouro > 0 ? Number(parcelaAlvo.toFixed(2)) : null,
+        reducao_necessaria_enquadramento: valorEstouro > 0 ? Number(reducaoNecessaria.toFixed(2)) : null,
+        prazo_enquadrar_meses: prazoEnquadrar ? Number(prazoEnquadrar.toFixed(1)) : null,
+        enquadra,
         motivos_bloqueio: motivos,
         atende: motivos.length === 0,
       });
@@ -623,10 +732,15 @@ async function simularPortabilidade(convenioId, contratos) {
         saldo_devedor_estimado: saldoDevedor ? Number(saldoDevedor.toFixed(2)) : null,
         taxa_origem_assumida: TAXA_ORIGEM_PADRAO,
         fim: c.fim,
+        // Enquadramento (so quando estourou — mostra qual a parcela alvo
+        // pra esse contrato eliminar a sua fatia do estouro)
+        parcela_alvo_enquadramento: valorEstouro > 0 ? Number(parcelaAlvo.toFixed(2)) : null,
+        reducao_necessaria_enquadramento: valorEstouro > 0 ? Number(reducaoNecessaria.toFixed(2)) : null,
       },
       sugestoes_top: sugestoes.slice(0, 5),
       total_sugestoes: sugestoes.length,
       qtd_atendem: sugestoes.filter(s => s.atende).length,
+      qtd_enquadram: sugestoes.filter(s => s.enquadra).length,
     });
   }
   return result;

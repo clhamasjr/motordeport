@@ -6,9 +6,11 @@ import { SimulacaoContrato } from '@/lib/fed-types';
 
 interface Props {
   simulacao: SimulacaoContrato[];
+  /** Mostra coluna extra "Pra enquadrar" se houver estouro de margem */
+  estourou?: boolean;
 }
 
-export function SimulacaoPortTable({ simulacao }: Props) {
+export function SimulacaoPortTable({ simulacao, estourou = false }: Props) {
   if (!simulacao || simulacao.length === 0) return null;
 
   return (
@@ -22,6 +24,14 @@ export function SimulacaoPortTable({ simulacao }: Props) {
             Saldo devedor calculado assumindo <b>taxa atual de 1,80% a.m.</b> no contrato origem.{' '}
             <b>Troco</b> = capital financiável pelo banco destino (mantendo a parcela atual e o
             prazo total original) menos o saldo devedor de hoje. Top 5 bancos por troco.
+            {estourou && (
+              <>
+                {' '}
+                Como há <b className="text-destructive">estouro de margem</b>, a coluna{' '}
+                <b>Pra enquadrar</b> mostra a parcela alvo (e o prazo necessário) pra eliminar a
+                fatia desse contrato no estouro.
+              </>
+            )}
           </div>
         </div>
 
@@ -74,6 +84,14 @@ export function SimulacaoPortTable({ simulacao }: Props) {
                         >
                           Port pura (parcela)
                         </th>
+                        {estourou && (
+                          <th
+                            className="px-1.5 py-1 text-right"
+                            title="Parcela alvo + prazo necessário pra eliminar a fatia desse contrato no estouro de margem"
+                          >
+                            🎯 Pra enquadrar
+                          </th>
+                        )}
                         <th className="px-1.5 py-1"></th>
                       </tr>
                     </thead>
@@ -119,6 +137,23 @@ export function SimulacaoPortTable({ simulacao }: Props) {
                                 '—'
                               )}
                             </td>
+                            {estourou && (
+                              <td className="px-1.5 py-1.5 text-right">
+                                {sg.parcela_alvo_enquadramento != null && sg.prazo_enquadrar_meses != null ? (
+                                  <>
+                                    <div className={sg.enquadra ? '' : 'text-destructive'}>
+                                      {formatBRL(sg.parcela_alvo_enquadramento)}
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground">
+                                      em {Math.ceil(sg.prazo_enquadrar_meses)}x
+                                      {!sg.enquadra && ' (não cabe)'}
+                                    </div>
+                                  </>
+                                ) : (
+                                  '—'
+                                )}
+                              </td>
+                            )}
                             <td className="px-1.5 py-1.5 text-[10px] text-muted-foreground">
                               {sg.atende
                                 ? '✓'

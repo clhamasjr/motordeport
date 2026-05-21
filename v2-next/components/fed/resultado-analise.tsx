@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { TabelaContratos } from './tabela-contratos';
 import { SimulacaoPortTable } from './simulacao-port-table';
+import { EnquadramentoCard } from './enquadramento-card';
 
 interface Props {
   r: AnaliseHoleriteResponse;
@@ -217,11 +218,17 @@ export function ResultadoAnalise({ r }: Props) {
         </Card>
       )}
 
-      {/* ── Extrato (contratos + simulação port) ── */}
+      {/* ── Extrato (contratos + enquadramento + simulação port) ── */}
       {(contratos.length > 0 || d.extrato_erro) && (
         <TabelaContratos contratos={contratos} erro={d.extrato_erro} />
       )}
-      {simulacao.length > 0 && <SimulacaoPortTable simulacao={simulacao} />}
+      {r.enquadramento && <EnquadramentoCard enquadramento={r.enquadramento} />}
+      {simulacao.length > 0 && (
+        <SimulacaoPortTable
+          simulacao={simulacao}
+          estourou={!!r.enquadramento?.estourou}
+        />
+      )}
     </div>
   );
 }

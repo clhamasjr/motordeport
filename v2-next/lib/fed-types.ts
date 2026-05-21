@@ -198,6 +198,14 @@ export interface SugestaoPort {
   economia_port_pura: number | null;
   novo_pv_refin: number | null;
   troco_estimado: number | null;
+  /** Parcela ALVO pra eliminar a fatia desse contrato no estouro de margem */
+  parcela_alvo_enquadramento: number | null;
+  /** Redução em R$ vs parcela atual (parcela_atual − parcela_alvo) */
+  reducao_necessaria_enquadramento: number | null;
+  /** Prazo (meses) que o banco destino precisa praticar pra que a parcela alvo cubra o saldo na taxa do banco */
+  prazo_enquadrar_meses: number | null;
+  /** True se o prazo necessário ≤ prazo total original (cabe sem estender mais) */
+  enquadra: boolean;
   motivos_bloqueio: string[];
   atende: boolean;
 }
@@ -215,10 +223,38 @@ export interface SimulacaoContrato {
     saldo_devedor_estimado: number | null;
     taxa_origem_assumida: number;
     fim?: string | null;
+    /** Parcela alvo (rateada) deste contrato pra eliminar sua fatia do estouro */
+    parcela_alvo_enquadramento?: number | null;
+    reducao_necessaria_enquadramento?: number | null;
   };
   sugestoes_top: SugestaoPort[];
   total_sugestoes: number;
   qtd_atendem: number;
+  qtd_enquadram?: number;
+}
+
+/** Análise de enquadramento da margem total do servidor */
+export interface Enquadramento {
+  salario_bruto: number;
+  /** Teto em fração (ex: 0.40 = 40%) */
+  teto_pct: number;
+  teto_valor: number;
+  /** Margem disponível só pra empréstimo (descontando reserva dos cartões averbados) */
+  margem_util_emprestimo_valor: number;
+  pmt_emprestimos: number;
+  pmt_rmc: number;
+  pmt_rcc: number;
+  total_consignado: number;
+  tem_rmc: boolean;
+  tem_rcc: boolean;
+  tem_ambos_cartoes: boolean;
+  estourou: boolean;
+  /** Valor R$ que está acima do teto (maior entre estouro total e estouro de empréstimo) */
+  valor_estouro: number;
+  valor_estouro_emprestimo: number;
+  /** Percentual da margem total já consumido (1.0 = 100%) */
+  pct_consumido: number;
+  qtd_emprestimos: number;
 }
 
 /** Resposta de /api/fed action:analisarHolerite */
@@ -231,6 +267,7 @@ export interface AnaliseHoleriteResponse {
   bancos_atendem: BancoAtende[];
   bancos_nao_atendem: BancoNaoAtende[];
   simulacao_port: SimulacaoContrato[];
+  enquadramento?: Enquadramento | null;
   duracao_ms?: number;
   error?: string;
 }
