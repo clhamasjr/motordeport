@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AuthUser, useAuth } from '@/hooks/use-auth';
 import { LogOut, Search, User as UserIcon } from 'lucide-react';
+import { InstallPwaButton } from '@/components/install-pwa-button';
 
 export function Topbar({ user }: { user: AuthUser }) {
   const { logout } = useAuth();
@@ -15,6 +16,9 @@ export function Topbar({ user }: { user: AuthUser }) {
         <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <Input placeholder="Buscar CPF ou nome..." className="pl-9 h-9" />
       </div>
+
+      {/* PWA install (so aparece em browser que suporta + nao instalado) */}
+      <InstallPwaButton />
 
       {/* User pill */}
       <div className="flex items-center gap-3">
