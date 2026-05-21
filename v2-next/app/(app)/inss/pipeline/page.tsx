@@ -10,6 +10,7 @@ import { formatCpf, formatBRL } from '@/lib/utils';
 import { useInssBaseStore } from '@/hooks/use-inss-base-store';
 import { Filter, MessageSquare, Phone, Search, Trash2, ShoppingCart } from 'lucide-react';
 import { ElegivelRow } from '@/lib/inss-base-parser';
+import { ImportTelefonesButton } from '@/components/inss/import-telefones';
 
 type Stage = 'sel' | 'hig' | 'wpp';
 
@@ -97,7 +98,8 @@ export default function PipelineInssPage() {
             disparar.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <ImportTelefonesButton />
           {selectedCpfs.size > 0 && (
             <Button variant="outline" size="sm" onClick={clearSelection} className="text-destructive">
               <Trash2 className="size-4" />

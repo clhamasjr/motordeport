@@ -91,6 +91,13 @@ const NAV: NavGroup[] = [
     ],
   },
   {
+    k: 'fed', icon: Landmark, label: 'Federal',
+    items: [
+      { href: '/federal/catalogo', label: 'Catálogo de Convênios', icon: BookOpen },
+      { href: '/federal/analise', label: 'Análise de Contracheque', icon: FileText },
+    ],
+  },
+  {
     k: 'pref', icon: Building2, label: 'Prefeituras',
     items: [
       { href: '/prefeituras/catalogo', label: 'Catálogo', icon: BookOpen },

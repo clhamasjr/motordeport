@@ -109,10 +109,41 @@ Transfira IMEDIATAMENTE (com [ACAO:TRANSFERIR_HUMANO] + [HANDOFF:motivo]) quando
 
 # 7. EXEMPLOS DE OURO
 
-## Exemplo A — campanha de portabilidade com troco (dados do contexto):
-[Contexto: nome=Maria, troco=R$ 4.500,00, banco_origem=Itaú, parcela_atual=R$ 380]
+## Exemplo A — apresentação ORGANIZADA de proposta (formato padrão):
+[Contexto: motor calculou EMPRÉSTIMO NOVO R$ 4.500 / parcela R$ 100 / 108m / 1,85%]
 Cliente: "oi"
-Sofia: "Oi, Maria! 😊 Aqui é a Sofia da LhamasCred. Olhei seu contrato do Itaú e identifiquei uma oportunidade boa: trazendo a portabilidade pra cá, sua parcela cai e ainda libera R$ 4.500,00 de troco na sua conta. Posso te explicar como funciona?
+Sofia: "Oi, Maria! 😊 Aqui é a Sofia da LhamasCred.
+
+Olhei aqui seu benefício e separei essa oportunidade pra você:
+
+💰 *EMPRÉSTIMO NOVO*
+- Valor liberado: *R$ 4.500,00*
+- Parcela: R$ 100,00/mês
+- Prazo: 108 meses
+- Taxa: 1,85% ao mês (teto INSS)
+- Banco: BRB / C6 / QUALI
+- Desconto direto na folha
+
+Quer seguir com essa proposta?
+[FASE:qualificacao]
+[INTENCAO:emprestimo_novo]"
+
+## Exemplo A2 — apresentação de PORTABILIDADE com troco:
+[Contexto: motor calculou PORT — banco origem 318@1.43%, destino ICRED@1.50%/108m,
+parcela atual R$ 927, nova R$ 750, reduz R$ 177, troco R$ 5.053]
+Cliente: "oi"
+Sofia: "Oi, José! 😊
+
+Olhei seu contrato do BMG e identifiquei essa oportunidade:
+
+🔄 *PORTABILIDADE + REFINANCIAMENTO*
+- Contrato origem: BMG (1,43% ao mês)
+- Banco destino: ICRED (1,50% ao mês — 108 meses)
+- Parcela atual: R$ 927,00 → nova *R$ 750,00*
+- Redução: *R$ 177,00/mês* (cabe no benefício)
+- Troco na conta: *R$ 5.053,00*
+
+Posso te explicar como funciona ou já registro?
 [FASE:qualificacao]
 [INTENCAO:portabilidade]"
 
@@ -607,11 +638,16 @@ function extractOportunidades(parsed) {
   const benef = _parseBR(ben.base_calculo) || _parseBR(ben.valor) || 0;
   const sumEmp = _parseBR(mrg.parcelas);
 
-  // Cliente tem cartao? — se nao tem, teto emp = 40%, senao 35%
-  const temRmc = carts.some(c => String(c.tipo || '').toUpperCase().includes('RMC')) || (mrg.rmc != null && mrgRmc < (benef * 0.05) - 0.01);
-  const temRcc = carts.some(c => String(c.tipo || '').toUpperCase().includes('RCC')) || (mrg.rcc != null && mrgRcc < (benef * 0.05) - 0.01);
-  const temAlgumCartao = temRmc || temRcc;
-  const tetoEmpReal = temAlgumCartao ? benef * 0.35 : benef * 0.40;
+  // Cliente tem AMBOS os cartoes (RMC e RCC) averbados?
+  // - SIM: teto emp = 35% + 5% cartao = 40%
+  // - NAO (falta pelo menos 1): teto emp = 40% inteiro
+  // Detecta APENAS pela margem livre (fonte de verdade) — ignora parsed.cartoes
+  // (que pode trazer cartoes antigos do historico).
+  const temRmc = mrg.rmc != null && mrgRmc < (benef * 0.05) - 0.01;
+  const temRcc = mrg.rcc != null && mrgRcc < (benef * 0.05) - 0.01;
+  const temAmbosCartoes = temRmc && temRcc;
+  const temAlgumCartao = temAmbosCartoes; // alias
+  const tetoEmpReal = temAmbosCartoes ? benef * 0.35 : benef * 0.40;
   const teto40Total = benef * 0.40;
 
   // Soma cartoes utilizados
@@ -625,15 +661,16 @@ function extractOportunidades(parsed) {
   const oport = [];
 
   // 1. EMPRÉSTIMO NOVO (só se enquadra E tem margem livre real)
+  // Calcula em PRICE 108 meses @ 1.85% (teto INSS, prazo máximo)
   if (enquadrado && margemLivreEmp >= 50) {
-    const destinosNovo = _testarTodos(margemLivreEmp, 0, 0, '000', 0);
-    if (destinosNovo.length > 0) {
-      const melhor = destinosNovo[0];
-      oport.push({ tipo: 'emprestimo_novo', label: 'Empréstimo Novo',
-        valor: Math.round(melhor.vc * 100) / 100,
-        desc: `Margem livre ${_formatBRL(margemLivreEmp)}/mês — libera ${_formatBRL(melhor.vc)} em ${melhor.banco} a ${melhor.taxa.toFixed(2)}%`,
-        banco: melhor.banco });
-    }
+    const coef108_185 = 0.02153;
+    const vcNovo = margemLivreEmp / coef108_185;
+    oport.push({ tipo: 'emprestimo_novo', label: 'Empréstimo Novo',
+      valor: Math.round(vcNovo * 100) / 100,
+      novaParc: Math.round(margemLivreEmp * 100) / 100,
+      prazo: 108, taxa: 1.85,
+      desc: `Margem livre ${_formatBRL(margemLivreEmp)}/mês · 108 meses · 1,85%`,
+      banco: 'BRB / C6 / QUALI' });
   }
 
   // 2. PORTABILIDADE / REFIN — roda motor real em cada contrato
@@ -692,21 +729,9 @@ function extractOportunidades(parsed) {
     }
   }
 
-  // 3. CARTÃO BENEFÍCIO (RMC) — só se ainda nao tem RMC
-  if (mrgRmc >= 10 && !temRmc) {
-    const pot = Math.round((mrgRmc / 0.029214) * 100) / 100;
-    oport.push({ tipo: 'cartao_beneficio', label: 'Cartão Benefício (RMC)',
-      valor: pot, desc: `Margem RMC ${_formatBRL(mrgRmc)}`, banco: 'FACTA' });
-  }
-
-  // 4. SAQUE em cartão ativo
-  for (const cd of carts) {
-    const mrgC = _parseBR(cd.margem);
-    if (mrgC >= 10) {
-      oport.push({ tipo: 'saque_complementar', label: `Saque ${cd.tipo || ''} ${cd.banco || ''}`.trim(),
-        valor: mrgC, desc: 'Cartão ativo com margem', banco: cd.banco || '' });
-    }
-  }
+  // Cartão Benefício (RMC) e Saque em cartão REMOVIDOS como oferta primária.
+  // Conforme política comercial atual: Sofia NÃO oferece cartão proativamente.
+  // Quando o cliente perguntar, ela pode mencionar — mas não como oferta principal.
 
   // Ordena oportunidades por valor desc (mostra a mais alta primeiro)
   oport.sort((a, b) => (b.valor || 0) - (a.valor || 0));
@@ -1043,13 +1068,36 @@ export default async function handler(req) {
               if (partes.length) contextParts.push(`  ↳ ${partes.join(' + ')}`);
             }
           }
-          contextParts.push(`\n⚡ AÇÃO OBRIGATÓRIA agora:
-1. Apresente a PRIMEIRA (maior valor) de forma natural e animada (use o nome do cliente)
-2. Foque no benefício prático (dinheiro na conta / economia / cartão)
-3. Use os VALORES EXATOS calculados pelo motor — NÃO arredonde, NÃO invente
-4. Pergunte se o cliente quer seguir em frente
-5. NÃO liste todas de uma vez — mantenha conversa natural
-6. Atualize para [FASE:qualificacao]`);
+          contextParts.push(`\n⚡ AÇÃO OBRIGATÓRIA — APRESENTE NO FORMATO PADRÃO:
+
+Saudação curta com nome do cliente (1 linha).
+
+Depois, apresente APENAS A MELHOR oportunidade (maior valor) no formato BLOCO ORGANIZADO:
+
+Pra EMPRÉSTIMO NOVO use:
+💰 *EMPRÉSTIMO NOVO*
+- Valor liberado: *R$ X.XXX,XX*
+- Parcela: R$ XXX,XX/mês
+- Prazo: 108 meses
+- Taxa: 1,85% ao mês (teto INSS)
+- Banco: BRB / C6 / QUALI
+- Desconto direto na folha
+
+Pra PORTABILIDADE use:
+🔄 *PORTABILIDADE + REFINANCIAMENTO*
+- Contrato origem: [banco] ([taxa]% ao mês)
+- Banco destino: [banco] ([taxa]% ao mês — 108 meses)
+- Parcela atual: R$ X → nova *R$ Y*
+- Redução: *R$ Z/mês*
+- Troco na conta: *R$ T* (se houver)
+
+REGRAS:
+1. Use os VALORES EXATOS calculados pelo motor — NÃO arredonde, NÃO invente
+2. Mostre SÓ a melhor oportunidade. Se cliente perguntar de outras, aí mostra.
+3. Use *negrito* nos números chave (asteriscos no WhatsApp)
+4. Use traços (-) pra lista, NÃO use markdown de tabela
+5. Sempre termine perguntando "Posso registrar?" ou "Quer que eu explique como funciona?"
+6. Atualize [FASE:qualificacao]`);
         }
         conv._oportunidadesApresentadas = true;
         setConv(number, conv);

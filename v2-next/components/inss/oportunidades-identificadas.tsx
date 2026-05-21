@@ -15,8 +15,9 @@ import {
   CheckCircle2, XCircle, Scissors, RefreshCw,
 } from 'lucide-react';
 
-// Coef pra estimativa rápida (1.85% = teto INSS — taxa de tabela alta)
-const COEF_EMP_185 = 0.02299;
+// Coef pra estimativa rápida em 108 MESES @ 1.85% (teto INSS, tabela alta)
+// Cliente com margem livre faz empréstimo novo 108m — coef PRICE = 0.02153
+const COEF_EMP_185 = 0.02153;
 
 // Diagnóstico do motivo de bloqueio pra contratos que ninguém aceita.
 // Pega o "menos pior" — explica em 1 frase por que cada banco rejeitou.
@@ -141,37 +142,38 @@ function calcularTudo(
   // ── Análise da nova regra INSS (vigente) ──
   //
   // REGRA:
-  //   - Cliente COM PELO MENOS 1 cartão (RMC ou RCC): 35% emp + 5% cartão = 40%
-  //   - Cliente SEM CARTÃO NENHUM: 40% INTEIRO pra empréstimo
+  //   - Cliente COM OS 2 CARTÕES AVERBADOS (RMC + RCC ambos ativos):
+  //     35% emp + 5% cartão = 40% total
+  //   - Cliente SEM os 2 cartões averbados (faltando pelo menos 1):
+  //     40% INTEIRO pra empréstimo
   //
-  // Em ambos: teto TOTAL = 40% da base de cálculo. Diferença é o split.
+  // Detecção: usa SÓ a margem livre como fonte de verdade. Se margem livre
+  // do cartão < teto, significa que tá sendo usado. Cartões antigos no array
+  // parsed.cartoes podem vir como histórico e não devem afetar a regra.
   const benef = parseBR(ben.base_calculo) || parseBR(ben.valor) || 0;
   const sumEmp = parseBR(mrg.parcelas);
   const tetoCartao = benef * 0.05;
   const mrgRmcLivre = parseBR(mrg.rmc);
   const mrgRccLivre = parseBR(mrg.rcc);
-  const cartoes = parsed.cartoes || [];
-  const temRmc = (mrg.rmc != null && mrgRmcLivre < tetoCartao - 0.01) ||
-    cartoes.some((c) => (c.tipo || '').toUpperCase().includes('RMC'));
-  const temRcc = (mrg.rcc != null && mrgRccLivre < tetoCartao - 0.01) ||
-    cartoes.some((c) => (c.tipo || '').toUpperCase().includes('RCC'));
+  const temRmc = mrg.rmc != null && mrgRmcLivre < tetoCartao - 0.01;
+  const temRcc = mrg.rcc != null && mrgRccLivre < tetoCartao - 0.01;
   const sumRmc = temRmc ? Math.max(0, tetoCartao - mrgRmcLivre) : 0;
   const sumRcc = temRcc ? Math.max(0, tetoCartao - mrgRccLivre) : 0;
   const total = sumEmp + sumRmc + sumRcc;
   const compPct = benef > 0 ? (total / benef) * 100 : 0;
 
-  // Tem ALGUM cartão? (RMC ou RCC qualquer)
-  const temAlgumCartao = temRmc || temRcc;
+  // Tem os DOIS cartões averbados? (RMC E RCC ambos)
+  const temAmbosCartoes = temRmc && temRcc;
+  // Pra compat com props existentes — temAlgumCartao = mesma coisa que temAmbos
+  // (sem cartão completo, regra é 40% só emp)
+  const temAlgumCartao = temAmbosCartoes;
 
   const teto40Total = benef * 0.40;
-  // Teto de empréstimo: 35% se tem cartão; 40% se NÃO tem nenhum cartão
-  const tetoEmpReal = temAlgumCartao ? benef * 0.35 : benef * 0.40;
-  const tetoEmpComCartao = benef * 0.35; // legacy — usado em outros lugares
+  // Teto de empréstimo: 35% se TEM AMBOS os cartões; 40% caso contrário
+  const tetoEmpReal = temAmbosCartoes ? benef * 0.35 : benef * 0.40;
+  const tetoEmpComCartao = benef * 0.35; // legacy
   const enquadraNovaRegra = total <= teto40Total + 0.01 && sumEmp <= tetoEmpReal + 0.01;
   const excedente = Math.max(0, total - teto40Total);
-  // Margem livre pra novas operações de empréstimo:
-  //  - sem cartão: pode usar 40% inteiro pra emp → livre = 40% - sumEmp
-  //  - com cartão: limite emp é 35% → livre = 35% - sumEmp
   const margemLivreNova = Math.max(0, tetoEmpReal - sumEmp);
 
   // ── Roda motor pra cada contrato ──
@@ -379,8 +381,8 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
   const empNovoOpcoes = useMemo(() => {
     if (!enquadraNovaRegra || margemLivreNova <= 0) return [] as BancoSimul[];
     try {
-      // saldo=0, pg=0, cd='000' (sem origem), inv=false, restPg=96
-      return testarTodos(margemLivreNova, 0, 0, '000', false, idadeNum, null, 96, especieNum, '', 0);
+      // saldo=0, pg=0, cd='000' (sem origem), inv=false, restPg=108 (nova regra)
+      return testarTodos(margemLivreNova, 0, 0, '000', false, idadeNum, null, 108, especieNum, '', 0);
     } catch {
       return [];
     }
@@ -548,11 +550,12 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
               <TrendingUp className="size-4 text-orange-400" />
             </div>
 
-            {/* Estimativa rápida pelo teto 1.85% (tabela alta) */}
+            {/* Estimativa rápida: PRICE 108m @ 1.85% (teto INSS) */}
             <div>
               <div className="text-2xl font-mono font-bold text-orange-400">{formatBRL(empNovoVlr185)}</div>
               <div className="text-[10px] text-muted-foreground">
-                Estimativa na <strong>tabela 1,85%</strong> (teto INSS) — mais comissão. Use bancos abaixo pra ver o liberado real.
+                Estimativa na <strong>tabela 1,85% em 108 meses</strong> (teto INSS, prazo máximo) — coef PRICE 0.02153.
+                Use bancos abaixo pra ver o liberado real por destino.
               </div>
             </div>
 
