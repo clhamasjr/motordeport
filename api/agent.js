@@ -127,6 +127,37 @@ Sofia: "Entendo a preocupação, é importante mesmo desconfiar. A LhamasCred é
 [SENTIMENTO:desconfiado]
 [INTENCAO:duvida_seguranca]"
 
+## Exemplo C2 — objeção "tá caro / juros alto":
+Cliente: "tá muito caro essa taxa, juros de banco é roubo"
+Sofia: "Entendo. O consignado INSS tem taxa REGULADA pelo Conselho Nacional de Previdência — hoje o teto é de 1,85% ao mês, e nossos bancos parceiros operam entre 1,50% e 1,85%. Pra comparar: cartão de crédito comum cobra 14-15% ao mês, e empréstimo pessoal sem garantia, 8-12% ao mês. Aqui você paga MUITO menos justamente porque a parcela sai direto no benefício, sem risco pro banco. Mas você decide, sem pressão 😊
+[INTENCAO:duvida_geral]
+[SENTIMENTO:desconfiado]"
+
+## Exemplo C3 — objeção "vou pensar":
+Cliente: "deixa eu pensar e te respondo depois"
+Sofia: "Claro, sem pressão! 😊 Uma coisa só: a taxa que separei pra você hoje é da tabela ATUAL, e ela muda mês a mês. Se quiser, posso anotar seu nome e dar uma respondida em 2-3 dias só pra saber se ficou alguma dúvida — quem decide é sempre você. Combinado?
+[INTENCAO:duvida_geral]
+[SENTIMENTO:neutro]
+[LEAD_SCORE:50]"
+
+## Exemplo C4 — objeção "minha família não deixa / esposa não autoriza":
+Cliente: "minha filha falou pra eu não fazer nada"
+Sofia: "Faz total sentido conversar em família, isso é prudente mesmo. Se quiser, posso te mandar por escrito o resumo da proposta pra sua filha conferir comigo aqui pelo WhatsApp também — fico à disposição pra tirar qualquer dúvida com ela. Sem pressão pra decidir agora.
+[INTENCAO:duvida_geral]
+[SENTIMENTO:ansioso]"
+
+## Exemplo C5 — objeção "não preciso de dinheiro":
+Cliente: "não tô precisando agora, obrigado"
+Sofia: "Show, sem problema 😊 Mas só pra deixar registrado: a oportunidade que olhei aqui não é dinheiro novo — é REDUZIR a parcela que você JÁ paga, sem mexer no resto. Você passa a pagar menos e fica com mais sobrando no benefício. Se mudar de ideia ou quiser entender melhor, é só me chamar.
+[INTENCAO:recusa]
+[LEAD_SCORE:35]"
+
+## Exemplo C6 — cliente SEM oportunidade viável (motor retornou vazio):
+[Contexto: motor consultou e não achou nenhuma operação]
+Sofia: "Olhei aqui seu cadastro com cuidado, José. Nesse momento não tenho uma operação que faça sentido financeiro pra você — ou porque a margem já tá comprometida, ou porque o contrato atual já tá numa taxa muito boa pra portar. Mas vou anotar seu contato pra te avisar assim que aparecer algo bom. Pode ser?
+[FASE:encerrado]
+[LEAD_SCORE:30]"
+
 ## Exemplo D — handoff judicial:
 Cliente: "minha advogada falou pra eu não fazer nada antes da perícia"
 Sofia: "Entendi, Sr(a). Como tem advogado envolvido, vou passar seu atendimento pra um consultor humano da LhamasCred pra dar a orientação certa. Em instantes alguém te chama por aqui. 😊
@@ -334,13 +365,22 @@ function buildContext(campaignType, clientData) {
 
 // ═══ CPF DETECTION + CONSULTA AUTOMATICA DO MOTOR ═══
 
-// Extrai CPF (11 digitos) de qualquer texto. Aceita 123.456.789-00 ou 12345678900.
+// Extrai CPF de qualquer texto. Aceita 123.456.789-00 ou 12345678900.
+// Pad com zeros se vier 9 ou 10 digitos (CPF comecando com 0, comum quando
+// cliente digita sem pontuacao). Valida DV antes de aceitar pad.
 function extractCPF(text) {
   if (!text) return null;
   const clean = String(text).replace(/\D/g, '');
-  // Busca por 11 digitos consecutivos
-  const m = clean.match(/\d{11}/);
-  return m ? m[0] : null;
+  // 11 digitos seguidos: ja eh CPF
+  const m11 = clean.match(/\d{11}/);
+  if (m11) return m11[0];
+  // 10 digitos: pode ser CPF sem o zero a frente
+  const m10 = clean.match(/\d{10}/);
+  if (m10 && isValidCPF('0' + m10[0])) return '0' + m10[0];
+  // 9 digitos: CPF com 2 zeros a frente
+  const m9 = clean.match(/\d{9}/);
+  if (m9 && isValidCPF('00' + m9[0])) return '00' + m9[0];
+  return null;
 }
 
 // Valida CPF com digitos verificadores
@@ -420,7 +460,139 @@ async function consultarMotorSofia(cpf, appUrl) {
   }
 }
 
-// Extrai oportunidades do resultado parsed do Multicorban
+// ─── MOTOR INSS (port direto de v2-next/lib/inss-motor.ts em JS puro) ───
+// Sofia precisa rodar a mesma calculadora que a Consulta Unitaria roda na UI:
+// testarTodos + calcPortRefin108 com tabela alta/baixa + reducao exata.
+
+function _parseBR(v) {
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const s = String(v).trim().replace(/R\$\s*/g, '').replace(/\s/g, '');
+  if (!s) return 0;
+  if (s.indexOf(',') >= 0) return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  return parseFloat(s) || 0;
+}
+function _padCod(v) {
+  if (v == null || v === '') return '';
+  return String(v).trim().padStart(3, '0');
+}
+function _priceCoef(taxaPct, n) {
+  const i = (taxaPct || 0) / 100;
+  if (i <= 0 || n <= 0) return 0;
+  return i / (1 - Math.pow(1 + i, -n));
+}
+const _COEFS = [
+  { t: 1.85, c: 0.02299 }, { t: 1.83, c: 0.02360 }, { t: 1.80, c: 0.02451 },
+  { t: 1.78, c: 0.02250 }, { t: 1.75, c: 0.021985 }, { t: 1.72, c: 0.02175 },
+  { t: 1.70, c: 0.021604 }, { t: 1.68, c: 0.02145 }, { t: 1.66, c: 0.02130 },
+  { t: 1.65, c: 0.02123 }, { t: 1.60, c: 0.02046 }, { t: 1.55, c: 0.02009 },
+  { t: 1.50, c: 0.01973 },
+];
+const _COEFS_108 = [
+  { t: 1.85, c: 0.02153 }, { t: 1.80, c: 0.02112 }, { t: 1.75, c: 0.02071 },
+  { t: 1.70, c: 0.02031 }, { t: 1.66, c: 0.02000 }, { t: 1.65, c: 0.01992 },
+  { t: 1.60, c: 0.01952 }, { t: 1.55, c: 0.01913 }, { t: 1.50, c: 0.01874 },
+];
+function _coefFor(taxaPct, n) {
+  const tbl = n === 108 ? _COEFS_108 : _COEFS;
+  const exact = tbl.find((c) => Math.abs(c.t - taxaPct) < 0.001);
+  if (exact) return exact.c;
+  return _priceCoef(taxaPct, n);
+}
+const _BD = {
+  QUALI: { sMin: 2000, tMin: 250, faixa: [1.66, 1.85], coefF: null,
+    block: ['359','246','025','047','063','320','394','654','212','626','925','935','753','330','012','752','082','079','329','643','243'],
+    pgMinMap: { '070': 12, '623': 12 },
+    taxaOrigemMin: { '422': 0, '149': 0, '389': 0 },
+    taxaOrigemMinDefault: 1.10 },
+  C6: { sMin: 2000, tMin: 50, faixa: [1.55, 1.85], coefF: null,
+    block: ['336','626','707','121','012','422','925'],
+    pgMinMap: { '254': 13, '623': 37, '070': 12, '318': 12, '149': 12 },
+    taxaOrigemMinDefault: 1.35 },
+  BRB: { sMin: 3000, tMin: 250, faixa: null, coefF: 0.02299,
+    block: ['070','623','935','149','012','071','925','380','079'],
+    taxaOrigemMinDefault: 0 },
+  ICRED: { sMin: 3000, tMin: 100, faixa: [1.50, 1.85], coefF: null,
+    block: ['329','643','935'],
+    pgMinMap: { '623': 1, '336': 1 },
+    taxaOrigemMinDefault: 1.10 },
+};
+const _ORDEM = ['QUALI', 'C6', 'BRB', 'ICRED'];
+const _TROCO_MIN = 250;
+const _TROCO_MIN_ENQUADRADO = 250;
+
+function _bankAccepts(r, cd, p, s, pg, taxaOrig) {
+  if (r.block && r.block.includes(cd)) return false;
+  if (r.sMin && s < r.sMin) return false;
+  const pgR = (r.pgMinMap && r.pgMinMap[cd]) || 0;
+  if (pgR && pg < pgR) return false;
+  if (cd && cd !== '000') {
+    let minTx;
+    if (r.taxaOrigemMin && r.taxaOrigemMin[cd] !== undefined) minTx = r.taxaOrigemMin[cd];
+    else if (r.taxaOrigemMinDefault !== undefined) minTx = r.taxaOrigemMinDefault;
+    if (minTx !== undefined && minTx > 0 && taxaOrig > 0 && taxaOrig < minTx) return false;
+  }
+  return true;
+}
+function _bestR(p, s, t, faixa) {
+  const pool = faixa ? _COEFS.filter((c) => c.t >= faixa[0] && c.t <= faixa[1]) : _COEFS;
+  for (const { t: tx, c } of pool) {
+    const vc = p / c, tr = vc - s;
+    if (tr >= t) return { t: tx, c, vc, tr };
+  }
+  return null;
+}
+function _tryBank(b, r, p, s) {
+  const tMinEff = Math.max(r.tMin || 0, p, b === 'ICRED' ? 100 : _TROCO_MIN);
+  if (r.coefF) {
+    const vc = p / r.coefF, tr = vc - s;
+    if (tr < tMinEff) return null;
+    const tx = _COEFS.find((x) => x.c === r.coefF);
+    return { banco: b, troco: tr, vc, taxa: tx ? tx.t : 0 };
+  }
+  const res = _bestR(p, s, tMinEff, r.faixa);
+  if (res) return { banco: b, troco: res.tr, vc: res.vc, taxa: res.t };
+  return null;
+}
+function _testarTodos(p, s, pg, cd, taxaOrig) {
+  const out = [];
+  for (const b of _ORDEM) {
+    const r = _BD[b];
+    if (!_bankAccepts(r, cd, p, s, pg, taxaOrig)) continue;
+    const res = _tryBank(b, r, p, s);
+    if (res) out.push(res);
+  }
+  out.sort((a, b) => (b.troco || 0) - (a.troco || 0));
+  return out;
+}
+function _calcCenario(par, sal, taxa) {
+  const coef = _coefFor(taxa, 108);
+  const refin_novaParc = sal * coef;
+  const port_vc = par / coef;
+  return { taxa, coef, refin_novaParc, refin_reducao: par - refin_novaParc,
+    port_novaParc: par, port_vc, port_troco: port_vc - sal };
+}
+function _calcPortRefin108(par, sal, destino, taxaOrig, cd) {
+  const r = _BD[destino];
+  if (!r) return null;
+  let tAlta, tBaixa;
+  if (r.coefF) {
+    const t = _COEFS.find((x) => x.c === r.coefF);
+    tAlta = tBaixa = t ? t.t : 1.85;
+  } else if (r.faixa) { tAlta = r.faixa[1]; tBaixa = r.faixa[0]; }
+  else return null;
+  let minOrigem = 0;
+  if (cd && r.taxaOrigemMin && r.taxaOrigemMin[cd] !== undefined) minOrigem = r.taxaOrigemMin[cd];
+  else if (r.taxaOrigemMinDefault !== undefined) minOrigem = r.taxaOrigemMinDefault;
+  const taxaOrigVale = minOrigem <= 0 ? true : (taxaOrig <= 0 ? true : taxaOrig >= minOrigem);
+  return { banco: destino, tabelaAlta: _calcCenario(par, sal, tAlta),
+    tabelaBaixa: _calcCenario(par, sal, tBaixa), taxaOrigVale };
+}
+function _formatBRL(v) {
+  return 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Extrai oportunidades do resultado parsed do Multicorban — USA MOTOR REAL
 function extractOportunidades(parsed) {
   const b = parsed.beneficiario || {};
   const ben = parsed.beneficio || {};
@@ -429,41 +601,115 @@ function extractOportunidades(parsed) {
   const tels = parsed.telefones || [];
   const contratos = parsed.contratos || [];
 
-  const mrgDisp = parseFloat(String(mrg.disponivel || '0').replace(/\./g, '').replace(',', '.')) || 0;
-  const mrgRmc = parseFloat(String(mrg.rmc || '0').replace(/\./g, '').replace(',', '.')) || 0;
-  const mrgRcc = parseFloat(String(mrg.rcc || '0').replace(/\./g, '').replace(',', '.')) || 0;
+  const mrgDisp = _parseBR(mrg.disponivel);
+  const mrgRmc = _parseBR(mrg.rmc);
+  const mrgRcc = _parseBR(mrg.rcc);
+  const benef = _parseBR(ben.base_calculo) || _parseBR(ben.valor) || 0;
+  const sumEmp = _parseBR(mrg.parcelas);
+
+  // Cliente tem cartao? — se nao tem, teto emp = 40%, senao 35%
+  const temRmc = carts.some(c => String(c.tipo || '').toUpperCase().includes('RMC')) || (mrg.rmc != null && mrgRmc < (benef * 0.05) - 0.01);
+  const temRcc = carts.some(c => String(c.tipo || '').toUpperCase().includes('RCC')) || (mrg.rcc != null && mrgRcc < (benef * 0.05) - 0.01);
+  const temAlgumCartao = temRmc || temRcc;
+  const tetoEmpReal = temAlgumCartao ? benef * 0.35 : benef * 0.40;
+  const teto40Total = benef * 0.40;
+
+  // Soma cartoes utilizados
+  const sumRmc = temRmc ? Math.max(0, (benef * 0.05) - mrgRmc) : 0;
+  const sumRcc = temRcc ? Math.max(0, (benef * 0.05) - mrgRcc) : 0;
+  const total = sumEmp + sumRmc + sumRcc;
+  const enquadrado = total <= teto40Total + 0.01 && sumEmp <= tetoEmpReal + 0.01;
+  const excedente = Math.max(0, total - teto40Total);
+  const margemLivreEmp = Math.max(0, tetoEmpReal - sumEmp);
 
   const oport = [];
-  // Emprestimo Novo (so se margem util)
-  if (mrgDisp >= 50) {
-    const pot = Math.round((mrgDisp / 0.02299) * 100) / 100;
-    oport.push({ tipo: 'emprestimo_novo', label: 'Empréstimo Novo', valor: pot, desc: `Margem livre R$ ${mrg.disponivel}`, banco: 'FACTA' });
-  }
-  // Cartao Beneficio / RMC
-  const hasRmc = carts.some(c => String(c.tipo || '').toUpperCase().includes('RMC'));
-  if (mrgRmc >= 10 && !hasRmc) {
-    const pot = Math.round((mrgRmc / 0.029214) * 100) / 100;
-    oport.push({ tipo: 'cartao_beneficio', label: 'Cartão Benefício (RMC)', valor: pot, desc: `Margem RMC R$ ${mrg.rmc}`, banco: 'FACTA' });
-  }
-  // Saque em cartao ativo
-  for (const cd of carts) {
-    const mrgC = parseFloat(String(cd.margem || '0').replace(/\./g, '').replace(',', '.')) || 0;
-    if (mrgC >= 10) {
-      oport.push({ tipo: 'saque_complementar', label: `Saque ${cd.tipo || ''} ${cd.banco || ''}`.trim(), valor: mrgC, desc: 'Cartão ativo com margem', banco: cd.banco || '' });
+
+  // 1. EMPRÉSTIMO NOVO (só se enquadra E tem margem livre real)
+  if (enquadrado && margemLivreEmp >= 50) {
+    const destinosNovo = _testarTodos(margemLivreEmp, 0, 0, '000', 0);
+    if (destinosNovo.length > 0) {
+      const melhor = destinosNovo[0];
+      oport.push({ tipo: 'emprestimo_novo', label: 'Empréstimo Novo',
+        valor: Math.round(melhor.vc * 100) / 100,
+        desc: `Margem livre ${_formatBRL(margemLivreEmp)}/mês — libera ${_formatBRL(melhor.vc)} em ${melhor.banco} a ${melhor.taxa.toFixed(2)}%`,
+        banco: melhor.banco });
     }
   }
-  // Portabilidade (so contratos com prazo_original)
-  let portTotal = 0;
-  let portCount = 0;
+
+  // 2. PORTABILIDADE / REFIN — roda motor real em cada contrato
   for (const ct of contratos) {
-    const par = parseFloat(String(ct.parcela || '0').replace(/\./g, '').replace(',', '.')) || 0;
-    const sal = parseFloat(String(ct.saldo || ct.saldo_quitacao || '0').replace(/\./g, '').replace(',', '.')) || 0;
-    const total = parseInt(ct.prazo_original || '0') || 0;
-    if (par > 0 && sal > 0 && total > 0) portCount++;
+    const par = _parseBR(ct.parcela);
+    const sal = _parseBR(ct.saldo || ct.saldo_quitacao);
+    if (par <= 0 || sal <= 0) continue;
+    const cod = _padCod(ct.banco_codigo || '');
+    const taxaOrig = _parseBR(ct.taxa);
+    const restPg = parseInt(String(ct.prazo || '0'), 10) || 0;
+    const totPg = parseInt(String(ct.prazo_original || '0'), 10) || 0;
+    const pagas = Math.max(0, totPg - restPg);
+
+    const destinos = _testarTodos(par, sal, pagas, cod, taxaOrig);
+    if (!destinos.length) continue;
+
+    // Avalia cenarios
+    let melhor = null;
+    for (const d of destinos) {
+      const r = _calcPortRefin108(par, sal, d.banco, taxaOrig, cod);
+      if (!r || !r.taxaOrigVale) continue;
+      let novaParc, reducao, troco, taxa;
+      if (enquadrado) {
+        const cen = r.tabelaAlta.port_troco >= _TROCO_MIN_ENQUADRADO ? r.tabelaAlta : r.tabelaBaixa;
+        novaParc = cen.refin_novaParc; reducao = cen.refin_reducao;
+        troco = cen.port_troco; taxa = cen.taxa;
+      } else {
+        // Fora regra: reduz EXATO o excedente, troco = sobra
+        const cen = r.tabelaBaixa;
+        const alvo = Math.max(0, par - excedente);
+        const vcAlvo = cen.coef > 0 ? alvo / cen.coef : 0;
+        if (vcAlvo >= sal) {
+          novaParc = alvo; reducao = par - alvo;
+          troco = vcAlvo - sal; taxa = cen.taxa;
+        } else {
+          novaParc = cen.refin_novaParc; reducao = cen.refin_reducao;
+          troco = 0; taxa = cen.taxa;
+        }
+      }
+      const score = enquadrado ? troco : reducao;
+      if (!melhor || score > melhor.score) {
+        melhor = { banco: d.banco, taxa, novaParc, reducao, troco, score };
+      }
+    }
+    if (melhor) {
+      const descPartes = [`${ct.banco || cod}@${taxaOrig.toFixed(2)}%`,
+        `→ ${melhor.banco}@${melhor.taxa.toFixed(2)}%`,
+        `parc ${_formatBRL(par)} → ${_formatBRL(melhor.novaParc)}`];
+      if (melhor.troco > 0) descPartes.push(`troco ${_formatBRL(melhor.troco)}`);
+      oport.push({ tipo: 'portabilidade', label: 'Portabilidade + Refin',
+        contrato: ct.contrato || '', valor: Math.round(melhor.troco * 100) / 100,
+        novaParc: Math.round(melhor.novaParc * 100) / 100,
+        reducao: Math.round(melhor.reducao * 100) / 100,
+        troco: Math.round(melhor.troco * 100) / 100,
+        desc: descPartes.join(' · '), banco: melhor.banco });
+    }
   }
-  if (portCount > 0) {
-    oport.push({ tipo: 'portabilidade', label: 'Portabilidade CIP', valor: 0, desc: `${portCount} contrato(s) elegível(is) para análise`, banco: 'FACTA' });
+
+  // 3. CARTÃO BENEFÍCIO (RMC) — só se ainda nao tem RMC
+  if (mrgRmc >= 10 && !temRmc) {
+    const pot = Math.round((mrgRmc / 0.029214) * 100) / 100;
+    oport.push({ tipo: 'cartao_beneficio', label: 'Cartão Benefício (RMC)',
+      valor: pot, desc: `Margem RMC ${_formatBRL(mrgRmc)}`, banco: 'FACTA' });
   }
+
+  // 4. SAQUE em cartão ativo
+  for (const cd of carts) {
+    const mrgC = _parseBR(cd.margem);
+    if (mrgC >= 10) {
+      oport.push({ tipo: 'saque_complementar', label: `Saque ${cd.tipo || ''} ${cd.banco || ''}`.trim(),
+        valor: mrgC, desc: 'Cartão ativo com margem', banco: cd.banco || '' });
+    }
+  }
+
+  // Ordena oportunidades por valor desc (mostra a mais alta primeiro)
+  oport.sort((a, b) => (b.valor || 0) - (a.valor || 0));
 
   // Primeiro telefone
   const tel = tels && tels.length ? tels[0] : '';
@@ -485,6 +731,11 @@ function extractOportunidades(parsed) {
       parcelas: mrg.parcelas || '0,00',
       base_calculo: ben.base_calculo || '',
       valor_beneficio: ben.valor || ''
+    },
+    enquadramento: {
+      enquadrado, excedente,
+      tetoEmpReal, temAlgumCartao,
+      sumEmp, sumRmc, sumRcc, total,
     },
     oportunidades: oport,
     telefone: tel
@@ -715,6 +966,7 @@ export default async function handler(req) {
             margem_rcc: motor.margem.rcc,
             valor_beneficio: motor.margem.valor_beneficio,
             _oportunidades: motor.oportunidades,
+            _enquadramento: motor.enquadramento || null,
           };
           // Define campaignType baseado na melhor oportunidade
           const melhor = motor.oportunidades.sort((a, b) => (b.valor || 0) - (a.valor || 0))[0];
@@ -754,24 +1006,51 @@ export default async function handler(req) {
       // Se o motor foi consultado com sucesso AGORA (neste turno), destacar no contexto
       if (conv.motorConsultado && conv._oportunidadesApresentadas !== true && Array.isArray(conv.data?._oportunidades)) {
         const oport = conv.data._oportunidades;
-        contextParts.push(`\n═══ 🔥 MOTOR ACABOU DE CONSULTAR — OPORTUNIDADES REAIS ENCONTRADAS ═══`);
+        const enq = conv.data._enquadramento || {};
+        contextParts.push(`\n═══ 🔥 MOTOR ACABOU DE CONSULTAR — RESULTADO REAL DA CALCULADORA ═══`);
         contextParts.push(`Cliente: ${conv.data.nome_completo || conv.data.nome}`);
         contextParts.push(`CPF: ${conv.data.cpf}`);
         contextParts.push(`Benefício: ${conv.data.beneficio} (${conv.data.especie})`);
         contextParts.push(`Valor do benefício: R$ ${conv.data.valor_beneficio}`);
         contextParts.push(`Margem livre: R$ ${conv.data.margem_disponivel} | RMC: R$ ${conv.data.margem_rmc} | RCC: R$ ${conv.data.margem_rcc}`);
-        contextParts.push(`\nOPORTUNIDADES IDENTIFICADAS (ordenadas por valor):`);
-        const sorted = [...oport].sort((a,b) => (b.valor||0) - (a.valor||0));
-        for (const o of sorted) {
-          const v = o.valor > 0 ? `R$ ${Number(o.valor).toLocaleString('pt-BR',{minimumFractionDigits:2})}` : 'disponível';
-          contextParts.push(`• ${o.label}: ${v} — ${o.desc} — Banco: ${o.banco}`);
+        // Status de enquadramento (NOVA regra 40%)
+        if (enq.enquadrado === true) {
+          contextParts.push(`✅ Cliente ENQUADRADO na nova regra (40%). Tem margem pra novas operações.`);
+        } else if (enq.enquadrado === false) {
+          contextParts.push(`⚠️ Cliente EXTRAPOLOU a regra de 40% em R$ ${Number(enq.excedente || 0).toLocaleString('pt-BR',{minimumFractionDigits:2})}. Solução = portabilidade que reduza parcela ou cancelar cartão.`);
         }
-        contextParts.push(`\n⚡ AÇÃO OBRIGATÓRIA agora:
+
+        if (oport.length === 0) {
+          // SEM OPORTUNIDADES — Sofia precisa quebrar isso com elegância
+          contextParts.push(`\n⚠️ ATENÇÃO: NENHUMA OPORTUNIDADE VIÁVEL FOI ENCONTRADA neste momento.`);
+          contextParts.push(`Motivos possíveis: cliente sem margem livre, sem contratos portáveis, ou todos contratos com taxa origem incompatível com nossos destinos.`);
+          contextParts.push(`\n⚡ AÇÃO obrigatória agora:
+1. NÃO mente nem inventa valor — seja honesta
+2. Use tom acolhedor: "Olhei aqui sua situação e nesse momento não tenho uma operação que faça sentido financeiro pra você, mas posso te avisar assim que mudar — pode ser?"
+3. Ofereça cadastro pra retorno futuro: "Anoto seu contato e te procuro quando aparecer algo bom"
+4. NÃO transfira pra humano (não tem nada pra humano fazer ainda)
+5. Atualize para [FASE:encerrado] [LEAD_SCORE:30]`);
+        } else {
+          contextParts.push(`\nOPORTUNIDADES IDENTIFICADAS (ordenadas por valor, calculadas no motor real):`);
+          for (const o of oport) {
+            const v = o.valor > 0 ? `R$ ${Number(o.valor).toLocaleString('pt-BR',{minimumFractionDigits:2})}` : 'disponível';
+            contextParts.push(`• ${o.label}: ${v} — ${o.desc} — Banco: ${o.banco}`);
+            // Pra portabilidade, expõe os números calculados (parcela nova, troco, redução)
+            if (o.tipo === 'portabilidade' && (o.novaParc || o.troco)) {
+              const partes = [];
+              if (o.reducao > 0) partes.push(`reduz parcela em R$ ${Number(o.reducao).toLocaleString('pt-BR',{minimumFractionDigits:2})}`);
+              if (o.troco > 0) partes.push(`libera troco de R$ ${Number(o.troco).toLocaleString('pt-BR',{minimumFractionDigits:2})}`);
+              if (partes.length) contextParts.push(`  ↳ ${partes.join(' + ')}`);
+            }
+          }
+          contextParts.push(`\n⚡ AÇÃO OBRIGATÓRIA agora:
 1. Apresente a PRIMEIRA (maior valor) de forma natural e animada (use o nome do cliente)
 2. Foque no benefício prático (dinheiro na conta / economia / cartão)
-3. Pergunte se o cliente quer seguir em frente
-4. NÃO liste todas de uma vez — mantenha conversa natural
-5. Atualize para [FASE:qualificacao]`);
+3. Use os VALORES EXATOS calculados pelo motor — NÃO arredonde, NÃO invente
+4. Pergunte se o cliente quer seguir em frente
+5. NÃO liste todas de uma vez — mantenha conversa natural
+6. Atualize para [FASE:qualificacao]`);
+        }
         conv._oportunidadesApresentadas = true;
         setConv(number, conv);
       } else if (conv.motorErro) {
