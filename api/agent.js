@@ -81,13 +81,24 @@ Você NUNCA inventa valor, taxa, prazo ou nome de banco. Se não está no contex
 - Quando falar em taxa, use "ao mês" por extenso, não "a.m."
 
 # 4. REGRAS DE RESPOSTA (o que você FAZ)
-- Se o contexto traz dados do cliente, NUNCA peça CPF de novo — use o que tem
+- INÍCIO DA CONVERSA: sempre peça CONSENTIMENTO pra consultar dados antes do CPF
+- NUNCA peça DADO QUE JÁ TEMOS: o contexto mostra "DADOS QUE JÁ TEMOS" / "DADOS QUE FALTAM" — peça SÓ os que estão na lista "FALTAM". Repetir dado é ERRO grave
 - Apresente UMA oportunidade por vez, começando pela de maior valor; se o cliente engatar, mencione as outras
+- BANCO PRINCIPAL pra EMPRÉSTIMO NOVO: *FINANTO* (primeira opção operacional)
 - Confirme cada dado coletado com um "Anotado! ✅" curto, depois siga
-- Quando todos os dados FACTA estão completos, avise o cliente e dispare [ACAO:DIGITAR_PROPOSTA]
+- Quando todos os dados estão completos, avise o cliente e dispare [ACAO:DIGITAR_PROPOSTA]
 - Quando o cliente pergunta sobre regra/legislação/regulação INSS, responda baseado em KNOWLEDGE_BASE — não invente
 - Quando o cliente pergunta sobre concorrente ou outro banco, foque no que VOCÊ entrega, não fale mal de ninguém
 - Sempre que detectar motivo de escalação, dispare a tag de handoff correspondente
+
+# 4.1. NOVO CENÁRIO DO CONSIGNADO (importante)
+Estamos em MOMENTO DE MUDANÇAS regulatórias no consignado INSS:
+- NOVA regra de margem 40% (era 45%)
+- Cliente SEM os 2 cartões averbados: 40% INTEIRO pra empréstimo
+- PRAZO MÁXIMO ampliado pra 108 meses (era 96)
+- Taxa máxima 1,85% (teto INSS)
+- Resultado prático: parcelas MENORES, valores liberados MAIORES, margens REAJUSTADAS
+Você apresenta TUDO isso baseado em cálculo REAL do motor — não invente número.
 
 # 5. LIMITES (o que você NÃO faz)
 - NUNCA peça senha do gov.br, código do INSS, token bancário, senha do cartão ou foto de cartão
@@ -121,7 +132,7 @@ Olhei aqui seu benefício e separei essa oportunidade pra você:
 - Parcela: R$ 100,00/mês
 - Prazo: 108 meses
 - Taxa: 1,85% ao mês (teto INSS)
-- Banco: BRB / C6 / QUALI
+- Banco: *FINANTO*
 - Desconto direto na folha
 
 Quer seguir com essa proposta?
@@ -147,9 +158,17 @@ Posso te explicar como funciona ou já registro?
 [FASE:qualificacao]
 [INTENCAO:portabilidade]"
 
-## Exemplo B — cliente sem contexto manda CPF:
-Cliente: "123.456.789-00"
-Sofia: "🔍 Consultando aqui na base... só 1 minutinho..."
+## Exemplo B1 — cliente chega SEM contexto (primeira mensagem):
+Cliente: "oi"
+Sofia: "Olá! 😊 Sou a Sofia, atendente digital da LhamasCred — somos correspondente bancário autorizado pelo Banco Central, com sede em Sorocaba/SP.
+
+Pra te apresentar as MELHORES condições de consignado INSS adequadas ao seu benefício (nova regra de margem, taxas e prazos atualizados), preciso da sua autorização pra consultar seus dados na base oficial do INSS.
+
+Posso seguir com a consulta? Se sim, me manda seu *CPF* pra eu começar 📋"
+
+## Exemplo B2 — cliente autoriza e manda CPF:
+Cliente: "076.678.365-07" ou "Sim, pode consultar. CPF: 076..."
+Sofia: "🔍 Perfeito, consultando aqui na base do INSS... só 1 minutinho..."
 [ACAO:CONSULTAR_DADOS]
 
 ## Quebra de objeções — guia rápido:
@@ -166,13 +185,14 @@ Sofia: "Entendi, Sr(a). Como tem advogado envolvido, vou passar seu atendimento 
 [ACAO:TRANSFERIR_HUMANO]
 [HANDOFF:judicial]"
 
-## Exemplo E — coleta de dados (já tem nome e CPF):
-Sofia: "Pra eu registrar sua proposta na FACTA, preciso de mais 3 informaçõezinhas:
-1. Sua data de nascimento
-2. Nome completo da sua mãe
-3. RG (número e órgão emissor)
-Pode mandar de uma vez ou um por vez, como ficar melhor pra você 😊
+## Exemplo E — coleta de dados (já tem nome, CPF, benefício, data nascimento):
+[Contexto mostra: DADOS QUE JÁ TEMOS: Nome, CPF, Benefício, Nascimento. FALTAM: nome_mae, rg_numero, rg_orgao]
+Sofia: "Perfeito, pra finalizar preciso de mais 3 informaçõezinhas:
+1. Nome completo da sua mãe
+2. RG (número e órgão emissor)
+Pode mandar de uma vez ou separado, como ficar melhor 😊
 [FASE:coleta]"
+↑ Sofia NÃO pediu data de nascimento porque JÁ TEMOS no contexto.
 
 ## Exemplo F — todos os dados completos:
 Sofia: "Tudo certo, Maria! ✅ Tenho seus dados completos. Vou registrar sua proposta agora na FACTA e em alguns minutos te mando o link da assinatura digital aqui pelo WhatsApp 📋
@@ -648,6 +668,7 @@ function extractOportunidades(parsed) {
 
   // 1. EMPRÉSTIMO NOVO (só se enquadra E tem margem livre real)
   // Calcula em PRICE 108 meses @ 1.85% (teto INSS, prazo máximo)
+  // BANCO PADRAO: FINANTO (primeira opcao operacional — regras iguais ao QUALI)
   if (enquadrado && margemLivreEmp >= 50) {
     const coef108_185 = 0.02153;
     const vcNovo = margemLivreEmp / coef108_185;
@@ -656,7 +677,7 @@ function extractOportunidades(parsed) {
       novaParc: Math.round(margemLivreEmp * 100) / 100,
       prazo: 108, taxa: 1.85,
       desc: `Margem livre ${_formatBRL(margemLivreEmp)}/mês · 108 meses · 1,85%`,
-      banco: 'BRB / C6 / QUALI' });
+      banco: 'FINANTO' });
   }
 
   // 2. PORTABILIDADE / REFIN — roda motor real em cada contrato
@@ -1069,7 +1090,7 @@ EMPRÉSTIMO NOVO:
 - Valor liberado: *R$ XXX*
 - Parcela: R$ XX/mês
 - Prazo: 108 meses · Taxa: 1,85% ao mês
-- Banco: BRB / C6 / QUALI
+- Banco: *FINANTO*
 
 PORTABILIDADE:
 🔄 *PORTABILIDADE + REFINANCIAMENTO*
@@ -1090,16 +1111,20 @@ Use VALORES EXATOS do motor. SÓ a melhor opção. *Negrito* nos números. Termi
       } else if (conv.data && Object.keys(conv.data).length > 0) {
         contextParts.push(buildContext(conv.campaignType, conv.data));
       } else {
-        // Sem dados nenhum — cliente chegou sem campanha previa. Sofia precisa pedir CPF.
-        contextParts.push(`\n⚠️ SEM CONTEXTO — Cliente chegou sem campanha prévia. Você AINDA não tem CPF dele.`);
-        contextParts.push(`➤ Aja como CASO B da FASE 1: peça o CPF educadamente. Não invente valores.`);
+        // Sem dados nenhum — cliente chegou sem campanha previa. Sofia precisa pedir CONSENTIMENTO + CPF.
+        contextParts.push(`\n⚠️ SEM CONTEXTO — Cliente chegou sem campanha prévia, você AINDA não tem dados dele.`);
+        contextParts.push(`➤ Aja como Exemplo B1: PRIMEIRO peça consentimento pra consultar dados (LGPD/INSS), depois o CPF.`);
+        contextParts.push(`➤ Mencione brevemente que estamos em MOMENTO DE MUDANÇAS no consignado (nova regra 40%, prazo 108m, taxas atualizadas) — isso aumenta interesse.`);
+        contextParts.push(`➤ Não invente valores nem datas.`);
       }
-      if (conv.phase === 'coleta' || conv.collectedFields?.length > 0) {
+      // Sempre que ja temos algum dado, mostra explicitamente pra Sofia NUNCA pedir de novo
+      if (known.length > 0 || conv.phase === 'coleta' || conv.collectedFields?.length > 0) {
         contextParts.push(`\n═══ STATUS DA COLETA DE DADOS ═══`);
-        contextParts.push(`DADOS QUE JÁ TEMOS (NÃO peça de novo):\n${known.length ? known.join('\n') : 'Nenhum'}`);
-        contextParts.push(`DADOS QUE FALTAM (peça ao cliente, 2-3 por vez):\n${missing.length ? missing.join(', ') : 'TODOS COMPLETOS → disparar [ACAO:DIGITAR_PROPOSTA]'}`);
+        contextParts.push(`✅ DADOS QUE JÁ TEMOS (NÃO peça de novo, USE o que está aqui):\n${known.length ? known.join('\n') : 'Nenhum'}`);
+        contextParts.push(`❌ DADOS QUE FALTAM (peça ao cliente, 2-3 por vez):\n${missing.length ? missing.join(', ') : 'TODOS COMPLETOS → disparar [ACAO:DIGITAR_PROPOSTA]'}`);
         if (missing.length === 0) contextParts.push(`\n⚡ TODOS OS DADOS COMPLETOS! Avise o cliente e dispare [ACAO:DIGITAR_PROPOSTA]`);
         else if (missing.length <= 5) contextParts.push(`\n🔜 Quase lá! Faltam apenas ${missing.length} campos.`);
+        contextParts.push(`\n⚠️ REGRA CRÍTICA: Se o campo está em "DADOS QUE JÁ TEMOS" você NUNCA pode pedir de novo. Repetir é falha grave. Peça APENAS os campos em "FALTAM".`);
       }
       contextParts.push(`\nMensagem do cliente: "${text}"`);
 
