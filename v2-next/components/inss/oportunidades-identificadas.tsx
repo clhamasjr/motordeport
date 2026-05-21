@@ -550,32 +550,36 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
               <TrendingUp className="size-4 text-orange-400" />
             </div>
 
-            {/* Estimativa rápida: PRICE 108m @ 1.85% (teto INSS) */}
-            <div>
+            {/* FINANTO destacado — primeira opção operacional pra contrato novo */}
+            <div className="rounded-md border border-orange-500/60 bg-orange-500/10 p-3">
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                <Badge variant="success" className="text-[10px] font-mono">FINANTO ⭐</Badge>
+                <span className="text-[10px] font-mono text-muted-foreground">108m · 1,85%</span>
+              </div>
               <div className="text-2xl font-mono font-bold text-orange-400">{formatBRL(empNovoVlr185)}</div>
               <div className="text-[10px] text-muted-foreground">
-                Estimativa na <strong>tabela 1,85% em 108 meses</strong> (teto INSS, prazo máximo) — coef PRICE 0.02153.
-                Use bancos abaixo pra ver o liberado real por destino.
+                <strong className="text-orange-300">Banco primário</strong> — contrato novo INSS · taxa única 1,85% em 108 meses · coef PRICE 0.02153.
+                Regras iguais ao QUALI (mín saldo, troco, idade etc).
               </div>
             </div>
 
-            {/* Tabela com bancos disponíveis pelo motor */}
+            {/* Outros destinos disponíveis pelo motor (opções secundárias) */}
             {empNovoOpcoes.length > 0 && (
               <div className="pt-2 border-t border-orange-500/20">
                 <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground mb-1.5">
-                  Valor liberado por banco (taxa mais baixa de cada um):
+                  Outras opções por banco (referência):
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                   {empNovoOpcoes.map((b, i) => (
                     <div
                       key={b.banco}
                       className={`rounded-md border p-2 ${
-                        i === 0 ? 'border-green-500/60 bg-green-500/10' : 'border-border bg-card/50'
+                        i === 0 ? 'border-green-500/40 bg-green-500/5' : 'border-border bg-card/50'
                       }`}
                     >
                       <div className="flex items-center justify-between">
                         <Badge variant={i === 0 ? 'success' : 'outline'} className="text-[9px] font-mono">
-                          {b.banco}{i === 0 && ' ⭐'}
+                          {b.banco}
                         </Badge>
                         <span className="text-[9px] font-mono text-muted-foreground">{b.taxa.toFixed(2)}%</span>
                       </div>
@@ -587,8 +591,7 @@ export function OportunidadesIdentificadas({ parsed }: Props) {
                   ))}
                 </div>
                 <div className="text-[9px] text-muted-foreground mt-1.5 italic">
-                  💡 Taxa mais alta (1,85%) = mais comissão de tabela pro correspondente, menos valor liberado pro cliente.
-                  Taxa mais baixa (1,50% / BRB) = mais valor liberado, menos comissão.
+                  💡 FINANTO é a primeira opção operacional. Os bancos acima são fallback se FINANTO indisponível.
                 </div>
               </div>
             )}
