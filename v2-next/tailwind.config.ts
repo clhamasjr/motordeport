@@ -5,8 +5,11 @@ const config: Config = {
   content: ['./app/**/*.{ts,tsx}', './components/**/*.{ts,tsx}'],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['var(--font-sans)', 'Inter', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-mono)', 'JetBrains Mono', 'ui-monospace', 'monospace'],
+      },
       colors: {
-        // Cores do FlowForce (mantém continuidade visual com V1)
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
@@ -36,22 +39,39 @@ const config: Config = {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
-        // Cores específicas dos bancos (mantém paleta)
         bank: {
-          c6: '#22d3ee',          // cyan
-          pb: '#22c55e',          // green
-          joinbank: '#a855f7',    // purple
-          mercantil: '#a855f7',   // purple
-          v8: '#f5c242',          // yellow
-          fintech_qi: '#f5c242',  // yellow
-          fintech_celcoin: '#22d3ee', // cyan
-          handbank: '#3b82f6',    // blue
+          c6: '#22d3ee',
+          pb: '#22c55e',
+          joinbank: '#a855f7',
+          mercantil: '#a855f7',
+          v8: '#f5c242',
+          fintech_qi: '#f5c242',
+          fintech_celcoin: '#22d3ee',
+          handbank: '#3b82f6',
         },
       },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
+      },
+      backgroundImage: {
+        'aurora': 'linear-gradient(135deg, hsl(var(--aurora-1)) 0%, hsl(var(--aurora-3)) 60%, hsl(var(--aurora-2)) 100%)',
+        'aurora-subtle': 'linear-gradient(135deg, hsl(var(--aurora-1) / 0.12) 0%, hsl(var(--aurora-2) / 0.12) 100%)',
+      },
+      keyframes: {
+        'shimmer': {
+          '0%': { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' },
+        },
+        'pulse-glow': {
+          '0%, 100%': { boxShadow: '0 0 0 0 hsl(var(--primary) / 0.4)' },
+          '50%': { boxShadow: '0 0 0 8px hsl(var(--primary) / 0)' },
+        },
+      },
+      animation: {
+        'shimmer': 'shimmer 2.5s linear infinite',
+        'pulse-glow': 'pulse-glow 2s ease-out infinite',
       },
     },
   },
