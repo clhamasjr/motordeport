@@ -537,10 +537,12 @@ const _BD = {
     taxaOrigemMin: { '422': 0, '149': 0, '389': 0 },
     taxaOrigemMinDefault: 1.10 },
   C6: { sMin: 2000, tMin: 50, faixa: [1.55, 1.85], coefF: null,
-    // Regras Carol GC C6 (08/04/2026): nao porta Daycoval/Agibank/Inbursa/Safra/BRB/QI Tech
-    block: ['336','626','707','121','012','422','070','925','329'],
-    // FACTA 13 pagas, PARANA 13, PAN 37. Demais CIP: sem restricao
-    pgMinMap: { '149': 13, '254': 13, '623': 37 },
+    // Regras Carol GC C6 atualizadas:
+    // BLOCK: nao porta Daycoval(707)/Agibank(121)/Inbursa(012)/Safra(422)/BRB(070)/BRB Cred(925)
+    block: ['336','626','707','121','012','422','070','925'],
+    // Tabela exclusiva (priority): QI TECH(329)/FACTA(149)/FACTA CFI(935)/PINE(643) — acima de 12 pagas
+    // PARANA(254): 13 pagas. PAN(623): 37 pagas. Demais CIP: sem restricao
+    pgMinMap: { '329': 12, '149': 12, '935': 12, '643': 12, '254': 13, '623': 37 },
     taxaOrigemMinDefault: 1.35 },
   BRB: { sMin: 3000, tMin: 250, faixa: null, coefF: 0.02299,
     block: ['070','623','935','149','012','071','925','380','079'],
