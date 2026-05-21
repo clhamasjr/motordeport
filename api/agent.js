@@ -658,6 +658,8 @@ function extractOportunidades(parsed) {
   const carts = parsed.cartoes || [];
   const tels = parsed.telefones || [];
   const contratos = parsed.contratos || [];
+  const end = parsed.endereco || {};
+  const bcoPag = parsed.banco || {};
 
   const mrgDisp = _parseBR(mrg.disponivel);
   const mrgRmc = _parseBR(mrg.rmc);
@@ -775,7 +777,22 @@ function extractOportunidades(parsed) {
       nb: b.nb || ben.nb || '',
       data_nascimento: b.data_nascimento || '',
       especie: ben.especie || '',
-      idade: b.idade || ''
+      idade: b.idade || '',
+      // Dados pessoais adicionais (Multicorban traz, Sofia precisa pra DIGITAR_PROPOSTA)
+      rg: b.rg || '',
+      nome_mae: b.nome_mae || '',
+    },
+    endereco: {
+      logradouro: end.endereco || '',
+      cep: end.cep || '',
+      municipio: end.municipio || '',
+      uf: end.uf || '',
+    },
+    banco_pagador: {
+      nome: bcoPag.nome || '',
+      agencia: bcoPag.agencia || '',
+      conta: bcoPag.conta || '',
+      tipo: bcoPag.tipo || '',
     },
     margem: {
       disponivel: mrg.disponivel || '0,00',
@@ -1011,7 +1028,12 @@ export default async function handler(req) {
         }
         conv.motorConsultado = true;
         if (motor.success) {
-          // Injeta dados do motor na conv
+          // Injeta TODOS os dados do motor na conv (Multicorban traz: nome, CPF, NB,
+          // data_nasc, RG, nome_mae, endereco completo, banco/agencia/conta)
+          // Sofia NUNCA mais pede esses dados pq ja estao em conv.data — buildDataSummary
+          // vai colocar em "DADOS QUE JA TEMOS"
+          const e = motor.endereco || {};
+          const bp = motor.banco_pagador || {};
           conv.data = {
             ...conv.data,
             cpf: motor.beneficiario.cpf,
@@ -1020,6 +1042,20 @@ export default async function handler(req) {
             beneficio: motor.beneficiario.nb,
             data_nascimento: motor.beneficiario.data_nascimento,
             especie: motor.beneficiario.especie,
+            // Dados pessoais que Multicorban traz prontos
+            rg_numero: motor.beneficiario.rg || conv.data.rg_numero,
+            nome_mae: motor.beneficiario.nome_mae || conv.data.nome_mae,
+            // Endereco
+            cep: e.cep || conv.data.cep,
+            endereco: e.logradouro || conv.data.endereco,
+            cidade: e.municipio || conv.data.cidade,
+            uf: e.uf || conv.data.uf,
+            // Banco de deposito (conta INSS — geralmente eh onde recebe o beneficio)
+            banco_deposito: bp.nome || conv.data.banco_deposito,
+            agencia: bp.agencia || conv.data.agencia,
+            conta: bp.conta || conv.data.conta,
+            tipo_conta: bp.tipo || conv.data.tipo_conta,
+            // Telemetria de margem (info pra Sofia argumentar)
             margem_disponivel: motor.margem.disponivel,
             margem_rmc: motor.margem.rmc,
             margem_rcc: motor.margem.rcc,
