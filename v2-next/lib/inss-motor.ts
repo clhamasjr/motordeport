@@ -88,8 +88,10 @@ export const BD: Record<string, BancoRegra> = {
     sMin: 2000, tMin: 50, pMin: 0, pgMin: 0, faixa: [1.55, 1.85], coefF: null,
     // 336 e 626 = C6 (não porta a si mesmo). 707/121/012/422/925 mantidos do V1.
     block: ['336','626','707','121','012','422','925'],
-    // pgMin específico por origem. FACTA (149) acima de 12 pagas.
-    pgMinMap: { '254': 13, '623': 37, '070': 12, '318': 12, '149': 12 },
+    // pgMin específico por origem.
+    // FACTA (149): 12 pagas. QI Sociedade (329): 12 pagas.
+    // PAN (623): 37. PARANÁ (254): 13. BRB (070) / BMG (318): 12.
+    pgMinMap: { '254': 13, '623': 37, '070': 12, '318': 12, '149': 12, '329': 12 },
     blockInv: true,
     // C6 aceita port com taxa origem >= 1,35%
     taxaOrigemMinDefault: 1.35,
