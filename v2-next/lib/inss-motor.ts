@@ -86,18 +86,29 @@ export const BD: Record<string, BancoRegra> = {
   },
   C6: {
     sMin: 2000, tMin: 50, pMin: 0, pgMin: 0, faixa: [1.55, 1.85], coefF: null,
-    // 336 e 626 = C6 (não porta a si mesmo). 707/121/012/422/925 mantidos do V1.
-    block: ['336','626','707','121','012','422','925'],
-    // pgMin específico por origem.
-    // FACTA (149): 12 pagas. QI Sociedade (329): 12 pagas.
-    // PAN (623): 37. PARANÁ (254): 13. BRB (070) / BMG (318): 12.
-    pgMinMap: { '254': 13, '623': 37, '070': 12, '318': 12, '149': 12, '329': 12 },
+    // ─── BLOCK — bancos que C6 NÃO porta (regra Carol GC C6, 08/04/2026): ───
+    //  336/626 = C6 próprio (auto-port bloqueado)
+    //  707 = Daycoval — não portamos
+    //  121 = Agibank — não portamos
+    //  012 = Inbursa — não portamos
+    //  422 = Safra — não portamos
+    //  070 = BRB — não portamos
+    //  925 = BRB Cred CFI — não portamos
+    //  329 = QI Tech — não portamos (antes era priority com pgMin 12; agora total)
+    block: ['336','626','707','121','012','422','070','925','329'],
+    // ─── PG MÍN POR ORIGEM (regra Carol GC C6): ───
+    //  149 FACTA: 13 pagas (era 12, agora 13)
+    //  254 PARANÁ BANCO: 13 pagas
+    //  623 PAN: 37 pagas
+    //  Demais bancos CIP: aceita com menos de 12 pagas (sem restrição)
+    pgMinMap: { '149': 13, '254': 13, '623': 37 },
     blockInv: true,
-    // C6 aceita port com taxa origem >= 1,35%
+    // Taxa mínima Port: 1,35%. Refin obrigatório se origem < 1,75%
+    // (nosso motor faz sempre port+refin 108m, então qualquer taxa origem ≥ 1,35 entra)
     taxaOrigemMinDefault: 1.35,
-    priorityFor: ['329','149','935','643'],
+    // FACTA (935 CFI) e PINE (643) ainda em priority — taxa fixa 1,55%
+    priorityFor: ['935','643'],
     priorityRate: 1.55,
-    contractPrefixBlock: { '329': ['FIN','QUA','FDC'] },
   },
   BRB: {
     sMin: 3000, tMin: 250, pMin: 0, pgMin: 0, faixa: null, coefF: 0.02299,

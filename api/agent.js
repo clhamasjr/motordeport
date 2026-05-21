@@ -537,8 +537,10 @@ const _BD = {
     taxaOrigemMin: { '422': 0, '149': 0, '389': 0 },
     taxaOrigemMinDefault: 1.10 },
   C6: { sMin: 2000, tMin: 50, faixa: [1.55, 1.85], coefF: null,
-    block: ['336','626','707','121','012','422','925'],
-    pgMinMap: { '254': 13, '623': 37, '070': 12, '318': 12, '149': 12, '329': 12 },
+    // Regras Carol GC C6 (08/04/2026): nao porta Daycoval/Agibank/Inbursa/Safra/BRB/QI Tech
+    block: ['336','626','707','121','012','422','070','925','329'],
+    // FACTA 13 pagas, PARANA 13, PAN 37. Demais CIP: sem restricao
+    pgMinMap: { '149': 13, '254': 13, '623': 37 },
     taxaOrigemMinDefault: 1.35 },
   BRB: { sMin: 3000, tMin: 250, faixa: null, coefF: 0.02299,
     block: ['070','623','935','149','012','071','925','380','079'],
