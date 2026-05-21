@@ -132,14 +132,21 @@ export function Sidebar({ user }: { user: AuthUser }) {
         <Link
           href="/inicio"
           className={cn(
-            'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
-            pathname === '/inicio'
-              ? 'bg-aurora-subtle text-foreground font-medium ring-1 ring-primary/30 shadow-[0_0_18px_-6px_hsl(var(--primary)/.55)]'
-              : 'hover:bg-secondary/60 text-muted-foreground hover:text-foreground',
+            'w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs uppercase tracking-wider font-semibold transition-colors',
+            pathname === '/inicio' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
           )}
         >
-          <Home className="w-4 h-4" />
-          <span>Início</span>
+          <span
+            className={cn(
+              'w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 transition-all',
+              pathname === '/inicio'
+                ? 'bg-aurora-subtle ring-1 ring-primary/30 text-foreground shadow-[0_0_14px_-4px_hsl(var(--primary)/.55)]'
+                : 'bg-secondary/40 text-muted-foreground',
+            )}
+          >
+            <Home className="w-4 h-4" />
+          </span>
+          <span className="flex-1 text-left">Início</span>
         </Link>
 
         {NAV.map((group) => {
@@ -151,11 +158,23 @@ export function Sidebar({ user }: { user: AuthUser }) {
             <div key={group.k} className="pt-3">
               <button
                 onClick={() => setOpen((o) => ({ ...o, [group.k]: !o[group.k] }))}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                className={cn(
+                  'w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs uppercase tracking-wider font-semibold transition-colors',
+                  isOpen ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+                )}
               >
-                <Icon className="w-3 h-3" />
+                <span
+                  className={cn(
+                    'w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 transition-all',
+                    isOpen
+                      ? 'bg-aurora-subtle ring-1 ring-primary/30 text-foreground'
+                      : 'bg-secondary/40 text-muted-foreground',
+                  )}
+                >
+                  <Icon className="w-4 h-4" />
+                </span>
                 <span className="flex-1 text-left">{group.label}</span>
-                <ChevronRight className={cn('w-3 h-3 transition-transform', isOpen && 'rotate-90')} />
+                <ChevronRight className={cn('w-3.5 h-3.5 transition-transform flex-shrink-0', isOpen && 'rotate-90')} />
               </button>
               {isOpen && (
                 <div className="mt-1 space-y-0.5">
