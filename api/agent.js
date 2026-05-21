@@ -403,12 +403,12 @@ function autoFillDefaults(convData) {
     if (num) { d.numero_end = num; auto.add('numero_end'); }
   }
 
-  // Email: gera aleatorio cpf@lhamascred.com.br se cliente nao tem
-  // (muito cliente INSS nao tem email)
+  // Email: gera aleatorio cpf@gmail.com se cliente nao tem
+  // (muito cliente INSS nao tem email; gmail.com eh aceito sem rejeicao por banco)
   if (!d.email && d.cpf) {
     const cpfClean = String(d.cpf).replace(/\D/g, '');
     if (cpfClean.length === 11) {
-      d.email = `cliente${cpfClean}@lhamascred.com.br`;
+      d.email = `cliente${cpfClean}@gmail.com`;
       auto.add('email');
     }
   }
