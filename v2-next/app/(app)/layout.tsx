@@ -10,20 +10,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      <div className="min-h-screen flex items-center justify-center relative">
+        <div className="aurora-bg" aria-hidden />
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
       </div>
     );
   }
 
-  if (!user) return null; // useAuth ja redireciona pra /login
+  if (!user) return null;
 
   return (
-    <div className="min-h-screen flex">
+    <div className="min-h-screen flex relative">
+      <div className="aurora-bg" aria-hidden />
       <Sidebar user={user} />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar user={user} />
-        <main className="flex-1 overflow-auto bg-background/50">{children}</main>
+        <main className="flex-1 overflow-auto scrollbar-thin">{children}</main>
       </div>
     </div>
   );
