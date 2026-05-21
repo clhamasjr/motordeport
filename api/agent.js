@@ -152,42 +152,13 @@ Cliente: "123.456.789-00"
 Sofia: "🔍 Consultando aqui na base... só 1 minutinho..."
 [ACAO:CONSULTAR_DADOS]
 
-## Exemplo C — objeção "tô com medo de golpe":
-Cliente: "isso é golpe né, vai pegar minha senha"
-Sofia: "Entendo a preocupação, é importante mesmo desconfiar. A LhamasCred é correspondente autorizado pelo Banco Central, e eu não peço senha do gov.br nem do banco em momento nenhum. A formalização é feita pelo próprio INSS, com link enviado aqui no WhatsApp. Pode até ligar na empresa pra confirmar (Sorocaba/SP) antes de seguir.
-[SENTIMENTO:desconfiado]
-[INTENCAO:duvida_seguranca]"
-
-## Exemplo C2 — objeção "tá caro / juros alto":
-Cliente: "tá muito caro essa taxa, juros de banco é roubo"
-Sofia: "Entendo. O consignado INSS tem taxa REGULADA pelo Conselho Nacional de Previdência — hoje o teto é de 1,85% ao mês, e nossos bancos parceiros operam entre 1,50% e 1,85%. Pra comparar: cartão de crédito comum cobra 14-15% ao mês, e empréstimo pessoal sem garantia, 8-12% ao mês. Aqui você paga MUITO menos justamente porque a parcela sai direto no benefício, sem risco pro banco. Mas você decide, sem pressão 😊
-[INTENCAO:duvida_geral]
-[SENTIMENTO:desconfiado]"
-
-## Exemplo C3 — objeção "vou pensar":
-Cliente: "deixa eu pensar e te respondo depois"
-Sofia: "Claro, sem pressão! 😊 Uma coisa só: a taxa que separei pra você hoje é da tabela ATUAL, e ela muda mês a mês. Se quiser, posso anotar seu nome e dar uma respondida em 2-3 dias só pra saber se ficou alguma dúvida — quem decide é sempre você. Combinado?
-[INTENCAO:duvida_geral]
-[SENTIMENTO:neutro]
-[LEAD_SCORE:50]"
-
-## Exemplo C4 — objeção "minha família não deixa / esposa não autoriza":
-Cliente: "minha filha falou pra eu não fazer nada"
-Sofia: "Faz total sentido conversar em família, isso é prudente mesmo. Se quiser, posso te mandar por escrito o resumo da proposta pra sua filha conferir comigo aqui pelo WhatsApp também — fico à disposição pra tirar qualquer dúvida com ela. Sem pressão pra decidir agora.
-[INTENCAO:duvida_geral]
-[SENTIMENTO:ansioso]"
-
-## Exemplo C5 — objeção "não preciso de dinheiro":
-Cliente: "não tô precisando agora, obrigado"
-Sofia: "Show, sem problema 😊 Mas só pra deixar registrado: a oportunidade que olhei aqui não é dinheiro novo — é REDUZIR a parcela que você JÁ paga, sem mexer no resto. Você passa a pagar menos e fica com mais sobrando no benefício. Se mudar de ideia ou quiser entender melhor, é só me chamar.
-[INTENCAO:recusa]
-[LEAD_SCORE:35]"
-
-## Exemplo C6 — cliente SEM oportunidade viável (motor retornou vazio):
-[Contexto: motor consultou e não achou nenhuma operação]
-Sofia: "Olhei aqui seu cadastro com cuidado, José. Nesse momento não tenho uma operação que faça sentido financeiro pra você — ou porque a margem já tá comprometida, ou porque o contrato atual já tá numa taxa muito boa pra portar. Mas vou anotar seu contato pra te avisar assim que aparecer algo bom. Pode ser?
-[FASE:encerrado]
-[LEAD_SCORE:30]"
+## Quebra de objeções — guia rápido:
+- "tô com medo de golpe / senha" → Banco Central autoriza, NÃO peço senha gov.br/banco, formalização pelo INSS. Pode ligar pra confirmar. [SENTIMENTO:desconfiado][INTENCAO:duvida_seguranca]
+- "tá caro / juros alto" → Taxa REGULADA INSS (teto 1,85%). Cartão = 14% / pessoal = 10%. Aqui paga MUITO menos. [INTENCAO:duvida_geral]
+- "vou pensar" → Claro, sem pressão. Tabela muda mês a mês. Posso voltar em 2-3 dias? [LEAD_SCORE:50]
+- "esposa/filha não deixa" → Faz sentido conversar em família. Posso mandar resumo escrito pra ela ver, sem pressão. [SENTIMENTO:ansioso]
+- "não preciso de dinheiro" → Não é dinheiro novo — é REDUZIR a parcela que já paga. Fica mais sobrando no benefício. [INTENCAO:recusa][LEAD_SCORE:35]
+- Cliente SEM oportunidade viável → "Olhei com cuidado e nesse momento não tenho operação que faça sentido pra você. Vou anotar pra te avisar quando aparecer algo. Pode ser?" [FASE:encerrado][LEAD_SCORE:30]
 
 ## Exemplo D — handoff judicial:
 Cliente: "minha advogada falou pra eu não fazer nada antes da perícia"
@@ -428,6 +399,17 @@ function isValidCPF(cpf) {
   return d2 === parseInt(cpf[10]);
 }
 
+// Helper: fetch com timeout configuravel (default 15s) — evita travar a Sofia
+async function fetchTimeout(url, opts = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...opts, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 // Consulta Multicorban + monta oportunidades (mesma logica da Consulta Unitaria do frontend)
 async function consultarMotorSofia(cpf, appUrl) {
   const log = [];
@@ -439,11 +421,11 @@ async function consultarMotorSofia(cpf, appUrl) {
   };
   try {
     log.push({ step: 'consult_cpf', cpf, hasSecret: !!internalSecret });
-    const r = await fetch(appUrl + '/api/multicorban', {
+    const r = await fetchTimeout(appUrl + '/api/multicorban', {
       method: 'POST',
       headers: internalHeaders,
       body: JSON.stringify({ action: 'consult_cpf', cpf })
-    });
+    }, 18000);
     const txt = await r.text();
     let data;
     try { data = JSON.parse(txt); } catch { data = { ok: false, error: 'resposta nao-JSON', raw: txt.substring(0, 300) }; }
@@ -457,11 +439,11 @@ async function consultarMotorSofia(cpf, appUrl) {
       const ativo = data.lista.find(b => b.situacao === 'ATIVO') || data.lista[0];
       log.push({ step: 'consult_beneficio', nb: ativo?.nb, situacao: ativo?.situacao });
       if (ativo && ativo.nb) {
-        const r2 = await fetch(appUrl + '/api/multicorban', {
+        const r2 = await fetchTimeout(appUrl + '/api/multicorban', {
           method: 'POST',
           headers: internalHeaders,
           body: JSON.stringify({ action: 'consult_beneficio', beneficio: ativo.nb })
-        });
+        }, 18000);
         const t2 = await r2.text();
         let d2;
         try { d2 = JSON.parse(t2); } catch { d2 = { ok: false, error: 'resposta nao-JSON', raw: t2.substring(0, 300) }; }
@@ -977,8 +959,14 @@ export default async function handler(req) {
       if (cpfDetectado && isValidCPF(cpfDetectado) && !conv.motorConsultado && !jaTemDadosCliente) {
         const appUrl = process.env.APP_URL || 'https://motordeport.vercel.app';
         // Consulta assincrona — envia mensagem "deixa eu consultar" enquanto processa
-        await sendMsg(instance, number, '🔍 Consultando aqui na base... só 1 minutinho...');
-        const motor = await consultarMotorSofia(cpfDetectado, appUrl);
+        try { await sendMsg(instance, number, '🔍 Consultando aqui na base... só 1 minutinho...'); } catch {}
+        let motor;
+        try {
+          motor = await consultarMotorSofia(cpfDetectado, appUrl);
+        } catch (e) {
+          console.error('[SOFIA] consultarMotorSofia exception:', e && e.message);
+          motor = { success: false, error: e && e.message || 'falha geral motor' };
+        }
         conv.motorConsultado = true;
         if (motor.success) {
           // Injeta dados do motor na conv
@@ -1072,36 +1060,25 @@ export default async function handler(req) {
               if (partes.length) contextParts.push(`  ↳ ${partes.join(' + ')}`);
             }
           }
-          contextParts.push(`\n⚡ AÇÃO OBRIGATÓRIA — APRESENTE NO FORMATO PADRÃO:
+          contextParts.push(`\n⚡ APRESENTE A MELHOR OPORTUNIDADE NO FORMATO PADRÃO:
 
-Saudação curta com nome do cliente (1 linha).
+Saudação curta com nome (1 linha). Depois bloco organizado:
 
-Depois, apresente APENAS A MELHOR oportunidade (maior valor) no formato BLOCO ORGANIZADO:
-
-Pra EMPRÉSTIMO NOVO use:
+EMPRÉSTIMO NOVO:
 💰 *EMPRÉSTIMO NOVO*
-- Valor liberado: *R$ X.XXX,XX*
-- Parcela: R$ XXX,XX/mês
-- Prazo: 108 meses
-- Taxa: 1,85% ao mês (teto INSS)
+- Valor liberado: *R$ XXX*
+- Parcela: R$ XX/mês
+- Prazo: 108 meses · Taxa: 1,85% ao mês
 - Banco: BRB / C6 / QUALI
-- Desconto direto na folha
 
-Pra PORTABILIDADE use:
+PORTABILIDADE:
 🔄 *PORTABILIDADE + REFINANCIAMENTO*
-- Contrato origem: [banco] ([taxa]% ao mês)
-- Banco destino: [banco] ([taxa]% ao mês — 108 meses)
-- Parcela atual: R$ X → nova *R$ Y*
-- Redução: *R$ Z/mês*
-- Troco na conta: *R$ T* (se houver)
+- Origem: [banco origem] ([taxa]%)
+- Destino: [banco dest] ([taxa]%/108m)
+- Parcela: R$ X → *R$ Y* (reduz R$ Z)
+- Troco: *R$ T* (se houver)
 
-REGRAS:
-1. Use os VALORES EXATOS calculados pelo motor — NÃO arredonde, NÃO invente
-2. Mostre SÓ a melhor oportunidade. Se cliente perguntar de outras, aí mostra.
-3. Use *negrito* nos números chave (asteriscos no WhatsApp)
-4. Use traços (-) pra lista, NÃO use markdown de tabela
-5. Sempre termine perguntando "Posso registrar?" ou "Quer que eu explique como funciona?"
-6. Atualize [FASE:qualificacao]`);
+Use VALORES EXATOS do motor. SÓ a melhor opção. *Negrito* nos números. Termine com "Posso registrar?" [FASE:qualificacao]`);
         }
         conv._oportunidadesApresentadas = true;
         setConv(number, conv);
@@ -1141,8 +1118,19 @@ REGRAS:
         else { cleanMessages.push({ ...m }); lastRole = m.role; }
       }
 
-      const reply = await callClaude(cleanMessages);
-      if (!reply) return jsonResp({ error: 'Claude sem resposta' }, 500, req);
+      let reply;
+      try {
+        reply = await callClaude(cleanMessages);
+      } catch (e) {
+        console.error('[SOFIA] callClaude exception:', e && e.message);
+        reply = null;
+      }
+      if (!reply) {
+        // Fallback — Claude falhou ou timeout. NUNCA deixar cliente sem resposta.
+        const fallback = 'Tive um problema rápido aqui. Pode repetir sua última mensagem? Em alguns segundos eu volto.';
+        try { await sendMsg(instance, number, fallback); } catch {}
+        return jsonResp({ ok: true, fallback: true }, 200, req);
+      }
 
       const parsed = parseResponse(reply);
       const { cleanReply, actions, phase, collectedData, intencao, sentimento, leadScore, handoffMotivo } = parsed;
