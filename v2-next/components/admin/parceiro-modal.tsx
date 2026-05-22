@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Parceiro } from '@/lib/admin-types';
 import { useCreateParceiro, useUpdateParceiro } from '@/hooks/use-admin-parceiros';
 import { Button } from '@/components/ui/button';
@@ -46,8 +46,11 @@ export function ParceiroModal({
   const create = useCreateParceiro();
   const update = useUpdateParceiro();
 
-  const handleOpenChange = (o: boolean) => {
-    if (o) {
+  // Hidrata o form quando o modal abre ou o parceiro alvo muda. NAO use
+  // onOpenChange do Radix Dialog pra isso — ele so dispara em interacao do
+  // usuario (clicar fora/Esc), nao em mudanca externa da prop `open`.
+  useEffect(() => {
+    if (open) {
       setNome(parceiro?.nome || '');
       setCnpj(parceiro?.cnpj || '');
       setResponsavel(parceiro?.responsavel || '');
@@ -58,9 +61,11 @@ export function ParceiroModal({
       setUf(parceiro?.uf || '');
       setComissao(parceiro?.comissao_padrao != null ? String(parceiro.comissao_padrao) : '');
       setObservacoes(parceiro?.observacoes || '');
-    } else {
-      onClose();
     }
+  }, [open, parceiro]);
+
+  const handleOpenChange = (o: boolean) => {
+    if (!o) onClose();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

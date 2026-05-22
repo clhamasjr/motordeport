@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   useAdminUsers,
   useCreateUser,
@@ -546,15 +546,22 @@ function EditUserModal({ user, onClose }: { user: User | null; onClose: () => vo
   const [perfilParceiroOpen, setPerfilParceiroOpen] = useState<Parceiro | null>(null);
   const parceiroSelecionado = parceiroId ? parceiros.find((p) => p.id === Number(parceiroId)) ?? null : null;
 
-  const handleOpenChange = (o: boolean) => {
-    if (o && user) {
+  // Hidrata o form quando o usuario a editar muda. NAO use handleOpenChange
+  // pra isso — Radix Dialog so dispara onOpenChange em interacao do usuario
+  // (clicar fora/Esc), nao quando a prop `open` muda externamente. O modal
+  // abre via `open={!!user}` quando o caller seta `editingUser`, e esse caminho
+  // exige useEffect.
+  useEffect(() => {
+    if (user) {
       setName(user.name || '');
       setNewUsername(user.username);
       setRole(user.role);
       setParceiroId(user.parceiro_id ? String(user.parceiro_id) : '');
-    } else {
-      onClose();
     }
+  }, [user]);
+
+  const handleOpenChange = (o: boolean) => {
+    if (!o) onClose();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -743,12 +750,16 @@ function BankCodesModal({ user, onClose }: { user: User | null; onClose: () => v
   const update = useUpdateBankCodes();
   const [codes, setCodes] = useState<Record<string, string>>({});
 
-  const handleOpenChange = (o: boolean) => {
-    if (o && user) {
+  // Hidrata os codigos quando o usuario muda — onOpenChange do Radix nao
+  // dispara em mudanca externa de prop. Ver nota no EditUserModal acima.
+  useEffect(() => {
+    if (user) {
       setCodes({ ...(user.bank_codes || {}) });
-    } else {
-      onClose();
     }
+  }, [user]);
+
+  const handleOpenChange = (o: boolean) => {
+    if (!o) onClose();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
