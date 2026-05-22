@@ -2,6 +2,7 @@
 
 # Modulo GOVERNOS — arquivos intermediarios do parser (so o gov_seed.json importa)
 scripts/gov/seed_chunks/
+scripts/gov/inline_chunks/
 scripts/gov/convenios.json
 scripts/gov/inspect.json
 scripts/gov/migration_clean.sql
@@ -10,3 +11,14 @@ scripts/gov/03_gen_seed.py
 scripts/gov/04_seed_chunks.py
 scripts/gov/parse_planilha.py
 supabase_seed_gov.sql
+
+# Modulo PREFEITURAS — SQL batches gerados (so o convenios.json importa)
+scripts/pref/sql_batches/
+
+# TypeScript incremental build info — local, nao versionar
+v2-next/tsconfig.tsbuildinfo
+
+# Arquivos de debug local (regex tests, dumps, sandbox)
+# IMPORTANTE: nunca commitar dump com PII de cliente
+debug-*
+
