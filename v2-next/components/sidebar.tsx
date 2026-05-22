@@ -8,6 +8,7 @@ import {
   Home, Search, BookOpen, Target, Trophy, Download,
   ListChecks, FileText, MessageSquare, Settings, Building2, Landmark,
   Briefcase, Zap, ChevronRight, Smartphone, Sparkles, Activity, ChevronDown,
+  Compass,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -206,6 +207,28 @@ export function Sidebar({ user }: { user: AuthUser }) {
           </span>
           <span className="flex-1 text-left">Início</span>
         </Link>
+
+        {user.role === 'admin' && (
+          <Link
+            href="/orquestrador"
+            className={cn(
+              'w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs uppercase tracking-wider font-semibold transition-colors',
+              pathname === '/orquestrador' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <span
+              className={cn(
+                'w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 transition-all',
+                pathname === '/orquestrador'
+                  ? 'bg-aurora-subtle ring-1 ring-primary/30 text-foreground shadow-[0_0_14px_-4px_hsl(var(--primary)/.55)]'
+                  : 'bg-secondary/40 text-muted-foreground',
+              )}
+            >
+              <Compass className="w-4 h-4" />
+            </span>
+            <span className="flex-1 text-left">Orquestrador</span>
+          </Link>
+        )}
 
         {NAV.map((group) => {
           const visibleItems = group.items.filter(canSee);
