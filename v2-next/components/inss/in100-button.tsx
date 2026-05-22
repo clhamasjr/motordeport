@@ -7,14 +7,23 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { formatBRL } from '@/lib/utils';
-import { useConsultarIN100, type In100Result } from '@/hooks/use-inss-in100';
-import { FileSearch, Download, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useConsultarIN100, In100Error, type In100Result } from '@/hooks/use-inss-in100';
+import { FileSearch, Download, AlertCircle, CheckCircle2, Copy, RotateCw } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface Props {
   cpf: string;
   beneficio?: string;
   /** Se true, renderiza como botão pequeno na toolbar */
   compact?: boolean;
+}
+
+interface ErroEstado {
+  message: string;
+  step?: string;
+  httpStatus?: number;
+  rawAjin?: unknown;
+  queryId?: string;
 }
 
 /**
@@ -24,6 +33,7 @@ interface Props {
 export function In100Button({ cpf, beneficio, compact = false }: Props) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<In100Result | null>(null);
+  const [erro, setErro] = useState<ErroEstado | null>(null);
   const mut = useConsultarIN100();
 
   const disabled = !cpf || !beneficio;
@@ -32,11 +42,40 @@ export function In100Button({ cpf, beneficio, compact = false }: Props) {
     if (!cpf || !beneficio) return;
     setOpen(true);
     setData(null);
+    setErro(null);
     try {
       const r = await mut.mutateAsync({ cpf, beneficio });
       setData(r);
+    } catch (e) {
+      // Captura erro estruturado pra mostrar na UI (não só toast)
+      if (e instanceof In100Error) {
+        setErro({
+          message: e.message,
+          step: e.step,
+          httpStatus: e.httpStatus,
+          rawAjin: e.rawAjin,
+          queryId: e.queryId,
+        });
+      } else if (e instanceof Error) {
+        setErro({ message: e.message });
+      } else {
+        setErro({ message: 'Erro desconhecido' });
+      }
+    }
+  }
+
+  async function copiarErro() {
+    if (!erro) return;
+    const txt = JSON.stringify({
+      cpf, beneficio,
+      timestamp: new Date().toISOString(),
+      ...erro,
+    }, null, 2);
+    try {
+      await navigator.clipboard.writeText(txt);
+      toast.success('Erro copiado pra área de transferência');
     } catch {
-      // toast tratado no hook
+      toast.error('Falha ao copiar — selecione o JSON manualmente abaixo');
     }
   }
 
@@ -76,14 +115,101 @@ export function In100Button({ cpf, beneficio, compact = false }: Props) {
             </DialogDescription>
           </DialogHeader>
 
-          {mut.isPending && !data && (
+          {mut.isPending && !data && !erro && (
             <div className="text-center py-10">
               <div className="text-3xl mb-2 animate-pulse">🔍</div>
               <div className="text-sm text-muted-foreground">Consultando DATAPREV...</div>
+              <div className="text-[10px] text-muted-foreground mt-1">Pode levar até 90s se a DATAPREV estiver lenta.</div>
             </div>
           )}
 
-          {data && (
+          {/* ─── BLOCO DE ERRO ────────────────────────────────────────── */}
+          {erro && !mut.isPending && (
+            <div className="space-y-3">
+              <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="size-5 text-red-400 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-red-300 text-sm">Falha na consulta IN100</div>
+                    <div className="text-xs mt-1 text-foreground/90 break-words">{erro.message}</div>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {erro.step && (
+                        <Badge variant="destructive" className="text-[9px] uppercase">
+                          etapa: {erro.step}
+                        </Badge>
+                      )}
+                      {erro.httpStatus && (
+                        <Badge variant="muted" className="text-[9px]">HTTP {erro.httpStatus}</Badge>
+                      )}
+                      {erro.queryId && (
+                        <Badge variant="muted" className="text-[9px] font-mono">
+                          queryId: {String(erro.queryId).substring(0, 12)}...
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Contexto */}
+              <div className="text-xs grid grid-cols-2 gap-2">
+                <div className="rounded-md border border-border bg-card/50 p-2">
+                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">CPF testado</div>
+                  <div className="font-mono">{cpf || '—'}</div>
+                </div>
+                <div className="rounded-md border border-border bg-card/50 p-2">
+                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">Benefício (NB)</div>
+                  <div className="font-mono">{beneficio || '—'}</div>
+                </div>
+              </div>
+
+              {/* Resposta crua da Ajin pra debug */}
+              {erro.rawAjin != null && (
+                <details className="rounded-md border border-border bg-card/30 p-2" open>
+                  <summary className="cursor-pointer text-xs font-semibold text-cyan-400">
+                    ▸ Detalhe técnico da Ajin (mande isso pro suporte se precisar)
+                  </summary>
+                  <pre className="mt-2 p-2 rounded bg-background overflow-x-auto text-[10px] font-mono max-h-72">
+                    {JSON.stringify(erro.rawAjin, null, 2)}
+                  </pre>
+                </details>
+              )}
+
+              {/* Ações de erro */}
+              <div className="flex gap-2 flex-wrap">
+                <Button size="sm" variant="default" onClick={consultar} disabled={mut.isPending}>
+                  <RotateCw className="size-3.5" /> Tentar de novo
+                </Button>
+                <Button size="sm" variant="outline" onClick={copiarErro}>
+                  <Copy className="size-3.5" /> Copiar erro
+                </Button>
+              </div>
+
+              {/* Dicas baseadas no tipo de erro */}
+              {erro.step === 'cpf_invalido' && (
+                <div className="text-[11px] text-muted-foreground p-2 rounded bg-muted/30">
+                  💡 CPF precisa ter 11 dígitos (com ou sem máscara).
+                </div>
+              )}
+              {erro.step === 'beneficio_invalido' && (
+                <div className="text-[11px] text-muted-foreground p-2 rounded bg-muted/30">
+                  💡 Preencha o número do benefício INSS (NB) antes de consultar.
+                </div>
+              )}
+              {erro.step === 'pending_timeout' && (
+                <div className="text-[11px] text-muted-foreground p-2 rounded bg-muted/30">
+                  💡 A DATAPREV ficou mais de 90s sem responder. Isso costuma ser instabilidade lá. Tenta de novo em 1-2 minutos.
+                </div>
+              )}
+              {erro.step === 'ajin' && (
+                <div className="text-[11px] text-muted-foreground p-2 rounded bg-muted/30">
+                  💡 A Ajin/QualiBanking retornou um erro. Os motivos mais comuns: benefício não cadastrado, espécie não habilitada, CPF sem opt-in DATAPREV ainda, ou bloqueio temporário.
+                </div>
+              )}
+            </div>
+          )}
+
+          {data && !erro && (
             <div className="space-y-3">
               {/* Header com nome + status */}
               <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-border">

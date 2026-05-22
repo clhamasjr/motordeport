@@ -5,12 +5,16 @@ import { Input } from '@/components/ui/input';
 import { AuthUser, useAuth } from '@/hooks/use-auth';
 import { LogOut, Search, User as UserIcon } from 'lucide-react';
 import { InstallPwaButton } from '@/components/install-pwa-button';
+import { MobileNav } from '@/components/mobile-nav';
 
 export function Topbar({ user }: { user: AuthUser }) {
   const { logout } = useAuth();
 
   return (
-    <header className="h-14 glass-subtle border-b border-border/60 flex items-center px-4 gap-4 flex-shrink-0 sticky top-0 z-20">
+    <header className="h-14 glass-subtle border-b border-border/60 flex items-center px-3 sm:px-4 gap-2 sm:gap-4 flex-shrink-0 sticky top-0 z-20">
+      {/* Hamburger mobile — esconde em lg+ (sidebar fixa cobre) */}
+      <MobileNav user={user} />
+
       {/* Search global (placeholder) */}
       <div className="flex-1 max-w-md relative">
         <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
@@ -24,7 +28,7 @@ export function Topbar({ user }: { user: AuthUser }) {
       <InstallPwaButton />
 
       {/* User pill */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1 sm:gap-3">
         <div className="text-right hidden sm:block">
           <div className="text-sm font-medium leading-tight">{user.name || user.username}</div>
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider">

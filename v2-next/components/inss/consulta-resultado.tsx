@@ -91,7 +91,7 @@ export function ConsultaResultado({ cpf, view, onClose, onReConsult }: Props) {
         </div>
 
         {/* ✨ Análise NOVA regra INSS (40%) — único card de enquadramento */}
-        <OportunidadesIdentificadas parsed={parsed} />
+        <OportunidadesIdentificadas parsed={parsed} cpf={cpf} />
 
         {/* 💳 Saque Complementar */}
         <SaqueComplementar cpf={cpf} matricula={b.nb || ben.nb} />

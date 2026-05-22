@@ -35,6 +35,40 @@ Configure todas no Vercel Dashboard:
 | `JOINBANK_URL` | `https://integration.ajin.io` | URL base da API |
 | `JOINBANK_KEY` | `a8UhKEOC85SS+dMTWkWwKfl7mAYde9hR2UJ/p52yAYOt0Urx4vpFqmsXWGQNHPyj` | API Key |
 
+### FINANTO (plataforma Ajin — loja separada) — novo mai/2026
+| Variavel | Valor | Descricao |
+|----------|-------|-----------|
+| `FINANTO_URL` | `https://api.ajin.io` | URL base produção (Ajin v3). Use `https://integration.ajin.io` pra homologação |
+| `FINANTO_KEY` | *(passar via Vercel, nao commitar)* | apikey fornecida pela FINANTO (header `apikey`) |
+| `FINANTO_DRIVE_URL` | `https://api-drive.ajin.io` | (Opcional) URL do Ajin Drive pra upload de docs |
+| `FINANTO_WEBHOOK_SECRET` | *(gerar com `openssl rand -hex 32` — passar via Vercel)* | Shared secret pra validar webhooks Ajin em `?s=<secret>` (fallback usa `WEBHOOK_SECRET`) |
+| `SOFIA_DIGITACAO_FINANTO_ATIVA` | `true` | Feature flag: se `false`, Sofia passa o contrato pro consultor humano em vez de digitar automaticamente na FINANTO. Padrão: ativo. |
+| `INSS_DIGITACAO_WHITELIST` | *(vazio = todos)* | Números de WhatsApp (separados por vírgula, só dígitos) que podem receber digitação automática da Sofia. Vazio = todos os clientes. Ex: `5515999990001,5515999990002` |
+
+**Webhook receiver**: a URL publica `/api/finanto-webhook` recebe eventos da Ajin (port aceita/rejeitada, contrato pago/cancelado, saldo INSS pronto) e atualiza o status da proposta + avisa o cliente via WhatsApp automaticamente.
+
+Cadastre essa URL no painel Ajin (Configurações → Webhooks):
+```
+https://flowforce.vercel.app/api/finanto-webhook?s=<FINANTO_WEBHOOK_SECRET>
+```
+
+Eventos suportados:
+- `credit_transfer.proposal` (status accepted/rejected) → Sofia avisa cliente que saldo foi liberado ou rejeitado
+- `loan.status` (signed/paid/canceled/in_analysis/rejected) → Sofia avisa mudanças do contrato
+- `query_inss_balance.completed` → grava saldo INSS quando chega async
+
+**Setup**: a FINANTO usa a mesma plataforma Ajin do JoinBank, mas como loja/parceiro separado. Por isso ganhou env vars próprias (`FINANTO_*`) e endpoint `/api/finanto` próprio. Cobre INSS (todas as operações 1–6 incluindo portabilidade + refin da port + margem complementar), FGTS e Consignado Privado (providers QITech 950002 e 321Bank 950703).
+
+Endpoint base: `POST /api/finanto` com `{ action, ...payload }`. Lista de actions disponíveis:
+- **Diagnóstico**: `test`, `about`, `diag`
+- **Catálogo**: `listProducts`, `listRules`, `getRule`
+- **INSS**: `contratosRefinanciaveis`, `calculate`, `createProposal`, `getSimulation`, `updateSimulation`, `copySimulation`, `getAuthTerm`, `signTerm`, `in100`, `in100Sync`, `getBalance`, `generateContracts`, `getLoansBySimulation`, `getLoan`, `getLoanByContract`, `searchLoans`, `recalculate`, `acceptLoan`, `reformalize`, `getCreditAnalysis`
+- **FGTS**: `fgtsCreateSimulation`, `fgtsGetSimulation`, `fgtsActions`, `fgtsCopy`
+- **CLT (Consignado Privado)**: `cltCreateSimulation`, `cltAuthTerm`, `cltSignTerm`, `cltCalculate`, `cltSelectCondition`, `cltCreateLoans`, `cltCheckEligibility`
+- **Drive**: `driveUploadByUrl`, `driveGetFile`
+- **Admin**: `listBrokers`, `listAccounts`, `listPartners`, `listStores`
+- **Escape hatch**: `rawCall` (passa `method` + `path` + `payload` direto na API Ajin)
+
 ### Evolution API (WhatsApp)
 | Variavel | Valor antigo | Descricao |
 |----------|-------------|-----------|
@@ -87,6 +121,22 @@ Webhooks: registrar via action `registrarWebhooks` (registra automaticamente em 
 
 Rate limit: 30 req/min (recomendado 1 req a cada 2s).
 
+### Crefaz On (Credito Pessoal Energia / Debito em Conta / Boleto) — novo mai/2026
+| Variavel | Valor | Descricao |
+|----------|-------|-----------|
+| `CREFAZ_ENV` | `stag` ou `prod` | Ambiente ativo. Mude pra `prod` quando a Crefaz liberar a apiKey de producao |
+| `CREFAZ_BASE_STAG` | `https://app2-crefaz-api-external-stag.azurewebsites.net/api` | URL homologacao (default no codigo) |
+| `CREFAZ_BASE_PROD` | `https://api-externo.crefazon.com.br/api` | URL producao (default no codigo) |
+| `CREFAZ_API_KEY_STAG` | `65fa475c-dc8e-4243-9066-81607cab5679` | apiKey de homologacao fornecida pela Crefaz |
+| `CREFAZ_API_KEY_PROD` | *(SOLICITAR a Crefaz — ainda nao entregue)* | apiKey de producao. Em mai/2026 a Crefaz so liberou Stag |
+| `CREFAZ_LOGIN` | `CCxxxxxxxx` | Codigo do parceiro (mesmo do painel Crefaz On) |
+| `CREFAZ_SENHA` | *(passar via Vercel, nao commitar)* | Senha do usuario Crefaz On |
+| `CREFAZ_WEBHOOK_SECRET` | *(gerar com `openssl rand -hex 32`)* | Shared secret pra validar callbacks Crefaz em `?secret=...` |
+
+**Status mai/2026**: usuario `CC030137862` retorna `Usuario ou senha invalidos` em Stag (pendente habilitacao em homologacao pela Crefaz) e ambas apiKeys retornam `ApiKey Invalida` em Prod (pendente entrega da chave Prod). Pedido aberto com a Crefaz.
+
+Webhook publico: `https://motordeport.vercel.app/api/crefaz-webhook?secret={CREFAZ_WEBHOOK_SECRET}` — registrar essa URL no campo `urlNotificacaoParceiro` ao criar proposta via `POST /Proposta`.
+
 ### JoinBank/QualiBanking CLT — reutiliza credenciais INSS existentes
 Não precisa nenhuma env var nova. Usa `JOINBANK_URL` e `JOINBANK_KEY` já configuradas. Os endpoints CLT usam o prefixo `/v3/loan-private-payroll-simulations/...` em vez do INSS `/v3/loan-inss-simulations/...`.
 
@@ -119,7 +169,7 @@ Pode reutilizar a `CLAUDE_API_KEY` existente OU criar uma separada:
 | `APP_URL` | `https://flowforce.vercel.app` | URL publica do app (usada nos webhooks) |
 | `WEBHOOK_SECRET` | (vazio) | Secret para validar webhooks do Evolution |
 
-## TOTAL: 14 variaveis
+## TOTAL: 17 variaveis (com FINANTO)
 
 ### Passo a passo:
 1. Abra https://vercel.com > seu projeto motordeport > Settings > Environment Variables

@@ -129,7 +129,14 @@ function loadLS<T extends Record<string, boolean>>(key: string, fallback: T): T 
   } catch { return fallback; }
 }
 
-export function Sidebar({ user }: { user: AuthUser }) {
+/**
+ * Conteúdo INTERNO da navegação lateral — logo, nav, versão.
+ *
+ * Usado tanto pela `<Sidebar>` (wrapper desktop fixo) quanto pelo
+ * `<MobileNav>` (drawer mobile). Mantenha qualquer mudança de menu
+ * aqui — os dois wrappers herdam automaticamente.
+ */
+export function SidebarContent({ user }: { user: AuthUser }) {
   const pathname = usePathname();
 
   // Grupos: por padrao todos abertos. Persiste em localStorage.
@@ -172,7 +179,7 @@ export function Sidebar({ user }: { user: AuthUser }) {
   };
 
   return (
-    <aside className="w-64 glass-strong border-r border-border/60 flex flex-col flex-shrink-0 relative z-10">
+    <div className="flex flex-col h-full glass-strong">
       {/* Logo */}
       <div className="p-4 border-b border-border/60">
         <Link href="/inicio" className="flex items-center gap-3 group">
@@ -359,6 +366,20 @@ export function Sidebar({ user }: { user: AuthUser }) {
           V2 · Beta · {process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA?.substring(0, 7) || 'dev'}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Sidebar desktop — wrapper fixo de 256px (w-64).
+ *
+ * Escondida em telas < lg (1024px); nesses casos, a `<MobileNav>`
+ * (renderizada dentro da `<Topbar>`) exibe o mesmo conteúdo num drawer.
+ */
+export function Sidebar({ user }: { user: AuthUser }) {
+  return (
+    <aside className="hidden lg:flex w-64 border-r border-border/60 flex-col flex-shrink-0 relative z-10">
+      <SidebarContent user={user} />
     </aside>
   );
 }

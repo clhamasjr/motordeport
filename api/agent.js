@@ -833,7 +833,14 @@ function extractOportunidades(parsed) {
         novaParc: Math.round(melhor.novaParc * 100) / 100,
         reducao: Math.round(melhor.reducao * 100) / 100,
         troco: Math.round(melhor.troco * 100) / 100,
-        desc: descPartes.join(' · '), banco: melhor.banco });
+        prazo: 108, taxa: melhor.taxa,
+        desc: descPartes.join(' · '), banco: melhor.banco,
+        // Dados do contrato origem — necessarios pra Ajin (originContract)
+        origem: {
+          cod, banco: ct.banco || cod, contrato: ct.contrato || '',
+          taxa: taxaOrig, parcela: par, saldo: sal,
+          prazoRestante: restPg, prazoTotal: totPg,
+        } });
     }
   }
 
@@ -1346,14 +1353,92 @@ Use VALORES EXATOS do motor. SÓ a melhor opção. *Negrito* nos números. Termi
       const result = { success: true, instance, number, clientName, reply: cleanReply, actions, phase: conv.phase, collectedData, missingFields: getMissingFields(conv.data) };
 
       if (actions.includes('DIGITAR_PROPOSTA')) {
+        // ─── Alert #3: Feature flag global — SOFIA_DIGITACAO_FINANTO_ATIVA ───
+        // Se = 'false' → Sofia passa pro humano em vez de tentar digitar
+        const digitacaoAtiva = process.env.SOFIA_DIGITACAO_FINANTO_ATIVA !== 'false';
+        // ─── Alert #4: Whitelist por número — INSS_DIGITACAO_WHITELIST ───
+        // Vazio = todos; não-vazio = só os números listados (separados por vírgula)
+        const _wlRaw = (process.env.INSS_DIGITACAO_WHITELIST || '').split(',').map(n => n.trim().replace(/\D/g, '')).filter(Boolean);
+        const _numDigits = (number || '').replace(/\D/g, '');
+        const digitacaoPermitida = _wlRaw.length === 0 || _wlRaw.includes(_numDigits);
+        if (!digitacaoAtiva || !digitacaoPermitida) {
+          const _motivo = !digitacaoAtiva ? 'SOFIA_DIGITACAO_FINANTO_ATIVA=false' : `${number} fora de INSS_DIGITACAO_WHITELIST`;
+          console.log('[SOFIA] digitacao bloqueada:', _motivo);
+          const _msgHumano = 'Perfeito! Já tenho todos os seus dados. Vou passar pro nosso consultor finalizar o contrato — ele entra em contato em breve. 😊';
+          try {
+            await sendMsg(instance, number, _msgHumano);
+            await inssAppendMsg(number, { role: 'sofia', content: _msgHumano, ts: new Date().toISOString(), instance });
+          } catch {}
+          result.digitacao = { status: !digitacaoAtiva ? 'desativado' : 'fora_whitelist', message: _motivo };
+        } else {
         const d = conv.data;
         const missingNow = getMissingFields(d);
         if (missingNow.length > 0) {
           result.digitacao = { status: 'pendente', missing: missingNow };
         } else {
-          result.digitacao = { status: 'pronto', message: 'Dados completos, pronto para digitacao' };
-          // TODO: integrar com api/facta e api/joinbank via internal call
+          // ─── DIGITAÇÃO FINANTO (INSS Novo e Port+Refin) ───
+          // Pega a melhor oportunidade FINANTO já calculada pelo motor
+          const oports = Array.isArray(d._oportunidades) ? d._oportunidades : [];
+          const finantoOpts = oports.filter((o) =>
+            (o.banco === 'FINANTO' || o.banco === 'QUALI' || o.banco === 'QITECH') &&
+            (o.tipo === 'emprestimo_novo' || o.tipo === 'portabilidade'),
+          );
+          const melhorFinanto = finantoOpts.sort((a, b) => (b.valor || 0) - (a.valor || 0))[0]
+            // Fallback: aceita qualquer oportunidade INSS Novo/Port que tenhamos
+            || oports.find((o) => o.tipo === 'emprestimo_novo' || o.tipo === 'portabilidade');
+
+          if (!melhorFinanto) {
+            result.digitacao = { status: 'sem_oportunidade', message: 'Nenhuma oportunidade INSS Novo/Port disponivel para FINANTO' };
+          } else {
+            const appUrl = process.env.APP_URL || 'https://motordeport.vercel.app';
+            const internalSecret = process.env.WEBHOOK_SECRET || '';
+            try {
+              const rDig = await fetchTimeout(appUrl + '/api/sofia-digitar-finanto', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(internalSecret ? { 'x-internal-secret': internalSecret } : {}),
+                },
+                body: JSON.stringify({
+                  action: 'digitar',
+                  convData: d,
+                  oportunidade: melhorFinanto,
+                  telefone: number,
+                }),
+              }, 90000);
+              const txt = await rDig.text();
+              let dig; try { dig = JSON.parse(txt); } catch { dig = { success: false, error: 'resposta nao-JSON', raw: txt.substring(0, 400) }; }
+              result.digitacao = dig;
+
+              // Avisa o cliente no chat com o link de assinatura, se gerou
+              if (dig.success && dig.signatureUrl) {
+                const tipoLabel = dig.type === 'port_refin' ? 'portabilidade' : 'empréstimo';
+                const msg = `Pronto! 🎉 Sua proposta de ${tipoLabel} foi registrada na FINANTO.\n\nAgora é só assinar pra liberar:\n${dig.signatureUrl}\n\nDúvida? Tô aqui. ❤️`;
+                try {
+                  await sendMsg(instance, number, msg);
+                  await inssAppendMsg(number, { role: 'sofia', content: msg, ts: new Date().toISOString(), instance });
+                } catch (e) { console.error('[SOFIA] envio link assinatura falhou:', e?.message); }
+              } else if (dig.success && !dig.signatureUrl) {
+                const msg = `Sua proposta foi registrada (código ${dig.code || dig.simulationId}). Em instantes o link de assinatura vai chegar.`;
+                try {
+                  await sendMsg(instance, number, msg);
+                  await inssAppendMsg(number, { role: 'sofia', content: msg, ts: new Date().toISOString(), instance });
+                } catch {}
+              } else {
+                console.error('[SOFIA] digitacao FINANTO falhou:', dig.step, dig.error);
+                const msgFail = `Tive um probleminha aqui pra registrar agora. Já avisei o consultor humano, ele vai te procurar pra finalizar. Obrigada pela paciência!`;
+                try {
+                  await sendMsg(instance, number, msgFail);
+                  await inssAppendMsg(number, { role: 'sofia', content: msgFail, ts: new Date().toISOString(), instance });
+                } catch {}
+              }
+            } catch (e) {
+              console.error('[SOFIA] sofia-digitar-finanto exception:', e?.message);
+              result.digitacao = { success: false, error: e?.message || 'Erro ao chamar digitacao FINANTO' };
+            }
+          }
         }
+        } // end else (digitacao ativa + whitelist ok)
       }
 
       return jsonResp(result, 200, req);

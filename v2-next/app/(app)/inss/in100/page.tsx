@@ -7,21 +7,59 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { formatCpf, formatBRL } from '@/lib/utils';
-import { useConsultarIN100, type In100Result } from '@/hooks/use-inss-in100';
-import { Shield, Search, CheckCircle2, AlertCircle, Lock, Unlock } from 'lucide-react';
+import { useConsultarIN100, In100Error, type In100Result } from '@/hooks/use-inss-in100';
+import { Shield, Search, CheckCircle2, AlertCircle, Lock, Unlock, Copy, RotateCw } from 'lucide-react';
+import { toast } from 'sonner';
+
+interface ErroEstado {
+  message: string;
+  step?: string;
+  httpStatus?: number;
+  rawAjin?: unknown;
+  queryId?: string;
+}
 
 export default function In100Page() {
   const mut = useConsultarIN100();
   const [cpf, setCpf] = useState('');
   const [beneficio, setBeneficio] = useState('');
   const [result, setResult] = useState<In100Result | null>(null);
+  const [erro, setErro] = useState<ErroEstado | null>(null);
 
   async function consultar(e: React.FormEvent) {
     e.preventDefault();
+    setResult(null);
+    setErro(null);
     try {
       const r = await mut.mutateAsync({ cpf, beneficio });
       setResult(r);
-    } catch { /* toast no hook */ }
+    } catch (e) {
+      if (e instanceof In100Error) {
+        setErro({
+          message: e.message, step: e.step, httpStatus: e.httpStatus,
+          rawAjin: e.rawAjin, queryId: e.queryId,
+        });
+      } else if (e instanceof Error) {
+        setErro({ message: e.message });
+      } else {
+        setErro({ message: 'Erro desconhecido' });
+      }
+    }
+  }
+
+  async function copiarErro() {
+    if (!erro) return;
+    const txt = JSON.stringify({
+      cpf, beneficio,
+      timestamp: new Date().toISOString(),
+      ...erro,
+    }, null, 2);
+    try {
+      await navigator.clipboard.writeText(txt);
+      toast.success('Erro copiado pra área de transferência');
+    } catch {
+      toast.error('Falha ao copiar — selecione o JSON manualmente');
+    }
   }
 
   return (
@@ -55,7 +93,93 @@ export default function In100Page() {
         </CardContent>
       </Card>
 
-      {result && (
+      {/* ─── BLOCO DE ERRO ─────────────────────────────────────────── */}
+      {erro && !mut.isPending && (
+        <Card className="border-red-500/50 bg-red-500/5">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="size-6 text-red-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-red-300">Falha na consulta IN100</div>
+                <div className="text-sm mt-1 break-words">{erro.message}</div>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {erro.step && (
+                    <Badge variant="destructive" className="text-[10px] uppercase">
+                      etapa: {erro.step}
+                    </Badge>
+                  )}
+                  {erro.httpStatus && (
+                    <Badge variant="muted" className="text-[10px]">HTTP {erro.httpStatus}</Badge>
+                  )}
+                  {erro.queryId && (
+                    <Badge variant="muted" className="text-[10px] font-mono">
+                      queryId: {String(erro.queryId).substring(0, 16)}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Contexto */}
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-md border border-border bg-card/50 p-2">
+                <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">CPF testado</div>
+                <div className="font-mono">{cpf || '—'}</div>
+              </div>
+              <div className="rounded-md border border-border bg-card/50 p-2">
+                <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">Benefício (NB)</div>
+                <div className="font-mono">{beneficio || '—'}</div>
+              </div>
+            </div>
+
+            {/* Dicas baseadas no tipo */}
+            {erro.step === 'cpf_invalido' && (
+              <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30">
+                💡 CPF precisa ter 11 dígitos (com ou sem máscara).
+              </div>
+            )}
+            {erro.step === 'beneficio_invalido' && (
+              <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30">
+                💡 Preencha o número do benefício INSS (NB) antes de consultar.
+              </div>
+            )}
+            {erro.step === 'pending_timeout' && (
+              <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30">
+                💡 A DATAPREV ficou mais de 90s sem responder. Isso costuma ser instabilidade lá. Tenta de novo em 1-2 minutos.
+              </div>
+            )}
+            {erro.step === 'ajin' && (
+              <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30">
+                💡 A Ajin/QualiBanking retornou um erro. Motivos comuns: benefício não cadastrado, espécie não habilitada, CPF sem opt-in DATAPREV ainda, bloqueio temporário, ou rate-limit. Veja o detalhe técnico abaixo.
+              </div>
+            )}
+
+            {/* JSON cru da Ajin */}
+            {erro.rawAjin != null && (
+              <details className="rounded-md border border-border bg-card/30 p-2" open>
+                <summary className="cursor-pointer text-xs font-semibold text-cyan-400">
+                  ▸ Detalhe técnico da Ajin (manda isso pro suporte se precisar)
+                </summary>
+                <pre className="mt-2 p-2 rounded bg-background overflow-x-auto text-[10px] font-mono max-h-96">
+                  {JSON.stringify(erro.rawAjin, null, 2)}
+                </pre>
+              </details>
+            )}
+
+            {/* Ações */}
+            <div className="flex gap-2 flex-wrap pt-1">
+              <Button size="sm" variant="default" onClick={(e) => consultar(e as any)} disabled={mut.isPending}>
+                <RotateCw className="size-3.5" /> Tentar de novo
+              </Button>
+              <Button size="sm" variant="outline" onClick={copiarErro}>
+                <Copy className="size-3.5" /> Copiar erro completo
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {result && !erro && (
         <Card className={result.bloqueado ? 'border-red-500/50 bg-red-500/5' : result.elegivel ? 'border-green-500/50 bg-green-500/5' : 'border-yellow-500/50 bg-yellow-500/5'}>
           <CardContent className="p-4 space-y-3">
             <div className="flex items-center justify-between flex-wrap gap-2">

@@ -46,10 +46,62 @@ export default async function handler(req) {
       const cpf = (body.cpf || '').replace(/\D/g, '');
       const ben = (body.beneficio || '').replace(/\D/g, '');
       if (!cpf || !ben) return jsonError('CPF e beneficio obrigatorios', 400, req);
-      const r = await jb('POST', '/v3/query-inss-balances/finder', { identity: cpf, benefitNumber: ben, lastHours: body.lastHours || 24, timeout: body.timeout || 120 });
-      const d = r.data;
+
+      // ── Estratégia: tenta SÍNCRONO primeiro (/finder/await), com fallback ─
+      // assíncrono se a sync timeoutar/falhar. /finder/await retorna saldo na
+      // hora; /finder retorna {id, status:'awaiting'} e a gente faz polling.
+      const payload = {
+        identity: cpf,
+        benefitNumber: ben,
+        lastDays: body.lastDays !== undefined ? body.lastDays : 0,
+        attempts: body.attempts || 3,
+      };
+
+      // 1) Tenta /finder/await (síncrono — Ajin segura ate ~60s)
+      let r = await jb('POST', '/v3/query-inss-balances/finder/await', payload);
+      let d = r.data || {};
+
+      // 2) Se retornou awaiting (Ajin caiu pra modo async), faz polling no GET /{id}
+      if (r.ok && d.status === 'awaiting' && d.id) {
+        const queryId = d.id;
+        let tentativas = 0;
+        const maxTentativas = 12; // ~24s (12 x 2s)
+        while (tentativas < maxTentativas) {
+          await new Promise((res) => setTimeout(res, 2000));
+          const pg = await jb('GET', `/v3/query-inss-balances/${queryId}`);
+          if (pg.ok && pg.data && pg.data.status !== 'awaiting') {
+            d = pg.data;
+            r = pg;
+            break;
+          }
+          tentativas++;
+        }
+        // Se ainda awaiting depois de 24s, retorna queryId pro frontend continuar
+        if (d.status === 'awaiting') {
+          return j({
+            success: false,
+            pending: true,
+            queryId,
+            cpf, beneficio: ben,
+            message: 'Consulta DATAPREV iniciada. Tente novamente em alguns segundos.',
+            _raw: d,
+          }, 200, req);
+        }
+      }
+
+      // 3) Erro da Ajin (HTTP != 2xx)
+      if (!r.ok) {
+        return j({
+          success: false,
+          httpStatus: r.status,
+          cpf, beneficio: ben,
+          error: d.title || d.detail || d.message || d.error || 'Erro na consulta DATAPREV',
+          _raw: d,
+        }, 200, req);
+      }
+
       return j({
-        success: r.ok, cpf, beneficio: ben,
+        success: true, cpf, beneficio: ben,
         nome: d.name || null, status: d.status || null,
         benefitStatus: d.benefitStatus || d.benefitSituation || null,
         elegivel: d.benefitStatus === 'elegible' || d.benefitSituation === 'active',
@@ -71,6 +123,26 @@ export default async function handler(req) {
         uf: d.state || null, dataNascimento: d.birthDate || null,
         dataConcessao: d.grantDate || null, queryDate: d.queryDate || null,
         _raw: d
+      }, 200, req);
+    }
+
+    // Polling do queryId quando o /finder/await caiu em modo async
+    if (action === 'in100Poll') {
+      if (!body.queryId) return jsonError('queryId obrigatorio', 400, req);
+      const r = await jb('GET', `/v3/query-inss-balances/${body.queryId}`);
+      const d = r.data || {};
+      if (d.status === 'awaiting') {
+        return j({ success: false, pending: true, queryId: body.queryId, status: 'awaiting', _raw: d }, 200, req);
+      }
+      if (!r.ok) return j({ success: false, error: d.title || d.detail || 'Erro polling', _raw: d }, 200, req);
+      return j({
+        success: true,
+        nome: d.name || null,
+        elegivel: d.benefitStatus === 'elegible' || d.benefitSituation === 'active',
+        margemEmprestimo: d.consignedCreditBalance || 0,
+        margemCartao: d.consignedCardBalance || 0,
+        saldoDisponivel: d.availableTotalBalance || 0,
+        _raw: d,
       }, 200, req);
     }
 

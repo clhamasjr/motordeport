@@ -318,20 +318,21 @@ function parseConsultHTML(html) {
       const dataAverb = getField('Data Averba');
 
       // Bank code from icon OR alt attribute (<img alt="935 - Facta"> etc) OR texto
+      // Aceita 1 a 3 digitos (BB="1", CEF="104", etc) — sempre normaliza com padStart(3,'0')
       let banco_codigo = '';
-      const iconM = card.match(/icones\/(\d{3})\.png/);
-      if (iconM) banco_codigo = iconM[1];
-      if (!banco_codigo) { const altM = card.match(/alt="\s*(\d{3})\s*[-–]/i); if (altM) banco_codigo = altM[1]; }
-      if (!banco_codigo) { const btm = card.match(/(\d{3})\s*-\s*[A-Z]/); if (btm) banco_codigo = btm[1]; }
-      // Fallback: 2 digitos seguidos de "-BANCO"
-      if (!banco_codigo) { const btm2 = card.match(/>\s*(\d{2,3})\s*[-–]\s*[A-Za-z]{2,}/); if (btm2) banco_codigo = String(btm2[1]).padStart(3,'0'); }
+      const iconM = card.match(/icones\/(\d{1,3})\.png/);
+      if (iconM) banco_codigo = String(iconM[1]).padStart(3, '0');
+      if (!banco_codigo) { const altM = card.match(/alt="\s*(\d{1,3})\s*[-–]/i); if (altM) banco_codigo = String(altM[1]).padStart(3, '0'); }
+      if (!banco_codigo) { const btm = card.match(/(\d{1,3})\s*-\s*[A-Z]/); if (btm) banco_codigo = String(btm[1]).padStart(3, '0'); }
+      // Fallback: digito(s) seguido(s) de "-BANCO"
+      if (!banco_codigo) { const btm2 = card.match(/>\s*(\d{1,3})\s*[-–]\s*[A-Za-z]{2,}/); if (btm2) banco_codigo = String(btm2[1]).padStart(3,'0'); }
 
       // ── Nome do banco (pra normalizacao de codigos aglutinados) ──
       let banco_nome = '';
-      const nm1 = card.match(/icones\/\d{3}\.png[^>]*alt="([^"]+)"/i);
+      const nm1 = card.match(/icones\/\d{1,3}\.png[^>]*alt="([^"]+)"/i);
       if (nm1) banco_nome = nm1[1];
-      if (!banco_nome) { const nm2 = card.match(/alt="\s*\d{2,3}\s*[-–]\s*([^"]+)"/i); if (nm2) banco_nome = nm2[1]; }
-      if (!banco_nome) { const nm3 = card.match(/\b\d{2,3}\s*[-–]\s*([A-Za-zÀ-ú][A-Za-zÀ-ú .]{1,30})/); if (nm3) banco_nome = nm3[1].trim(); }
+      if (!banco_nome) { const nm2 = card.match(/alt="\s*\d{1,3}\s*[-–]\s*([^"]+)"/i); if (nm2) banco_nome = nm2[1]; }
+      if (!banco_nome) { const nm3 = card.match(/\b\d{1,3}\s*[-–]\s*([A-Za-zÀ-ú][A-Za-zÀ-ú .]{1,30})/); if (nm3) banco_nome = nm3[1].trim(); }
 
       // ── Normalizacao de codigos aglutinados ──
       // 029 = Itau BMG = Itau Consignado (mesma coisa).
