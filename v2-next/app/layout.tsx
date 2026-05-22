@@ -35,6 +35,13 @@ export const metadata: Metadata = {
       { url: '/icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
     ],
   },
+  // `apple-mobile-web-app-capable` (gerado por `appleWebApp.capable`) foi
+  // marcado como deprecated pelo Chrome em 2024 — o padrão atual é
+  // `mobile-web-app-capable`. Mantemos os dois pra cobrir iOS Safari (antigo)
+  // e Chrome (novo).
+  other: {
+    'mobile-web-app-capable': 'yes',
+  },
 };
 
 export const viewport: Viewport = {
