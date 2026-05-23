@@ -2,7 +2,7 @@
 
 > Documento estratégico — define o que o Orquestrador É, o que FAZ, o que NÃO FAZ, e como se relaciona com os demais agentes do ecossistema FlowForce / LhamasCred.
 >
-> **Versão**: 1.0 · **Data**: 2026-05-21 · **Aprovado por**: clhamasjr
+> **Versão**: 1.1 · **Data**: 2026-05-22 · **Aprovado por**: clhamasjr
 
 ---
 
@@ -142,16 +142,40 @@ Se for sobre **negócio ou operação**, NÃO é dele — delega.
 
 ---
 
-## 9. Roadmap (em aberto)
+## 9. Roadmap
 
 | Fase | Entrega | Status |
 |---|---|---|
 | 0 | Constituição (este documento) | ✅ Aprovada 2026-05-21 |
-| 1 | Skill `flowforce-orquestrador` formalizada | ⏳ Próximo passo a definir |
-| 2 | Rota `/orquestrador` no v2-next — V1 visibilidade | ⏳ A planejar |
+| 1 | Skill `flowforce-orquestrador` formalizada | ✅ Entregue 2026-05-22 (`.claude/skills/flowforce-orquestrador/SKILL.md` + slash command `/orquestrador`) |
+| 2 | Rota `/orquestrador` no v2-next — V1 visibilidade | ✅ Entregue 2026-05-21 (commit `d9da3cd`) |
+| 2.1 | Mobile responsivo (drawer + hamburger + dialog full-screen) | ✅ Entregue 2026-05-22 (commit `ac3d5c8`, parte) |
+| 2.2 | PWA polish (themeColor + shortcuts + mobile-cap meta) | ✅ Entregue 2026-05-22 (commit `6a11d4d`) |
 | 3 | SPECs por banco em `api/_specs/` (sob demanda) | ⏳ Reativo, conforme necessidade |
 | 4 | Controle ativo no painel (tema/menu/RBAC) | ⏳ V2+ |
+| 5 | Screenshots PNG + splash screens iOS no manifest | ⏳ Requer artefatos visuais |
+| 6 | Endpoint sessões ativas (`/api/auth action=sessoesAtivas`) | ⏳ Pequeno — completa o último card do painel |
 
 ---
 
-*Última atualização: 21/05/2026 — versão 1.0.*
+## 10. Incidente histórico — 22/05/2026
+
+Caso registrado pra justificar a regra **R2 — Separação de escopo em commits**:
+
+Durante uma sessão paralela, o agente que cuidava da integração FINANTO commitou **3.999 linhas em 21 arquivos num único commit** (`ac3d5c8`), misturando:
+
+- ✅ Trabalho de integração FINANTO (escopo dele)
+- ❌ Mudanças em IN100 INSS (escopo de outra sessão)
+- ❌ Trabalho de **mobile responsivo do Orquestrador** (escopo desta skill, em andamento na mesma janela)
+
+Consequências:
+- Histórico ilegível (1 commit gigante em vez de N pequenos por escopo)
+- Trabalho do Orquestrador "engolido" sem coordenação
+- Necessidade de `git reset --hard origin/main` pra desfazer commits limpos locais
+- Lição reforçando que a **skill `flowforce-orquestrador`** deveria ter sido criada ANTES de qualquer trabalho em paralelo
+
+Esta versão 1.1 da constituição + skill formalizada são a resposta direta ao incidente.
+
+---
+
+*Última atualização: 22/05/2026 — versão 1.1.*
