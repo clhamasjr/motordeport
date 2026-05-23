@@ -111,10 +111,21 @@ async function pingAgente(a: AgenteCfg): Promise<AgenteSaude> {
 
 // ── Hook principal ────────────────────────────────────────────────────
 
+async function fetchSessoes(): Promise<number | null> {
+  try {
+    const data = await api<{ ok: boolean; count?: number }>('/api/auth', { action: 'sessoesAtivas' });
+    if (data?.ok && typeof data.count === 'number') return data.count;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchSaude(): Promise<SaudeSaaS> {
-  const [bancosRes, agentesRes] = await Promise.all([
+  const [bancosRes, agentesRes, sessoesRes] = await Promise.all([
     Promise.all(BANCOS.map((b) => pingBanco(b))),
     Promise.all(AGENTES.map((a) => pingAgente(a))),
+    fetchSessoes(),
   ]);
 
   const conversasAtivas = agentesRes.reduce(
@@ -126,7 +137,7 @@ async function fetchSaude(): Promise<SaudeSaaS> {
     bancos: bancosRes,
     agentes: agentesRes,
     conversasAtivas,
-    sessoesAtivas: null, // endpoint pendente — V2
+    sessoesAtivas: sessoesRes,
     atualizadoEm: new Date().toISOString(),
   };
 }

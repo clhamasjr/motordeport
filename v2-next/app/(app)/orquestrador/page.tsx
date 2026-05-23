@@ -214,10 +214,20 @@ export default function OrquestradorPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-bold text-muted-foreground">—</span>
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-1">endpoint pendente (V2)</p>
+            {isLoading ? (
+              <Skeleton className="h-7 w-20" />
+            ) : data?.sessoesAtivas == null ? (
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl font-bold text-muted-foreground">—</span>
+                <span className="text-sm text-red-400">erro</span>
+              </div>
+            ) : (
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl font-bold">{data.sessoesAtivas}</span>
+                <span className="text-sm text-muted-foreground">logados</span>
+              </div>
+            )}
+            <p className="text-[10px] text-muted-foreground mt-1">sessões não expiradas</p>
           </CardContent>
         </Card>
       </div>

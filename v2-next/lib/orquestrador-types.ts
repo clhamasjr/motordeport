@@ -54,7 +54,7 @@ export interface SaudeSaaS {
   agentes: AgenteSaude[];
   /** Contagem agregada de conversas ativas (Sofia + agente-clt). */
   conversasAtivas: number;
-  /** Sessões logadas — opcional, endpoint pendente; null = N/A. */
+  /** Sessões logadas no momento. null se a chamada falhou. */
   sessoesAtivas: number | null;
   /** Timestamp ISO do último refresh. */
   atualizadoEm: string;

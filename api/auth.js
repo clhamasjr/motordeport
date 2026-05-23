@@ -91,6 +91,19 @@ export default async function handler(req) {
   const currentUser = await verifySession(req);
   if (!currentUser) return jsonError('Sessao invalida', 401, req);
 
+  // ── SESSOES ATIVAS (qualquer usuario logado) ───────────────
+  // Conta sessoes nao expiradas. Usado pelo painel /orquestrador.
+  // Nao expoe nomes/tokens — so o numero, e qualquer usuario logado pode ver.
+  if (action === 'sessoesAtivas') {
+    const nowIso = new Date().toISOString();
+    const { data, error } = await dbQuery(
+      'sessions',
+      `select=id&expires_at=gt.${encodeURIComponent(nowIso)}`,
+    );
+    if (error) return jsonError('Erro consultando sessoes: ' + error, 500, req);
+    return json({ ok: true, count: Array.isArray(data) ? data.length : 0 }, 200, req);
+  }
+
   // ── LIST USERS (admin/gestor) ──────────────────────────────
   // Admin ve todos. Gestor ve apenas o proprio + vendedores do seu time (parceiro_id = seu id)
   if (action === 'list') {
