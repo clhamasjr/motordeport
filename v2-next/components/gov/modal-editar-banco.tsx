@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -67,10 +67,21 @@ function fromBanco(b: BancoConvenio): FormState {
 
 export function ModalEditarBanco({ open, onClose, convenioId, bancosCatalogo, banco }: Props) {
   const novo = banco === null;
-  const [form, setForm] = useState<FormState>(() => banco ? fromBanco(banco) : emptyForm());
+  // IMPORTANTE: useState(() => ...) so executa a funcao na PRIMEIRA renderizacao
+  // do componente. Se o componente fica montado e a prop `banco` muda (ex: abrir
+  // pra editar banco A, fechar, abrir pra editar banco B), o form fica com
+  // dados de A. Por isso usamos useEffect abaixo pra re-hidratar.
+  const [form, setForm] = useState<FormState>(emptyForm);
   const upsertBC = useUpsertBancoConvenio();
   const upsertB = useUpsertBanco();
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm(s => ({ ...s, [k]: v }));
+
+  // Re-hidrata sempre que o modal abre OU o banco alvo muda.
+  useEffect(() => {
+    if (open) {
+      setForm(banco ? fromBanco(banco) : emptyForm());
+    }
+  }, [open, banco]);
 
   const handleOpenChange = (o: boolean) => {
     if (!o) onClose();
