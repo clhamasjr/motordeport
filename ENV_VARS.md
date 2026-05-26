@@ -151,6 +151,17 @@ Pode reutilizar a `CLAUDE_API_KEY` existente OU criar uma separada:
 |----------|-------|-----------|
 | `CLAUDE_API_KEY_AGENTE_CLT` | *(passar via Vercel, nao commitar)* | (Opcional) Chave dedicada ao agente CLT. Se nao setada, `api/agente-clt.js` usa `CLAUDE_API_KEY` |
 
+### Bot INSS Parceiro (WhatsApp B2B — consulta por CPF) — novo mai/2026
+
+| Variavel | Valor exemplo | Descricao |
+|----------|---------------|-----------|
+| `INSS_PARCEIRO_INSTANCE` | `lhamas-inss-bot` | Nome da instance Evolution dedicada ao bot de consulta INSS para parceiros |
+
+> **Dependência**: requer `WEBHOOK_SECRET` (já configurada) e `APP_URL` (já configurada).
+> Parceiros precisam ter `phone_whatsapp` preenchido em `users` (rodar `supabase_migration_inss_parceiro.sql`).
+
+---
+
 ### Agente Vendedor CLT — Evolution + Whitelist (F3, novo abr/2026)
 
 | Variavel | Valor exemplo | Descricao |
