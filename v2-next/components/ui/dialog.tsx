@@ -36,9 +36,13 @@ const DialogContent = React.forwardRef<
       className={cn(
         // Mobile (<sm): full-screen sem border-radius. Telas pequenas precisam
         // de toda a área disponível pra formulários longos não cortarem.
-        'fixed inset-0 z-50 grid w-full h-full max-h-screen overflow-y-auto bg-card p-4',
+        // IMPORTANTE: NÃO usar `inset-0` aqui — o tailwind-merge confunde com
+        // os `sm:left-/top-/right-/bottom-` do override desktop e acaba
+        // apagando o posicionamento responsivo, jogando o modal a 3000px do topo.
+        // Mantemos cada lado explícito pra cada um poder ser sobrescrito sozinho.
+        'fixed top-0 left-0 right-0 bottom-0 z-50 grid w-full h-full max-h-screen overflow-y-auto bg-card p-4',
         // sm+: volta a ser modal centralizado clássico.
-        'sm:left-[50%] sm:top-[50%] sm:inset-auto sm:h-auto sm:max-w-2xl sm:max-h-[90vh] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:p-6 sm:border sm:rounded-lg sm:gap-4',
+        'sm:left-[50%] sm:top-[50%] sm:right-auto sm:bottom-auto sm:h-auto sm:max-w-2xl sm:max-h-[90vh] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:p-6 sm:border sm:rounded-lg sm:gap-4',
         'shadow-lg duration-200',
         'data-[state=open]:animate-in data-[state=closed]:animate-out',
         'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
