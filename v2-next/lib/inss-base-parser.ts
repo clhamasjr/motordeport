@@ -4,7 +4,7 @@
 // ──────────────────────────────────────────────────────────────────
 
 import {
-  ESP_AUX, ESP_INV, B1P,
+  ESP_AUX, ESP_INV, ESP_LOAS, B1P,
   pV, pP, pC, pEN, cAge, cBY,
   testarTodos, ORDEM,
   type BancoSimul,
@@ -92,6 +92,29 @@ export interface RmcRow {
   valorBeneficio: number;
 }
 
+export type LoasStatus = 'sem_dados' | 'com_margem' | 'extrapolado_emp' | 'extrapolado_cartoes';
+
+export interface LoasRow {
+  nome: string;
+  cpf: string;
+  ben: string;
+  esp: string;
+  t1: string; t2: string; t3: string;
+  idade: number | string;
+  numCartoes: number;
+  sumEmp: number;
+  beneficio: number;
+  tetoEmp: number;
+  pctEmp: number;
+  margemLivreEmp: number;
+  margemLivreCart: number;
+  statusLoas: LoasStatus;
+  temRmc: boolean;
+  temRcc: boolean;
+  vRmc: number;
+  vRcc: number;
+}
+
 export interface MapaBanco {
   banco: string;
   n: number;
@@ -127,6 +150,7 @@ export interface BaseProcessada {
   mapaArr: MapaBanco[];
   taxaDist: Record<string, number>;
   compByCpf: Record<string, CompPorCpf>;
+  loasAll: LoasRow[];
   fname: string;
   loadedAt: number;
 }
@@ -232,6 +256,7 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
   const analise: ElegivelRow[] = [];
   const elegiveis: ElegivelRow[] = [];
   const rmcAll: RmcRow[] = [];
+  const loasAll: LoasRow[] = [];
 
   const g = (r: unknown[], c: number) => (c != null && c >= 0 && r[c] != null ? String(r[c]).trim() : '');
   const gv = (r: unknown[], c: number) => (c != null && c >= 0 ? pV(r[c]) : 0);
@@ -245,6 +270,7 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     const valorBeneficio = cVB >= 0 ? gv(row, cVB) : 0;
     const eN = pEN(esp);
     const isInv = ESP_INV.includes(eN);
+    const isLoas = ESP_LOAS.includes(eN);
     const isAux = ESP_AUX.includes(eN) || String(esp).toUpperCase().includes('AUXIL');
     const ai = cAge(gr(row, cNs));
     const idade: number | null = ai ? ai.age : null;
@@ -284,6 +310,40 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
         temRmc: realRmc, temRcc: realRcc, temCartao,
         valorBeneficio: Math.round(valorBeneficio * 100) / 100,
       });
+    }
+
+    // ── LOAS/BPC (espécies 87/88) — só contrato novo, sem portabilidade ──
+    if (isLoas) {
+      let sumEmpLoas = 0;
+      for (const lb of lbs) { const par = gv(row, lb.cp); if (par > 0) sumEmpLoas += par; }
+      const numCartoes = (realRmc ? 1 : 0) + (realRcc ? 1 : 0);
+      const benefLoas = valorBeneficio || (sumEmpLoas > 0 ? sumEmpLoas / 0.30 : 0);
+      const margemLivreEmp = benefLoas > 0 ? Math.max(0, benefLoas * 0.30 - sumEmpLoas) : 0;
+      const margemLivreCart = benefLoas > 0 && numCartoes === 0 ? benefLoas * 0.05 : 0;
+      const pctEmp = benefLoas > 0 ? Math.round(sumEmpLoas / benefLoas * 1000) / 10 : 0;
+      const statusLoas: LoasStatus = !benefLoas
+        ? 'sem_dados'
+        : numCartoes >= 2
+          ? 'extrapolado_cartoes'
+          : sumEmpLoas >= benefLoas * 0.30 - 0.01
+            ? 'extrapolado_emp'
+            : 'com_margem';
+      loasAll.push({
+        nome, cpf, ben, esp, t1, t2, t3,
+        idade: idade ?? '-',
+        numCartoes,
+        sumEmp: Math.round(sumEmpLoas * 100) / 100,
+        beneficio: Math.round(benefLoas * 100) / 100,
+        tetoEmp: Math.round(benefLoas * 0.30 * 100) / 100,
+        pctEmp,
+        margemLivreEmp: Math.round(margemLivreEmp * 100) / 100,
+        margemLivreCart: Math.round(margemLivreCart * 100) / 100,
+        statusLoas,
+        temRmc: !!realRmc, temRcc: !!realRcc,
+        vRmc: Math.round(vRmc * 100) / 100,
+        vRcc: Math.round(vRcc * 100) / 100,
+      });
+      continue; // LOAS não porta — pula loop de contratos
     }
 
     for (const lb of lbs) {
@@ -560,6 +620,7 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     mapaArr,
     taxaDist,
     compByCpf,
+    loasAll,
     fname,
     loadedAt: Date.now(),
   };
