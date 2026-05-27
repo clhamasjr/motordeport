@@ -32,6 +32,7 @@ export const BANCO_LABEL: Record<BancoSlug, string> = {
   fintech_qi: 'Fintech (QI Tech)',
   fintech_celcoin: 'Fintech (Celcoin)',
   unno: 'Unno (ITAPEMA/QITech)',
+  nossa_fintech: 'A NOSSA FINTECH',
 };
 
 /**
@@ -45,6 +46,7 @@ export const BANCOS_VISIVEIS: BancoSlug[] = [
   'mercantil',
   'c6',
   'unno',
+  'nossa_fintech',
   'presencabank',
 ];
 

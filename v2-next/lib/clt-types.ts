@@ -20,7 +20,7 @@ export type BancoSlug =
   | 'v8_qi' | 'v8_celcoin'
   | 'joinbank' | 'mercantil' | 'handbank' | 'c6'
   | 'fintech_qi' | 'fintech_celcoin'
-  | 'unno';
+  | 'unno' | 'nossa_fintech';
 
 export interface BancoState {
   status: StatusBanco;

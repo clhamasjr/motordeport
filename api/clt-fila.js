@@ -63,7 +63,7 @@ function ddMmYyToIso(s) {
 const TODOS_BANCOS_CLT = [
   'presencabank', 'multicorban', 'v8_qi', 'v8_celcoin',
   'joinbank', 'mercantil', 'handbank', 'c6',
-  'fintech_qi', 'fintech_celcoin', 'unno',
+  'fintech_qi', 'fintech_celcoin', 'unno', 'nossa_fintech',
 ];
 
 // Atualiza UM banco no jsonb bancos sem sobrescrever os outros.
@@ -1015,6 +1015,116 @@ async function processarUnno(id, cpf, auth, secret) {
   });
 }
 
+// ─── A NOSSA FINTECH (Spixii, provedor QITECH) ──────────────────
+// Fluxo modelo Mercantil — exige SMS pro cliente autorizar consulta
+// DataPrev. Sistema dispara SMS automatico, card vira BLOQUEADO ate
+// cliente autorizar. Operador clica re-tentar pra finalizar.
+async function processarNossaFintech(id, cpf, auth, secret) {
+  const manut = await _bancoEmManutencao('nossa_fintech');
+  if (manut) { await _marcarEmManutencao(id, 'nossa_fintech', manut); return; }
+  await patchBanco(id, 'nossa_fintech', { status: 'processando' });
+
+  // Espera dados do cliente — Nossa Fintech precisa de nome+telefone
+  // pra disparar SMS de autorização (caso ainda nao autorizado)
+  const cli = await aguardarCliente(id, 6000);
+  const telefone = cli?.telefones?.[0]?.completo || null;
+  const nome = cli?.nome || null;
+
+  const r = await callApi('/api/nossa-fintech', {
+    action: 'consultarAprovacao',
+    cpf,
+    nome,
+    telefone,
+  }, auth, secret, 18000);
+
+  const u = r.data || {};
+  if (!r.ok) {
+    await patchBanco(id, 'nossa_fintech', {
+      status: 'falha',
+      mensagem: u.error || u.message || `Erro Nossa Fintech (HTTP ${r.status})`,
+      retryable: true,
+      _raw_response: u,
+    });
+    return;
+  }
+
+  // APROVADO
+  if (u.etapa === 'APROVADO') {
+    // Mescla dados do cliente (Nossa Fintech retorna nome/dataNasc/sexo/mae)
+    const dc = u.dadosCliente || {};
+    const novoCliente = {};
+    if (dc.nome) novoCliente.nome = dc.nome;
+    if (dc.dataNascimento) novoCliente.dataNascimento = dc.dataNascimento;
+    if (dc.sexo) novoCliente.sexo = dc.sexo;
+    if (dc.nomeMae) novoCliente.nomeMae = dc.nomeMae;
+    if (Object.keys(novoCliente).length > 0) await mesclarCliente(id, novoCliente);
+
+    // Persiste vinculo na fila se nao tem ainda
+    if (u.vinculo?.cnpj && u.vinculo?.empregador) {
+      await dbUpdate('clt_consultas_fila', { id }, {
+        vinculo: {
+          cnpj: u.vinculo.cnpj,
+          empregador: u.vinculo.empregador,
+          matricula: u.vinculo.matricula,
+          dataAdmissao: u.vinculo.dataAdmissao,
+          fonte: 'nossa_fintech',
+        }
+      });
+    }
+
+    await patchBanco(id, 'nossa_fintech', {
+      status: 'ok',
+      disponivel: true,
+      mensagem: u.mensagem,
+      dados: {
+        margemDisponivel: u.margem?.disponivel || 0,
+        margemUtilizavel: u.margem?.utilizavel || 0,
+        margemBase: u.margem?.base || 0,
+        empregador: u.vinculo?.empregador,
+        empregadorCnpj: u.vinculo?.cnpj,
+        matricula: u.vinculo?.matricula,
+        marginKey: u.marginKey, // pra simulacao futura
+      },
+    });
+    if (u.vinculo?.cnpj) {
+      _registrarAprovacao(u.vinculo.cnpj, u.vinculo.empregador, 'nossa_fintech', null, null, null);
+    }
+    return;
+  }
+
+  // AGUARDA_AUTORIZACAO — SMS disparado, cliente precisa autorizar
+  if (u.etapa === 'AGUARDA_AUTORIZACAO') {
+    await patchBanco(id, 'nossa_fintech', {
+      status: 'bloqueado',
+      bloqueado: true,
+      precisaAutorizacao: true,
+      linkAutorizacao: u.linkAutorizacao || null,
+      mensagem: u.mensagem,
+      statusAutorizacao: u.status,
+    });
+    return;
+  }
+
+  // SEM_VINCULO / SEM_MARGEM
+  if (u.etapa === 'SEM_VINCULO' || u.etapa === 'SEM_MARGEM') {
+    await patchBanco(id, 'nossa_fintech', {
+      status: 'falha',
+      disponivel: false,
+      mensagem: u.mensagem,
+      _raw_response: u,
+    });
+    return;
+  }
+
+  // Outros erros
+  await patchBanco(id, 'nossa_fintech', {
+    status: 'falha',
+    mensagem: u.error || u.mensagem || `Etapa: ${u.etapa}`,
+    retryable: true,
+    _raw_response: u,
+  });
+}
+
 async function processarC6(id, cpf, incluirC6, auth, secret) {
   const manut = await _bancoEmManutencao('c6');
   if (manut) { await _marcarEmManutencao(id, 'c6', manut); return; }
@@ -1417,7 +1527,8 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       else if (banco === 'fintech_qi') await processarFintech(id, 'qi', row.cpf, auth, secret);
       else if (banco === 'fintech_celcoin') await processarFintech(id, 'celcoin', row.cpf, auth, secret);
       else if (banco === 'unno') await processarUnno(id, row.cpf, auth, secret);
-      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno', 400, req);
+      else if (banco === 'nossa_fintech') await processarNossaFintech(id, row.cpf, auth, secret);
+      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno, nossa_fintech', 400, req);
     } catch (e) {
       await patchBanco(id, banco, { status: 'falha', mensagem: 'Erro: ' + e.message });
       return jsonResp({ success: false, error: e.message }, 200, req);
