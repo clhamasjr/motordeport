@@ -1,20 +1,12 @@
-# ════════════════════════════════════════════════════════════════════
-# Build + push da imagem Docker do FlowForce V2 pra GitHub Container Registry
+# ══════════════════════════════════════════════════════════════════
+# FlowForce V2 — Build Docker + Push ghcr.io → Watchtower deploya na VPS
 #
-# Trigger: push em main que mexa em v2-next/
-# Steps:
-#   1. Build Docker image multi-stage
-#   2. Push pra ghcr.io/clhamasjr/flowforce-v2:latest
-#
-# DEPLOY automatico via WATCHTOWER (roda na VPS — monitora ghcr.io
-# a cada 60s e atualiza o servico Swarm sozinho). Zero SSH externo.
-# Antes era SSH push do GitHub Actions, mas Hostinger bloqueia IPs
-# desconhecidos no firewall (i/o timeout).
-#
-# REQUER (Settings > Secrets and variables > Actions):
-#   - SUPABASE_ANON_KEY = chave anon do Supabase (embutida no build)
-# ════════════════════════════════════════════════════════════════════
-name: Build V2 (Docker)
+# Dispara em push pra main quando arquivos de v2-next/ mudam.
+# O Watchtower na VPS (interval=60s) detecta a nova imagem :latest
+# e faz rolling update automático (zero-downtime).
+# ══════════════════════════════════════════════════════════════════
+
+name: Deploy V2 (Docker → VPS)
 
 on:
   push:
@@ -22,58 +14,58 @@ on:
     paths:
       - 'v2-next/**'
       - '.github/workflows/deploy-v2.yml'
-  workflow_dispatch:
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/flowforce-v2
+  # Permite rodar manualmente pelo GitHub Actions UI
+  workflow_dispatch:
 
 jobs:
   build-and-push:
+    name: Build & Push imagem Docker
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      packages: write   # necessário pra push no ghcr.io
 
     steps:
-      - name: Checkout
+      # ── 1. Checkout ────────────────────────────────────────────────
+      - name: Checkout repositório
         uses: actions/checkout@v4
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login GitHub Container Registry
+      # ── 2. Login no GitHub Container Registry ─────────────────────
+      - name: Login no ghcr.io
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest
-            type=sha,prefix=
+      # ── 3. Cache de camadas Docker (acelera builds) ────────────────
+      - name: Configura Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
+      # ── 4. Build + Push ────────────────────────────────────────────
+      - name: Build e push imagem
         uses: docker/build-push-action@v5
         with:
           context: ./v2-next
           file: ./v2-next/Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: |
+            ghcr.io/clhamasjr/flowforce-v2:latest
+            ghcr.io/clhamasjr/flowforce-v2:${{ github.sha }}
           build-args: |
             NEXT_PUBLIC_BACKEND_URL=https://motordeport.vercel.app
-            NEXT_PUBLIC_SUPABASE_URL=https://xtyvnocvckbvhwvdwdpo.supabase.co
-            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+            NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
 
-      - name: Summary
+      # ── 5. Resumo do deploy ────────────────────────────────────────
+      - name: Resumo
         run: |
-          echo "✅ Image pushed: ${{ steps.meta.outputs.tags }}"
-          echo "🔄 Watchtower vai atualizar a VPS em ~60s automaticamente"
+          echo "## ✅ Deploy V2 iniciado" >> $GITHUB_STEP_SUMMARY
+          echo "**Imagem:** \`ghcr.io/clhamasjr/flowforce-v2:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "**SHA:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "O Watchtower detecta a nova imagem em até 60s e faz rolling update." >> $GITHUB_STEP_SUMMARY
+          echo "🌐 [flowforce.tec.br](https://flowforce.tec.br)" >> $GITHUB_STEP_SUMMARY
