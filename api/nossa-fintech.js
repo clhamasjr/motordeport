@@ -198,18 +198,35 @@ async function consultarAprovacao({ cpf, nome, telefone }) {
   if (cpfLimpo.length !== 11) return { approved: false, etapa: 'ERRO', error: 'CPF invalido' };
 
   // 1) Verifica status de autorização
+  // A API retorna success:false / HTTP 4xx quando CPF NUNCA teve autorização
+  // registrada — semanticamente isso eh "NOT_AUTHORIZED, dispara SMS".
+  // Outros erros (5xx, mensagem diferente) cai em ERRO real.
   const auth = await checkAutorizacao(cpfLimpo);
-  if (!auth.ok) {
-    return {
-      approved: false,
-      etapa: 'ERRO',
-      error: auth.data?.message || `HTTP ${auth.status}`,
-      _raw: auth.data,
-    };
-  }
+  const apiSucesso = auth.ok && auth.data?.success === true;
 
-  const status = auth.data?.data?.status;
-  const link = auth.data?.data?.authorization_link;
+  let status, link;
+  if (apiSucesso) {
+    status = auth.data?.data?.status;
+    link = auth.data?.data?.authorization_link;
+  } else {
+    const msg = (auth.data?.message || '').toLowerCase();
+    const isNotFound =
+      msg.includes('não encontrada') || msg.includes('nao encontrada') ||
+      msg.includes('not found') || msg.includes('autorização não') ||
+      msg.includes('sem autorização');
+    if (!isNotFound) {
+      // Erro real (5xx, sistema fora do ar, etc) — propaga
+      return {
+        approved: false,
+        etapa: 'ERRO',
+        error: auth.data?.message || `HTTP ${auth.status}`,
+        _raw: auth.data,
+      };
+    }
+    // Caso "autorização não encontrada" — trata como NOT_AUTHORIZED
+    status = 'NOT_AUTHORIZED';
+    link = null;
+  }
 
   // 2) NOT_AUTHORIZED — dispara SMS automaticamente se temos telefone+nome
   if (status === 'NOT_AUTHORIZED') {
