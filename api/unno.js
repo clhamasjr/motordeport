@@ -1,21 +1,30 @@
 // ══════════════════════════════════════════════════════════════════
-// api/unno.js — Unno Tech: Consignado CLT (consulta de aprovação)
+// api/unno.js — Unno Tech: Consignado CLT (CONSULTA DE STATUS)
 //
-// IMPORTANTE: A Unno NAO TEM endpoint de consulta de elegibilidade
-// puro. O unico jeito de saber se um CPF eh aprovado eh:
-//   1. POST /loan/api/v2/clt/draft     → cria proposta DRAFT
-//   2. Sistema deles roda risk-analysis automatico (~3-10s)
-//   3. GET /proposal/api/v1/proposals/{uuid} → polling ate status final
-//   4. POST /proposal/api/v1/proposals/{uuid}/cancel → cancela SEMPRE
+// ESTRATEGIA: O motor NAO CRIA proposta na Unno. Operador cria
+// manualmente no painel app.unnotech.com.br (formulario "Nova
+// Simulacao"). Aqui apenas LEMOS as propostas existentes e mostramos
+// o status atual de cada CPF no card V2.
 //
-// "Proposta-fantasma": criamos, lemos resultado, cancelamos. Cliente
-// nunca eh contatado (link de formalizacao so sai depois do select+
-// register-worker+...).
+// Por que essa estrategia:
+//   - Endpoint de criar proposta (/loan/api/v2/clt/draft) achado no
+//     bundle JS retorna 404 no gateway publico — nao esta exposto.
+//   - O fluxo deles exige autorizacao do cliente via link DataPrev/MTE
+//     (nao da pra "consultar silenciosamente").
+//   - Listar propostas (/proposal/api/v1/proposals?productType=
+//     CONSIGNADO_CLT) funciona com nosso token e retorna status real.
 //
-// Auth: nao tem credencial OAuth2 com permissoes operacionais — usa
-// login HUMANO (username+password). Token JWT user-type (TTL ~4h).
-// Roadmap: pedir pra Unno credenciais service com `proposal.simulation-
-// clt-*` e migrar.
+// Status Unno mapeados (a partir das 44 propostas atuais da LhamasCred):
+//   integrated                       → APROVADA (motor de risco passou)
+//   disbursed                        → DESEMBOLSADA (contrato pago)
+//   rejected_risk_analysis_automatic → RECUSADA (motor recusou)
+//   cancelled                        → CANCELADA
+//   <outros>                         → EM ANALISE (qualquer status nao
+//                                       terminal — provavelmente em
+//                                       andamento)
+//
+// Auth: login HUMANO (username+password) ate Unno disponibilizar
+// credenciais OAuth2 service. JWT user-type, TTL ~4h.
 // ══════════════════════════════════════════════════════════════════
 
 export const config = { runtime: 'edge' };
@@ -32,9 +41,6 @@ function getConfig() {
 }
 
 // ── Token cache (JWT humano, TTL ~4h) ──────────────────────────
-// O JWT da Unno traz `exp` no payload — usamos isso pra calcular
-// validade real, com 60s de margem. Edge eh stateless entre cold-
-// starts mas mantem dentro da mesma instancia (poupa logins).
 let TOKEN_CACHE = { token: null, expiresAt: 0 };
 
 function decodeJwtExp(token) {
@@ -65,9 +71,8 @@ async function getToken() {
   if (!r.ok || !d.access_token) {
     throw new Error(`Falha login Unno (HTTP ${r.status}): ${d.error || d.message || d.raw || 'sem detalhes'}`);
   }
-  // Calcula expiracao real do JWT (exp em segundos epoch), com margem de 60s
   const realExp = decodeJwtExp(d.access_token);
-  const fallbackTtl = now + (3 * 60 * 60 * 1000); // 3h se nao conseguir decodar
+  const fallbackTtl = now + (3 * 60 * 60 * 1000);
   TOKEN_CACHE = {
     token: d.access_token,
     expiresAt: realExp > 0 ? realExp - 60_000 : fallbackTtl,
@@ -75,7 +80,6 @@ async function getToken() {
   return d.access_token;
 }
 
-// ── Helper de chamada autenticada ──────────────────────────────
 async function unnoCall(path, method = 'GET', body = null) {
   const token = await getToken();
   const cfg = getConfig();
@@ -94,164 +98,139 @@ async function unnoCall(path, method = 'GET', body = null) {
   return { ok: r.ok, status: r.status, data: d };
 }
 
-// ── Helpers de formatacao ──────────────────────────────────────
 function onlyDigits(s) { return String(s || '').replace(/\D/g, ''); }
 
-function normalizeBirthDate(s) {
-  if (!s) return '';
-  // Aceita YYYY-MM-DD ou DD/MM/YYYY, retorna sempre YYYY-MM-DD
-  const m1 = String(s).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (m1) return s;
-  const m2 = String(s).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (m2) return `${m2[3]}-${m2[2]}-${m2[1]}`;
-  return s; // deixa Unno reclamar se for invalido
+// ── Cache da lista de propostas (~30s) ─────────────────────────
+// Edge function tem TTL curto, mas dentro da mesma instancia poupa
+// chamadas repetidas pra Unno quando varios CPFs sao consultados
+// sequencialmente. 30s eh suficiente: se operador criou simulacao
+// nova, ele clica "re-tentar" e cache invalida.
+let PROPOSALS_CACHE = { data: null, fetchedAt: 0 };
+const PROPOSALS_TTL_MS = 30 * 1000;
+
+async function listarPropostasCltCache() {
+  const now = Date.now();
+  if (PROPOSALS_CACHE.data && (now - PROPOSALS_CACHE.fetchedAt) < PROPOSALS_TTL_MS) {
+    return PROPOSALS_CACHE.data;
+  }
+  // Filtro server-side por CPF nao funciona (Unno ignora silenciosamente
+  // qualquer parametro de filtro alem de productType). Buscamos as 100
+  // ultimas propostas CLT e filtramos client-side por customer_document.
+  // Limite atual da conta: 44 propostas — entao size=100 cobre tudo.
+  const r = await unnoCall(
+    '/proposal/api/v1/proposals?size=100&sort=createdAt,desc&productType=CONSIGNADO_CLT',
+    'GET'
+  );
+  if (!r.ok) {
+    throw new Error(`Falha listar propostas Unno (HTTP ${r.status}): ${r.data?.error || r.data?.message || 'sem detalhes'}`);
+  }
+  PROPOSALS_CACHE = {
+    data: r.data?.content || [],
+    fetchedAt: now,
+  };
+  return PROPOSALS_CACHE.data;
 }
 
-// ── Cancelar proposta (cleanup obrigatorio do "fantasma") ──────
-async function cancelarProposta(uuid) {
-  try {
-    const r = await unnoCall(`/proposal/api/v1/proposals/${uuid}/cancel`, 'POST', {});
-    return { ok: r.ok, status: r.status };
-  } catch (e) {
-    // Nao propaga erro de cancelamento — o importante eh o resultado
-    // da consulta. Loga so pra eventual auditoria.
-    console.error('[unno] erro cancelando proposta', uuid, e.message);
-    return { ok: false, error: e.message };
-  }
-}
+// ── Mapeamento de status Unno → estado do card no motor V2 ─────
+function interpretarStatus(prop) {
+  const status = (prop.status || '').toLowerCase();
+  const bpStatus = prop.bank_provider_status || '';
 
-// ── Polling de status apos criar draft ─────────────────────────
-// Aguarda o risk-analysis terminar. Status terminais que liberam
-// a leitura final:
-//   APPROVED, REJECTED, IN_FORMALIZATION, FORMALIZED, PAID, DENIED,
-//   AWAITING_RISK_ANALYSIS (saiu dos estagios DRAFT/PENDING)
-// Status que SEGUEM em risk-analysis:
-//   DRAFT, PENDING, IN_RISK_ANALYSIS
-async function aguardarRiskAnalysis(uuid, maxMs = 12000, intervalMs = 1000) {
-  const inicio = Date.now();
-  const inProgress = new Set([
-    'DRAFT', 'PENDING', 'IN_RISK_ANALYSIS', 'PROCESSING',
-    'AWAITING_RISK_ANALYSIS', 'CREATED'
-  ]);
-  while (Date.now() - inicio < maxMs) {
-    const r = await unnoCall(`/proposal/api/v1/proposals/${uuid}`, 'GET');
-    if (r.ok && r.data) {
-      const st = (r.data.status || '').toUpperCase();
-      if (st && !inProgress.has(st)) {
-        return { status: st, proposal: r.data };
-      }
-    }
-    await new Promise(res => setTimeout(res, intervalMs));
+  // Terminais aprovados
+  if (status === 'integrated' || status === 'disbursed') {
+    return {
+      approved: true,
+      mensagem: status === 'disbursed'
+        ? '💰 Aprovada e desembolsada na Unno'
+        : '✅ Aprovada na Unno — pronta pra prosseguir no painel',
+    };
   }
-  // Timeout: retorna ultimo status conhecido
-  const last = await unnoCall(`/proposal/api/v1/proposals/${uuid}`, 'GET');
+
+  // Terminais rejeitados
+  if (status === 'rejected_risk_analysis_automatic' || status.startsWith('rejected')) {
+    // Tenta extrair motivo dos logs (geralmente o ultimo log REJECTED tem motivo)
+    const logs = prop.logs || [];
+    const logRejeicao = logs.find(l =>
+      (l.action || '').toLowerCase().includes('rejected') ||
+      (l.action || '').toLowerCase().includes('erro reportado')
+    );
+    const motivo = logRejeicao
+      ? (logRejeicao.action || '').replace(/^.*?:\s*/, '').substring(0, 150)
+      : bpStatus || 'Recusada pelo motor de risco da Unno';
+    return {
+      approved: false,
+      mensagem: `❌ ${motivo}`,
+    };
+  }
+
+  // Cancelada
+  if (status === 'cancelled' || status === 'canceled') {
+    return {
+      approved: false,
+      mensagem: '🚫 Proposta cancelada na Unno',
+    };
+  }
+
+  // Em andamento (qualquer status nao terminal — provavelmente analisando)
   return {
-    status: (last.data?.status || 'TIMEOUT').toUpperCase(),
-    proposal: last.data || null,
-    timeout: true
+    approved: false,
+    emAndamento: true,
+    mensagem: `⏳ Em análise na Unno (status: ${prop.status || 'desconhecido'})`,
   };
 }
 
-// ── Action principal: consulta de aprovação ────────────────────
-// Cria proposta-fantasma, le resultado do risk-analysis, cancela.
-//
-// Input: { cpf, nome, telefone, email?, dataNascimento }
+// ── Action principal: consultar status de um CPF ───────────────
 // Output: {
-//   approved: boolean,
-//   status: 'APPROVED' | 'REJECTED' | 'AWAITING_RISK_ANALYSIS' | ...,
-//   reason: string,
-//   proposalUuid: string,   // pra debug — proposta ja foi cancelada
-//   dadosCliente: { ... },  // o que conseguimos extrair (nome, etc)
-//   raw: { ... }            // proposta completa pra inspecao
+//   encontrado: bool,           // se achamos proposta pra esse CPF
+//   approved: bool,             // se aprovada
+//   emAndamento: bool,          // se ainda processando (operador deve aguardar)
+//   mensagem: string,           // texto pra mostrar no card
+//   status: string,             // status Unno raw
+//   proposalUuid: string,       // pra debug
+//   dadosCliente: {...},        // info extraida da proposta
+//   linkPainel: string          // link direto pra abrir no painel Unno
 // }
-async function consultarAprovacao({ cpf, nome, telefone, email, dataNascimento }) {
+async function consultarStatusCpf(cpf) {
   const cpfLimpo = onlyDigits(cpf);
   if (!cpfLimpo || cpfLimpo.length !== 11) {
-    return { approved: false, error: 'CPF invalido (precisa 11 digitos)' };
-  }
-  if (!nome || !nome.trim()) {
-    return { approved: false, error: 'Nome obrigatorio pra Unno (sem nome nao da pra criar draft)' };
-  }
-  if (!dataNascimento) {
-    return { approved: false, error: 'Data de nascimento obrigatoria pra Unno' };
+    return { encontrado: false, approved: false, error: 'CPF invalido' };
   }
 
-  const payload = {
-    cpf: cpfLimpo,
-    name: nome.trim(),
-    phone: onlyDigits(telefone) || '11900000000', // Unno exige campo, mas valida formato
-    email: (email && email.includes('@')) ? email : `${cpfLimpo}@lead.lhamascred.com.br`,
-    birth_date: normalizeBirthDate(dataNascimento),
+  const propostas = await listarPropostasCltCache();
+  // Filtra todas as propostas desse CPF — pode ter mais de uma
+  // (canceladas + nova). Pega a MAIS RECENTE.
+  const minhas = propostas
+    .filter(p => onlyDigits(p.customer_document) === cpfLimpo)
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+  if (minhas.length === 0) {
+    return {
+      encontrado: false,
+      approved: false,
+      mensagem: 'Sem simulação na Unno pra esse CPF. Operador precisa criar no painel.',
+      linkPainel: 'https://app.unnotech.com.br/loans/clt/simulations',
+    };
+  }
+
+  const prop = minhas[0];
+  const interpret = interpretarStatus(prop);
+
+  return {
+    encontrado: true,
+    approved: interpret.approved,
+    emAndamento: !!interpret.emAndamento,
+    mensagem: interpret.mensagem,
+    status: prop.status,
+    proposalUuid: prop.uuid,
+    bancoProvedor: prop.bank_provider_name,
+    bancoProvedorStatus: prop.bank_provider_status,
+    dadosCliente: {
+      nome: prop.customer_name,
+      cpf: prop.customer_document,
+    },
+    linkPainel: `https://app.unnotech.com.br/loans/clt/${prop.uuid}`,
+    totalPropostasCpf: minhas.length, // se >1, tem historico (canceladas + ativa)
   };
-
-  // 1) Cria proposta DRAFT
-  const draft = await unnoCall('/loan/api/v2/clt/draft', 'POST', payload);
-  if (!draft.ok) {
-    return {
-      approved: false,
-      error: draft.data?.error?.message || draft.data?.message || `Falha criar draft (HTTP ${draft.status})`,
-      _raw: draft.data,
-    };
-  }
-  const uuid = draft.data?.uuid || draft.data?.proposalUuid || draft.data?.id;
-  if (!uuid) {
-    return {
-      approved: false,
-      error: 'Unno criou draft mas nao retornou uuid',
-      _raw: draft.data,
-    };
-  }
-
-  let resultado;
-  try {
-    // 2) Polling do risk-analysis
-    const aguard = await aguardarRiskAnalysis(uuid);
-    const status = aguard.status;
-    const prop = aguard.proposal || {};
-
-    // 3) Interpreta resultado
-    const APROVADOS = ['APPROVED', 'IN_FORMALIZATION', 'FORMALIZED', 'PAID', 'AWAITING_FORMALIZATION'];
-    const REJEITADOS = ['REJECTED', 'DENIED', 'CANCELLED', 'CANCELED'];
-
-    let approved = false;
-    let reason = '';
-    if (APROVADOS.includes(status)) {
-      approved = true;
-      reason = `Cliente aprovado pela Unno (status: ${status})`;
-    } else if (REJEITADOS.includes(status)) {
-      approved = false;
-      reason = prop.rejection_reason || prop.reason || `Recusado pela Unno (status: ${status})`;
-    } else {
-      // Status intermediario apos timeout — nao deu pra confirmar
-      approved = false;
-      reason = aguard.timeout
-        ? `Risk-analysis ainda rodando apos 12s (status: ${status}) — tente novamente em ~30s`
-        : `Status inesperado: ${status}`;
-    }
-
-    resultado = {
-      approved,
-      status,
-      reason,
-      proposalUuid: uuid,
-      dadosCliente: {
-        nome: prop.customer_full_name || payload.name,
-        cpf: prop.customer_cpf || cpfLimpo,
-        empregador: prop.employer_name || prop.company_name || null,
-        empregadorCnpj: prop.employer_cnpj || prop.company_cnpj || null,
-        margemDisponivel: prop.available_margin || prop.margin || null,
-        renda: prop.monthly_income || prop.income || null,
-      },
-      _raw: prop,
-    };
-  } catch (e) {
-    resultado = { approved: false, error: 'Erro polling risk-analysis: ' + e.message, proposalUuid: uuid };
-  } finally {
-    // 4) CANCELAMENTO OBRIGATORIO — proposta-fantasma nao pode ficar viva
-    await cancelarProposta(uuid);
-  }
-
-  return resultado;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -269,40 +248,37 @@ export default async function handler(req) {
 
   try {
     if (action === 'test') {
-      // Healthcheck: tenta login e lista partners (endpoint que sabemos retornar 200)
-      const r = await unnoCall('/auth/api/v1/partners?size=1', 'GET');
+      // Healthcheck: login + count de propostas CLT
+      const propostas = await listarPropostasCltCache().catch(e => ({ _err: e.message }));
+      const count = Array.isArray(propostas) ? propostas.length : null;
       return jsonResp({
-        success: r.ok,
+        success: count !== null,
         login: 'ok',
-        partnersStatus: r.status,
-        partnersCount: r.data?.total_elements ?? null,
+        totalPropostas: count,
+        erro: propostas?._err || null,
       }, 200, req);
     }
 
-    if (action === 'consultarAprovacao') {
-      const out = await consultarAprovacao({
-        cpf: body.cpf,
-        nome: body.nome || body.name,
-        telefone: body.telefone || body.phone,
-        email: body.email,
-        dataNascimento: body.dataNascimento || body.birth_date,
-      });
+    if (action === 'consultarAprovacao' || action === 'consultarStatus') {
+      // Mantemos 'consultarAprovacao' por compat com clt-fila.js
+      const out = await consultarStatusCpf(body.cpf);
       return jsonResp(out, 200, req);
     }
 
+    if (action === 'invalidarCache') {
+      // Pra quando operador acabou de criar uma simulacao no painel
+      // e quer ver no V2 sem esperar os 30s do TTL.
+      PROPOSALS_CACHE = { data: null, fetchedAt: 0 };
+      return jsonResp({ success: true, mensagem: 'Cache invalidado' }, 200, req);
+    }
+
     if (action === 'listarTabelas') {
-      // Util pra ver tabelas CLT disponiveis (taxa, comissao, prazo)
       const r = await unnoCall('/proposal/api/v1/tables/clt', 'GET');
       return jsonResp({ success: r.ok, ...r.data }, r.status, req);
     }
 
-    if (action === 'listarPartners') {
-      const r = await unnoCall('/auth/api/v1/partners', 'GET');
-      return jsonResp({ success: r.ok, ...r.data }, r.status, req);
-    }
-
     return jsonError(
-      'Action invalida. Validas: test, consultarAprovacao, listarTabelas, listarPartners',
+      'Action invalida. Validas: test, consultarStatus (alias consultarAprovacao), invalidarCache, listarTabelas',
       400, req
     );
   } catch (e) {

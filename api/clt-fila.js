@@ -796,35 +796,22 @@ async function processarFintech(id, provider, cpf, auth, secret) {
   });
 }
 
-// ─── UNNO (Consignado CLT via QITech/ITAPEMA) ──────────────────────
-// Atencao: Unno nao tem endpoint puro de elegibilidade. O motor cria
-// uma proposta DRAFT, le o risk-analysis, e CANCELA. Cliente nunca
-// eh contatado (link de formalizacao so sai dps de muitos outros
-// steps). Ver api/unno.js pro fluxo completo.
+// ─── UNNO (Consignado CLT — leitura de status) ─────────────────────
+// Atencao: motor NAO cria proposta na Unno. Operador cria manualmente
+// no painel app.unnotech.com.br (form "Nova Simulacao"). Aqui apenas
+// LEMOS as propostas existentes via GET /proposals e mostramos status
+// atual do CPF no card V2. Ver api/unno.js pra detalhes.
 async function processarUnno(id, cpf, auth, secret) {
   const manut = await _bancoEmManutencao('unno');
   if (manut) { await _marcarEmManutencao(id, 'unno', manut); return; }
   await patchBanco(id, 'unno', { status: 'processando' });
 
-  // Espera dados basicos (Unno exige nome + dataNasc obrigatoriamente)
-  const cli = await aguardarCliente(id, 8000);
-  if (!cli || !cli.nome || !cli.dataNascimento) {
-    await patchBanco(id, 'unno', {
-      status: 'falha',
-      mensagem: 'Faltam dados basicos do cliente (nome ou data de nascimento) — Unno exige pra criar draft'
-    });
-    return;
-  }
-
-  // Chama /api/unno action consultarAprovacao
+  // Como nao criamos proposta — nao precisa esperar nome/dataNasc.
+  // Basta CPF pra fazer GET /proposals e filtrar.
   const r = await callApi('/api/unno', {
-    action: 'consultarAprovacao',
+    action: 'consultarStatus',
     cpf,
-    nome: cli.nome,
-    dataNascimento: cli.dataNascimento,
-    telefone: cli.telefones?.[0]?.completo || null,
-    email: cli.emails?.[0] || null,
-  }, auth, secret, 22000); // timeout interno do callApi maior, ja que o polling pode levar ~12s
+  }, auth, secret, 15000);
 
   const u = r.data || {};
 
@@ -832,40 +819,62 @@ async function processarUnno(id, cpf, auth, secret) {
     await patchBanco(id, 'unno', {
       status: 'falha',
       mensagem: u.error || u.message || `Erro Unno (HTTP ${r.status})`,
+      retryable: true,
       _raw_response: u,
     });
     return;
   }
 
+  // CPF nao tem simulacao no painel — operador precisa criar la
+  if (!u.encontrado) {
+    await patchBanco(id, 'unno', {
+      status: 'manual_aguardando',
+      disponivel: false,
+      manual: true,
+      portalUrl: u.linkPainel || 'https://app.unnotech.com.br/loans/clt/simulations',
+      mensagem: u.mensagem || 'Sem simulacao na Unno. Crie no painel e clique "re-tentar".',
+      retryable: true,
+    });
+    return;
+  }
+
+  // Achou proposta — interpreta resultado
   if (u.approved) {
-    const dc = u.dadosCliente || {};
     await patchBanco(id, 'unno', {
       status: 'ok',
       disponivel: true,
-      mensagem: dc.empregador
-        ? `Cliente aprovado — ${dc.empregador}`
-        : 'Cliente aprovado pela Unno',
+      mensagem: u.mensagem,
       dados: {
-        margemDisponivel: dc.margemDisponivel || 0,
-        empregador: dc.empregador,
-        empregadorCnpj: dc.empregadorCnpj,
-        renda: dc.renda,
-        proposalUuidFantasma: u.proposalUuid, // ja cancelada — info debug
         statusUnno: u.status,
+        proposalUuid: u.proposalUuid,
+        bancoProvedor: u.bancoProvedor,
+        linkPainel: u.linkPainel,
       },
-      _raw_response: u._raw,
+      _raw_response: u,
     });
-    // Tracking: registra empresa aprovada
-    if (dc.empregadorCnpj) {
-      _registrarAprovacao(dc.empregadorCnpj, dc.empregador, 'unno', null, null, null);
-    }
+  } else if (u.emAndamento) {
+    await patchBanco(id, 'unno', {
+      status: 'manual_aguardando',
+      disponivel: false,
+      manual: true,
+      portalUrl: u.linkPainel,
+      mensagem: u.mensagem,
+      retryable: true,
+      dados: { statusUnno: u.status, proposalUuid: u.proposalUuid },
+    });
   } else {
     await patchBanco(id, 'unno', {
       status: 'falha',
       disponivel: false,
-      mensagem: u.reason || u.error || 'Cliente nao aprovado pela Unno',
-      retryable: u.status === 'AWAITING_RISK_ANALYSIS' || u.status === 'TIMEOUT',
-      _raw_response: u._raw,
+      mensagem: u.mensagem || 'Recusada pela Unno',
+      retryable: true,
+      dados: {
+        statusUnno: u.status,
+        proposalUuid: u.proposalUuid,
+        bancoProvedor: u.bancoProvedor,
+        linkPainel: u.linkPainel,
+      },
+      _raw_response: u,
     });
   }
 }
