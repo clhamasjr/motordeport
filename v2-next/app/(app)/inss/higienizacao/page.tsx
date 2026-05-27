@@ -6,14 +6,53 @@ import { Card, CardContent } from '@/components/ui/card';
 import { useInssBaseStore } from '@/hooks/use-inss-base-store';
 import { Sparkles, FileSpreadsheet, TrendingUp } from 'lucide-react';
 import { formatBRL } from '@/lib/utils';
+import { useState, useMemo } from 'react';
+import type { LoasRow } from '@/lib/inss-base-parser';
+
+// ─── helpers ────────────────────────────────────────────────────────────────
+const STATUS_LABEL: Record<string, string> = {
+  com_margem: '✅ Com margem',
+  extrapolado_emp: '🔴 Extrap. empréstimo',
+  extrapolado_cartoes: '🟠 Extrap. cartões',
+  sem_dados: '⚪ Sem dados',
+};
+const STATUS_COLOR: Record<string, string> = {
+  com_margem: 'text-green-400',
+  extrapolado_emp: 'text-red-400',
+  extrapolado_cartoes: 'text-orange-400',
+  sem_dados: 'text-muted-foreground',
+};
+
+type LoasFiltro = 'ALL' | 'MARGEM' | 'SEMCART' | 'EXTRAP';
 
 export default function HigienizacaoInssPage() {
   const { base } = useInssBaseStore();
+  const [loasFiltro, setLoasFiltro] = useState<LoasFiltro>('ALL');
 
   // KPIs gerais da base (não dos filtrados)
   const totalTroco = base ? base.elegiveis.reduce((s, e) => s + (e.troco || 0), 0) : 0;
   const totalVC = base ? base.elegiveis.reduce((s, e) => s + (e.vc || 0), 0) : 0;
   const clientesElegiveis = base ? new Set(base.elegiveis.map((e) => e.cpf)).size : 0;
+
+  // KPIs LOAS
+  const loasAll: LoasRow[] = base?.loasAll ?? [];
+  const loasComMargem = loasAll.filter((r) => r.statusLoas === 'com_margem');
+  const loasExtrap = loasAll.filter(
+    (r) => r.statusLoas === 'extrapolado_emp' || r.statusLoas === 'extrapolado_cartoes',
+  );
+  const loasSemCart = loasAll.filter((r) => r.numCartoes === 0 && r.statusLoas !== 'sem_dados');
+  const potencialCartao = loasSemCart.reduce((s, r) => s + r.margemLivreCart, 0);
+  const potencialEmp = loasComMargem.reduce((s, r) => s + r.margemLivreEmp, 0);
+
+  const loasFiltrado = useMemo(() => {
+    if (loasFiltro === 'MARGEM') return loasAll.filter((r) => r.statusLoas === 'com_margem');
+    if (loasFiltro === 'SEMCART') return loasAll.filter((r) => r.numCartoes === 0 && r.statusLoas !== 'sem_dados');
+    if (loasFiltro === 'EXTRAP')
+      return loasAll.filter(
+        (r) => r.statusLoas === 'extrapolado_emp' || r.statusLoas === 'extrapolado_cartoes',
+      );
+    return loasAll;
+  }, [loasAll, loasFiltro]);
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-4">
@@ -113,6 +152,173 @@ export default function HigienizacaoInssPage() {
 
           {/* Tabela completa com filtros */}
           <ElegiveisTable />
+
+          {/* ── BASE LOAS/BPC ─────────────────────────────────────────────── */}
+          {loasAll.length > 0 && (
+            <div className="space-y-3">
+              {/* header */}
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-bold">🔵 Base LOAS / BPC</span>
+                <span className="text-xs text-muted-foreground">
+                  (espécies 87/88 — só contrato novo, sem portabilidade)
+                </span>
+              </div>
+
+              {/* KPIs LOAS */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <Card className="border-blue-500/40 bg-blue-950/20">
+                  <CardContent className="p-3">
+                    <div className="text-[10px] uppercase tracking-wider text-blue-300 font-semibold">
+                      Total LOAS
+                    </div>
+                    <div className="text-2xl font-mono font-bold mt-1 text-blue-200">
+                      {loasAll.length}
+                    </div>
+                    <div className="text-[10px] text-blue-400">clientes na base</div>
+                  </CardContent>
+                </Card>
+                <Card className="border-green-500/40 bg-green-950/20">
+                  <CardContent className="p-3">
+                    <div className="text-[10px] uppercase tracking-wider text-green-300 font-semibold">
+                      Com margem
+                    </div>
+                    <div className="text-2xl font-mono font-bold mt-1 text-green-400">
+                      {loasComMargem.length}
+                    </div>
+                    <div className="text-[10px] text-green-500 font-mono">
+                      {formatBRL(potencialEmp)} potencial emp
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="border-cyan-500/40 bg-cyan-950/20">
+                  <CardContent className="p-3">
+                    <div className="text-[10px] uppercase tracking-wider text-cyan-300 font-semibold">
+                      Oport. cartão
+                    </div>
+                    <div className="text-2xl font-mono font-bold mt-1 text-cyan-400">
+                      {loasSemCart.length}
+                    </div>
+                    <div className="text-[10px] text-cyan-500 font-mono">
+                      {formatBRL(potencialCartao)} potencial
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="border-red-500/40 bg-red-950/20">
+                  <CardContent className="p-3">
+                    <div className="text-[10px] uppercase tracking-wider text-red-300 font-semibold">
+                      Extrapolados
+                    </div>
+                    <div className="text-2xl font-mono font-bold mt-1 text-red-400">
+                      {loasExtrap.length}
+                    </div>
+                    <div className="text-[10px] text-red-500">acima do teto 30%</div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* filtro */}
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    { v: 'ALL', label: `Todos (${loasAll.length})` },
+                    { v: 'MARGEM', label: `Com margem (${loasComMargem.length})` },
+                    { v: 'SEMCART', label: `Sem cartão (${loasSemCart.length})` },
+                    { v: 'EXTRAP', label: `Extrapolados (${loasExtrap.length})` },
+                  ] as { v: LoasFiltro; label: string }[]
+                ).map(({ v, label }) => (
+                  <button
+                    key={v}
+                    onClick={() => setLoasFiltro(v)}
+                    className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                      loasFiltro === v
+                        ? 'bg-blue-600 border-blue-500 text-white'
+                        : 'border-border text-muted-foreground hover:text-foreground hover:border-blue-500/50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* tabela */}
+              <Card>
+                <CardContent className="p-0 overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-border text-left">
+                        {[
+                          'Nome', 'CPF', 'Ben', 'Esp',
+                          'Benefício R$', 'Teto 30%', 'Comprometido', '% Comp.',
+                          'Margem Emp', 'Margem Cart', 'Cartões', 'Idade',
+                          'Status', 'Tel',
+                        ].map((h) => (
+                          <th key={h} className="px-2 py-2 text-[10px] uppercase tracking-wider text-muted-foreground font-semibold whitespace-nowrap">
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loasFiltrado.length === 0 && (
+                        <tr>
+                          <td colSpan={14} className="text-center py-6 text-muted-foreground">
+                            Nenhum registro nesse filtro.
+                          </td>
+                        </tr>
+                      )}
+                      {loasFiltrado.map((r, i) => (
+                        <tr
+                          key={`${r.cpf}-${i}`}
+                          className="border-b border-border/50 hover:bg-muted/20 transition-colors"
+                        >
+                          <td className="px-2 py-1.5 font-medium max-w-[140px] truncate" title={r.nome}>
+                            {r.nome}
+                          </td>
+                          <td className="px-2 py-1.5 font-mono">{r.cpf}</td>
+                          <td className="px-2 py-1.5 font-mono">{r.ben}</td>
+                          <td className="px-2 py-1.5">{r.esp}</td>
+                          <td className="px-2 py-1.5 font-mono text-right">
+                            {r.beneficio > 0 ? formatBRL(r.beneficio) : '—'}
+                          </td>
+                          <td className="px-2 py-1.5 font-mono text-right">
+                            {r.tetoEmp > 0 ? formatBRL(r.tetoEmp) : '—'}
+                          </td>
+                          <td className="px-2 py-1.5 font-mono text-right">
+                            {r.sumEmp > 0 ? formatBRL(r.sumEmp) : '—'}
+                          </td>
+                          <td
+                            className={`px-2 py-1.5 font-mono text-right font-bold ${
+                              r.pctEmp >= 30 ? 'text-red-400' : r.pctEmp >= 20 ? 'text-yellow-400' : 'text-green-400'
+                            }`}
+                          >
+                            {r.pctEmp > 0 ? `${r.pctEmp}%` : '—'}
+                          </td>
+                          <td className="px-2 py-1.5 font-mono text-right text-green-400">
+                            {r.margemLivreEmp > 0 ? formatBRL(r.margemLivreEmp) : '—'}
+                          </td>
+                          <td className="px-2 py-1.5 font-mono text-right text-cyan-400">
+                            {r.margemLivreCart > 0 ? formatBRL(r.margemLivreCart) : '—'}
+                          </td>
+                          <td className="px-2 py-1.5 text-center">
+                            {r.temRmc && <span className="inline-block bg-blue-700/50 text-blue-200 rounded px-1 mr-0.5">RMC</span>}
+                            {r.temRcc && <span className="inline-block bg-purple-700/50 text-purple-200 rounded px-1">RCC</span>}
+                            {!r.temRmc && !r.temRcc && <span className="text-muted-foreground">—</span>}
+                          </td>
+                          <td className="px-2 py-1.5 text-center">{r.idade}</td>
+                          <td className={`px-2 py-1.5 font-semibold whitespace-nowrap ${STATUS_COLOR[r.statusLoas] ?? ''}`}>
+                            {STATUS_LABEL[r.statusLoas] ?? r.statusLoas}
+                          </td>
+                          <td className="px-2 py-1.5 text-muted-foreground">
+                            {[r.t1, r.t2, r.t3].filter(Boolean).join(' · ') || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </>
       )}
 
