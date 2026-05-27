@@ -131,6 +131,54 @@ export interface ConsultaRecente {
   criada_por_user_id?: number | null;
 }
 
+/**
+ * Re-dispara processamento de UM banco em uma consulta existente.
+ * Backend `clt-fila.js action='processar'` aceita `force: true` que bypass
+ * o guard de idempotencia — sem isso, ele recusa re-rodar bancos em estado
+ * final ('falha', 'ok', etc) com `skipped`.
+ *
+ * Uso: card de banco em status='falha' → botao "Re-tentar".
+ *
+ * Apos sucesso, invalida o cache do status da fila pra UI puxar o estado novo
+ * (banco volta a aparecer como 'processando' e segue o polling normal).
+ */
+interface ReprocessarParams {
+  filaId: string;
+  banco: string; // BancoSlug
+}
+interface ReprocessarResponse {
+  success: boolean;
+  banco?: string;
+  id?: string;
+  skipped?: string;
+  error?: string;
+}
+export function useReprocessarBanco() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: ReprocessarParams) => {
+      return api<ReprocessarResponse>('/api/clt-fila', {
+        action: 'processar',
+        id: params.filaId,
+        banco: params.banco,
+        force: true,
+      });
+    },
+    onSuccess: (data, vars) => {
+      if (data.success) {
+        // Invalida o status da fila pra UI puxar o novo estado (processando)
+        qc.invalidateQueries({ queryKey: ['clt', 'fila', vars.filaId] });
+        toast.success(`Re-disparado: ${vars.banco}`);
+      } else {
+        toast.error(data.error || 'Falha ao re-disparar banco');
+      }
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || 'Erro ao re-disparar banco');
+    },
+  });
+}
+
 export function useConsultasRecentes(limit = 20) {
   return useQuery({
     queryKey: ['clt', 'recentes', limit],

@@ -5,9 +5,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { BancoState, BancoSlug, ClienteData } from '@/lib/clt-types';
 import { formatBRL, formatCnpj, cn } from '@/lib/utils';
-import { Loader2, Wrench, AlertCircle, CheckCircle2, Camera, FileText, RefreshCw, Smartphone } from 'lucide-react';
+import { Loader2, Wrench, CheckCircle2, Camera, FileText, RefreshCw, Smartphone } from 'lucide-react';
 import { useGerarLinkSelfieC6, useRecarregarC6 } from '@/hooks/use-clt-c6';
 import { useMercantilSolicitarSMS, useMercantilVerificarAutorizacao } from '@/hooks/use-clt-mercantil';
+import { useReprocessarBanco } from '@/hooks/use-clt-fila';
 
 const BANCO_LABEL: Record<BancoSlug, string> = {
   presencabank: 'PresençaBank',
@@ -184,6 +185,16 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
     mercantilVerificar.mutate({ cpf: cliente.cpf, filaId });
   };
 
+  // ─── Re-tentar: re-dispara processamento desse banco com force=true ──
+  // Aparece em qualquer card em status='falha' (operador decide quando
+  // re-tentar — ex: banco travado por 10min, ou erro transitorio).
+  const reprocessar = useReprocessarBanco();
+  const podeRetentar = state.status === 'falha' && !!filaId;
+  const dispararRetentar = () => {
+    if (!filaId) return;
+    reprocessar.mutate({ filaId, banco });
+  };
+
   return (
     <Card
       className={cn(
@@ -339,11 +350,19 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
         </Button>
       )}
 
-      {/* Re-tentar quando falhou e é retryable */}
-      {state.status === 'falha' && state.retryable && (
-        <Button variant="outline" size="sm" className="w-full mt-2 gap-1">
-          <AlertCircle className="w-3 h-3" />
-          Re-tentar
+      {/* Re-tentar — aparece em QUALQUER banco em falha (operador decide).
+          Re-dispara o handler 'processar' com force=true, que bypassa
+          idempotencia e roda novamente. Disabled durante o request. */}
+      {podeRetentar && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full mt-2 gap-1"
+          onClick={dispararRetentar}
+          disabled={reprocessar.isPending}
+        >
+          <RefreshCw className={cn('w-3 h-3', reprocessar.isPending && 'animate-spin')} />
+          {reprocessar.isPending ? 'Re-tentando...' : 'Re-tentar este banco'}
         </Button>
       )}
     </Card>
