@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { formatBRL } from '@/lib/utils';
 import { InssParsedResult, InssContrato } from '@/lib/inss-types';
 import {
-  testarTodos, calcPortRefin108, parseBR, pC, pEN, ESP_INV, ESP_AUX, BD,
+  testarTodos, calcPortRefin108, parseBR, pC, pEN, ESP_INV, ESP_AUX, ESP_LOAS, BD,
   type BancoSimul, type PortRefin108Result,
 } from '@/lib/inss-motor';
 import {
@@ -100,20 +100,30 @@ interface AnaliseNovaRegra {
   // Cliente tem algum cartão (RMC ou RCC)?
   temAlgumCartao: boolean;
 
-  // Tetos NOVA regra (40% total)
-  teto40Total: number;     // 40% benefício
-  tetoEmpComCartao: number; // 35% (legacy — sempre 35%)
-  tetoEmpReal: number;     // teto EMP que VALE pra esse cliente: 35% (com cartão) ou 40% (sem)
-  tetoCartao: number;      // 5% (quando aplicável)
+  // Tetos NOVA regra (40% total) — ignorado quando isLoas=true
+  teto40Total: number;
+  tetoEmpComCartao: number;
+  tetoEmpReal: number;
+  tetoCartao: number;
 
   // Estado NOVA
   enquadraNovaRegra: boolean;
-  excedente: number;       // total - teto40Total se positivo
-  margemLivreNova: number; // tetoEmpReal - sumEmp se positivo (margem PRA EMPRÉSTIMO)
+  excedente: number;
+  margemLivreNova: number;
 
   // Soluções pra enquadrar (só se NÃO enquadra)
-  contratosQueResolvem: ContratoCalc[]; // contratos cujo refin sozinho cobre o excedente
-  cartoesQueResolvem: SolucaoCartao[];  // cancelar RMC/RCC se valor >= excedente
+  contratosQueResolvem: ContratoCalc[];
+  cartoesQueResolvem: SolucaoCartao[];
+
+  // ── LOAS/BPC (espécies 87/88) ──────────────────────────────────────
+  isLoas: boolean;
+  // campos abaixo só significativos quando isLoas=true
+  numCartoesLoas: number;       // total de cartões averbados (RMC + RCC)
+  tetoEmpLoas: number;          // benef * 0.30
+  margemLivreEmpLoas: number;   // tetoEmpLoas - sumEmp (≥ 0)
+  margemLivreCartLoas: number;  // benef * 0.05 se numCartoesLoas === 0, senão 0
+  pctEmpLoas: number;           // sumEmp / benef * 100
+  statusLoas: 'sem_dados' | 'com_margem' | 'extrapolado_emp' | 'extrapolado_cartoes';
 }
 
 function calcularTudo(
@@ -126,6 +136,7 @@ function calcularTudo(
   const esp = ben.especie || '';
   const eN = pEN(esp);
   const isInv = ESP_INV.includes(eN);
+  const isLoas = ESP_LOAS.includes(eN);
   const isAux = ESP_AUX.includes(eN) || String(esp).toUpperCase().includes('AUXIL');
   const idade = b.idade ? parseInt(String(b.idade), 10) : null;
 
@@ -202,6 +213,10 @@ function calcularTudo(
     if (isAux) {
       bloqueado = true;
       motivo = 'Auxílio — não permite consignado';
+    } else if (isLoas) {
+      // LOAS/BPC: só contrato novo, sem portabilidade
+      bloqueado = true;
+      motivo = 'LOAS/BPC — apenas contrato novo (sem portabilidade)';
     } else {
       try {
         destinos = testarTodos(parcela, saldo, pagas, codOrigem, isInv, idade, bY, restPg, eN, contrato, taxaOrig);
@@ -323,6 +338,20 @@ function calcularTudo(
   if (sumRmc > 0) cartoesQueResolvem.push({ tipo: 'RMC', valor: sumRmc, resolve: sumRmc >= excedente - 0.01 });
   if (sumRcc > 0) cartoesQueResolvem.push({ tipo: 'RCC', valor: sumRcc, resolve: sumRcc >= excedente - 0.01 });
 
+  // ── Campos LOAS/BPC ───────────────────────────────────────────────
+  const numCartoesLoas = (temRmc ? 1 : 0) + (temRcc ? 1 : 0);
+  const tetoEmpLoas = benef * 0.30;
+  const margemLivreEmpLoas = benef > 0 ? Math.max(0, tetoEmpLoas - sumEmp) : 0;
+  const margemLivreCartLoas = benef > 0 && numCartoesLoas === 0 ? benef * 0.05 : 0;
+  const pctEmpLoas = benef > 0 ? (sumEmp / benef) * 100 : 0;
+  const statusLoas: AnaliseNovaRegra['statusLoas'] = !benef
+    ? 'sem_dados'
+    : numCartoesLoas >= 2
+      ? 'extrapolado_cartoes'
+      : sumEmp >= tetoEmpLoas - 0.01
+        ? 'extrapolado_emp'
+        : 'com_margem';
+
   const analise: AnaliseNovaRegra = {
     benef, sumEmp, sumRmc, sumRcc, total, compPct,
     temAlgumCartao,
@@ -330,6 +359,10 @@ function calcularTudo(
     enquadraNovaRegra, excedente, margemLivreNova,
     contratosQueResolvem: contratos.filter((c) => c.resolveExcedente),
     cartoesQueResolvem,
+    // LOAS
+    isLoas,
+    numCartoesLoas, tetoEmpLoas, margemLivreEmpLoas,
+    margemLivreCartLoas, pctEmpLoas, statusLoas,
   };
 
   return { contratos, analise };
@@ -369,6 +402,8 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
     benef, total, compPct, teto40Total, tetoEmpReal, temAlgumCartao,
     enquadraNovaRegra, excedente, margemLivreNova,
     contratosQueResolvem, cartoesQueResolvem,
+    isLoas, numCartoesLoas, tetoEmpLoas, margemLivreEmpLoas,
+    margemLivreCartLoas, pctEmpLoas, statusLoas,
   } = analise;
 
   const numSolucoesContrato = contratosQueResolvem.length;
@@ -376,30 +411,147 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
   const totalSolucoes = numSolucoesContrato + numSolucoesCartao;
   const inviavel = !enquadraNovaRegra && totalSolucoes === 0;
 
-  // Empréstimo Novo: só faz sentido se ENQUADRA e tem margem livre na nova
-  // Estimativa rápida pelo teto 1.85% (tabela mais alta = MENOR VC pro cliente mas
-  // MAIS comissão pro correspondente — é a tabela "padrão" do BRB/QUALI)
-  const empNovoVlr185 = enquadraNovaRegra && margemLivreNova > 0 ? margemLivreNova / COEF_EMP_185 : 0;
-  // Testa TODOS os bancos com parcela = margem livre, saldo 0 (sem contrato origem)
   const idadeNum = parsed.beneficiario?.idade ? parseInt(String(parsed.beneficiario.idade), 10) : null;
   const especieNum = pEN(parsed.beneficio?.especie || '');
+
+  // Empréstimo Novo — usa teto diferente pra LOAS (30%) vs normal (35%/40%)
+  const margemLivreParaEmpNovo = isLoas ? margemLivreEmpLoas : (enquadraNovaRegra ? margemLivreNova : 0);
+  const empNovoVlr185 = margemLivreParaEmpNovo > 0 ? margemLivreParaEmpNovo / COEF_EMP_185 : 0;
+
   const empNovoOpcoes = useMemo(() => {
-    if (!enquadraNovaRegra || margemLivreNova <= 0) return [] as BancoSimul[];
+    if (margemLivreParaEmpNovo <= 0) return [] as BancoSimul[];
+    if (!isLoas && !enquadraNovaRegra) return [] as BancoSimul[];
     try {
-      // saldo=0, pg=0, cd='000' (sem origem), inv=false, restPg=108 (nova regra)
-      return testarTodos(margemLivreNova, 0, 0, '000', false, idadeNum, null, 108, especieNum, '', 0);
+      return testarTodos(margemLivreParaEmpNovo, 0, 0, '000', false, idadeNum, null, 108, especieNum, '', 0);
     } catch {
       return [];
     }
-  }, [enquadraNovaRegra, margemLivreNova, idadeNum, especieNum]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoas, enquadraNovaRegra, margemLivreParaEmpNovo, idadeNum, especieNum]);
 
   return (
     <Card className={
-      inviavel ? 'border-red-500/40 bg-red-500/5'
-      : !enquadraNovaRegra ? 'border-yellow-500/40 bg-yellow-500/5'
-      : 'border-green-500/30 bg-green-500/5'
+      isLoas
+        ? statusLoas === 'com_margem' ? 'border-blue-500/40 bg-blue-500/5'
+          : statusLoas === 'extrapolado_cartoes' ? 'border-orange-500/40 bg-orange-500/5'
+          : statusLoas === 'extrapolado_emp' ? 'border-red-500/40 bg-red-500/5'
+          : 'border-border'
+        : inviavel ? 'border-red-500/40 bg-red-500/5'
+        : !enquadraNovaRegra ? 'border-yellow-500/40 bg-yellow-500/5'
+        : 'border-green-500/30 bg-green-500/5'
     }>
       <CardContent className="p-4 space-y-3">
+
+        {/* ═══════════════ LOAS/BPC ═══════════════════════════════════════ */}
+        {isLoas ? (
+          <>
+            {/* Header LOAS */}
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-lg">🔵</span>
+                <h3 className="font-bold text-base text-blue-300">LOAS / BPC — Regra especial 30%</h3>
+                <Badge variant="info" className="text-[10px]">Espécie {parsed.beneficio?.especie}</Badge>
+                <Badge variant="muted" className="text-[10px]">Sem portabilidade</Badge>
+              </div>
+              <Badge
+                variant={statusLoas === 'com_margem' ? 'success' : 'destructive'}
+                className="text-xs font-mono"
+              >
+                {pctEmpLoas.toFixed(1)}% / 30%
+              </Badge>
+            </div>
+
+            {/* Aviso LOAS */}
+            <div className="rounded-md bg-blue-500/10 border border-blue-500/30 p-3 text-xs text-blue-200">
+              <strong>LOAS/BPC</strong> aplica regras diferentes do INSS regular:{' '}
+              <strong>teto emp = 30%</strong> do benefício (não 35/40%),{' '}
+              <strong>1 cartão no máximo (5%)</strong>,{' '}
+              <strong>sem portabilidade</strong> — somente contratos novos.
+            </div>
+
+            {/* KPIs LOAS */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div className="rounded-md border border-border bg-card/50 p-2">
+                <div className="text-[9px] uppercase text-muted-foreground font-semibold">Teto Emp (30%)</div>
+                <div className="font-mono font-bold text-blue-300">{formatBRL(tetoEmpLoas)}</div>
+              </div>
+              <div className="rounded-md border border-border bg-card/50 p-2">
+                <div className="text-[9px] uppercase text-muted-foreground font-semibold">Comprometido</div>
+                <div className={`font-mono font-bold ${pctEmpLoas >= 30 ? 'text-red-400' : pctEmpLoas >= 20 ? 'text-yellow-400' : 'text-foreground'}`}>
+                  {formatBRL(benef > 0 ? benef - margemLivreEmpLoas - tetoEmpLoas + benef * 0.30 : 0)} ({pctEmpLoas.toFixed(1)}%)
+                </div>
+              </div>
+              <div className="rounded-md border border-border bg-card/50 p-2">
+                <div className="text-[9px] uppercase text-muted-foreground font-semibold">Cartões</div>
+                <div className="font-mono font-bold">
+                  {numCartoesLoas === 0
+                    ? <span className="text-green-400">Sem cartão</span>
+                    : numCartoesLoas === 1
+                      ? <span className="text-yellow-400">1 cartão</span>
+                      : <span className="text-red-400">⚠ {numCartoesLoas} cartões (extrapola)</span>
+                  }
+                </div>
+              </div>
+            </div>
+
+            {/* Status LOAS */}
+            {statusLoas === 'com_margem' && (
+              <div className="rounded-md bg-green-500/10 border border-green-500/40 p-3 text-sm">
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="size-5 text-green-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-green-400">✅ LOAS com margem disponível</div>
+                    <div className="text-xs text-foreground mt-1">
+                      Parcelas de emp <strong className="font-mono">{formatBRL(benef - margemLivreEmpLoas - tetoEmpLoas + benef * 0.30)}</strong>{' '}
+                      de <strong className="font-mono">{formatBRL(tetoEmpLoas)}</strong> (teto 30%).
+                      Sobra <strong className="font-mono text-green-400">{formatBRL(margemLivreEmpLoas)}</strong> pra empréstimo novo.
+                      {margemLivreCartLoas > 0 && (
+                        <>{' '}Cliente sem cartão — pode contratar 1 cartão (margem{' '}
+                          <strong className="font-mono text-cyan-400">{formatBRL(margemLivreCartLoas)}</strong>).</>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {statusLoas === 'extrapolado_emp' && (
+              <div className="rounded-md bg-red-500/10 border border-red-500/40 p-3 text-sm">
+                <div className="flex items-start gap-2">
+                  <XCircle className="size-5 text-red-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-red-400">🔴 LOAS extrapolado — empréstimo acima de 30%</div>
+                    <div className="text-xs text-foreground mt-1">
+                      Parcelas de emp <strong className="font-mono text-red-400">{formatBRL(benef - margemLivreEmpLoas - tetoEmpLoas + benef * 0.30)}</strong>{' '}
+                      ≥ teto <strong className="font-mono">{formatBRL(tetoEmpLoas)}</strong>. Sem margem pra novo contrato.
+                      <div className="mt-1 text-muted-foreground">LOAS não permite portabilidade — não há como liberar margem operacionalmente.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {statusLoas === 'extrapolado_cartoes' && (
+              <div className="rounded-md bg-orange-500/10 border border-orange-500/40 p-3 text-sm">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="size-5 text-orange-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-orange-400">🟠 LOAS extrapolado — {numCartoesLoas} cartões (máx 1)</div>
+                    <div className="text-xs text-foreground mt-1">
+                      LOAS permite no máximo 1 cartão (5% do benefício). Cliente tem {numCartoesLoas} cartões averbados.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {statusLoas === 'sem_dados' && (
+              <div className="rounded-md bg-muted/30 border border-border p-3 text-sm text-muted-foreground">
+                ⚪ Sem dados de benefício suficientes pra calcular enquadramento LOAS.
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+        {/* ═══════════════ INSS REGULAR ════════════════════════════════ */}
+
         {/* Header */}
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
@@ -480,9 +632,11 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
             </div>
           </div>
         )}
+          </>
+        )}
 
-        {/* Soluções isoladas pra enquadrar (só se NÃO enquadra mas tem solução) */}
-        {!enquadraNovaRegra && totalSolucoes > 0 && (
+        {/* Soluções isoladas — só pro INSS regular fora de regra */}
+        {!isLoas && !enquadraNovaRegra && totalSolucoes > 0 && (
           <div className="space-y-2">
             <div className="text-xs uppercase tracking-wider font-bold text-muted-foreground">
               Soluções pra enquadrar (escolha 1):
@@ -535,22 +689,26 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
           </div>
         )}
 
-        {/* Empréstimo Novo (só se ENQUADRA + tem margem livre na nova) */}
-        {enquadraNovaRegra && margemLivreNova > 0 && (
+        {/* Empréstimo Novo — LOAS: mostra se tem margem livre (30%); Regular: se enquadra */}
+        {margemLivreParaEmpNovo > 0 && (
           <div className="rounded-lg border border-orange-500/40 bg-orange-500/5 p-3 space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="text-[10px] uppercase tracking-wider font-bold text-orange-400">💰 Empréstimo Novo</div>
-                <Badge variant="muted" className="text-[9px]">Parcela {formatBRL(margemLivreNova)}/mês</Badge>
-                <Badge
-                  variant={temAlgumCartao ? 'muted' : 'info'}
-                  className="text-[9px]"
-                  title={temAlgumCartao
-                    ? 'Cliente já tem cartão — margem emp limitada a 35%'
-                    : 'Cliente sem cartão — pode usar 40% inteiro em empréstimo'}
-                >
-                  {temAlgumCartao ? 'teto 35% (com cartão)' : 'teto 40% (sem cartão)'}
-                </Badge>
+                <Badge variant="muted" className="text-[9px]">Parcela {formatBRL(margemLivreParaEmpNovo)}/mês</Badge>
+                {isLoas ? (
+                  <Badge variant="info" className="text-[9px]">teto 30% LOAS</Badge>
+                ) : (
+                  <Badge
+                    variant={temAlgumCartao ? 'muted' : 'info'}
+                    className="text-[9px]"
+                    title={temAlgumCartao
+                      ? 'Cliente já tem cartão — margem emp limitada a 35%'
+                      : 'Cliente sem cartão — pode usar 40% inteiro em empréstimo'}
+                  >
+                    {temAlgumCartao ? 'teto 35% (com cartão)' : 'teto 40% (sem cartão)'}
+                  </Badge>
+                )}
               </div>
               <TrendingUp className="size-4 text-orange-400" />
             </div>
@@ -623,8 +781,8 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
           </div>
         )}
 
-        {/* Oportunidades de TROCO (cliente enquadrado, sem precisar enquadrar) */}
-        {enquadraNovaRegra && (() => {
+        {/* Oportunidades de TROCO — só INSS regular (LOAS não porta) */}
+        {!isLoas && enquadraNovaRegra && (() => {
           const comTroco = contratos
             .filter((c) => !c.bloqueado && c.portRefin108 && c.portRefin108.port_troco > 0)
             .sort((a, b) => (b.portRefin108?.port_troco || 0) - (a.portRefin108?.port_troco || 0));
