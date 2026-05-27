@@ -69,7 +69,20 @@ function StatusPill({ state }: { state: BancoState }) {
       </Badge>
     );
   }
-  if (state.status === 'bloqueado' || state.precisaAutorizacao) {
+  // "Já contratado" tem prioridade sobre "Aguarda autorização": Handbank/UY3
+  // marca status='bloqueado' quando cliente ja tem contrato ativo, mas isso
+  // NAO eh falta de autorizacao — eh impedimento permanente.
+  if (state.jaTemContrato) {
+    return <Badge variant="muted">Já contratado</Badge>;
+  }
+  // C6 usa `requiresLiveness`; Mercantil/Celcoin usam `precisaAutorizacao`;
+  // genericamente, qualquer 'bloqueado' que nao seja "ja contratado" cai aqui
+  // (fallback preserva comportamento antigo pra bancos que so setam status).
+  if (
+    state.precisaAutorizacao ||
+    state.requiresLiveness ||
+    state.status === 'bloqueado'
+  ) {
     return <Badge variant="warning">Aguarda autorização</Badge>;
   }
   return <Badge variant="muted">Indisponível</Badge>;

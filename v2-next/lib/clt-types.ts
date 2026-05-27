@@ -29,6 +29,10 @@ export interface BancoState {
   bloqueado?: boolean;
   precisaAutorizacao?: boolean;
   requiresLiveness?: boolean;
+  // Handbank/UY3: cliente já tem contrato ativo — bloqueado por impedimento
+  // (não por falta de autorização). UI mostra "Já contratado" em vez de
+  // "Aguarda autorização".
+  jaTemContrato?: boolean;
   linkAutorizacao?: string | null;
   mensagem?: string;
   retryable?: boolean;
