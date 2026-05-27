@@ -19,7 +19,8 @@ export type BancoSlug =
   | 'presencabank' | 'multicorban'
   | 'v8_qi' | 'v8_celcoin'
   | 'joinbank' | 'mercantil' | 'handbank' | 'c6'
-  | 'fintech_qi' | 'fintech_celcoin';
+  | 'fintech_qi' | 'fintech_celcoin'
+  | 'unno';
 
 export interface BancoState {
   status: StatusBanco;

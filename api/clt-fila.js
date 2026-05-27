@@ -63,7 +63,7 @@ function ddMmYyToIso(s) {
 const TODOS_BANCOS_CLT = [
   'presencabank', 'multicorban', 'v8_qi', 'v8_celcoin',
   'joinbank', 'mercantil', 'handbank', 'c6',
-  'fintech_qi', 'fintech_celcoin',
+  'fintech_qi', 'fintech_celcoin', 'unno',
 ];
 
 // Atualiza UM banco no jsonb bancos sem sobrescrever os outros.
@@ -796,6 +796,80 @@ async function processarFintech(id, provider, cpf, auth, secret) {
   });
 }
 
+// ─── UNNO (Consignado CLT via QITech/ITAPEMA) ──────────────────────
+// Atencao: Unno nao tem endpoint puro de elegibilidade. O motor cria
+// uma proposta DRAFT, le o risk-analysis, e CANCELA. Cliente nunca
+// eh contatado (link de formalizacao so sai dps de muitos outros
+// steps). Ver api/unno.js pro fluxo completo.
+async function processarUnno(id, cpf, auth, secret) {
+  const manut = await _bancoEmManutencao('unno');
+  if (manut) { await _marcarEmManutencao(id, 'unno', manut); return; }
+  await patchBanco(id, 'unno', { status: 'processando' });
+
+  // Espera dados basicos (Unno exige nome + dataNasc obrigatoriamente)
+  const cli = await aguardarCliente(id, 8000);
+  if (!cli || !cli.nome || !cli.dataNascimento) {
+    await patchBanco(id, 'unno', {
+      status: 'falha',
+      mensagem: 'Faltam dados basicos do cliente (nome ou data de nascimento) — Unno exige pra criar draft'
+    });
+    return;
+  }
+
+  // Chama /api/unno action consultarAprovacao
+  const r = await callApi('/api/unno', {
+    action: 'consultarAprovacao',
+    cpf,
+    nome: cli.nome,
+    dataNascimento: cli.dataNascimento,
+    telefone: cli.telefones?.[0]?.completo || null,
+    email: cli.emails?.[0] || null,
+  }, auth, secret, 22000); // timeout interno do callApi maior, ja que o polling pode levar ~12s
+
+  const u = r.data || {};
+
+  if (!r.ok) {
+    await patchBanco(id, 'unno', {
+      status: 'falha',
+      mensagem: u.error || u.message || `Erro Unno (HTTP ${r.status})`,
+      _raw_response: u,
+    });
+    return;
+  }
+
+  if (u.approved) {
+    const dc = u.dadosCliente || {};
+    await patchBanco(id, 'unno', {
+      status: 'ok',
+      disponivel: true,
+      mensagem: dc.empregador
+        ? `Cliente aprovado — ${dc.empregador}`
+        : 'Cliente aprovado pela Unno',
+      dados: {
+        margemDisponivel: dc.margemDisponivel || 0,
+        empregador: dc.empregador,
+        empregadorCnpj: dc.empregadorCnpj,
+        renda: dc.renda,
+        proposalUuidFantasma: u.proposalUuid, // ja cancelada — info debug
+        statusUnno: u.status,
+      },
+      _raw_response: u._raw,
+    });
+    // Tracking: registra empresa aprovada
+    if (dc.empregadorCnpj) {
+      _registrarAprovacao(dc.empregadorCnpj, dc.empregador, 'unno', null, null, null);
+    }
+  } else {
+    await patchBanco(id, 'unno', {
+      status: 'falha',
+      disponivel: false,
+      mensagem: u.reason || u.error || 'Cliente nao aprovado pela Unno',
+      retryable: u.status === 'AWAITING_RISK_ANALYSIS' || u.status === 'TIMEOUT',
+      _raw_response: u._raw,
+    });
+  }
+}
+
 async function processarC6(id, cpf, incluirC6, auth, secret) {
   const manut = await _bancoEmManutencao('c6');
   if (manut) { await _marcarEmManutencao(id, 'c6', manut); return; }
@@ -1197,7 +1271,8 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       else if (banco === 'c6') await processarC6(id, row.cpf, !!row.incluir_c6, auth, secret);
       else if (banco === 'fintech_qi') await processarFintech(id, 'qi', row.cpf, auth, secret);
       else if (banco === 'fintech_celcoin') await processarFintech(id, 'celcoin', row.cpf, auth, secret);
-      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin', 400, req);
+      else if (banco === 'unno') await processarUnno(id, row.cpf, auth, secret);
+      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno', 400, req);
     } catch (e) {
       await patchBanco(id, banco, { status: 'falha', mensagem: 'Erro: ' + e.message });
       return jsonResp({ success: false, error: e.message }, 200, req);
