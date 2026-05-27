@@ -95,6 +95,10 @@ export default function InicioPage() {
 
           <div className="font-semibold text-foreground/80 pt-2">⚙️ Admin — completo</div>
           <div className="pl-4">✅ Usuários + Parceiros (perfil completo: contato, endereço, comissão)</div>
+          <div className="pl-4">✅ Redefinir senha (gerar aleatória, mostrar/esconder, confirmar, aviso de sessão)</div>
+
+          <div className="font-semibold text-foreground/80 pt-2">🧱 Foundation</div>
+          <div className="pl-4">✅ Fix posicionamento de modais (Dialog renderizava fora da viewport em desktop)</div>
 
           <div className="font-semibold text-foreground/80 pt-2">🟡 INSS — migração em curso (outro chat)</div>
           <div className="pl-4">⏳ Consulta + Higienização + Pipeline + Esteira já rodando</div>
