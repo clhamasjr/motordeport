@@ -811,15 +811,99 @@ async function processarFintech(id, provider, cpf, auth, secret) {
 async function processarUnno(id, cpf, auth, secret) {
   const manut = await _bancoEmManutencao('unno');
   if (manut) { await _marcarEmManutencao(id, 'unno', manut); return; }
+
+  // ── IDEMPOTENCIA: se ja tem termo criado, NAO cria de novo. ──
+  // Le estado atual pra ver se ja tem termUuid persistido. Sem isso,
+  // cada re-tentativa criava termo duplicado no painel da Unno (lixo).
+  const { data: rowAtu } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+  const estadoUnno = rowAtu?.bancos?.unno || {};
+  const termUuidExistente = estadoUnno.termUuid;
+
   await patchBanco(id, 'unno', { status: 'processando' });
 
-  // Unno exige nome + dataNasc + telefone pra criar termo
+  // Se ja tem termo — so verifica status da proposta (nao cria novo)
+  if (termUuidExistente) {
+    const r = await callApi('/api/unno', {
+      action: 'verificarStatus',
+      termUuid: termUuidExistente,
+      cpf,
+    }, auth, secret, 20000);
+
+    const u = r.data || {};
+
+    if (!r.ok) {
+      await patchBanco(id, 'unno', {
+        status: 'falha',
+        mensagem: u.error || `Erro Unno (HTTP ${r.status})`,
+        retryable: true,
+        termUuid: termUuidExistente,
+      });
+      return;
+    }
+
+    // Aprovado
+    if (u.etapa === 'APROVADO') {
+      await patchBanco(id, 'unno', {
+        status: 'ok',
+        disponivel: true,
+        mensagem: u.mensagem,
+        dados: {
+          proposalUuid: u.proposalUuid,
+          termUuid: termUuidExistente,
+          bancoProvedor: u.bancoProvedor,
+          linkPainel: u.linkPainel,
+        },
+      });
+      return;
+    }
+    // Recusado
+    if (u.etapa === 'RECUSADO') {
+      await patchBanco(id, 'unno', {
+        status: 'falha',
+        disponivel: false,
+        mensagem: u.mensagem,
+        retryable: false,
+        dados: {
+          proposalUuid: u.proposalUuid,
+          termUuid: termUuidExistente,
+          bancoProvedor: u.bancoProvedor,
+          linkPainel: u.linkPainel,
+          motivoRecusa: u.motivoRecusa,
+        },
+      });
+      return;
+    }
+    // Cancelado
+    if (u.etapa === 'CANCELADO') {
+      await patchBanco(id, 'unno', {
+        status: 'falha',
+        mensagem: u.mensagem,
+        retryable: false,
+        dados: { proposalUuid: u.proposalUuid, termUuid: termUuidExistente },
+      });
+      return;
+    }
+    // Em análise — mantém manual_aguardando (action='status' vai auto-re-trigger)
+    await patchBanco(id, 'unno', {
+      status: 'manual_aguardando',
+      disponivel: false,
+      manual: false, // operador NAO precisa fazer nada — sistema continua sozinho
+      portalUrl: u.linkPainel || 'https://app.unnotech.com.br/loans/clt/simulations',
+      mensagem: '⏳ Unno analisando — aguarde...',
+      retryable: false, // status check faz auto-re-trigger
+      termUuid: termUuidExistente,
+      dados: { proposalUuid: u.proposalUuid, bancoProvedor: u.bancoProvedor, linkPainel: u.linkPainel },
+    });
+    return;
+  }
+
+  // ── Primeira execucao: precisa dados completos pra criar termo ─
   const cli = await aguardarCliente(id, 8000);
   if (!cli || !cli.nome || !cli.dataNascimento) {
     await patchBanco(id, 'unno', {
       status: 'falha',
       mensagem: 'Faltam nome ou data de nascimento — Unno exige pra criar termo',
-      retryable: true, // operador completa dados e clica re-tentar
+      retryable: true,
     });
     return;
   }
@@ -832,8 +916,7 @@ async function processarUnno(id, cpf, auth, secret) {
     return;
   }
 
-  // Chama fluxo COMPLETO (cria termo + auto-autz + polling proposta)
-  // Timeout 25s pq inclui polling de ate 18s + overhead.
+  // Cria termo NOVO + auto-autz + polling inicial
   const r = await callApi('/api/unno', {
     action: 'simulacaoCompleta',
     cpf,
@@ -892,15 +975,17 @@ async function processarUnno(id, cpf, auth, secret) {
     return;
   }
 
-  // EM_ANALISE / AUTORIZADO_EM_ANALISE — polling estourou mas eh recuperavel
+  // EM_ANALISE / AUTORIZADO_EM_ANALISE — polling estourou, mas tem termUuid.
+  // Action='status' faz auto-re-trigger automaticamente — operador nao
+  // precisa fazer nada, sistema continua sozinho.
   if (u.etapa === 'EM_ANALISE' || u.etapa === 'AUTORIZADO_EM_ANALISE') {
     await patchBanco(id, 'unno', {
       status: 'manual_aguardando',
       disponivel: false,
-      manual: true,
+      manual: false, // operador NAO precisa fazer nada
       portalUrl: u.linkPainel || 'https://app.unnotech.com.br/loans/clt/simulations',
-      mensagem: u.mensagem,
-      retryable: true,
+      mensagem: '⏳ Unno analisando — aguarde...',
+      retryable: false, // auto-re-trigger no status
       termUuid: u.termUuid,
       dados: {
         proposalUuid: u.proposalUuid,
@@ -1382,6 +1467,29 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
         // Re-le row depois das atualizacoes
         const { data: refreshed } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
         if (refreshed) row = refreshed;
+      }
+    }
+
+    // AUTO-RE-TRIGGER UNNO: se Unno esta em manual_aguardando com termUuid
+    // ha mais de 8s (tempo razoavel pro polling proposta), re-processa em
+    // background pra o operador NAO precisar clicar "re-tentar". O polling
+    // proprio do frontend (a cada 2s) eventualmente pega o novo estado.
+    // Idempotencia em processarUnno garante que NAO cria termo duplicado.
+    {
+      const unno = row.bancos?.unno;
+      if (unno && unno.status === 'manual_aguardando' && unno.termUuid) {
+        const idadeMs = unno.atualizado_em
+          ? Date.now() - new Date(unno.atualizado_em).getTime()
+          : Infinity;
+        if (idadeMs > 8000) {
+          // Fire-and-forget — proximo poll do frontend ve o resultado
+          const baseUrl = APP_URL();
+          fetch(baseUrl + '/api/clt-fila', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
+            body: JSON.stringify({ action: 'processar', id, banco: 'unno', force: true })
+          }).catch(e => console.error('[clt-fila] auto-re-trigger unno:', e.message));
+        }
       }
     }
 
