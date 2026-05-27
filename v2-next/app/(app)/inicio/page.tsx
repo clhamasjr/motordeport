@@ -94,21 +94,35 @@ export default function InicioPage() {
           <div className="pl-4">✅ Painel Operacional (KPIs + usuários online)</div>
 
           <div className="font-semibold text-foreground/80 pt-2">⚙️ Admin — completo</div>
-          <div className="pl-4">✅ Usuários + Parceiros (perfil completo: contato, endereço, comissão)</div>
-          <div className="pl-4">✅ Redefinir senha (gerar aleatória, mostrar/esconder, confirmar, aviso de sessão)</div>
+          <div className="pl-4">✅ Usuários + Parceiros + Manutenção</div>
+          <div className="pl-4">✅ Redefinir senha v2 (gerar aleatória, mostrar/esconder, confirmar, aviso de sessão)</div>
+
+          <div className="font-semibold text-foreground/80 pt-2">🧭 Orquestrador — V1 entregue</div>
+          <div className="pl-4">✅ Painel de visibilidade macro do SaaS (saúde de bancos, agentes, módulos)</div>
+
+          <div className="font-semibold text-foreground/80 pt-2">🔵 INSS — completo</div>
+          <div className="pl-4">✅ Consulta + Higienização + Pipeline + Esteira</div>
+          <div className="pl-4">✅ IN100 (DataPrev) + Extrato PDF + Enquadramento (manual)</div>
+          <div className="pl-4">✅ RMC/RCC + Saque + Propostas + Gestão</div>
+          <div className="pl-4">✅ Sofia Knowledge + Conexão WhatsApp</div>
+          <div className="pl-4">🟡 Sofia (Conversas) + Disparo em massa — em ajuste</div>
+
+          <div className="font-semibold text-foreground/80 pt-2">🏛️ Federal (SIAPE) — em operação</div>
+          <div className="pl-4">✅ Catálogo + Análise de holerite</div>
+
+          <div className="font-semibold text-foreground/80 pt-2">🏙️ Governos (Estaduais) — em operação</div>
+          <div className="pl-4">✅ Catálogo + Análise de holerite</div>
+
+          <div className="font-semibold text-foreground/80 pt-2">🏘️ Prefeituras (Municipais) — em operação</div>
+          <div className="pl-4">✅ Catálogo + Análise de holerite</div>
 
           <div className="font-semibold text-foreground/80 pt-2">🧱 Foundation</div>
           <div className="pl-4">✅ Fix posicionamento de modais (Dialog renderizava fora da viewport em desktop)</div>
 
-          <div className="font-semibold text-foreground/80 pt-2">🟡 INSS — migração em curso (outro chat)</div>
-          <div className="pl-4">⏳ Consulta + Higienização + Pipeline + Esteira já rodando</div>
-          <div className="pl-4">⏳ Sofia (Conversas) + Disparo em massa em ajuste</div>
-
           <div className="font-semibold text-foreground/80 pt-2">⏳ Roadmap</div>
-          <div className="pl-4">⏳ Governos / SIAPE / Estaduais / Municipais</div>
-          <div className="pl-4">⏳ Prefeituras (catálogo já existe, falta operação)</div>
           <div className="pl-4">⏳ Consulta CLT com Supabase Realtime (substituir polling)</div>
           <div className="pl-4">⏳ Migrar backend Vercel → Next.js API routes (autonomia total da VPS)</div>
+          <div className="pl-4">⏳ Polish final dos módulos em operação (Federal, Governos, Prefeituras)</div>
         </CardContent>
       </Card>
     </div>
