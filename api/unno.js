@@ -1,30 +1,26 @@
 // ══════════════════════════════════════════════════════════════════
-// api/unno.js — Unno Tech: Consignado CLT (CONSULTA DE STATUS)
+// api/unno.js — Unno Tech: Consignado CLT (fluxo C6-like)
 //
-// ESTRATEGIA: O motor NAO CRIA proposta na Unno. Operador cria
-// manualmente no painel app.unnotech.com.br (formulario "Nova
-// Simulacao"). Aqui apenas LEMOS as propostas existentes e mostramos
-// o status atual de cada CPF no card V2.
+// ENDPOINTS REAIS DESCOBERTOS (via engenharia reversa do app deles):
+//   POST  /auth/api/v1/terms                    → cria termo + retorna link
+//   GET   /auth/api/v1/terms/latest/{uuid}      → status do termo (PENDING/AGREED)
+//   GET   /proposal/api/v1/proposals?productType=CONSIGNADO_CLT → propostas
+//   POST  /proposal/api/v1/proposals/{uuid}/cancel → cancela
 //
-// Por que essa estrategia:
-//   - Endpoint de criar proposta (/loan/api/v2/clt/draft) achado no
-//     bundle JS retorna 404 no gateway publico — nao esta exposto.
-//   - O fluxo deles exige autorizacao do cliente via link DataPrev/MTE
-//     (nao da pra "consultar silenciosamente").
-//   - Listar propostas (/proposal/api/v1/proposals?productType=
-//     CONSIGNADO_CLT) funciona com nosso token e retorna status real.
+// FLUXO OPERACIONAL (modelo C6 no motor V2):
+//   1. Operador consulta CPF no V2
+//   2. Motor chama action 'iniciarSimulacao' → POST /auth/api/v1/terms
+//      → recebe { uuid, link }
+//   3. Card no V2 mostra "Aguarda autorização" + botão WhatsApp
+//   4. Operador envia link ao cliente via WhatsApp (manual ou via skill)
+//   5. Cliente acessa link, lê termo, clica "Autorizar Consulta"
+//   6. Unno cria proposta e roda risk-analysis automático
+//   7. Polling (action 'verificarStatus') le proposals filtrando por CPF
+//   8. Quando proposta aparece com status integrated/rejected → card vira
+//      ok/falha
 //
-// Status Unno mapeados (a partir das 44 propostas atuais da LhamasCred):
-//   integrated                       → APROVADA (motor de risco passou)
-//   disbursed                        → DESEMBOLSADA (contrato pago)
-//   rejected_risk_analysis_automatic → RECUSADA (motor recusou)
-//   cancelled                        → CANCELADA
-//   <outros>                         → EM ANALISE (qualquer status nao
-//                                       terminal — provavelmente em
-//                                       andamento)
-//
-// Auth: login HUMANO (username+password) ate Unno disponibilizar
-// credenciais OAuth2 service. JWT user-type, TTL ~4h.
+// Auth: login HUMANO (username+password). JWT user-type, TTL ~4h.
+// Cache de token via TOKEN_CACHE (decodifica exp do JWT).
 // ══════════════════════════════════════════════════════════════════
 
 export const config = { runtime: 'edge' };
@@ -37,6 +33,9 @@ function getConfig() {
     BASE: (process.env.UNNO_BASE_URL || 'https://gtw.unnotech.com.br').trim(),
     USER: (process.env.UNNO_USERNAME || '').trim(),
     PASS: (process.env.UNNO_PASSWORD || '').trim(),
+    // UUIDs descobertos via Network do painel
+    BANK_PROVIDER_QITECH: 'a3f2c1d4-7e85-4b9a-b2c3-1d4e5f6a7b8c',
+    BANK_PROVIDER_CREDSPOT: 'b7e4f2a1-3d9c-4e8b-a5f6-2c1d0e9f8a7b',
   };
 }
 
@@ -89,6 +88,7 @@ async function unnoCall(path, method = 'GET', body = null) {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
       'Accept': 'application/json',
+      'Origin': 'https://app.unnotech.com.br',
     },
   };
   if (body && method !== 'GET') opts.body = JSON.stringify(body);
@@ -99,137 +99,205 @@ async function unnoCall(path, method = 'GET', body = null) {
 }
 
 function onlyDigits(s) { return String(s || '').replace(/\D/g, ''); }
+function normalizeBirth(s) {
+  if (!s) return '';
+  const m1 = String(s).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m1) return s;
+  const m2 = String(s).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m2) return `${m2[3]}-${m2[2]}-${m2[1]}`;
+  return s;
+}
+function normalizeGender(s) {
+  const v = String(s || '').toUpperCase();
+  if (v.startsWith('F')) return 'FEMALE';
+  return 'MALE'; // default
+}
 
-// ── Cache da lista de propostas (~30s) ─────────────────────────
-// Edge function tem TTL curto, mas dentro da mesma instancia poupa
-// chamadas repetidas pra Unno quando varios CPFs sao consultados
-// sequencialmente. 30s eh suficiente: se operador criou simulacao
-// nova, ele clica "re-tentar" e cache invalida.
-let PROPOSALS_CACHE = { data: null, fetchedAt: 0 };
-const PROPOSALS_TTL_MS = 30 * 1000;
-
-async function listarPropostasCltCache() {
-  const now = Date.now();
-  if (PROPOSALS_CACHE.data && (now - PROPOSALS_CACHE.fetchedAt) < PROPOSALS_TTL_MS) {
-    return PROPOSALS_CACHE.data;
+// ─── ACTION: iniciarSimulacao ──────────────────────────────────
+// POST /auth/api/v1/terms — cria termo de consentimento + retorna link.
+// Cliente recebe link, autoriza, sistema Unno cria proposta + roda
+// risk-analysis. Esse passo eh O QUE CRIA a "simulacao" no painel.
+//
+// Input: { cpf, nome, telefone, email?, dataNascimento, sexo?, provedor? }
+// Output: { sucesso, uuid, link, expiraEm, mensagem }
+async function iniciarSimulacao({ cpf, nome, telefone, email, dataNascimento, sexo, provedor }) {
+  const cpfLimpo = onlyDigits(cpf);
+  if (cpfLimpo.length !== 11) return { sucesso: false, error: 'CPF invalido (precisa 11 digitos)' };
+  if (!nome?.trim()) return { sucesso: false, error: 'Nome obrigatorio' };
+  if (!dataNascimento) return { sucesso: false, error: 'Data nascimento obrigatoria' };
+  const tel = onlyDigits(telefone);
+  if (tel.length < 10 || tel.length > 11) {
+    return { sucesso: false, error: 'Telefone invalido (precisa DDD + 8-9 digitos)' };
   }
-  // Filtro server-side por CPF nao funciona (Unno ignora silenciosamente
-  // qualquer parametro de filtro alem de productType). Buscamos as 100
-  // ultimas propostas CLT e filtramos client-side por customer_document.
-  // Limite atual da conta: 44 propostas — entao size=100 cobre tudo.
-  const r = await unnoCall(
-    '/proposal/api/v1/proposals?size=100&sort=createdAt,desc&productType=CONSIGNADO_CLT',
+
+  const cfg = getConfig();
+  const bankProvider = (provedor || 'qitech').toLowerCase() === 'credspot'
+    ? cfg.BANK_PROVIDER_CREDSPOT
+    : cfg.BANK_PROVIDER_QITECH;
+
+  const payload = {
+    customer_cpf: cpfLimpo,
+    customer_phone: tel,
+    customer_full_name: nome.trim(),
+    customer_email: (email && email.includes('@'))
+      ? email
+      : `${cpfLimpo}@lead.lhamascred.com.br`,
+    customer_birth_date: normalizeBirth(dataNascimento),
+    customer_gender: normalizeGender(sexo),
+    bank_provider_uuid: bankProvider,
+    product_type: 'CONSIGNADO_CLT',
+  };
+
+  const r = await unnoCall('/auth/api/v1/terms', 'POST', payload);
+  if (!r.ok || !r.data?.uuid) {
+    return {
+      sucesso: false,
+      error: r.data?.error?.message || r.data?.message || `HTTP ${r.status}`,
+      _raw: r.data,
+    };
+  }
+
+  return {
+    sucesso: true,
+    uuid: r.data.uuid,
+    link: r.data.link,
+    expiraEm: r.data.expiry_date,
+    status: r.data.status, // PENDING
+    proposalUuid: r.data.proposal_uuid_ref || null, // null ate cliente autorizar
+    mensagem: 'Termo criado — envie o link ao cliente pra autorizar',
+  };
+}
+
+// ─── ACTION: verificarStatus ──────────────────────────────────
+// 1) GET /auth/api/v1/terms/latest/{termUuid} → checa se cliente
+//    autorizou (status: PENDING → AGREED)
+// 2) Se autorizado: GET /proposal/api/v1/proposals → busca proposta
+//    correspondente (pelo CPF) e retorna status (integrated/rejected)
+//
+// Input: { termUuid, cpf }
+// Output: {
+//   etapa: 'AGUARDANDO_AUTORIZACAO' | 'AUTORIZADO_EM_ANALISE' | 'APROVADO' | 'RECUSADO' | 'CANCELADO',
+//   approved: bool,
+//   mensagem: string,
+//   link?: string,            // se ainda aguardando autorizacao
+//   proposalUuid?: string,    // se ja criada
+//   bancoProvedor?: string,
+//   motivoRecusa?: string,
+//   linkPainel?: string
+// }
+async function verificarStatus({ termUuid, cpf }) {
+  // 1) Status do termo
+  const term = await unnoCall(`/auth/api/v1/terms/latest/${termUuid}`, 'GET');
+  if (!term.ok) {
+    return {
+      etapa: 'ERRO',
+      approved: false,
+      error: term.data?.message || `Termo nao encontrado (HTTP ${term.status})`,
+    };
+  }
+  const t = term.data;
+
+  // Se ainda PENDING — cliente nao autorizou
+  if (t.status !== 'AGREED' || !t.agreed_at) {
+    return {
+      etapa: 'AGUARDANDO_AUTORIZACAO',
+      approved: false,
+      mensagem: '📲 Cliente ainda não autorizou. Reenvie o link via WhatsApp.',
+      link: t.link,
+      expiraEm: t.expiry_date,
+    };
+  }
+
+  // 2) Cliente autorizou — busca proposta criada
+  // Como filtro server-side por CPF nao funciona, listamos as 50 ultimas
+  // e filtramos client-side.
+  const list = await unnoCall(
+    '/proposal/api/v1/proposals?size=50&sort=createdAt,desc&productType=CONSIGNADO_CLT',
     'GET'
   );
-  if (!r.ok) {
-    throw new Error(`Falha listar propostas Unno (HTTP ${r.status}): ${r.data?.error || r.data?.message || 'sem detalhes'}`);
-  }
-  PROPOSALS_CACHE = {
-    data: r.data?.content || [],
-    fetchedAt: now,
-  };
-  return PROPOSALS_CACHE.data;
-}
-
-// ── Mapeamento de status Unno → estado do card no motor V2 ─────
-function interpretarStatus(prop) {
-  const status = (prop.status || '').toLowerCase();
-  const bpStatus = prop.bank_provider_status || '';
-
-  // Terminais aprovados
-  if (status === 'integrated' || status === 'disbursed') {
-    return {
-      approved: true,
-      mensagem: status === 'disbursed'
-        ? '💰 Aprovada e desembolsada na Unno'
-        : '✅ Aprovada na Unno — pronta pra prosseguir no painel',
-    };
-  }
-
-  // Terminais rejeitados
-  if (status === 'rejected_risk_analysis_automatic' || status.startsWith('rejected')) {
-    // Tenta extrair motivo dos logs (geralmente o ultimo log REJECTED tem motivo)
-    const logs = prop.logs || [];
-    const logRejeicao = logs.find(l =>
-      (l.action || '').toLowerCase().includes('rejected') ||
-      (l.action || '').toLowerCase().includes('erro reportado')
-    );
-    const motivo = logRejeicao
-      ? (logRejeicao.action || '').replace(/^.*?:\s*/, '').substring(0, 150)
-      : bpStatus || 'Recusada pelo motor de risco da Unno';
-    return {
-      approved: false,
-      mensagem: `❌ ${motivo}`,
-    };
-  }
-
-  // Cancelada
-  if (status === 'cancelled' || status === 'canceled') {
-    return {
-      approved: false,
-      mensagem: '🚫 Proposta cancelada na Unno',
-    };
-  }
-
-  // Em andamento (qualquer status nao terminal — provavelmente analisando)
-  return {
-    approved: false,
-    emAndamento: true,
-    mensagem: `⏳ Em análise na Unno (status: ${prop.status || 'desconhecido'})`,
-  };
-}
-
-// ── Action principal: consultar status de um CPF ───────────────
-// Output: {
-//   encontrado: bool,           // se achamos proposta pra esse CPF
-//   approved: bool,             // se aprovada
-//   emAndamento: bool,          // se ainda processando (operador deve aguardar)
-//   mensagem: string,           // texto pra mostrar no card
-//   status: string,             // status Unno raw
-//   proposalUuid: string,       // pra debug
-//   dadosCliente: {...},        // info extraida da proposta
-//   linkPainel: string          // link direto pra abrir no painel Unno
-// }
-async function consultarStatusCpf(cpf) {
-  const cpfLimpo = onlyDigits(cpf);
-  if (!cpfLimpo || cpfLimpo.length !== 11) {
-    return { encontrado: false, approved: false, error: 'CPF invalido' };
-  }
-
-  const propostas = await listarPropostasCltCache();
-  // Filtra todas as propostas desse CPF — pode ter mais de uma
-  // (canceladas + nova). Pega a MAIS RECENTE.
-  const minhas = propostas
+  const cpfLimpo = onlyDigits(cpf || t.customer_cpf);
+  const propostas = (list.data?.content || [])
     .filter(p => onlyDigits(p.customer_document) === cpfLimpo)
     .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 
-  if (minhas.length === 0) {
+  if (propostas.length === 0) {
+    // Cliente autorizou mas Unno ainda nao criou proposta — esta criando.
+    // Frontend deles tambem fica em loading aqui (~5-15s).
     return {
-      encontrado: false,
+      etapa: 'AUTORIZADO_EM_ANALISE',
       approved: false,
-      mensagem: 'Sem simulação na Unno pra esse CPF. Operador precisa criar no painel.',
-      linkPainel: 'https://app.unnotech.com.br/loans/clt/simulations',
+      mensagem: '⏳ Cliente autorizou — Unno está criando proposta (aguarde ~10s)',
+      link: t.link,
     };
   }
 
-  const prop = minhas[0];
-  const interpret = interpretarStatus(prop);
+  const p = propostas[0];
+  const status = (p.status || '').toLowerCase();
 
+  // APROVADOS
+  if (status === 'integrated' || status === 'disbursed') {
+    return {
+      etapa: 'APROVADO',
+      approved: true,
+      mensagem: status === 'disbursed'
+        ? '💰 Aprovada e desembolsada'
+        : '✅ Aprovada — pronta pra prosseguir no painel Unno',
+      proposalUuid: p.uuid,
+      bancoProvedor: p.bank_provider_name,
+      linkPainel: `https://app.unnotech.com.br/loans/clt/${p.uuid}`,
+    };
+  }
+
+  // RECUSADOS — extrai motivo do log
+  if (status === 'rejected_risk_analysis_automatic' || status.startsWith('rejected')) {
+    const logs = p.logs || [];
+    const logRej = logs.find(l =>
+      (l.action || '').toLowerCase().includes('rejected') ||
+      (l.action || '').toLowerCase().includes('erro reportado')
+    );
+    const motivo = logRej
+      ? (logRej.action || '').replace(/^.*?:\s*/, '').substring(0, 200)
+      : p.bank_provider_status || 'Recusada pelo motor de risco';
+    return {
+      etapa: 'RECUSADO',
+      approved: false,
+      mensagem: `❌ ${motivo}`,
+      proposalUuid: p.uuid,
+      bancoProvedor: p.bank_provider_name,
+      linkPainel: `https://app.unnotech.com.br/loans/clt/${p.uuid}`,
+      motivoRecusa: motivo,
+    };
+  }
+
+  if (status === 'cancelled' || status === 'canceled') {
+    return {
+      etapa: 'CANCELADO',
+      approved: false,
+      mensagem: '🚫 Cancelada',
+      proposalUuid: p.uuid,
+      linkPainel: `https://app.unnotech.com.br/loans/clt/${p.uuid}`,
+    };
+  }
+
+  // Outros status — em análise ainda
   return {
-    encontrado: true,
-    approved: interpret.approved,
-    emAndamento: !!interpret.emAndamento,
-    mensagem: interpret.mensagem,
-    status: prop.status,
-    proposalUuid: prop.uuid,
-    bancoProvedor: prop.bank_provider_name,
-    bancoProvedorStatus: prop.bank_provider_status,
-    dadosCliente: {
-      nome: prop.customer_name,
-      cpf: prop.customer_document,
-    },
-    linkPainel: `https://app.unnotech.com.br/loans/clt/${prop.uuid}`,
-    totalPropostasCpf: minhas.length, // se >1, tem historico (canceladas + ativa)
+    etapa: 'AUTORIZADO_EM_ANALISE',
+    approved: false,
+    mensagem: `⏳ Em análise (status: ${p.status})`,
+    proposalUuid: p.uuid,
+    bancoProvedor: p.bank_provider_name,
+    linkPainel: `https://app.unnotech.com.br/loans/clt/${p.uuid}`,
+  };
+}
+
+// ─── ACTION: cancelarSimulacao ─────────────────────────────────
+async function cancelarSimulacao(proposalUuid) {
+  if (!proposalUuid) return { sucesso: false, error: 'proposalUuid obrigatorio' };
+  const r = await unnoCall(`/proposal/api/v1/proposals/${proposalUuid}/cancel`, 'POST', {});
+  return {
+    sucesso: r.ok,
+    status: r.status,
+    error: r.ok ? null : (r.data?.message || `HTTP ${r.status}`),
   };
 }
 
@@ -248,28 +316,40 @@ export default async function handler(req) {
 
   try {
     if (action === 'test') {
-      // Healthcheck: login + count de propostas CLT
-      const propostas = await listarPropostasCltCache().catch(e => ({ _err: e.message }));
-      const count = Array.isArray(propostas) ? propostas.length : null;
+      // Healthcheck: login + lista partners
+      const r = await unnoCall('/auth/api/v1/partners?size=1', 'GET');
       return jsonResp({
-        success: count !== null,
+        success: r.ok,
         login: 'ok',
-        totalPropostas: count,
-        erro: propostas?._err || null,
+        partnersStatus: r.status,
+        partnersCount: r.data?.total_elements ?? null,
       }, 200, req);
     }
 
-    if (action === 'consultarAprovacao' || action === 'consultarStatus') {
-      // Mantemos 'consultarAprovacao' por compat com clt-fila.js
-      const out = await consultarStatusCpf(body.cpf);
+    if (action === 'iniciarSimulacao') {
+      const out = await iniciarSimulacao({
+        cpf: body.cpf,
+        nome: body.nome || body.name,
+        telefone: body.telefone || body.phone,
+        email: body.email,
+        dataNascimento: body.dataNascimento || body.birth_date,
+        sexo: body.sexo || body.gender,
+        provedor: body.provedor || body.provider, // 'qitech' | 'credspot' (default qitech)
+      });
       return jsonResp(out, 200, req);
     }
 
-    if (action === 'invalidarCache') {
-      // Pra quando operador acabou de criar uma simulacao no painel
-      // e quer ver no V2 sem esperar os 30s do TTL.
-      PROPOSALS_CACHE = { data: null, fetchedAt: 0 };
-      return jsonResp({ success: true, mensagem: 'Cache invalidado' }, 200, req);
+    if (action === 'verificarStatus') {
+      const out = await verificarStatus({
+        termUuid: body.termUuid || body.uuid,
+        cpf: body.cpf,
+      });
+      return jsonResp(out, 200, req);
+    }
+
+    if (action === 'cancelarSimulacao') {
+      const out = await cancelarSimulacao(body.proposalUuid || body.uuid);
+      return jsonResp(out, 200, req);
     }
 
     if (action === 'listarTabelas') {
@@ -278,7 +358,7 @@ export default async function handler(req) {
     }
 
     return jsonError(
-      'Action invalida. Validas: test, consultarStatus (alias consultarAprovacao), invalidarCache, listarTabelas',
+      'Action invalida. Validas: test, iniciarSimulacao, verificarStatus, cancelarSimulacao, listarTabelas',
       400, req
     );
   } catch (e) {

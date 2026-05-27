@@ -796,87 +796,163 @@ async function processarFintech(id, provider, cpf, auth, secret) {
   });
 }
 
-// ─── UNNO (Consignado CLT — leitura de status) ─────────────────────
-// Atencao: motor NAO cria proposta na Unno. Operador cria manualmente
-// no painel app.unnotech.com.br (form "Nova Simulacao"). Aqui apenas
-// LEMOS as propostas existentes via GET /proposals e mostramos status
-// atual do CPF no card V2. Ver api/unno.js pra detalhes.
+// ─── UNNO (Consignado CLT via QITECH/Credspot — modelo C6-like) ─────
+// Fluxo (igual C6/Mercantil):
+//   1) Cria TERMO de consentimento via POST /auth/api/v1/terms
+//      → recebe { uuid, link }
+//   2) Card V2 fica BLOQUEADO com linkAutorizacao + precisaAutorizacao
+//   3) Operador envia link ao cliente via WhatsApp
+//   4) Cliente acessa link, autoriza
+//   5) Operador clica "re-tentar" → motor verifica status do termo
+//      e busca proposta criada → card vira aprovado/recusado
+//
+// Re-execucao: se ja tem termUuid no jsonb (re-tentar), nao cria de novo
+// — so verifica status. Idempotencia importante.
 async function processarUnno(id, cpf, auth, secret) {
   const manut = await _bancoEmManutencao('unno');
   if (manut) { await _marcarEmManutencao(id, 'unno', manut); return; }
+
+  // Le estado atual do banco unno na fila
+  const { data: rowAtu } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+  const estadoAtual = rowAtu?.bancos?.unno || {};
+  const termUuidExistente = estadoAtual.termUuid;
+
   await patchBanco(id, 'unno', { status: 'processando' });
 
-  // Como nao criamos proposta — nao precisa esperar nome/dataNasc.
-  // Basta CPF pra fazer GET /proposals e filtrar.
-  const r = await callApi('/api/unno', {
-    action: 'consultarStatus',
-    cpf,
-  }, auth, secret, 15000);
+  // Se ja tem termo criado (re-tentar) — so verifica status
+  if (termUuidExistente) {
+    const r = await callApi('/api/unno', {
+      action: 'verificarStatus',
+      termUuid: termUuidExistente,
+      cpf,
+    }, auth, secret, 15000);
+    const u = r.data || {};
 
-  const u = r.data || {};
+    if (!r.ok) {
+      await patchBanco(id, 'unno', {
+        status: 'falha',
+        mensagem: u.error || `Erro Unno (HTTP ${r.status})`,
+        retryable: true,
+        termUuid: termUuidExistente, // mantem pra re-tentar dps
+      });
+      return;
+    }
 
-  if (!r.ok) {
-    await patchBanco(id, 'unno', {
-      status: 'falha',
-      mensagem: u.error || u.message || `Erro Unno (HTTP ${r.status})`,
-      retryable: true,
-      _raw_response: u,
-    });
-    return;
-  }
+    // Aguardando cliente autorizar
+    if (u.etapa === 'AGUARDANDO_AUTORIZACAO') {
+      await patchBanco(id, 'unno', {
+        status: 'bloqueado',
+        bloqueado: true,
+        precisaAutorizacao: true,
+        linkAutorizacao: u.link,
+        termUuid: termUuidExistente,
+        mensagem: u.mensagem,
+      });
+      return;
+    }
 
-  // CPF nao tem simulacao no painel — operador precisa criar la
-  if (!u.encontrado) {
-    await patchBanco(id, 'unno', {
-      status: 'manual_aguardando',
-      disponivel: false,
-      manual: true,
-      portalUrl: u.linkPainel || 'https://app.unnotech.com.br/loans/clt/simulations',
-      mensagem: u.mensagem || 'Sem simulacao na Unno. Crie no painel e clique "re-tentar".',
-      retryable: true,
-    });
-    return;
-  }
+    // Em analise (autorizou mas Unno ainda processando)
+    if (u.etapa === 'AUTORIZADO_EM_ANALISE') {
+      await patchBanco(id, 'unno', {
+        status: 'manual_aguardando',
+        disponivel: false,
+        manual: true,
+        portalUrl: u.linkPainel,
+        mensagem: u.mensagem,
+        retryable: true,
+        termUuid: termUuidExistente,
+        dados: { proposalUuid: u.proposalUuid },
+      });
+      return;
+    }
 
-  // Achou proposta — interpreta resultado
-  if (u.approved) {
-    await patchBanco(id, 'unno', {
-      status: 'ok',
-      disponivel: true,
-      mensagem: u.mensagem,
-      dados: {
-        statusUnno: u.status,
-        proposalUuid: u.proposalUuid,
-        bancoProvedor: u.bancoProvedor,
-        linkPainel: u.linkPainel,
-      },
-      _raw_response: u,
-    });
-  } else if (u.emAndamento) {
-    await patchBanco(id, 'unno', {
-      status: 'manual_aguardando',
-      disponivel: false,
-      manual: true,
-      portalUrl: u.linkPainel,
-      mensagem: u.mensagem,
-      retryable: true,
-      dados: { statusUnno: u.status, proposalUuid: u.proposalUuid },
-    });
-  } else {
+    // APROVADO
+    if (u.etapa === 'APROVADO') {
+      await patchBanco(id, 'unno', {
+        status: 'ok',
+        disponivel: true,
+        mensagem: u.mensagem,
+        dados: {
+          proposalUuid: u.proposalUuid,
+          bancoProvedor: u.bancoProvedor,
+          linkPainel: u.linkPainel,
+        },
+      });
+      if (u.bancoProvedor) {
+        // _registrarAprovacao precisa CNPJ — Unno nao retorna direto na lista
+        // entao pulamos por enquanto (precisaria GET detalhado da proposta)
+      }
+      return;
+    }
+
+    // RECUSADO / CANCELADO
     await patchBanco(id, 'unno', {
       status: 'falha',
       disponivel: false,
       mensagem: u.mensagem || 'Recusada pela Unno',
-      retryable: true,
+      retryable: false, // motor recusou — refazer nao adianta
       dados: {
-        statusUnno: u.status,
         proposalUuid: u.proposalUuid,
         bancoProvedor: u.bancoProvedor,
         linkPainel: u.linkPainel,
+        motivoRecusa: u.motivoRecusa,
       },
+    });
+    return;
+  }
+
+  // ── Primeira execucao: cria termo ────────────────────────────
+  // Unno exige nome + dataNasc + telefone (telefone obrigatorio)
+  const cli = await aguardarCliente(id, 8000);
+  if (!cli || !cli.nome || !cli.dataNascimento) {
+    await patchBanco(id, 'unno', {
+      status: 'falha',
+      mensagem: 'Faltam nome ou data de nascimento — Unno exige pra criar termo',
+      retryable: true, // operador completa dados e clica re-tentar
+    });
+    return;
+  }
+  if (!cli.telefones?.[0]?.completo) {
+    await patchBanco(id, 'unno', {
+      status: 'falha',
+      mensagem: 'Falta telefone do cliente — Unno exige pra criar termo. Use "Completar Dados".',
+      retryable: true,
+    });
+    return;
+  }
+
+  const r = await callApi('/api/unno', {
+    action: 'iniciarSimulacao',
+    cpf,
+    nome: cli.nome,
+    dataNascimento: cli.dataNascimento,
+    telefone: cli.telefones[0].completo,
+    email: cli.emails?.[0] || null,
+    sexo: cli.sexo || 'M',
+    provedor: 'qitech', // default QITECH (provedor mais usado pela Lhamas)
+  }, auth, secret, 15000);
+
+  const u = r.data || {};
+  if (!r.ok || !u.sucesso) {
+    await patchBanco(id, 'unno', {
+      status: 'falha',
+      mensagem: u.error || `Erro Unno (HTTP ${r.status})`,
+      retryable: true,
       _raw_response: u,
     });
+    return;
   }
+
+  // Termo criado — bloqueia card e mostra link pro operador enviar
+  await patchBanco(id, 'unno', {
+    status: 'bloqueado',
+    bloqueado: true,
+    precisaAutorizacao: true,
+    linkAutorizacao: u.link,
+    termUuid: u.uuid,
+    mensagem: '📲 Cliente precisa autorizar — envie o link via WhatsApp',
+    expiraEm: u.expiraEm,
+  });
 }
 
 async function processarC6(id, cpf, incluirC6, auth, secret) {

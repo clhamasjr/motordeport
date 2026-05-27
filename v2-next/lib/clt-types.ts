@@ -34,6 +34,13 @@ export interface BancoState {
   // (não por falta de autorização). UI mostra "Já contratado" em vez de
   // "Aguarda autorização".
   jaTemContrato?: boolean;
+  // Unno: uuid do TERMO de consentimento criado via POST /auth/api/v1/terms.
+  // Usado pra re-checar status do termo (PENDING → AGREED) no proximo poll/
+  // re-tentar. Sem termUuid o motor cria novo termo a cada re-tentar.
+  termUuid?: string;
+  // Unno: expiracao do termo (geralmente 45 dias). Mostrar pro operador
+  // saber se pode confiar no link.
+  expiraEm?: string;
   linkAutorizacao?: string | null;
   mensagem?: string;
   retryable?: boolean;
