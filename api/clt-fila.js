@@ -542,10 +542,16 @@ async function processarHandbank(id, cpf, auth, secret) {
   }
 
   // Cenario 2: cliente ja tem contrato OU outro impedimento (400)
+  // IMPORTANTE: persistir `jaTemContrato: true` pra UI mostrar status "Já contratado"
+  // (sem essa flag o StatusPill mostra "Aguarda autorização" — semantica errada,
+  // ja que aqui o cliente NAO precisa autorizar nada, ele simplesmente nao eh
+  // elegivel porque ja contratou).
   if (d.bloqueado && d.jaTemContrato) {
     await patchBanco(id, 'handbank', {
       status: 'bloqueado',
       bloqueado: true,
+      jaTemContrato: true,
+      precisaAutorizacao: false,
       mensagem: d.mensagem || 'Cliente já possui contrato ativo na UY3'
     });
     return;
@@ -1247,11 +1253,14 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     // TIMEOUT ABSOLUTO: se a fila esta processando ha mais de 10min, forca
     // conclusao marcando bancos pendentes como falha (V8 pode ficar
     // WAITING_CREDIT_ANALYSIS eternamente se DataPrev nao confirmar)
+    // IMPORTANTE: usa TODOS_BANCOS_CLT (catalogo central) — antes era lista
+    // hardcoded que ficou desatualizada quando entraram fintech_qi/celcoin,
+    // mercantil, handbank e joinbank (esses ficavam "processando" eternos).
     if (row.status_geral === 'processando' && row.iniciado_em) {
       const idadeMs = Date.now() - new Date(row.iniciado_em).getTime();
       if (idadeMs > 10 * 60 * 1000) {
         const bancosNovos = { ...(row.bancos || {}) };
-        for (const k of ['presencabank', 'multicorban', 'v8_qi', 'v8_celcoin', 'c6']) {
+        for (const k of TODOS_BANCOS_CLT) {
           if (bancosNovos[k] && ['pending', 'processando'].includes(bancosNovos[k].status)) {
             bancosNovos[k] = {
               ...bancosNovos[k],
