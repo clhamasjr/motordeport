@@ -39,7 +39,14 @@ import {
   AlertCircle,
   RefreshCw,
   Search,
+  Eye,
+  EyeOff,
+  Copy,
+  Check,
+  Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
+import { toast } from 'sonner';
 
 const ROLE_LABEL: Record<UserRole, string> = {
   admin: 'Admin',
@@ -691,18 +698,82 @@ function EditUserModal({ user, onClose }: { user: User | null; onClose: () => vo
   );
 }
 
+/**
+ * Gera senha aleatória forte — 12 caracteres com letras (maiúsc/minúsc), números
+ * e 1 símbolo. Evita caracteres ambíguos (O/0, l/1, I).
+ */
+function gerarSenhaAleatoria(): string {
+  const letrasMin = 'abcdefghjkmnpqrstuvwxyz';
+  const letrasMai = 'ABCDEFGHJKMNPQRSTUVWXYZ';
+  const numeros = '23456789';
+  const simbolos = '!@#$%&*';
+  const todos = letrasMin + letrasMai + numeros;
+  let s = '';
+  // Garante pelo menos 1 de cada
+  s += letrasMin[Math.floor(Math.random() * letrasMin.length)];
+  s += letrasMai[Math.floor(Math.random() * letrasMai.length)];
+  s += numeros[Math.floor(Math.random() * numeros.length)];
+  s += simbolos[Math.floor(Math.random() * simbolos.length)];
+  // Completa até 12
+  for (let i = s.length; i < 12; i++) {
+    s += todos[Math.floor(Math.random() * todos.length)];
+  }
+  // Embaralha
+  return s
+    .split('')
+    .sort(() => Math.random() - 0.5)
+    .join('');
+}
+
 function ResetPwModal({ user, onClose }: { user: User | null; onClose: () => void }) {
   const reset = useResetPassword();
   const [newPass, setNewPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [copiado, setCopiado] = useState(false);
+
+  // Reseta o form quando o usuário muda (igual EditUserModal — Radix não
+  // dispara onOpenChange em mudança externa de prop).
+  useEffect(() => {
+    if (user) {
+      setNewPass('');
+      setConfirmPass('');
+      setShowPass(false);
+      setCopiado(false);
+    }
+  }, [user]);
 
   const handleOpenChange = (o: boolean) => {
-    if (o) setNewPass('');
-    else onClose();
+    if (!o) onClose();
   };
+
+  const handleGerar = () => {
+    const s = gerarSenhaAleatoria();
+    setNewPass(s);
+    setConfirmPass(s);
+    setShowPass(true);
+    setCopiado(false);
+  };
+
+  const handleCopiar = async () => {
+    if (!newPass) return;
+    try {
+      await navigator.clipboard.writeText(newPass);
+      setCopiado(true);
+      toast.success('Senha copiada');
+      setTimeout(() => setCopiado(false), 2500);
+    } catch {
+      toast.error('Não foi possível copiar');
+    }
+  };
+
+  const senhasIguais = newPass === confirmPass;
+  const tamanhoOk = newPass.length >= 4;
+  const podeEnviar = tamanhoOk && senhasIguais && !reset.isPending;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !newPass || newPass.length < 4) return;
+    if (!user || !podeEnviar) return;
     try {
       await reset.mutateAsync({ targetUser: user.username, newPass });
       onClose();
@@ -713,29 +784,115 @@ function ResetPwModal({ user, onClose }: { user: User | null; onClose: () => voi
 
   return (
     <Dialog open={!!user} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Redefinir senha</DialogTitle>
-          <DialogDescription>{user?.username}</DialogDescription>
+          <DialogTitle className="flex items-center gap-2">
+            <Key className="size-5 text-yellow-400" />
+            Redefinir senha
+          </DialogTitle>
+          <DialogDescription className="pt-1">
+            <span className="block font-semibold text-foreground">{user?.name || '—'}</span>
+            <span className="font-mono text-xs">{user?.username}</span>
+          </DialogDescription>
         </DialogHeader>
+
+        {/* Aviso de impacto */}
+        <div className="flex gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-xs">
+          <AlertTriangle className="size-4 shrink-0 text-yellow-500 mt-0.5" />
+          <div className="text-yellow-100/90 leading-relaxed">
+            <strong className="text-yellow-300">Atenção:</strong> ao redefinir, todas as sessões
+            ativas deste usuário serão encerradas. Ele será deslogado em todos os dispositivos.
+          </div>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
-            <Label>Nova senha (mín. 4 caracteres)</Label>
-            <Input
-              type="password"
-              value={newPass}
-              onChange={(e) => setNewPass(e.target.value)}
-              minLength={4}
-              autoFocus
-              required
-            />
+            <div className="flex items-center justify-between mb-1">
+              <Label>Nova senha</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleGerar}
+                className="h-7 px-2 text-[11px] gap-1 text-cyan-400 hover:text-cyan-300"
+              >
+                <Sparkles className="size-3" />
+                Gerar aleatória
+              </Button>
+            </div>
+            <div className="relative">
+              <Input
+                type={showPass ? 'text' : 'password'}
+                value={newPass}
+                onChange={(e) => setNewPass(e.target.value)}
+                minLength={4}
+                autoFocus
+                required
+                placeholder="mín. 4 caracteres"
+                className="pr-20 font-mono"
+              />
+              <div className="absolute right-1 top-1/2 -translate-y-1/2 flex">
+                {newPass && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCopiar}
+                    className="h-8 w-8 p-0"
+                    title="Copiar"
+                  >
+                    {copiado ? (
+                      <Check className="size-3.5 text-green-400" />
+                    ) : (
+                      <Copy className="size-3.5" />
+                    )}
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowPass((v) => !v)}
+                  className="h-8 w-8 p-0"
+                  title={showPass ? 'Esconder' : 'Mostrar'}
+                >
+                  {showPass ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                </Button>
+              </div>
+            </div>
           </div>
+
+          <div>
+            <Label>Confirme a senha</Label>
+            <Input
+              type={showPass ? 'text' : 'password'}
+              value={confirmPass}
+              onChange={(e) => setConfirmPass(e.target.value)}
+              minLength={4}
+              required
+              placeholder="repita a senha"
+              className="font-mono"
+            />
+            {confirmPass.length > 0 && !senhasIguais && (
+              <p className="text-[11px] text-destructive mt-1 flex items-center gap-1">
+                <AlertCircle className="size-3" />
+                As senhas não conferem
+              </p>
+            )}
+            {confirmPass.length > 0 && senhasIguais && tamanhoOk && (
+              <p className="text-[11px] text-green-400 mt-1 flex items-center gap-1">
+                <Check className="size-3" />
+                Senhas conferem
+              </p>
+            )}
+          </div>
+
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={reset.isPending}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={newPass.length < 4 || reset.isPending}>
-              {reset.isPending ? 'Salvando...' : 'Redefinir'}
+            <Button type="submit" disabled={!podeEnviar}>
+              {reset.isPending ? 'Salvando...' : 'Redefinir senha'}
             </Button>
           </DialogFooter>
         </form>
