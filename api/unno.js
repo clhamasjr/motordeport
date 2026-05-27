@@ -113,6 +113,62 @@ function normalizeGender(s) {
   return 'MALE'; // default
 }
 
+// ─── ACTION: autorizarTermo ────────────────────────────────────
+// PUT /auth/api/v1/terms/authorize/{uuid} — autoriza termo programaticamente
+// (modelo Handbank/UY3 ChallengeInfo). Cliente nao precisa clicar.
+// IMPORTANTE: Unno grava ip_address e user_agent na auditoria — fica
+// registrado que a LhamasCred autorizou em nome do cliente.
+// Pressupoe que parceiro tem procuracao escrita do cliente.
+async function autorizarTermo(termUuid) {
+  if (!termUuid) return { sucesso: false, error: 'termUuid obrigatorio' };
+  const r = await unnoCall(`/auth/api/v1/terms/authorize/${termUuid}`, 'PUT', {});
+  // PUT retorna 204 No Content em caso de sucesso
+  if (r.status === 204 || r.ok) {
+    return { sucesso: true };
+  }
+  return {
+    sucesso: false,
+    error: r.data?.error?.message || r.data?.message || `HTTP ${r.status}`,
+    _raw: r.data,
+  };
+}
+
+// ─── Helper: polling de proposta criada apos autorizacao ───────
+// Apos auto-autorizar, Unno cria proposta em background (~3-10s).
+// Esse polling aguarda a proposta aparecer na listagem por CPF.
+async function aguardarPropostaCriada(cpf, maxMs = 18000, intervalMs = 1500) {
+  const cpfLimpo = onlyDigits(cpf);
+  const inicio = Date.now();
+  while (Date.now() - inicio < maxMs) {
+    const list = await unnoCall(
+      '/proposal/api/v1/proposals?size=20&sort=createdAt,desc&productType=CONSIGNADO_CLT',
+      'GET'
+    );
+    const minhas = (list.data?.content || [])
+      .filter(p => onlyDigits(p.customer_document) === cpfLimpo)
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+    if (minhas.length > 0) {
+      const p = minhas[0];
+      const status = (p.status || '').toLowerCase();
+      // Status terminal — pode retornar
+      if (status === 'integrated' || status === 'disbursed' ||
+          status === 'rejected_risk_analysis_automatic' ||
+          status.startsWith('rejected') ||
+          status === 'cancelled' || status === 'canceled') {
+        return { encontrou: true, terminal: true, proposta: p };
+      }
+      // Achou mas ainda em analise (waiting_credit_analysis, created, etc)
+      // Continua pollando ate maxMs OR retorna em andamento
+      if (Date.now() - inicio > maxMs - intervalMs) {
+        return { encontrou: true, terminal: false, proposta: p };
+      }
+    }
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return { encontrou: false, terminal: false, proposta: null };
+}
+
 // ─── ACTION: iniciarSimulacao ──────────────────────────────────
 // POST /auth/api/v1/terms — cria termo de consentimento + retorna link.
 // Cliente recebe link, autoriza, sistema Unno cria proposta + roda
@@ -290,6 +346,119 @@ async function verificarStatus({ termUuid, cpf }) {
   };
 }
 
+// ─── ACTION: simulacaoCompleta ─────────────────────────────────
+// Fluxo "tudo de uma vez" (modelo Handbank/UY3):
+//   1. Cria termo (POST /auth/api/v1/terms)
+//   2. Auto-autoriza (PUT /auth/api/v1/terms/authorize/{uuid})
+//   3. Aguarda Unno criar proposta (polling 18s)
+//   4. Retorna resultado interpretado (APROVADO/RECUSADO/EM_ANALISE)
+//
+// Cliente NAO precisa clicar em link nenhum. Funciona como Handbank/UY3
+// onde o parceiro autoriza tecnicamente em nome do cliente.
+async function simulacaoCompleta(params) {
+  // 1) Cria termo
+  const termo = await iniciarSimulacao(params);
+  if (!termo.sucesso) {
+    return { ...termo, etapa: 'ERRO_CRIAR_TERMO' };
+  }
+
+  // 2) Auto-autoriza imediatamente
+  const autz = await autorizarTermo(termo.uuid);
+  if (!autz.sucesso) {
+    return {
+      sucesso: false,
+      etapa: 'ERRO_AUTORIZAR',
+      error: `Termo criado (${termo.uuid}) mas falhou auto-autz: ${autz.error}`,
+      termUuid: termo.uuid,
+      link: termo.link, // operador pode usar link manual como fallback
+    };
+  }
+
+  // 3) Aguarda proposta ser criada e analisada pela Unno
+  const aguard = await aguardarPropostaCriada(params.cpf);
+
+  if (!aguard.encontrou) {
+    return {
+      sucesso: true,
+      etapa: 'AUTORIZADO_EM_ANALISE',
+      approved: false,
+      mensagem: '⏳ Termo autorizado — Unno está criando proposta. Re-tentar em ~30s.',
+      termUuid: termo.uuid,
+      retryable: true,
+    };
+  }
+
+  const p = aguard.proposta;
+  const status = (p.status || '').toLowerCase();
+
+  // 4) Interpreta resultado
+  if (status === 'integrated' || status === 'disbursed') {
+    return {
+      sucesso: true,
+      etapa: 'APROVADO',
+      approved: true,
+      mensagem: status === 'disbursed'
+        ? '💰 Aprovada e desembolsada'
+        : '✅ Aprovada na Unno — pronta pra prosseguir',
+      termUuid: termo.uuid,
+      proposalUuid: p.uuid,
+      bancoProvedor: p.bank_provider_name,
+      linkPainel: `https://app.unnotech.com.br/loans/clt/${p.uuid}`,
+      dadosCliente: {
+        nome: p.customer_name,
+        cpf: p.customer_document,
+      },
+    };
+  }
+
+  if (status === 'rejected_risk_analysis_automatic' || status.startsWith('rejected')) {
+    const logs = p.logs || [];
+    const logRej = logs.find(l =>
+      (l.action || '').toLowerCase().includes('rejected') ||
+      (l.action || '').toLowerCase().includes('erro reportado')
+    );
+    const motivo = logRej
+      ? (logRej.action || '').replace(/^.*?:\s*/, '').substring(0, 200)
+      : p.bank_provider_status || 'Recusada pelo motor de risco';
+    return {
+      sucesso: true,
+      etapa: 'RECUSADO',
+      approved: false,
+      mensagem: `❌ ${motivo}`,
+      termUuid: termo.uuid,
+      proposalUuid: p.uuid,
+      bancoProvedor: p.bank_provider_name,
+      linkPainel: `https://app.unnotech.com.br/loans/clt/${p.uuid}`,
+      motivoRecusa: motivo,
+    };
+  }
+
+  if (status === 'cancelled' || status === 'canceled') {
+    return {
+      sucesso: true,
+      etapa: 'CANCELADO',
+      approved: false,
+      mensagem: '🚫 Cancelada',
+      termUuid: termo.uuid,
+      proposalUuid: p.uuid,
+      linkPainel: `https://app.unnotech.com.br/loans/clt/${p.uuid}`,
+    };
+  }
+
+  // Em análise — proposta criada mas motor ainda processando
+  return {
+    sucesso: true,
+    etapa: 'EM_ANALISE',
+    approved: false,
+    mensagem: `⏳ Em análise (status: ${p.status})`,
+    termUuid: termo.uuid,
+    proposalUuid: p.uuid,
+    bancoProvedor: p.bank_provider_name,
+    linkPainel: `https://app.unnotech.com.br/loans/clt/${p.uuid}`,
+    retryable: true,
+  };
+}
+
 // ─── ACTION: cancelarSimulacao ─────────────────────────────────
 async function cancelarSimulacao(proposalUuid) {
   if (!proposalUuid) return { sucesso: false, error: 'proposalUuid obrigatorio' };
@@ -335,6 +504,25 @@ export default async function handler(req) {
         dataNascimento: body.dataNascimento || body.birth_date,
         sexo: body.sexo || body.gender,
         provedor: body.provedor || body.provider, // 'qitech' | 'credspot' (default qitech)
+      });
+      return jsonResp(out, 200, req);
+    }
+
+    if (action === 'autorizarTermo') {
+      const out = await autorizarTermo(body.termUuid || body.uuid);
+      return jsonResp(out, 200, req);
+    }
+
+    if (action === 'simulacaoCompleta' || action === 'consultarAprovacao') {
+      // Fluxo Handbank/UY3-like: cria termo + auto-autz + polling
+      const out = await simulacaoCompleta({
+        cpf: body.cpf,
+        nome: body.nome || body.name,
+        telefone: body.telefone || body.phone,
+        email: body.email,
+        dataNascimento: body.dataNascimento || body.birth_date,
+        sexo: body.sexo || body.gender,
+        provedor: body.provedor || body.provider,
       });
       return jsonResp(out, 200, req);
     }
