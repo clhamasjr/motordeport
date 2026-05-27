@@ -620,6 +620,7 @@ function loadHist(id,silent){try{let raw=localStorage.getItem("lhm_data_"+id);if
   const hist=getHist(),h=hist.find(x=>x.id===id);
   S.data={
     analise:analise,elegiveis:eleg,mapaArr:sv.mapaArr||[],rmcRcc:sv.rmcRcc||[],taxaDist:sv.taxaDist||{},totalAnalise:sv.aLen||analise.length,
+    loasAll:sv.loasAll||[],
     _parceiroId:sv._parceiroId||(h&&h.parceiroId)||null,
     _parceiroNome:sv._parceiroNome||(h&&h.parceiroNome)||null
   };
@@ -1269,7 +1270,7 @@ function processar(data){
   // Also look for standalone margin columns
   let cMDE=findFirst(H,["Margem Disponivel Emprestimo","MargemDisponivelEmprestimo","Margem Emprestimo"]);
   let cMDR=findFirst(H,["Margem Disponivel Rcc","MargemDisponivelRcc","Margem Rcc","Margem Disponivel Cartao"]);
-  let analise=[],elegiveis=[],rmcAll=[];
+  let analise=[],elegiveis=[],rmcAll=[],loasAll=[];
   let g=(r,c)=>c!=null&&c>=0&&r[c]!=null?String(r[c]).trim():"",gv=(r,c)=>c!=null&&c>=0?pV(r[c]):0,gr=(r,c)=>c!=null&&c>=0?r[c]:null;
   const COEF185=0.02299,COEF_CART=0.029214;
   for(let row of rows){
@@ -1277,7 +1278,7 @@ function processar(data){
     let ben=g(row,cBn),esp=g(row,cEs),t1=g(row,cT1),t2=g(row,cT2),t3=g(row,cT3);
     // Valor do benefício direto da planilha (se houver coluna)
     let valorBeneficio=cVB>=0?gv(row,cVB):0;
-    let eN=pEN(esp),isInv=ESP_INV.includes(eN),isAux=ESP_AUX.includes(eN)||String(esp).toUpperCase().includes("AUXIL"),ai=cAge(gr(row,cNs)),idade=ai?ai.age:null,bY=cBY(gr(row,cDI));
+    let eN=pEN(esp),isInv=ESP_INV.includes(eN),isLoas=ESP_LOAS.includes(eN),isAux=ESP_AUX.includes(eN)||String(esp).toUpperCase().includes("AUXIL"),ai=cAge(gr(row,cNs)),idade=ai?ai.age:null,bY=cBY(gr(row,cDI));
     if(isAux)continue;
     let tRmc=rmcB?g(row,rmcB.tipo):"",cRmc=rmcB?pC(gr(row,rmcB.cod)??""):"",vRmc=rmcB?gv(row,rmcB.val):0;
     let tRcc=rccB?g(row,rccB.tipo):"",cRcc=rccB?pC(gr(row,rccB.cod)??""):"",vRcc=rccB?gv(row,rccB.val):0;
@@ -1302,6 +1303,26 @@ function processar(data){
       rmcAll.push({nome,cpf,ben,esp,t1,t2,t3,tRmc,cRmc:realRmc?cRmc:"",vRmc:Math.round(vRmc*100)/100,tRcc,cRcc:realRcc?cRcc:"",vRcc:Math.round(vRcc*100)/100,
         mrgCart:Math.round(margem*100)/100,mrgCartNova:margemCartNova,mrgEmpNova:margemEmpNova,temRmc:!!realRmc,temRcc:!!realRcc,temCartao,
         valorBeneficio:Math.round(valorBeneficio*100)/100});
+    }
+    // ── LOAS/BPC: apenas contrato novo — regra 30% emp + 5% cartão ──────────
+    if(isLoas){
+      let sumEmpLoas=0;
+      for(const lb of lbs){const par=gv(row,lb.cp);if(par>0)sumEmpLoas+=par;}
+      const numCartoes=(realRmc?1:0)+(realRcc?1:0);
+      const benefLoas=valorBeneficio||(sumEmpLoas>0?sumEmpLoas/0.30:0);
+      const margemLivreEmp=benefLoas>0?Math.max(0,benefLoas*0.30-sumEmpLoas):0;
+      const margemLivreCart=benefLoas>0&&numCartoes===0?benefLoas*0.05:0;
+      const pctEmp=benefLoas>0?Math.round(sumEmpLoas/benefLoas*1000)/10:0;
+      // Extrapolado: 2+ cartões OU empréstimo >= 30% do benefício
+      const statusLoas=!benefLoas?'sem_dados':numCartoes>=2?'extrapolado_cartoes':sumEmpLoas>=benefLoas*0.30-0.01?'extrapolado_emp':'com_margem';
+      loasAll.push({nome,cpf,ben,esp,t1,t2,t3,idade:idade??"-",numCartoes,
+        sumEmp:Math.round(sumEmpLoas*100)/100,beneficio:Math.round(benefLoas*100)/100,
+        tetoEmp:Math.round(benefLoas*0.30*100)/100,pctEmp,
+        margemLivreEmp:Math.round(margemLivreEmp*100)/100,
+        margemLivreCart:Math.round(margemLivreCart*100)/100,statusLoas,
+        temRmc:!!realRmc,temRcc:!!realRcc,
+        vRmc:Math.round(vRmc*100)/100,vRcc:Math.round(vRcc*100)/100});
+      continue; // LOAS não porta — pula análise de portabilidade
     }
     for(let lb of lbs){
       let con=g(row,lb.cc),par=gv(row,lb.cp),sal=gv(row,lb.cs);let[rest,tot,pag]=lb.cz!=null?pP(row[lb.cz]):[0,0,0];let cod=lb.ck!=null?pC(gr(row,lb.ck)??""):"";
@@ -1398,11 +1419,11 @@ function processar(data){
       }
     }
   }
-  return{analise,elegiveis,mapaArr,rmcRcc:rmcAll,taxaDist,compByCpf}
+  return{analise,elegiveis,mapaArr,rmcRcc:rmcAll,taxaDist,compByCpf,loasAll}
 }
 
 // ══════ STATE ══════
-let S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",fname:"",pipeStage:"sel",crmFilter:"",crmQ:"",fTaxa:"",fTrocoMin:0,fTrocoMax:0,fBanco:"",fMargemMin:0,fMargemMax:0,fMargemPctMin:0,fMargemPctMax:0,fCartao:"",fMargemEmpMin:0,fMargemEmpMax:0,fIdadeMin:0,fIdadeMax:0,f1p:"",fInv:"",fVCmin:0,fVCmax:0,fParMin:0,fParMax:0,fSalMin:0,fSalMax:0,fPagasMin:0,fPagasMax:0,fEnquad:"",fElegReal:"nova"};
+let S={data:null,tab:"dash",q:"",sort:{c:null,d:"asc"},pg:0,rmcF:"ALL",loasF:"ALL",fname:"",pipeStage:"sel",crmFilter:"",crmQ:"",fTaxa:"",fTrocoMin:0,fTrocoMax:0,fBanco:"",fMargemMin:0,fMargemMax:0,fMargemPctMin:0,fMargemPctMax:0,fCartao:"",fMargemEmpMin:0,fMargemEmpMax:0,fIdadeMin:0,fIdadeMax:0,f1p:"",fInv:"",fVCmin:0,fVCmax:0,fParMin:0,fParMax:0,fSalMin:0,fSalMax:0,fPagasMin:0,fPagasMax:0,fEnquad:"",fElegReal:"nova"};
 // Setters de filtros dos Elegiveis
 function setFBanco(v){S.fBanco=v||"";S.pg=0;renderApp()}
 function setFTaxa(v){S.fTaxa=v||"";S.pg=0;renderApp()}
@@ -12615,6 +12636,7 @@ const MENU=[
       ]},
       {group:'Higienização',icon:'🧼',items:[
         {k:'rc',icon:'💳',label:'RMC/RCC',needsData:true,needsRole:['gestor','admin']},
+        {k:'loas',icon:'🔵',label:'Base LOAS',needsData:true,needsRole:['gestor','admin']},
         {k:'in100',icon:'🔎',label:'IN100',badge:_in100Cnt,needsData:true},
         {k:'pipe',icon:'📞',label:'Telefones',needsData:true}
       ]},
@@ -13165,6 +13187,7 @@ if(!D){
   else if(S.tab==="wppchat")tcontent=renderWppChat();
   else if(S.tab==="est")tcontent=renderEsteira();
   else if(S.tab==="in100")tcontent=renderIN100();
+  else if(S.tab==="loas"){/* renderizado inline abaixo */}
   else if(S.tab==="crm")tcontent=renderCRM();
   else if(S.tab==="gestao"&&isAdm)tcontent=renderGestao();
   else if(S.tab==="gestaoGeral"&&isAdm)tcontent=renderGestaoGeral();
@@ -13217,7 +13240,32 @@ if(!D){
     </div>`;
     html+=`<div style="font-size:14px;font-weight:700;color:var(--t2);margin-bottom:12px">🏦 RMC / RCC POR BANCO</div><div class="rmc-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">`;
     for(let[n,cod]of Object.entries(CARTAO)){let f=D.rmcRcc.filter(r=>r.cRmc===cod||r.cRcc===cod);html+=`<div style="background:var(--card);border-radius:14px;padding:20px;border:1px solid var(--brd);border-left:4px solid ${bC[n]}"><div style="font-size:16px;font-weight:800;color:${bC[n]};margin-bottom:6px">${n}</div><div style="font-size:30px;font-weight:800">${f.length}</div></div>`}
-    html+=`</div>`}
+    html+=`</div>`;
+    // ── Card LOAS no dashboard ──
+    if(D.loasAll&&D.loasAll.length>0){
+      const loasComMargem=D.loasAll.filter(l=>l.statusLoas==='com_margem');
+      const loasExtrap=D.loasAll.filter(l=>l.statusLoas==='extrapolado_emp'||l.statusLoas==='extrapolado_cartoes');
+      const loasSemDados=D.loasAll.filter(l=>l.statusLoas==='sem_dados');
+      const totalMargEmp=loasComMargem.reduce((s,l)=>s+l.margemLivreEmp,0);
+      const totalMargCart=loasComMargem.reduce((s,l)=>s+l.margemLivreCart,0);
+      html+=`<div style="background:linear-gradient(135deg,rgba(59,130,246,.10),rgba(99,102,241,.06));border:2px solid rgba(59,130,246,.3);border-radius:18px;padding:24px;margin-bottom:24px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <div style="font-size:15px;font-weight:800;color:#60a5fa">🔵 BPC/LOAS — Contrato Novo (30% emp + 5% cartão)</div>
+          <button class="btn btn-sm" style="border-color:rgba(96,165,250,.3);color:#60a5fa" onclick="S.tab='loas';renderApp()">Ver Base Completa →</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+          <div style="background:rgba(59,130,246,.08);border-radius:10px;padding:14px;text-align:center"><div style="font-size:11px;color:var(--t3)">Total BPC/LOAS</div><div style="font-size:30px;font-weight:900;color:#60a5fa">${N(D.loasAll.length)}</div></div>
+          <div style="background:rgba(34,197,94,.08);border-radius:10px;padding:14px;text-align:center"><div style="font-size:11px;color:var(--t3)">✅ Com Margem</div><div style="font-size:30px;font-weight:900;color:var(--grn)">${N(loasComMargem.length)}</div></div>
+          <div style="background:rgba(239,68,68,.08);border-radius:10px;padding:14px;text-align:center"><div style="font-size:11px;color:var(--t3)">🚫 Extrapolados</div><div style="font-size:30px;font-weight:900;color:var(--red)">${N(loasExtrap.length)}</div></div>
+          <div style="background:rgba(234,179,8,.06);border-radius:10px;padding:14px;text-align:center"><div style="font-size:11px;color:var(--t3)">⚠️ Sem Dados</div><div style="font-size:30px;font-weight:900;color:var(--ylw)">${N(loasSemDados.length)}</div></div>
+        </div>
+        ${totalMargEmp>0||totalMargCart>0?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+          <div style="background:rgba(249,115,22,.08);border-radius:10px;padding:12px;text-align:center"><div style="font-size:10px;color:var(--t3)">Potencial Empréstimo (margem livre)</div><div style="font-size:22px;font-weight:900;color:var(--org)">${R$(totalMargEmp)}</div></div>
+          <div style="background:rgba(234,179,8,.06);border-radius:10px;padding:12px;text-align:center"><div style="font-size:10px;color:var(--t3)">Potencial Cartão (sem cartão)</div><div style="font-size:22px;font-weight:900;color:var(--ylw)">${R$(totalMargCart)}</div></div>
+        </div>`:''}
+      </div>`;
+    }
+    }
 
   // ═══ ELEGÍVEIS (empilhado por BANCO — cada contrato tem multiplas linhas, uma por destino viavel) ═══
   if(S.tab==="el"){
@@ -13604,6 +13652,75 @@ if(!D){
 }
 
   // ═══ RMC/RCC ═══
+  // ══════ BASE LOAS/BPC ══════
+  if(S.tab==="loas"){
+    const loas=D.loasAll||[];
+    // Filtro por status
+    const loasF=S.loasF||'ALL';
+    let src=loasF==='MARGEM'?loas.filter(l=>l.statusLoas==='com_margem')
+      :loasF==='EXTRAP'?loas.filter(l=>l.statusLoas==='extrapolado_emp'||l.statusLoas==='extrapolado_cartoes')
+      :loasF==='SEMCART'?loas.filter(l=>l.statusLoas==='com_margem'&&l.numCartoes===0)
+      :loas;
+    let filtered=S.q?src.filter(l=>l.nome.toLowerCase().includes(S.q.toLowerCase())||l.cpf.includes(S.q)):src;
+    let items=filtered.slice(S.pg*PER,(S.pg+1)*PER);
+    // KPIs
+    const comMargem=loas.filter(l=>l.statusLoas==='com_margem');
+    const extrapTotal=loas.filter(l=>l.statusLoas==='extrapolado_emp'||l.statusLoas==='extrapolado_cartoes');
+    const semCart=loas.filter(l=>l.statusLoas==='com_margem'&&l.numCartoes===0);
+    const totMargEmp=comMargem.reduce((s,l)=>s+l.margemLivreEmp,0);
+    html+=`<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <div class="kpi" style="flex:1;min-width:120px"><div class="kpi-label">Total BPC/LOAS</div><div class="kpi-value" style="color:#60a5fa">${N(loas.length)}</div></div>
+      <div class="kpi" style="flex:1;min-width:120px;border-color:rgba(34,197,94,.3)"><div class="kpi-label">✅ Com Margem</div><div class="kpi-value" style="color:var(--grn)">${N(comMargem.length)}</div></div>
+      <div class="kpi" style="flex:1;min-width:120px;border-color:rgba(239,68,68,.3)"><div class="kpi-label">🚫 Extrapolados</div><div class="kpi-value" style="color:var(--red)">${N(extrapTotal.length)}</div></div>
+      <div class="kpi" style="flex:1;min-width:120px;border-color:rgba(234,179,8,.3)"><div class="kpi-label">💳 Sem Cartão (oport.)</div><div class="kpi-value" style="color:var(--ylw)">${N(semCart.length)}</div></div>
+      <div class="kpi" style="flex:1;min-width:140px;border-color:rgba(249,115,22,.3)"><div class="kpi-label">💰 Pot. Empréstimo</div><div class="kpi-value" style="color:var(--org)">${R$(totMargEmp)}</div></div>
+    </div>
+    <div style="background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#93c5fd">
+      🔵 <b>Regra BPC/LOAS:</b> empréstimo ≤ 30% do benefício · cartão ≤ 5% (máximo 1 cartão) · <b>sem portabilidade</b> — apenas contrato novo
+    </div>`;
+    html+=`<div class="search-bar"><input type="text" placeholder="Buscar nome ou CPF..." value="${esc(S.q)}" oninput="setQ(this.value)">
+      <select onchange="S.loasF=this.value;S.pg=0;renderApp()">
+        <option value="ALL"${loasF==='ALL'?' selected':''}>Todos</option>
+        <option value="MARGEM"${loasF==='MARGEM'?' selected':''}>✅ Com margem</option>
+        <option value="SEMCART"${loasF==='SEMCART'?' selected':''}>🆕 Sem cartão (oport.)</option>
+        <option value="EXTRAP"${loasF==='EXTRAP'?' selected':''}>🚫 Extrapolados</option>
+      </select>
+      <button class="btn btn-grn btn-sm" onclick="exportLoasBase()">↓ Exportar</button>
+      <span style="font-size:10px;color:var(--t2)">${N(filtered.length)} clientes</span>
+    </div>`;
+    html+=`<div class="table-wrap"><div class="table-scroll"><table><thead><tr>
+      <th>Nome</th><th>CPF</th><th>Benef.</th><th>Esp</th><th class="right">Benefício R$</th>
+      <th class="right">Teto 30%</th><th class="right">Comprometido</th><th class="right">% Comp.</th>
+      <th class="right">Margem Emp</th><th class="right">Margem Cart</th>
+      <th>Cartões</th><th>Idade</th><th>Status</th><th>Tel</th>
+    </tr></thead><tbody>`;
+    for(const l of items){
+      const statusLabel=l.statusLoas==='com_margem'?'✅ Com margem'
+        :l.statusLoas==='extrapolado_emp'?'🚫 Emp extrapolado'
+        :l.statusLoas==='extrapolado_cartoes'?'🚫 2 cartões'
+        :'⚠️ Sem dados';
+      const statusColor=l.statusLoas==='com_margem'?'var(--grn)'
+        :l.statusLoas.startsWith('extrapolado')?'var(--red)':'var(--ylw)';
+      const cartLabel=l.numCartoes===0?'<span style="color:var(--t3)">Nenhum</span>'
+        :`${l.numCartoes}${l.temRmc?` <span class="pill pill-pur" style="font-size:9px">RMC ${R$(l.vRmc)}</span>`:''}${l.temRcc?` <span class="pill pill-pnk" style="font-size:9px">RCC ${R$(l.vRcc)}</span>`:''}`;
+      html+=`<tr class="rh">
+        <td>${esc(l.nome)}</td><td class="mono">${esc(l.cpf)}</td>
+        <td class="mono">${esc(l.ben)}</td><td>${esc(l.esp)}</td>
+        <td class="right mono">${l.beneficio>0?R$(l.beneficio):'<span style="color:var(--t3)">—</span>'}</td>
+        <td class="right mono">${l.tetoEmp>0?R$(l.tetoEmp):'—'}</td>
+        <td class="right mono" style="color:${l.sumEmp>0?'var(--acc)':'var(--t3)'}">${l.sumEmp>0?R$(l.sumEmp):'—'}</td>
+        <td class="right mono" style="color:${l.pctEmp>30?'var(--red)':l.pctEmp>20?'var(--ylw)':'var(--grn)'}">${l.beneficio>0?l.pctEmp+'%':'—'}</td>
+        <td class="right mono" style="color:${l.margemLivreEmp>0?'var(--org)':'var(--t3)'}">${l.margemLivreEmp>0?R$(l.margemLivreEmp):'—'}</td>
+        <td class="right mono" style="color:${l.margemLivreCart>0?'var(--ylw)':'var(--t3)'}">${l.margemLivreCart>0?R$(l.margemLivreCart):'—'}</td>
+        <td>${cartLabel}</td>
+        <td style="color:var(--t2)">${l.idade}</td>
+        <td style="color:${statusColor};font-weight:700;white-space:nowrap">${statusLabel}</td>
+        <td class="mono" style="font-size:11px;color:var(--t2)">${esc(l.t1||'')}</td>
+      </tr>`;
+    }
+    if(!items.length)html+=`<tr><td colspan="14" style="padding:40px;text-align:center;color:var(--t3)">Nenhum cliente BPC/LOAS encontrado na base</td></tr>`;
+    html+=`</tbody></table></div>${pgr(filtered.length)}</div>`}
+
   if(S.tab==="rc"){let src=D.rmcRcc;
     if(S.rmcF==="MARGEM")src=src.filter(r=>r.mrgCart>0&&!r.temCartao);else if(S.rmcF==="COMCARTAO")src=src.filter(r=>r.temCartao);
     else if(S.rmcF!=="ALL"){let cod=CARTAO[S.rmcF==="DAYCOVAL"?"Daycoval":S.rmcF];src=src.filter(r=>r.cRmc===cod||r.cRcc===cod)}
@@ -13958,6 +14075,23 @@ function showCardResult(data){
   document.getElementById("pmActions").innerHTML=`<button class="btn" onclick="document.getElementById('phoneModal').style.display='none'">Fechar</button>`;
 }
 
+function exportLoasBase(){
+  const D=S.data;if(!D||!D.loasAll||!D.loasAll.length){alert('Sem clientes BPC/LOAS na base');return}
+  const wb=XLSX.utils.book_new();
+  const toRow=l=>({
+    Nome:l.nome,CPF:l.cpf,"Benefício":l.ben,"Espécie":l.esp,Idade:l.idade,Tel1:l.t1,
+    "Valor Benefício":l.beneficio,"Teto Emp 30%":l.tetoEmp,
+    "Comprometido Emp":l.sumEmp,"% Comprometido":l.pctEmp,
+    "Margem Livre Emp":l.margemLivreEmp,"Margem Livre Cartão":l.margemLivreCart,
+    "Nº Cartões":l.numCartoes,"Valor RMC":l.vRmc,"Valor RCC":l.vRcc,
+    Status:l.statusLoas==='com_margem'?'Com Margem':l.statusLoas==='extrapolado_emp'?'Extrapolado Emp':l.statusLoas==='extrapolado_cartoes'?'Extrapolado 2 Cartões':'Sem Dados'
+  });
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(D.loasAll.map(toRow)),'Todos LOAS');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(D.loasAll.filter(l=>l.statusLoas==='com_margem').map(toRow)),'Com Margem');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(D.loasAll.filter(l=>l.statusLoas==='com_margem'&&l.numCartoes===0).map(toRow)),'Oport Cartão');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(D.loasAll.filter(l=>l.statusLoas.startsWith('extrapolado')).map(toRow)),'Extrapolados');
+  XLSX.writeFile(wb,'flowforce_loas.xlsx');
+}
 function exportRMC(){
   let D=S.data;if(!D)return;let wb=XLSX.utils.book_new(),mk=(a,n)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(a),n);
   mk(D.rmcRcc.map(r=>({Nome:r.nome,CPF:r.cpf,"Espécie":r.esp,Tel1:r.t1,"Banco RMC":r.cRmc,"Valor RMC":r.vRmc,"Banco RCC":r.cRcc,"Valor RCC":r.vRcc,"Margem Disp":r.mrgCart||0,"Cart Nova":r.mrgCartNova||0,"Emp Nova":r.mrgEmpNova||0,"Tem RMC":r.temRmc?"SIM":"NÃO","Tem RCC":r.temRcc?"SIM":"NÃO"})),"Todos");
