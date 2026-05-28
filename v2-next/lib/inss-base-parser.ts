@@ -159,8 +159,20 @@ export interface BaseProcessada {
 // Helpers de header (V1: findFirst / findAllPos)
 // ──────────────────────────────────────────────────────────────────
 
+// Normaliza string pra comparação de headers:
+//   1) lowercase
+//   2) NFD decomposition: "é" → "e" + combining-accent
+//   3) remove combining diacritics (U+0300..U+036F)
+//   4) remove qualquer char não-alfanumérico
+// Resultado: "Espécie" → "especie", "Benefício" → "beneficio"
+const COMBINING = /[̀-ͯ]/g;
 function normalize(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(COMBINING, '')
+    .replace(/[^a-z0-9 ]/g, '')
+    .trim();
 }
 
 function findAllPos(H: string[], nm: string): number[] {
@@ -202,13 +214,13 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
   const cNm = findFirst(H, ['Nome']);
   const cCP = findFirst(H, ['CPF']);
   const cBn = findFirst(H, ['Beneficio']);
-  const cEs = findFirst(H, ['Especie']);
+  const cEs = findFirst(H, ['Especie', 'Espécie', 'Especie do Beneficio', 'Espécie do Benefício', 'Esp']);
   const cNs = findFirst(H, ['Data Nascimento']);
   const cDI = findFirst(H, ['DIB']);
   const cT1 = findFirst(H, ['Telefone1']);
   const cT2 = findFirst(H, ['Telefone2']);
   const cT3 = findFirst(H, ['Telefone3']);
-  const cVB = findFirst(H, ['Valor Beneficio', 'Valor Benefício', 'ValorBeneficio', 'Renda', 'Salario', 'Valor Renda', 'Vlr Beneficio', 'Vlr Renda']);
+  const cVB = findFirst(H, ['Valor Beneficio', 'Valor Benefício', 'ValorBeneficio', 'Valor do Beneficio', 'Valor do Benefício', 'Renda', 'Salario', 'Salário', 'Valor Renda', 'Vlr Beneficio', 'Vlr Renda']);
   const cMg = findFirst(H, ['Margem']);
 
   const allTE = findAllPos(H, 'Tipo Emprestimo');
