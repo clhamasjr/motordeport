@@ -1,4 +1,4 @@
-// api/multicorban.js — Proxy Multicorban — FlowForce
+﻿// api/multicorban.js — Proxy Multicorban — FlowForce
 // Suporte a multiplos beneficios + parser Bootstrap cards contratos
 import { json, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 import { dbInsert } from './_lib/supabase.js';
@@ -241,6 +241,10 @@ function parseConsultHTML(html) {
   result.beneficio.base_calculo = ei('base_calculo_consignavel');
   m = html.match(/Situa[çc]\u00e3o:\s*<\/small>\s*<small[^>]*>\s*(\w+)/i); if (m) result.beneficio.situacao = m[1].trim();
   m = html.match(/Descri[çc]\u00e3o da Esp\u00e9cie<\/small>\s*<input[^>]*value="\s*([^"]+)"/i); if (m) result.beneficio.especie = m[1].trim();
+  // Tenta capturar o CODIGO numerico da especie e prefixa na descricao para que pEN() funcione
+  { const mc = html.match(/(?:C[oó]digo\s+da\s+)?Esp[eé]cie<\/small>\s*<input[^>]*value="\s*(\d{1,3})\s*"/i);
+    if (mc && result.beneficio.especie && !result.beneficio.especie.match(/^\d/))
+      result.beneficio.especie = mc[1] + ' - ' + result.beneficio.especie; }
   m = html.match(/Data do extrato:\s*<\/small>\s*<small[^>]*>\s*([^<]+)/i); if (m) result.beneficio.data_extrato = m[1].trim();
   m = html.match(/DDB<\/small>\s*<input[^>]*value="\s*([^"]+)"/i); if (m) result.beneficio.ddb = m[1].trim();
   m = html.match(/Desbloqueio<\/small>\s*(?:<[^>]*>)*\s*<input[^>]*value="\s*([^"]+)"/i); if (m) result.beneficio.desbloqueio = m[1].trim();

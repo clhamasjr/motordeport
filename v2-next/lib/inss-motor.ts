@@ -218,8 +218,17 @@ export function pC(v: unknown): string {
 /** Parser de espécie INSS — extrai o número do prefixo. */
 export function pEN(e: unknown): number {
   if (!e) return 0;
-  const m = String(e).match(/^(\d+)/);
-  return m ? parseInt(m[1], 10) : 0;
+  const s = String(e);
+  // Caso 1: começa com dígitos — "87", "87 - BPC...", "41 - Aposent..."
+  const m = s.match(/^(\d+)/);
+  if (m) return parseInt(m[1], 10);
+  // Caso 2: descrição textual do Multicorban (sem código numérico no início)
+  //   espécie 87 = "BENEFÍCIO DE PRESTAÇÃO CONTINUADA DA ASSIST. SOCIAL À PESSOA PORTADORA DE DEFICIÊNCIA"
+  //   espécie 88 = "BENEFÍCIO DE PRESTAÇÃO CONTINUADA DA ASSIST. SOCIAL AO IDOSO"
+  if (/presta.*continuada|bpc\b|loas\b/i.test(s)) {
+    return /idoso/i.test(s) ? 88 : 87;
+  }
+  return 0;
 }
 
 /** Calcula idade a partir de data de nascimento. */
