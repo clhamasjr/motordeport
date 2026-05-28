@@ -4,10 +4,11 @@ import { BaseUpload } from '@/components/inss/base-upload';
 import { ElegiveisTable } from '@/components/inss/elegiveis-table';
 import { Card, CardContent } from '@/components/ui/card';
 import { useInssBaseStore } from '@/hooks/use-inss-base-store';
-import { Sparkles, FileSpreadsheet, TrendingUp } from 'lucide-react';
+import { Sparkles, FileSpreadsheet, TrendingUp, Download } from 'lucide-react';
 import { formatBRL } from '@/lib/utils';
 import { useState, useMemo } from 'react';
 import type { LoasRow } from '@/lib/inss-base-parser';
+import { Button } from '@/components/ui/button';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 const STATUS_LABEL: Record<string, string> = {
@@ -53,6 +54,48 @@ export default function HigienizacaoInssPage() {
       );
     return loasAll;
   }, [loasAll, loasFiltro]);
+
+  // Exporta LOAS em XLSX com 4 abas (Todos / Com Margem / Oport Cartão / Extrapolados)
+  async function exportLoasXlsx() {
+    if (loasAll.length === 0) return;
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    const STATUS_TXT: Record<string, string> = {
+      com_margem: 'Com margem',
+      extrapolado_emp: 'Extrap. empréstimo',
+      extrapolado_cartoes: 'Extrap. cartões',
+      sem_dados: 'Sem dados',
+    };
+    const toRow = (r: LoasRow) => ({
+      Nome: r.nome,
+      CPF: r.cpf,
+      Benefício: r.ben,
+      Espécie: r.esp,
+      'Benefício R$': r.beneficio,
+      'Teto 30%': r.tetoEmp,
+      'Comprometido R$': r.sumEmp,
+      '% Comp.': r.pctEmp,
+      'Margem Emp R$': r.margemLivreEmp,
+      'Margem Cart R$': r.margemLivreCart,
+      'Nº Cartões': r.numCartoes,
+      RMC: r.temRmc ? 'SIM' : '',
+      RCC: r.temRcc ? 'SIM' : '',
+      Idade: r.idade,
+      Status: STATUS_TXT[r.statusLoas] ?? r.statusLoas,
+      Tel1: r.t1, Tel2: r.t2, Tel3: r.t3,
+    });
+    const todos = loasAll.map(toRow);
+    const comMargem = loasComMargem.map(toRow);
+    const semCart = loasSemCart.map(toRow);
+    const extrap = loasExtrap.map(toRow);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(todos), `Todos LOAS (${todos.length})`);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(comMargem), `Com Margem (${comMargem.length})`);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(semCart), `Oport Cartao (${semCart.length})`);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(extrap), `Extrapolados (${extrap.length})`);
+    const fn = (base?.fname || 'base').replace(/\.[^.]+$/, '');
+    const ts = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `LOAS_${fn}_${ts}.xlsx`);
+  }
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-4">
@@ -156,12 +199,23 @@ export default function HigienizacaoInssPage() {
           {/* ── BASE LOAS/BPC ─────────────────────────────────────────────── */}
           {loasAll.length > 0 && (
             <div className="space-y-3">
-              {/* header */}
-              <div className="flex items-center gap-2">
-                <span className="text-lg font-bold">🔵 Base LOAS / BPC</span>
-                <span className="text-xs text-muted-foreground">
-                  (espécies 87/88 — só contrato novo, sem portabilidade)
-                </span>
+              {/* header + export */}
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-lg font-bold">🔵 Base LOAS / BPC</span>
+                  <span className="text-xs text-muted-foreground">
+                    (espécies 87/88 — só contrato novo, sem portabilidade)
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={exportLoasXlsx}
+                  className="border-blue-500/40 text-blue-300 hover:bg-blue-500/10"
+                >
+                  <Download className="size-4" />
+                  Exportar XLSX ({loasAll.length})
+                </Button>
               </div>
 
               {/* KPIs LOAS */}
