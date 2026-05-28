@@ -339,10 +339,12 @@ function calcularTudo(
   if (sumRcc > 0) cartoesQueResolvem.push({ tipo: 'RCC', valor: sumRcc, resolve: sumRcc >= excedente - 0.01 });
 
   // ── Campos LOAS/BPC ───────────────────────────────────────────────
+  // Regra NOVA: 35% emp puro (sem teto separado de cartão). Cartão averbado
+  // é flag — não consome margem própria de 5%. Espelho do "40% só emp" do INSS regular.
   const numCartoesLoas = (temRmc ? 1 : 0) + (temRcc ? 1 : 0);
-  const tetoEmpLoas = benef * 0.30;
+  const tetoEmpLoas = benef * 0.35;
   const margemLivreEmpLoas = benef > 0 ? Math.max(0, tetoEmpLoas - sumEmp) : 0;
-  const margemLivreCartLoas = benef > 0 && numCartoesLoas === 0 ? benef * 0.05 : 0;
+  const margemLivreCartLoas = 0; // sem teto separado de cartão em LOAS
   const pctEmpLoas = benef > 0 ? (sumEmp / benef) * 100 : 0;
   const statusLoas: AnaliseNovaRegra['statusLoas'] = !benef
     ? 'sem_dados'
@@ -414,7 +416,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
   const idadeNum = parsed.beneficiario?.idade ? parseInt(String(parsed.beneficiario.idade), 10) : null;
   const especieNum = pEN(parsed.beneficio?.especie || '');
 
-  // Empréstimo Novo — usa teto diferente pra LOAS (30%) vs normal (35%/40%)
+  // Empréstimo Novo — usa teto diferente pra LOAS (35%) vs normal (35%/40%)
   const margemLivreParaEmpNovo = isLoas ? margemLivreEmpLoas : (enquadraNovaRegra ? margemLivreNova : 0);
   const empNovoVlr185 = margemLivreParaEmpNovo > 0 ? margemLivreParaEmpNovo / COEF_EMP_185 : 0;
 
@@ -449,7 +451,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-lg">🔵</span>
-                <h3 className="font-bold text-base text-blue-300">LOAS / BPC — Regra especial 30%</h3>
+                <h3 className="font-bold text-base text-blue-300">LOAS / BPC — Regra especial 35%</h3>
                 <Badge variant="info" className="text-[10px]">Espécie {parsed.beneficio?.especie}</Badge>
                 <Badge variant="muted" className="text-[10px]">Sem portabilidade</Badge>
               </div>
@@ -457,22 +459,22 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                 variant={statusLoas === 'com_margem' ? 'success' : 'destructive'}
                 className="text-xs font-mono"
               >
-                {pctEmpLoas.toFixed(1)}% / 30%
+                {pctEmpLoas.toFixed(1)}% / 35%
               </Badge>
             </div>
 
             {/* Aviso LOAS */}
             <div className="rounded-md bg-blue-500/10 border border-blue-500/30 p-3 text-xs text-blue-200">
               <strong>LOAS/BPC</strong> aplica regras diferentes do INSS regular:{' '}
-              <strong>teto emp = 30%</strong> do benefício (não 35/40%),{' '}
-              <strong>1 cartão no máximo (5%)</strong>,{' '}
+              <strong>teto emp = 35%</strong> só pra empréstimo (sem teto separado de cartão),{' '}
+              <strong>máximo 1 cartão</strong>,{' '}
               <strong>sem portabilidade</strong> — somente contratos novos.
             </div>
 
             {/* KPIs LOAS */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               <div className="rounded-md border border-border bg-card/50 p-2">
-                <div className="text-[9px] uppercase text-muted-foreground font-semibold">Teto Emp (30%)</div>
+                <div className="text-[9px] uppercase text-muted-foreground font-semibold">Teto Emp (35%)</div>
                 <div className="font-mono font-bold text-blue-300">{formatBRL(tetoEmpLoas)}</div>
               </div>
               <div className="rounded-md border border-border bg-card/50 p-2">
@@ -503,7 +505,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                     <div className="font-bold text-green-400">✅ LOAS com margem disponível</div>
                     <div className="text-xs text-foreground mt-1">
                       Parcelas de emp <strong className="font-mono">{formatBRL(benef - margemLivreEmpLoas - tetoEmpLoas + benef * 0.30)}</strong>{' '}
-                      de <strong className="font-mono">{formatBRL(tetoEmpLoas)}</strong> (teto 30%).
+                      de <strong className="font-mono">{formatBRL(tetoEmpLoas)}</strong> (teto 35%).
                       Sobra <strong className="font-mono text-green-400">{formatBRL(margemLivreEmpLoas)}</strong> pra empréstimo novo.
                       {margemLivreCartLoas > 0 && (
                         <>{' '}Cliente sem cartão — pode contratar 1 cartão (margem{' '}
@@ -519,7 +521,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                 <div className="flex items-start gap-2">
                   <XCircle className="size-5 text-red-400 shrink-0 mt-0.5" />
                   <div>
-                    <div className="font-bold text-red-400">🔴 LOAS extrapolado — empréstimo acima de 30%</div>
+                    <div className="font-bold text-red-400">🔴 LOAS extrapolado — empréstimo acima de 35%</div>
                     <div className="text-xs text-foreground mt-1">
                       Parcelas de emp <strong className="font-mono text-red-400">{formatBRL(benef - margemLivreEmpLoas - tetoEmpLoas + benef * 0.30)}</strong>{' '}
                       ≥ teto <strong className="font-mono">{formatBRL(tetoEmpLoas)}</strong>. Sem margem pra novo contrato.
@@ -536,7 +538,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                   <div>
                     <div className="font-bold text-orange-400">🟠 LOAS extrapolado — {numCartoesLoas} cartões (máx 1)</div>
                     <div className="text-xs text-foreground mt-1">
-                      LOAS permite no máximo 1 cartão (5% do benefício). Cliente tem {numCartoesLoas} cartões averbados.
+                      LOAS permite no máximo 1 cartão. Cliente tem {numCartoesLoas} cartões averbados — operação inviável.
                     </div>
                   </div>
                 </div>
@@ -689,7 +691,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
           </div>
         )}
 
-        {/* Empréstimo Novo — LOAS: mostra se tem margem livre (30%); Regular: se enquadra */}
+        {/* Empréstimo Novo — LOAS: mostra se tem margem livre (35%); Regular: se enquadra */}
         {margemLivreParaEmpNovo > 0 && (
           <div className="rounded-lg border border-orange-500/40 bg-orange-500/5 p-3 space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
@@ -697,7 +699,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                 <div className="text-[10px] uppercase tracking-wider font-bold text-orange-400">💰 Empréstimo Novo</div>
                 <Badge variant="muted" className="text-[9px]">Parcela {formatBRL(margemLivreParaEmpNovo)}/mês</Badge>
                 {isLoas ? (
-                  <Badge variant="info" className="text-[9px]">teto 30% LOAS</Badge>
+                  <Badge variant="info" className="text-[9px]">teto 35% LOAS</Badge>
                 ) : (
                   <Badge
                     variant={temAlgumCartao ? 'muted' : 'info'}

@@ -72,7 +72,7 @@ export default function HigienizacaoInssPage() {
       Benefício: r.ben,
       Espécie: r.esp,
       'Benefício R$': r.beneficio,
-      'Teto 30%': r.tetoEmp,
+      'Teto 35%': r.tetoEmp,
       'Comprometido R$': r.sumEmp,
       '% Comp.': r.pctEmp,
       'Margem Emp R$': r.margemLivreEmp,
@@ -265,7 +265,7 @@ export default function HigienizacaoInssPage() {
                     <div className="text-2xl font-mono font-bold mt-1 text-red-400">
                       {loasExtrap.length}
                     </div>
-                    <div className="text-[10px] text-red-500">acima do teto 30%</div>
+                    <div className="text-[10px] text-red-500">acima do teto 35%</div>
                   </CardContent>
                 </Card>
               </div>
@@ -302,7 +302,7 @@ export default function HigienizacaoInssPage() {
                       <tr className="border-b border-border text-left">
                         {[
                           'Nome', 'CPF', 'Ben', 'Esp',
-                          'Benefício R$', 'Teto 30%', 'Comprometido', '% Comp.',
+                          'Benefício R$', 'Teto 35%', 'Comprometido', '% Comp.',
                           'Margem Emp', 'Margem Cart', 'Cartões', 'Idade',
                           'Status', 'Tel',
                         ].map((h) => (
@@ -342,7 +342,7 @@ export default function HigienizacaoInssPage() {
                           </td>
                           <td
                             className={`px-2 py-1.5 font-mono text-right font-bold ${
-                              r.pctEmp >= 30 ? 'text-red-400' : r.pctEmp >= 20 ? 'text-yellow-400' : 'text-green-400'
+                              r.pctEmp >= 35 ? 'text-red-400' : r.pctEmp >= 25 ? 'text-yellow-400' : 'text-green-400'
                             }`}
                           >
                             {r.pctEmp > 0 ? `${r.pctEmp}%` : '—'}

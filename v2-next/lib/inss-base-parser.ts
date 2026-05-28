@@ -325,19 +325,22 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     }
 
     // ── LOAS/BPC (espécies 87/88) — só contrato novo, sem portabilidade ──
+    // Regra NOVA: 35% empréstimo puro (sem teto separado de cartão), análogo ao
+    // INSS regular sem cartão = 40% só emp. Cartão averbado é flag, não tem 5% próprio.
     if (isLoas) {
       let sumEmpLoas = 0;
       for (const lb of lbs) { const par = gv(row, lb.cp); if (par > 0) sumEmpLoas += par; }
       const numCartoes = (realRmc ? 1 : 0) + (realRcc ? 1 : 0);
-      const benefLoas = valorBeneficio || (sumEmpLoas > 0 ? sumEmpLoas / 0.30 : 0);
-      const margemLivreEmp = benefLoas > 0 ? Math.max(0, benefLoas * 0.30 - sumEmpLoas) : 0;
-      const margemLivreCart = benefLoas > 0 && numCartoes === 0 ? benefLoas * 0.05 : 0;
+      const benefLoas = valorBeneficio || (sumEmpLoas > 0 ? sumEmpLoas / 0.35 : 0);
+      const tetoEmpLoas = benefLoas * 0.35;
+      const margemLivreEmp = benefLoas > 0 ? Math.max(0, tetoEmpLoas - sumEmpLoas) : 0;
+      const margemLivreCart = 0; // sem teto separado de cartão em LOAS
       const pctEmp = benefLoas > 0 ? Math.round(sumEmpLoas / benefLoas * 1000) / 10 : 0;
       const statusLoas: LoasStatus = !benefLoas
         ? 'sem_dados'
         : numCartoes >= 2
           ? 'extrapolado_cartoes'
-          : sumEmpLoas >= benefLoas * 0.30 - 0.01
+          : sumEmpLoas >= tetoEmpLoas - 0.01
             ? 'extrapolado_emp'
             : 'com_margem';
       loasAll.push({
@@ -346,7 +349,7 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
         numCartoes,
         sumEmp: Math.round(sumEmpLoas * 100) / 100,
         beneficio: Math.round(benefLoas * 100) / 100,
-        tetoEmp: Math.round(benefLoas * 0.30 * 100) / 100,
+        tetoEmp: Math.round(tetoEmpLoas * 100) / 100,
         pctEmp,
         margemLivreEmp: Math.round(margemLivreEmp * 100) / 100,
         margemLivreCart: Math.round(margemLivreCart * 100) / 100,
