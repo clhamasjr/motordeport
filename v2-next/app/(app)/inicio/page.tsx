@@ -2,16 +2,16 @@
 
 import { useAuth } from '@/hooks/use-auth';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Briefcase, Building2, Landmark, Trophy, Search, Download } from 'lucide-react';
+import { Briefcase, Building2, Landmark, Search, Sparkles, FileText } from 'lucide-react';
 import Link from 'next/link';
 
 const QUICK_LINKS = [
   { href: '/clt/consulta', label: 'Consulta CLT', desc: 'Multi-banco em paralelo', icon: Search, color: 'text-bank-pb' },
-  { href: '/clt/empresas-aprovadas', label: 'Empresas Aprovadas', desc: 'CNPJs com histórico', icon: Trophy, color: 'text-yellow-500' },
-  { href: '/clt/extrair-caged', label: 'Extrair CAGED', desc: '43,6M CPFs filtráveis', icon: Download, color: 'text-bank-c6' },
   { href: '/inss/consulta', label: 'Consulta INSS', desc: 'Aposentados/pensionistas', icon: Briefcase, color: 'text-purple-400' },
-  { href: '/governos/federal', label: 'SIAPE', desc: 'Servidor federal', icon: Landmark, color: 'text-bank-handbank' },
-  { href: '/prefeituras/catalogo', label: 'Prefeituras', desc: 'Municipais', icon: Building2, color: 'text-orange-400' },
+  { href: '/inss/higienizacao', label: 'Higienização INSS', desc: 'Base XLSX em lote', icon: Sparkles, color: 'text-cyan-400' },
+  { href: '/federal/catalogo', label: 'Federal (SIAPE)', desc: 'Servidor federal civil', icon: Landmark, color: 'text-bank-handbank' },
+  { href: '/governos/catalogo', label: 'Governos', desc: 'Servidores estaduais', icon: Building2, color: 'text-bank-c6' },
+  { href: '/prefeituras/catalogo', label: 'Prefeituras', desc: 'Servidores municipais', icon: FileText, color: 'text-orange-400' },
 ];
 
 export default function InicioPage() {
@@ -35,24 +35,6 @@ export default function InicioPage() {
            'Sua operação de hoje'}
         </p>
       </div>
-
-      <Card className="bg-gradient-to-br from-primary/5 to-accent/5 border-primary/20">
-        <CardContent className="p-4">
-          <div className="flex items-start gap-3">
-            <div className="text-2xl">🚧</div>
-            <div className="flex-1">
-              <div className="font-bold mb-1">FlowForce V2 em construção</div>
-              <p className="text-sm text-muted-foreground">
-                Versão moderna substituindo a anterior. Telas migrando uma a uma. Pra fluxos ainda não migrados, use o{' '}
-                <a href="https://motordeport.vercel.app" className="underline hover:text-primary">
-                  sistema V1
-                </a>
-                .
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
       <div>
         <h2 className="text-sm uppercase tracking-wider text-muted-foreground mb-3">Acesso rápido</h2>
