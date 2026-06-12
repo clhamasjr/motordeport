@@ -136,6 +136,7 @@ export default function InicioPage() {
 
           <div className="font-semibold text-foreground/80 pt-2">🧱 Foundation</div>
           <div className="pl-4">✅ Fix posicionamento de modais (Dialog renderizava fora da viewport em desktop)</div>
+          <div className="pl-4">✅ Tela inicial v2 (links corrigidos, tiles coloridos por módulo, sem banner V1)</div>
 
           <div className="font-semibold text-foreground/80 pt-2">⏳ Roadmap</div>
           <div className="pl-4">⏳ Consulta CLT com Supabase Realtime (substituir polling)</div>
