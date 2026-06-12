@@ -81,10 +81,11 @@ export async function verifySession(req) {
 
   if (error || !data) return null;
 
-  // Buscar usuario (inclui parceiro_id pra isolamento multi-tenant)
+  // Buscar usuario (inclui parceiro_id + bank_codes pra isolamento multi-tenant
+  // — bank_codes.WPP carrega a instance WhatsApp do vendedor)
   const { data: user, error: userErr } = await dbSelect('users', {
     filters: { id: data.user_id, active: true },
-    select: 'id,username,name,role,parceiro_id,nome_vendedor,nome_parceiro',
+    select: 'id,username,name,role,parceiro_id,nome_vendedor,nome_parceiro,bank_codes',
     single: true
   });
 

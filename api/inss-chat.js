@@ -30,29 +30,63 @@ async function evoSend(instance, telefone, text) {
   }
 }
 
-// Pega 1 instancia Evolution INSS associada ao usuario (do bank_codes.WPP ou da config geral)
-async function getUserInstance(user) {
-  const bc = user.bank_codes || {};
-  if (bc.WPP) return bc.WPP;
-  // Fallback: qualquer instancia INSS configurada globalmente
-  return process.env.INSS_DEFAULT_INSTANCE || '';
+// ── Isolamento por usuario ─────────────────────────────────────────
+// Admin/gestor (e chamadas internas via WEBHOOK_SECRET) enxergam tudo.
+// Vendedor: SO enxerga conversas da SUA instance (bank_codes.WPP).
+// Vendedor sem instance atribuida nao enxerga NADA (seguro por padrao).
+function isPriv(user) {
+  return !!(user && (user.role === 'admin' || user.role === 'gestor' || user._internal));
 }
 
-// Lista conversas com filtros (status, instance, scope)
-async function listConversas({ status, instance, limit = 100, scope = 'mine', user }) {
+// Instance Evolution do usuario (bank_codes.WPP). '' = sem instance.
+function userInstance(user) {
+  const bc = (user && user.bank_codes) || {};
+  return bc.WPP || '';
+}
+
+// Fallback de envio: instance propria > default global (so pra priv)
+function getUserInstance(user) {
+  const own = userInstance(user);
+  if (own) return own;
+  return isPriv(user) ? (process.env.INSS_DEFAULT_INSTANCE || '') : '';
+}
+
+// Carrega conversa COM checagem de dono. Vendedor so acessa conversa da
+// propria instance. Retorna { ok, conversa } ou { ok:false, forbidden }.
+async function loadConversaAutorizada(telefone, user) {
+  const numClean = String(telefone || '').replace(/\D/g, '');
+  if (!numClean) return { ok: false, error: 'telefone invalido' };
+  const { data, error } = await dbSelect('inss_conversas', {
+    filters: { telefone: numClean }, single: true
+  });
+  if (error) return { ok: false, error: error.message };
+  if (!data) return { ok: false, error: 'Conversa nao encontrada' };
+  if (!isPriv(user)) {
+    const inst = userInstance(user);
+    if (!inst || data.instance !== inst) {
+      return { ok: false, error: 'Sem permissao para esta conversa', forbidden: true };
+    }
+  }
+  return { ok: true, conversa: data };
+}
+
+// Lista conversas com filtros (status). Isolamento aplicado SEMPRE no servidor.
+async function listConversas({ status, limit = 100, user }) {
   let filters = {};
   if (status && status !== 'all') filters.status = status;
-  // Admin e gestor sempre enxergam TODAS as conversas, sem filtro de instance.
-  // Vendedor: filtra pela instance ativa do chat (se houver).
-  const isPriv = user && (user.role === 'admin' || user.role === 'gestor');
-  if (scope === 'mine' && instance && !isPriv) filters.instance = instance;
+  if (!isPriv(user)) {
+    const inst = userInstance(user);
+    // Vendedor sem instance atribuida: lista vazia (nao vaza conversas dos outros)
+    if (!inst) return { ok: true, conversas: [], filtroInstance: null, semInstancia: true };
+    filters.instance = inst;
+  }
   const { data, error } = await dbSelect('inss_conversas', {
     filters,
     order: 'last_msg_at.desc',
     limit
   });
   if (error) return { ok: false, error: error.message || 'Erro ao listar' };
-  return { ok: true, conversas: (data || []).map(simplifyConv), filtroInstance: filters.instance || null, scope, isPriv };
+  return { ok: true, conversas: (data || []).map(simplifyConv), filtroInstance: filters.instance || null, isPriv: isPriv(user) };
 }
 
 function simplifyConv(c) {
@@ -73,13 +107,10 @@ function simplifyConv(c) {
   };
 }
 
-async function getConversa(telefone) {
-  const { data, error } = await dbSelect('inss_conversas', {
-    filters: { telefone }, single: true
-  });
-  if (error) return { ok: false, error: error.message };
-  if (!data) return { ok: false, error: 'Conversa nao encontrada' };
-  return { ok: true, conversa: data };
+async function getConversa(telefone, user) {
+  const r = await loadConversaAutorizada(telefone, user);
+  if (!r.ok) return r;
+  return { ok: true, conversa: r.conversa };
 }
 
 async function appendMessage(telefone, msg) {
@@ -119,22 +150,28 @@ async function appendMessage(telefone, msg) {
 
 async function sendMessage({ telefone, content, instance, user }) {
   if (!telefone || !content) return { ok: false, error: 'telefone e content obrigatorios' };
-  // Grava na conversa (role=me) ANTES de tentar enviar — assim mesmo se Evolution falhar, fica histórico.
   const numClean = String(telefone).replace(/\D/g, '');
   const ts = new Date().toISOString();
-  // Prioridade pra escolher a instance:
-  // 1) explicitamente passada no body
-  // 2) instance ja gravada na propria conversa (criada pelo webhook quando o cliente escreveu)
-  // 3) bank_codes.WPP do usuario logado
-  // 4) INSS_DEFAULT_INSTANCE
-  let inst = instance || '';
-  if (!inst) {
-    try {
-      const { data: existing } = await dbSelect('inss_conversas', { filters: { telefone: numClean }, single: true });
-      if (existing && existing.instance) inst = existing.instance;
-    } catch {}
+  // Se a conversa ja existe, checa dono ANTES de gravar/enviar.
+  let existing = null;
+  {
+    const { data } = await dbSelect('inss_conversas', { filters: { telefone: numClean }, single: true });
+    existing = data || null;
   }
-  if (!inst) inst = await getUserInstance(user);
+  if (existing && !isPriv(user)) {
+    const own = userInstance(user);
+    if (!own || existing.instance !== own) {
+      return { ok: false, error: 'Sem permissao para esta conversa' };
+    }
+  }
+  // Prioridade pra escolher a instance:
+  // 1) instance da propria conversa (criada pelo webhook quando o cliente escreveu)
+  // 2) instance explicita do body (so priv pode forcar — vendedor usa a propria)
+  // 3) bank_codes.WPP do usuario logado
+  // 4) INSS_DEFAULT_INSTANCE (so priv)
+  let inst = (existing && existing.instance) || '';
+  if (!inst && instance && isPriv(user)) inst = instance;
+  if (!inst) inst = getUserInstance(user);
   await appendMessage(numClean, { role: 'me', content, ts, instance: inst, sender: user.username || user.user || '' });
   // Envia via Evolution
   if (!inst) return { ok: false, error: 'Sem instancia Evolution. Conecte WhatsApp em Admin -> Conexoes.' };
@@ -148,28 +185,25 @@ async function sendMessage({ telefone, content, instance, user }) {
   return { ok: true, delivered: true };
 }
 
-async function markRead(telefone) {
-  const numClean = String(telefone).replace(/\D/g, '');
-  const { data: existing } = await dbSelect('inss_conversas', { filters: { telefone: numClean }, single: true });
-  if (!existing) return { ok: false, error: 'nao encontrada' };
-  await dbUpdate('inss_conversas', { id: existing.id }, { unread_count: 0 });
+async function markRead(telefone, user) {
+  const r = await loadConversaAutorizada(telefone, user);
+  if (!r.ok) return r;
+  await dbUpdate('inss_conversas', { id: r.conversa.id }, { unread_count: 0 });
   return { ok: true };
 }
 
-async function setStatus(telefone, status) {
+async function setStatus(telefone, status, user) {
   if (!['open', 'pending', 'resolved'].includes(status)) return { ok: false, error: 'status invalido' };
-  const numClean = String(telefone).replace(/\D/g, '');
-  const { data: existing } = await dbSelect('inss_conversas', { filters: { telefone: numClean }, single: true });
-  if (!existing) return { ok: false, error: 'nao encontrada' };
-  await dbUpdate('inss_conversas', { id: existing.id }, { status });
+  const r = await loadConversaAutorizada(telefone, user);
+  if (!r.ok) return r;
+  await dbUpdate('inss_conversas', { id: r.conversa.id }, { status });
   return { ok: true, status };
 }
 
-async function setAgenteAtivo(telefone, ativo) {
-  const numClean = String(telefone).replace(/\D/g, '');
-  const { data: existing } = await dbSelect('inss_conversas', { filters: { telefone: numClean }, single: true });
-  if (!existing) return { ok: false, error: 'nao encontrada' };
-  await dbUpdate('inss_conversas', { id: existing.id }, { agente_ativo: !!ativo });
+async function setAgenteAtivo(telefone, ativo, user) {
+  const r = await loadConversaAutorizada(telefone, user);
+  if (!r.ok) return r;
+  await dbUpdate('inss_conversas', { id: r.conversa.id }, { agente_ativo: !!ativo });
   return { ok: true, agente_ativo: !!ativo };
 }
 
@@ -178,8 +212,17 @@ async function createConversa({ telefone, nome, instance, user }) {
   const numClean = String(telefone).replace(/\D/g, '');
   if (!numClean || numClean.length < 10) return { ok: false, error: 'telefone invalido' };
   const { data: existing } = await dbSelect('inss_conversas', { filters: { telefone: numClean }, single: true });
-  if (existing) return { ok: true, conversa: existing, existed: true };
-  const inst = instance || (await getUserInstance(user));
+  if (existing) {
+    // Se ja existe mas e de outra instance, vendedor nao pode "adotar"
+    if (!isPriv(user)) {
+      const own = userInstance(user);
+      if (!own || existing.instance !== own) return { ok: false, error: 'Ja existe conversa deste telefone em outra instance' };
+    }
+    return { ok: true, conversa: existing, existed: true };
+  }
+  // Vendedor SEMPRE cria na propria instance; priv pode forcar via body
+  const inst = isPriv(user) ? (instance || getUserInstance(user)) : userInstance(user);
+  if (!inst) return { ok: false, error: 'Sem instancia WhatsApp atribuida. Peca ao admin para configurar (bank_codes.WPP).' };
   const now = new Date().toISOString();
   const created = await dbInsert('inss_conversas', {
     telefone: numClean, nome: nome || '', instance: inst,
@@ -203,43 +246,44 @@ export default async function handler(req) {
     if (action === 'listConversas') {
       const r = await listConversas({
         status: body.status,
-        instance: body.instance || (await getUserInstance(user)),
-        scope: body.scope || 'mine',
         limit: body.limit || 100,
         user
       });
       return jsonResp(r, r.ok ? 200 : 500, req);
     }
     if (action === 'getConversa') {
-      const r = await getConversa(String(body.telefone || '').replace(/\D/g, ''));
-      return jsonResp(r, r.ok ? 200 : 404, req);
+      const r = await getConversa(body.telefone, user);
+      return jsonResp(r, r.ok ? 200 : (r.forbidden ? 403 : 404), req);
     }
     if (action === 'sendMessage') {
       const r = await sendMessage({ telefone: body.telefone, content: body.content, instance: body.instance, user });
       return jsonResp(r, r.ok ? 200 : 500, req);
     }
     if (action === 'markRead') {
-      const r = await markRead(body.telefone);
-      return jsonResp(r, r.ok ? 200 : 404, req);
+      const r = await markRead(body.telefone, user);
+      return jsonResp(r, r.ok ? 200 : (r.forbidden ? 403 : 404), req);
     }
     if (action === 'setStatus') {
-      const r = await setStatus(body.telefone, body.status);
-      return jsonResp(r, r.ok ? 200 : 400, req);
+      const r = await setStatus(body.telefone, body.status, user);
+      return jsonResp(r, r.ok ? 200 : (r.forbidden ? 403 : 400), req);
     }
     if (action === 'pausarAgente') {
-      const r = await setAgenteAtivo(body.telefone, false);
-      return jsonResp(r, r.ok ? 200 : 404, req);
+      const r = await setAgenteAtivo(body.telefone, false, user);
+      return jsonResp(r, r.ok ? 200 : (r.forbidden ? 403 : 404), req);
     }
     if (action === 'retomarAgente') {
-      const r = await setAgenteAtivo(body.telefone, true);
-      return jsonResp(r, r.ok ? 200 : 404, req);
+      const r = await setAgenteAtivo(body.telefone, true, user);
+      return jsonResp(r, r.ok ? 200 : (r.forbidden ? 403 : 404), req);
     }
     if (action === 'createConversa') {
       const r = await createConversa({ telefone: body.telefone, nome: body.nome, instance: body.instance, user });
       return jsonResp(r, r.ok ? 200 : 400, req);
     }
     // ── Helper interno: appendMessage chamado pelo webhook (api/agent.js) ──
+    // So aceita chamada interna (WEBHOOK_SECRET) ou admin — webhook grava
+    // mensagens de QUALQUER conversa, vendedor nao pode usar isso.
     if (action === 'appendMessage') {
+      if (!isPriv(user)) return jsonError('Sem permissao', 403, req);
       const r = await appendMessage(
         String(body.telefone || '').replace(/\D/g, ''),
         body.msg || {}
