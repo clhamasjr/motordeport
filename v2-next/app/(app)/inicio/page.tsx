@@ -5,13 +5,45 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Briefcase, Building2, Landmark, Search, Sparkles, FileText } from 'lucide-react';
 import Link from 'next/link';
 
+// Classes completas (não interpoladas) — Tailwind só gera classe que aparece
+// literal no fonte. Cada módulo tem cor própria pra leitura rápida.
 const QUICK_LINKS = [
-  { href: '/clt/consulta', label: 'Consulta CLT', desc: 'Multi-banco em paralelo', icon: Search, color: 'text-bank-pb' },
-  { href: '/inss/consulta', label: 'Consulta INSS', desc: 'Aposentados/pensionistas', icon: Briefcase, color: 'text-purple-400' },
-  { href: '/inss/higienizacao', label: 'Higienização INSS', desc: 'Base XLSX em lote', icon: Sparkles, color: 'text-cyan-400' },
-  { href: '/federal/catalogo', label: 'Federal (SIAPE)', desc: 'Servidor federal civil', icon: Landmark, color: 'text-bank-handbank' },
-  { href: '/governos/catalogo', label: 'Governos', desc: 'Servidores estaduais', icon: Building2, color: 'text-bank-c6' },
-  { href: '/prefeituras/catalogo', label: 'Prefeituras', desc: 'Servidores municipais', icon: FileText, color: 'text-orange-400' },
+  {
+    href: '/clt/consulta', label: 'Consulta CLT', desc: 'Multi-banco em paralelo', icon: Search,
+    iconClass: 'text-emerald-400',
+    boxClass: 'bg-emerald-500/10 ring-emerald-500/25 group-hover:ring-emerald-400/60',
+    cardClass: 'hover:border-emerald-500/50 hover:shadow-emerald-500/10',
+  },
+  {
+    href: '/inss/consulta', label: 'Consulta INSS', desc: 'Aposentados/pensionistas', icon: Briefcase,
+    iconClass: 'text-purple-400',
+    boxClass: 'bg-purple-500/10 ring-purple-500/25 group-hover:ring-purple-400/60',
+    cardClass: 'hover:border-purple-500/50 hover:shadow-purple-500/10',
+  },
+  {
+    href: '/inss/higienizacao', label: 'Higienização INSS', desc: 'Base XLSX em lote', icon: Sparkles,
+    iconClass: 'text-cyan-400',
+    boxClass: 'bg-cyan-500/10 ring-cyan-500/25 group-hover:ring-cyan-400/60',
+    cardClass: 'hover:border-cyan-500/50 hover:shadow-cyan-500/10',
+  },
+  {
+    href: '/federal/catalogo', label: 'Federal (SIAPE)', desc: 'Servidor federal civil', icon: Landmark,
+    iconClass: 'text-blue-400',
+    boxClass: 'bg-blue-500/10 ring-blue-500/25 group-hover:ring-blue-400/60',
+    cardClass: 'hover:border-blue-500/50 hover:shadow-blue-500/10',
+  },
+  {
+    href: '/governos/catalogo', label: 'Governos', desc: 'Servidores estaduais', icon: Building2,
+    iconClass: 'text-yellow-400',
+    boxClass: 'bg-yellow-500/10 ring-yellow-500/25 group-hover:ring-yellow-400/60',
+    cardClass: 'hover:border-yellow-500/50 hover:shadow-yellow-500/10',
+  },
+  {
+    href: '/prefeituras/catalogo', label: 'Prefeituras', desc: 'Servidores municipais', icon: FileText,
+    iconClass: 'text-orange-400',
+    boxClass: 'bg-orange-500/10 ring-orange-500/25 group-hover:ring-orange-400/60',
+    cardClass: 'hover:border-orange-500/50 hover:shadow-orange-500/10',
+  },
 ];
 
 export default function InicioPage() {
@@ -38,23 +70,27 @@ export default function InicioPage() {
 
       <div>
         <h2 className="text-sm uppercase tracking-wider text-muted-foreground mb-3">Acesso rápido</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
           {QUICK_LINKS.map((link) => {
             const Icon = link.icon;
             return (
-              <Link key={link.href} href={link.href}>
-                <Card className="hover:border-primary/50 hover:shadow-md transition-all cursor-pointer h-full">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-secondary/50 flex items-center justify-center flex-shrink-0">
-                        <Icon className={`w-5 h-5 ${link.color}`} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <CardTitle className="text-base">{link.label}</CardTitle>
-                        <CardDescription className="text-xs mt-0.5">{link.desc}</CardDescription>
-                      </div>
+              <Link key={link.href} href={link.href} className="group">
+                <Card
+                  className={`h-full cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:shadow-lg ${link.cardClass}`}
+                >
+                  <CardContent className="flex flex-col items-center text-center gap-3 p-5 sm:p-6">
+                    <div
+                      className={`w-16 h-16 sm:w-20 sm:h-20 rounded-2xl ring-1 flex items-center justify-center transition-all duration-200 ${link.boxClass}`}
+                    >
+                      <Icon
+                        className={`size-8 sm:size-10 ${link.iconClass} transition-transform duration-200 group-hover:scale-110`}
+                      />
                     </div>
-                  </CardHeader>
+                    <div>
+                      <div className="font-semibold text-sm sm:text-base leading-tight">{link.label}</div>
+                      <div className="text-[11px] sm:text-xs text-muted-foreground mt-1">{link.desc}</div>
+                    </div>
+                  </CardContent>
                 </Card>
               </Link>
             );
