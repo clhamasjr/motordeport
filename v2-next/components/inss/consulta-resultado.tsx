@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { formatCpf, formatBRL } from '@/lib/utils';
 import { ConsultaInssView } from '@/lib/inss-types';
 import {
-  X, Wallet, MapPin, CreditCard, Phone, FileText, RefreshCw,
+  X, Wallet, MapPin, CreditCard, Phone, FileText, RefreshCw, Users, Loader2,
 } from 'lucide-react';
 import { OportunidadesIdentificadas } from './oportunidades-identificadas';
 import { SaqueComplementar } from './saque-complementar';
@@ -20,9 +20,11 @@ interface Props {
   view: ConsultaInssView;
   onClose: () => void;
   onReConsult?: () => void;
+  onSwitchBeneficio?: (nb: string) => void;
+  switching?: boolean;
 }
 
-export function ConsultaResultado({ cpf, view, onClose, onReConsult }: Props) {
+export function ConsultaResultado({ cpf, view, onClose, onReConsult, onSwitchBeneficio, switching }: Props) {
   const { parsed } = view;
   const b = parsed.beneficiario || {};
   const ben = parsed.beneficio || {};
@@ -79,6 +81,54 @@ export function ConsultaResultado({ cpf, view, onClose, onReConsult }: Props) {
             </Button>
           </div>
         </div>
+
+        {/* Switcher de benefícios (quando o CPF tem mais de 1) */}
+        {onSwitchBeneficio && view.lista && view.lista.length > 1 && (() => {
+          const atualNb = (view.auto_selected || b.nb || ben.nb || '').replace(/\D/g, '');
+          return (
+            <div className="rounded-md border border-cyan-500/30 bg-cyan-500/5 p-2.5">
+              <div className="flex items-center gap-1.5 mb-2 text-[11px] font-semibold text-cyan-300">
+                <Users className="size-3.5" />
+                Este CPF tem {view.lista.length} benefícios — clique pra trocar
+                {switching && <Loader2 className="size-3 animate-spin ml-1" />}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {view.lista.map((it, i) => {
+                  const nb = (it.nb || '').replace(/\D/g, '');
+                  const atual = !!nb && nb === atualNb;
+                  const valor = parseBR(it.valor);
+                  return (
+                    <button
+                      key={`${nb}-${i}`}
+                      type="button"
+                      disabled={atual || switching || !nb}
+                      onClick={() => nb && onSwitchBeneficio(nb)}
+                      className={`rounded-md border px-2.5 py-1.5 text-left transition disabled:cursor-default ${
+                        atual
+                          ? 'border-cyan-500/60 bg-cyan-500/15'
+                          : 'border-border bg-card/50 hover:border-cyan-500/60 hover:bg-cyan-500/10'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-xs font-bold">{it.nb || '(s/ nº)'}</span>
+                        {it.especie && <Badge variant="muted" className="text-[9px]">esp {it.especie}</Badge>}
+                        {it.situacao && (
+                          <Badge variant={it.situacao === 'ATIVO' ? 'success' : 'warning'} className="text-[9px]">
+                            {it.situacao}
+                          </Badge>
+                        )}
+                        {atual && <Badge variant="info" className="text-[9px]">aberto</Badge>}
+                      </div>
+                      {valor > 0 && (
+                        <div className="text-[11px] font-mono font-bold text-green-400 mt-0.5">{formatBRL(valor)}</div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* KPIs principais */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">

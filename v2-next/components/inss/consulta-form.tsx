@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { formatCpf } from '@/lib/utils';
+import { formatCpf, formatBRL } from '@/lib/utils';
 import { useConsultaInss, useConsultaBeneficio } from '@/hooks/use-inss-consulta';
+import { parseBR } from '@/lib/inss-motor';
 import { Search, IdCard, Banknote } from 'lucide-react';
 import { ConsultaInssView, InssBenefListItem } from '@/lib/inss-types';
 
@@ -24,6 +25,7 @@ export function ConsultaForm({ onResult }: Props) {
   const [listaBenef, setListaBenef] = useState<{
     cpf: string;
     itens: InssBenefListItem[];
+    autoSelected?: string;
   } | null>(null);
   const mutCpf = useConsultaInss();
   const mutBenef = useConsultaBeneficio();
@@ -40,9 +42,10 @@ export function ConsultaForm({ onResult }: Props) {
     try {
       if (modo === 'cpf') {
         const view = await mutCpf.mutateAsync(raw);
-        // Se a API retornar lista (múltiplos benefícios) sem auto-seleção, mostra seletor
-        if (view.lista && view.lista.length > 1 && !view.auto_selected) {
-          setListaBenef({ cpf: raw, itens: view.lista });
+        // Se o CPF tem mais de 1 benefício, SEMPRE mostra o seletor pro usuário
+        // escolher qual abrir (mesmo que a API tenha auto-selecionado um ATIVO).
+        if (view.lista && view.lista.length > 1) {
+          setListaBenef({ cpf: raw, itens: view.lista, autoSelected: view.auto_selected });
           return;
         }
         onResult(raw, view);
@@ -58,7 +61,13 @@ export function ConsultaForm({ onResult }: Props) {
   async function escolherBeneficio(nb: string) {
     try {
       const view = await mutBenef.mutateAsync(nb);
-      onResult(listaBenef?.cpf || nb, view);
+      // Preserva a lista de benefícios + marca qual está aberto, pra habilitar
+      // o switcher dentro do resultado (trocar de benefício sem redigitar o CPF).
+      onResult(listaBenef?.cpf || nb, {
+        ...view,
+        lista: listaBenef?.itens,
+        auto_selected: nb,
+      });
       setListaBenef(null);
     } catch {
       // toast tratado no hook
@@ -153,18 +162,24 @@ export function ConsultaForm({ onResult }: Props) {
             <div className="grid gap-2">
               {listaBenef.itens.map((it, i) => {
                 const nb = (it.nb || '').replace(/\D/g, '');
+                const isSugerido = !!listaBenef.autoSelected && nb === listaBenef.autoSelected.replace(/\D/g, '');
+                const valor = parseBR(it.valor);
                 return (
                   <button
                     key={`${nb}-${i}`}
                     type="button"
                     onClick={() => nb && escolherBeneficio(nb)}
                     disabled={!nb || carregando}
-                    className="text-left rounded-md border border-border bg-card/50 p-3 hover:border-cyan-500/60 hover:bg-cyan-500/5 transition disabled:opacity-60"
+                    className={`text-left rounded-md border p-3 transition disabled:opacity-60 ${
+                      isSugerido
+                        ? 'border-cyan-500/60 bg-cyan-500/10 hover:bg-cyan-500/15'
+                        : 'border-border bg-card/50 hover:border-cyan-500/60 hover:bg-cyan-500/5'
+                    }`}
                   >
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono text-sm font-bold">{it.nb || '(s/ nº)'}</span>
                       {it.especie && (
-                        <Badge variant="muted" className="text-[10px]">{it.especie}</Badge>
+                        <Badge variant="muted" className="text-[10px]">esp {it.especie}</Badge>
                       )}
                       {it.situacao && (
                         <Badge
@@ -174,10 +189,23 @@ export function ConsultaForm({ onResult }: Props) {
                           {it.situacao}
                         </Badge>
                       )}
+                      {valor > 0 && (
+                        <span className="font-mono text-sm font-bold text-green-400 ml-auto">
+                          {formatBRL(valor)}
+                        </span>
+                      )}
                     </div>
-                    {it.nome && (
-                      <div className="text-[11px] text-muted-foreground mt-1">{it.nome}</div>
-                    )}
+                    <div className="flex items-center gap-2 flex-wrap mt-1">
+                      {it.nome && (
+                        <span className="text-[11px] text-muted-foreground">{it.nome}</span>
+                      )}
+                      {it.ddb && (
+                        <span className="text-[10px] text-muted-foreground/70 font-mono">DDB {it.ddb}</span>
+                      )}
+                      {isSugerido && (
+                        <Badge variant="info" className="text-[9px] ml-auto">sugerido (ativo)</Badge>
+                      )}
+                    </div>
                   </button>
                 );
               })}

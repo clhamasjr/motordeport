@@ -70,6 +70,8 @@ export interface InssBenefListItem {
   situacao?: string;
   especie?: string;
   nome?: string;
+  valor?: string;
+  ddb?: string;
 }
 
 export interface InssEndereco {

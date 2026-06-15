@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ConsultaForm } from '@/components/inss/consulta-form';
 import { ConsultaResultado } from '@/components/inss/consulta-resultado';
 import { ConsultaInssView } from '@/lib/inss-types';
+import { useConsultaBeneficio } from '@/hooks/use-inss-consulta';
 
 interface ConsultaAberta {
   cpf: string;
@@ -12,6 +13,8 @@ interface ConsultaAberta {
 
 export default function ConsultaInssPage() {
   const [resultados, setResultados] = useState<ConsultaAberta[]>([]);
+  const mutBenef = useConsultaBeneficio();
+  const [trocandoCpf, setTrocandoCpf] = useState<string | null>(null);
 
   const adicionar = (cpf: string, view: ConsultaInssView) => {
     setResultados((prev) => {
@@ -22,6 +25,19 @@ export default function ConsultaInssPage() {
 
   const remover = (cpf: string) => {
     setResultados((prev) => prev.filter((r) => r.cpf !== cpf));
+  };
+
+  // Troca o benefício aberto de um CPF (mantém a lista de benefícios pro switcher)
+  const trocarBeneficio = async (cpf: string, nb: string, view: ConsultaInssView) => {
+    setTrocandoCpf(cpf);
+    try {
+      const nova = await mutBenef.mutateAsync(nb);
+      adicionar(cpf, { ...nova, lista: view.lista, auto_selected: nb });
+    } catch {
+      // toast tratado no hook
+    } finally {
+      setTrocandoCpf(null);
+    }
   };
 
   return (
@@ -44,6 +60,8 @@ export default function ConsultaInssPage() {
               cpf={r.cpf}
               view={r.view}
               onClose={() => remover(r.cpf)}
+              onSwitchBeneficio={(nb) => trocarBeneficio(r.cpf, nb, r.view)}
+              switching={trocandoCpf === r.cpf}
             />
           ))}
         </div>
