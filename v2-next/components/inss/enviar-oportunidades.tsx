@@ -6,7 +6,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Send, MessageCircle, ExternalLink, Phone, Loader2, Bot, Copy, Check } from 'lucide-react';
+import { Send, MessageCircle, ExternalLink, Phone, Loader2, Bot, Copy, Check, ImageDown } from 'lucide-react';
 import { InssParsedResult } from '@/lib/inss-types';
 import { useSendMessage } from '@/hooks/use-inss-conversas';
 import { toast } from 'sonner';
@@ -34,14 +34,22 @@ export function EnviarOportunidadesButton({ parsed, cpf, linhas, instance }: Pro
   const [copiado, setCopiado] = useState(false);
   const sendMsg = useSendMessage();
 
+  // Identificação do benefício (importante quando o CPF tem mais de 1)
+  const nb = (parsed.beneficiario?.nb || parsed.beneficio?.nb || '').toString().trim();
+  const especie = (parsed.beneficio?.especie || '').toString().trim();
+  const valorBenef = (parsed.beneficio?.valor || '').toString().trim();
+
   const templatePadrao = useMemo(() => {
-    const saud = `Olá ${primeiroNome}! 👋\n\nSou da *LhamasCred*. Analisei o seu benefício do INSS e separei estas oportunidades pra você:`;
+    const saud = `Olá ${primeiroNome}! 👋\n\nSou da *LhamasCred*.`;
+    const ident = nb
+      ? ` Sobre o seu benefício *${nb}*${especie ? ` (${especie})` : ''}, analisei e separei estas oportunidades pra você:`
+      : ` Analisei o seu benefício do INSS e separei estas oportunidades pra você:`;
     const corpo = linhas.length
       ? '\n\n' + linhas.map((l) => `• ${l}`).join('\n')
       : '\n\nNo momento não identifiquei oportunidades automáticas, mas posso fazer uma análise detalhada.';
     const fecho = `\n\nTudo isso sem sair de casa e *sem compromisso*. Quer que eu te explique melhor? 😊`;
-    return saud + corpo + fecho;
-  }, [primeiroNome, linhas]);
+    return saud + ident + corpo + fecho;
+  }, [primeiroNome, nb, especie, linhas]);
 
   const [mensagem, setMensagem] = useState(templatePadrao);
   // Re-sincroniza o texto quando reabre (linhas podem ter mudado)
@@ -77,6 +85,122 @@ export function EnviarOportunidadesButton({ parsed, cpf, linhas, instance }: Pro
       }
       document.body.removeChild(ta);
     }
+  }
+
+  // ── Gera um JPG do card de oportunidades (canvas nativo, sem libs) ──
+  function gerarImagem() {
+    const W = 1080;
+    const PADX = 72;
+    const innerW = W - PADX * 2;
+
+    const wrap = (ctx: CanvasRenderingContext2D, text: string, maxW: number) => {
+      const words = text.split(' ');
+      const out: string[] = [];
+      let line = '';
+      for (const w of words) {
+        const test = line ? line + ' ' + w : w;
+        if (ctx.measureText(test).width > maxW && line) { out.push(line); line = w; }
+        else line = test;
+      }
+      if (line) out.push(line);
+      return out;
+    };
+    const rr = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    };
+
+    // 1ª passada: medir
+    const m = document.createElement('canvas').getContext('2d');
+    if (!m) { toast.error('Navegador não suporta geração de imagem'); return; }
+    const bulletPadX = 40;
+    const bulletInnerW = innerW - bulletPadX - 24;
+    m.font = '600 34px Arial';
+    const itens = linhas.length ? linhas : ['Análise detalhada disponível — fale com a gente.'];
+    const blocks = itens.map((l) => wrap(m, l, bulletInnerW));
+
+    const lineH = 46;
+    const blockGap = 22;
+    let H = 64 + 64 + 44 + 44 + 58;       // top + logo + subtitulo + divisor + olá nome
+    if (nb) H += 42;                       // linha benefício
+    H += 36;                               // gap antes dos bullets
+    for (const b of blocks) H += (28 + b.length * lineH + 28) + blockGap;
+    H += 24 + 48 + 40 + 56;               // gap + rodapé linha1 + linha2 + bottom
+
+    // 2ª passada: desenhar
+    const cv = document.createElement('canvas');
+    cv.width = W;
+    cv.height = Math.round(H);
+    const ctx = cv.getContext('2d');
+    if (!ctx) { toast.error('Navegador não suporta geração de imagem'); return; }
+
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#0b1626');
+    g.addColorStop(1, '#0a1f1a');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#22d3ee';
+    ctx.fillRect(0, 0, 12, H);
+
+    ctx.textBaseline = 'top';
+    let y = 64;
+    ctx.fillStyle = '#22d3ee';
+    ctx.font = '800 54px Arial';
+    ctx.fillText('LhamasCred', PADX, y);
+    y += 64;
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '400 26px Arial';
+    ctx.fillText('Oportunidades pro seu benefício INSS', PADX, y);
+    y += 44;
+    ctx.strokeStyle = 'rgba(148,163,184,0.25)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(PADX, y + 8); ctx.lineTo(W - PADX, y + 8); ctx.stroke();
+    y += 44;
+    ctx.fillStyle = '#f1f5f9';
+    ctx.font = '700 44px Arial';
+    ctx.fillText(`Olá, ${primeiroNome}!`, PADX, y);
+    y += 58;
+    if (nb) {
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '400 28px Arial';
+      ctx.fillText(`Benefício ${nb}${especie ? ' • ' + especie : ''}`, PADX, y);
+      y += 42;
+    }
+    y += 36;
+
+    for (const b of blocks) {
+      const bh = 28 + b.length * lineH + 28;
+      ctx.fillStyle = 'rgba(34,211,238,0.08)';
+      rr(ctx, PADX, y, innerW, bh, 18); ctx.fill();
+      ctx.fillStyle = 'rgba(52,211,153,0.9)';
+      rr(ctx, PADX, y, 8, bh, 4); ctx.fill();
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = '600 34px Arial';
+      let ty = y + 28;
+      for (const ln of b) { ctx.fillText(ln, PADX + bulletPadX, ty); ty += lineH; }
+      y += bh + blockGap;
+    }
+    y += 24;
+    ctx.fillStyle = '#34d399';
+    ctx.font = '700 30px Arial';
+    ctx.fillText('Sem sair de casa e sem compromisso.', PADX, y);
+    y += 48;
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '400 26px Arial';
+    ctx.fillText('Fale com a LhamasCred', PADX, y);
+
+    const url = cv.toDataURL('image/jpeg', 0.92);
+    const a = document.createElement('a');
+    a.href = url;
+    const safe = primeiroNome.replace(/[^a-zA-Z0-9]/g, '') || 'cliente';
+    a.download = `oportunidades_${safe}${nb ? '_' + nb : ''}.jpg`;
+    a.click();
+    toast.success('Imagem JPG gerada — confira seus downloads');
   }
 
   const temTelefone = telefones.length > 0;
@@ -174,15 +298,27 @@ export function EnviarOportunidadesButton({ parsed, cpf, linhas, instance }: Pro
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
                 Mensagem
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={copiarMensagem}
-                className={copiado ? 'border-green-500/60 text-green-400 h-7' : 'h-7'}
-              >
-                {copiado ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-                {copiado ? 'Copiado!' : 'Copiar'}
-              </Button>
+              <div className="flex gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={gerarImagem}
+                  className="h-7"
+                  title="Gerar um card em imagem (JPG) pra mandar pro cliente"
+                >
+                  <ImageDown className="size-3.5" />
+                  Baixar JPG
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={copiarMensagem}
+                  className={copiado ? 'border-green-500/60 text-green-400 h-7' : 'h-7'}
+                >
+                  {copiado ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+                  {copiado ? 'Copiado!' : 'Copiar'}
+                </Button>
+              </div>
             </div>
             <textarea
               value={mensagem}
