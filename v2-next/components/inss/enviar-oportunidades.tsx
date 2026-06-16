@@ -6,7 +6,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Send, MessageCircle, ExternalLink, Phone, Loader2, Bot } from 'lucide-react';
+import { Send, MessageCircle, ExternalLink, Phone, Loader2, Bot, Copy, Check } from 'lucide-react';
 import { InssParsedResult } from '@/lib/inss-types';
 import { useSendMessage } from '@/hooks/use-inss-conversas';
 import { toast } from 'sonner';
@@ -31,6 +31,7 @@ export function EnviarOportunidadesButton({ parsed, cpf, linhas, instance }: Pro
   const nome = parsed.beneficiario?.nome || '';
   const primeiroNome = nome.split(' ')[0] || 'tudo bem';
   const [telIdx, setTelIdx] = useState(0);
+  const [copiado, setCopiado] = useState(false);
   const sendMsg = useSendMessage();
 
   const templatePadrao = useMemo(() => {
@@ -47,7 +48,35 @@ export function EnviarOportunidadesButton({ parsed, cpf, linhas, instance }: Pro
   function abrir() {
     setMensagem(templatePadrao);
     setTelIdx(0);
+    setCopiado(false);
     setOpen(true);
+  }
+
+  async function copiarMensagem() {
+    try {
+      await navigator.clipboard.writeText(mensagem);
+      setCopiado(true);
+      toast.success('Mensagem copiada — é só colar no WhatsApp');
+      setTimeout(() => setCopiado(false), 2500);
+    } catch {
+      // Fallback pra navegadores sem clipboard API (ou HTTP)
+      const ta = document.createElement('textarea');
+      ta.value = mensagem;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try {
+        document.execCommand('copy');
+        setCopiado(true);
+        toast.success('Mensagem copiada — é só colar no WhatsApp');
+        setTimeout(() => setCopiado(false), 2500);
+      } catch {
+        toast.error('Não consegui copiar — selecione o texto e copie manualmente');
+      }
+      document.body.removeChild(ta);
+    }
   }
 
   const temTelefone = telefones.length > 0;
@@ -80,12 +109,11 @@ export function EnviarOportunidadesButton({ parsed, cpf, linhas, instance }: Pro
       <Button
         size="sm"
         onClick={abrir}
-        disabled={!temTelefone}
         className="bg-green-600 hover:bg-green-700 text-white"
-        title={temTelefone ? 'Enviar card de oportunidades pro cliente' : 'Cliente sem telefone na consulta'}
+        title="Gerar mensagem de oportunidades pra copiar ou enviar"
       >
         <Send className="size-3.5" />
-        Enviar oportunidades
+        Gerar mensagem
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -97,9 +125,15 @@ export function EnviarOportunidadesButton({ parsed, cpf, linhas, instance }: Pro
             </DialogTitle>
             <DialogDescription>
               Mensagem montada automaticamente com as oportunidades do cliente.
-              Revise/edite e envie — sem montar proposta.
+              Edite se quiser, copie e cole no WhatsApp — sem montar proposta.
             </DialogDescription>
           </DialogHeader>
+
+          {!temTelefone && (
+            <div className="rounded-md border border-yellow-500/40 bg-yellow-500/5 p-2 text-xs text-yellow-300">
+              Cliente sem telefone na consulta — gere a mensagem, copie e cole no WhatsApp manualmente.
+            </div>
+          )}
 
           {/* Telefone */}
           {telefones.length > 1 ? (
@@ -136,8 +170,19 @@ export function EnviarOportunidadesButton({ parsed, cpf, linhas, instance }: Pro
 
           {/* Mensagem editável */}
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
-              Mensagem
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+                Mensagem
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={copiarMensagem}
+                className={copiado ? 'border-green-500/60 text-green-400 h-7' : 'h-7'}
+              >
+                {copiado ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+                {copiado ? 'Copiado!' : 'Copiar'}
+              </Button>
             </div>
             <textarea
               value={mensagem}
