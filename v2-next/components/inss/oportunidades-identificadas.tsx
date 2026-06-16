@@ -16,6 +16,7 @@ import {
   CheckCircle2, XCircle, Scissors, RefreshCw, Send,
 } from 'lucide-react';
 import { DigitarFinantoModal } from './digitar-finanto-modal';
+import { EnviarOportunidadesButton } from './enviar-oportunidades';
 
 // Coef pra estimativa rápida em 108 MESES @ 1.85% (teto INSS, tabela alta)
 // Cliente com margem livre faz empréstimo novo 108m — coef PRICE = 0.02153
@@ -431,6 +432,34 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoas, enquadraNovaRegra, margemLivreParaEmpNovo, idadeNum, especieNum]);
 
+  // ── Linhas do "card de oportunidades" pro cliente (WhatsApp) ──
+  // Resume em linguagem de cliente o que ele PODE fazer — sem montar proposta.
+  const linhasOportunidade = useMemo(() => {
+    const L: string[] = [];
+    // Empréstimo novo (LOAS usa teto 35%; regular só se enquadra)
+    if (margemLivreParaEmpNovo > 0 && empNovoVlr185 > 0) {
+      L.push(`Empréstimo novo: até ${formatBRL(empNovoVlr185)} na conta (parcela ${formatBRL(margemLivreParaEmpNovo)}/mês em 108x)`);
+    }
+    if (!isLoas) {
+      // Portabilidade com troco
+      const comTroco = contratos.filter((c) => !c.bloqueado && c.portRefin108 && c.portRefin108.port_troco > 0);
+      const trocoTotal = comTroco.reduce((s, c) => s + (c.portRefin108?.port_troco || 0), 0);
+      if (trocoTotal > 0) {
+        L.push(`Dinheiro extra trocando seu contrato de banco: até ${formatBRL(trocoTotal)} mantendo a mesma parcela`);
+      }
+      // Redução de parcela (quando fora de regra e há solução)
+      if (!enquadraNovaRegra) {
+        const reducaoMax = contratos
+          .filter((c) => c.resolveExcedente && c.portRefin108)
+          .reduce((s, c) => Math.max(s, c.portRefin108?.refin_reducao || 0), 0);
+        if (reducaoMax > 0) {
+          L.push(`Redução de parcela: até ${formatBRL(reducaoMax)}/mês a menos no seu desconto`);
+        }
+      }
+    }
+    return L;
+  }, [isLoas, enquadraNovaRegra, margemLivreParaEmpNovo, empNovoVlr185, contratos]);
+
   return (
     <Card className={
       isLoas
@@ -443,6 +472,11 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
         : 'border-green-500/30 bg-green-500/5'
     }>
       <CardContent className="p-4 space-y-3">
+
+        {/* Enviar card de oportunidades pro cliente (WhatsApp) — sem montar proposta */}
+        <div className="flex justify-end">
+          <EnviarOportunidadesButton parsed={parsed} cpf={cpf} linhas={linhasOportunidade} />
+        </div>
 
         {/* ═══════════════ LOAS/BPC ═══════════════════════════════════════ */}
         {isLoas ? (

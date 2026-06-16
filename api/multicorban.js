@@ -464,11 +464,32 @@ function parseConsultHTML(html) {
     result.cartoes.push({ tipo, banco, margem: margem || '0,00', limite: limite || '0,00' });
   }
 
-  // Telefones
-  const telRe = /phone=55(\d+)"/gi; let tl;
-  while ((tl = telRe.exec(html)) !== null) { if (!result.telefones.includes(tl[1])) result.telefones.push(tl[1]); }
-  const fxRe = /class="phone_fixo"[^>]*>\s*(\d+)/gi; let fx;
-  while ((fx = fxRe.exec(html)) !== null) { if (!result.telefones.includes(fx[1])) result.telefones.push(fx[1]); }
+  // Telefones — normaliza pra objeto { ddd, numero, completo, whatsapp }
+  // (a UI espera objeto, NAO string crua). Coleta de 3 padroes do HTML Multicorban:
+  //   1) link whatsapp ...phone=55XXXXXXXXXXX
+  //   2) <a class="phone_with_ddd">XXXXXXXXXXX</a>
+  //   3) <span class="phone_fixo">XXXXXXXXXX</span>
+  {
+    const telSet = new Set();
+    let mt;
+    const reWpp = /phone=55(\d{10,11})/gi;
+    while ((mt = reWpp.exec(html)) !== null) telSet.add(mt[1]);
+    const reDdd = /class="phone_with_ddd[^"]*"[^>]*>\s*([\d()\s-]+?)\s*<\/a>/gi;
+    while ((mt = reDdd.exec(html)) !== null) telSet.add(mt[1].replace(/\D/g, ''));
+    const reFixo = /class="phone_fixo[^"]*"[^>]*>\s*([\d()\s-]+?)\s*</gi;
+    while ((mt = reFixo.exec(html)) !== null) telSet.add(mt[1].replace(/\D/g, ''));
+    for (const t of telSet) {
+      const clean = String(t).replace(/\D/g, '');
+      if (clean.length >= 10 && clean.length <= 11) {
+        result.telefones.push({
+          ddd: clean.substring(0, 2),
+          numero: clean.substring(2),
+          completo: clean,
+          whatsapp: true,
+        });
+      }
+    }
+  }
 
   // Endereco
   m = html.match(/UF<\/small>\s*<input[^>]*value="\s*([^"]+)"/i); if (m) result.endereco.uf = m[1].trim();
