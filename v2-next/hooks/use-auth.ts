@@ -13,6 +13,7 @@ export interface AuthUser {
   parceiro_id?: number | null;
   nome_vendedor?: string | null;
   nome_parceiro?: string | null;
+  bank_codes?: Record<string, string> | null;
 }
 
 // V1 retorna { ok: true, user } — não { success: true }

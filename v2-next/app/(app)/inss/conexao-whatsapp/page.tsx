@@ -9,9 +9,13 @@ import { Label } from '@/components/ui/label';
 import {
   useEvoStatus, useEvoDiag, useResetWebhook, useStressTest, useIdleFollowup,
 } from '@/hooks/use-inss-evolution';
+import { useAuth } from '@/hooks/use-auth';
+import { ConectarMeuWhatsApp } from '@/components/inss/conectar-meu-whatsapp';
 import { Smartphone, RefreshCw, CheckCircle2, AlertCircle, Zap, MessageCircle, Activity } from 'lucide-react';
 
 export default function ConexaoWhatsAppPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'gestor';
   const { data: status, refetch, isFetching } = useEvoStatus();
   const diag = useEvoDiag();
   const reset = useResetWebhook();
@@ -27,12 +31,21 @@ export default function ConexaoWhatsAppPage() {
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Smartphone className="size-6 text-green-400" />
-          INSS — Conexão WhatsApp (Sofia + Evolution)
+          Conectar WhatsApp
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Status do agente Sofia + Evolution API. Diagnóstico, reset de webhook, stress test e disparo
-          manual de follow-up.
+          Conecte o seu número pra atender clientes pela plataforma.
         </p>
+      </div>
+
+      {/* Conectar meu WhatsApp — disponível pra TODOS os usuários */}
+      <ConectarMeuWhatsApp />
+
+      {/* ── Ferramentas avançadas (só admin/gestor) ───────────────── */}
+      {!isAdmin ? null : (
+      <>
+      <div className="pt-2 text-xs uppercase tracking-wider text-muted-foreground font-semibold">
+        Ferramentas avançadas (Sofia + Evolution)
       </div>
 
       {/* Status geral */}
@@ -193,6 +206,8 @@ export default function ConexaoWhatsAppPage() {
           </div>
         </CardContent>
       </Card>
+      </>
+      )}
     </div>
   );
 }

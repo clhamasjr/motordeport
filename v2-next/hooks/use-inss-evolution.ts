@@ -105,6 +105,73 @@ export function useIdleFollowup() {
 }
 
 // ──────────────────────────────────────────────────────────────────
+// Conectar meu WhatsApp (vendedor cria/pareia a própria instância)
+// ──────────────────────────────────────────────────────────────────
+
+export interface QrResponse {
+  success?: boolean;
+  qrcode?: string | null;      // data:image/png;base64,... ou base64 puro
+  instance?: unknown;
+  error?: string;
+  state?: string;
+}
+
+/** Cria a instância Evolution e retorna o QR code pra parear. */
+export function useCreateInstance() {
+  return useMutation({
+    mutationFn: async (name: string) => {
+      const r = await api<QrResponse>('/api/evolution', { action: 'create', name });
+      return r;
+    },
+    onError: (err: Error) => toast.error(err.message || 'Erro ao criar instância'),
+  });
+}
+
+/** Reconecta uma instância existente e retorna QR (pra reparear). */
+export function useConnectInstance() {
+  return useMutation({
+    mutationFn: async (instance: string) => {
+      const r = await api<QrResponse>('/api/evolution', { action: 'connect', instance });
+      return r;
+    },
+    onError: (err: Error) => toast.error(err.message || 'Erro ao conectar'),
+  });
+}
+
+/** Estado da conexão da instância (open = conectado). */
+export function useInstanceStatus(instance: string | null, ativo: boolean) {
+  return useQuery({
+    queryKey: ['inss-evolution', 'instance-status', instance],
+    queryFn: async () => {
+      const r = await api<{ instance?: { state?: string }; state?: string }>(
+        '/api/evolution', { action: 'status', instance },
+      );
+      return (r?.instance?.state || r?.state || 'unknown') as string;
+    },
+    enabled: !!instance && ativo,
+    refetchInterval: ativo ? 3000 : false,
+  });
+}
+
+/** Salva a instância no PRÓPRIO usuário (bank_codes.WPP). */
+export function useSaveMyWhatsapp() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (instance: string) => {
+      const r = await api<{ ok: boolean; instance?: string; error?: string }>(
+        '/api/auth', { action: 'set_my_whatsapp', instance },
+      );
+      if (!r.ok) throw new Error(r.error || 'Erro ao salvar');
+      return r;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['auth', 'me'] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}
+
+// ──────────────────────────────────────────────────────────────────
 // Knowledge base
 // ──────────────────────────────────────────────────────────────────
 export interface KnowledgeItem {

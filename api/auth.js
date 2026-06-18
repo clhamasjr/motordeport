@@ -137,6 +137,22 @@ export default async function handler(req) {
     return json({ ok: true, user: data }, 200, req);
   }
 
+  // ── SET MY WHATSAPP — qualquer usuario salva a PROPRIA instancia Evolution ──
+  // Usado pela tela "Conectar meu WhatsApp": grava bank_codes.WPP do proprio
+  // usuario logado (nao precisa ser admin). E o que liga o isolamento de
+  // conversas (cada vendedor so ve as conversas da sua instance).
+  if (action === 'set_my_whatsapp') {
+    const raw = String(body.instance || '').trim();
+    // sanitiza: nome de instance Evolution = letras, numeros, hifen, underscore
+    const instance = raw.replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!instance) return json({ ok: false, error: 'Nome da instancia invalido' }, 400, req);
+    const { data: meRow } = await dbSelect('users', { filters: { id: currentUser.id }, select: 'id,bank_codes', single: true });
+    const merged = Object.assign({}, meRow?.bank_codes || {}, { WPP: instance });
+    await dbUpdate('users', { id: currentUser.id }, { bank_codes: merged });
+    await dbInsert('audit_log', { user_id: currentUser.id, action: 'set_my_whatsapp', details: { instance } }).catch(() => {});
+    return json({ ok: true, mensagem: 'WhatsApp vinculado ao seu usuario', instance, bank_codes: merged }, 200, req);
+  }
+
   // ── MY TEAM — Lista users do parceiro do gestor atual ───
   // Util pra aplicar filtro "ver so meu time" em consultas/esteira/CRM
   if (action === 'my_team') {

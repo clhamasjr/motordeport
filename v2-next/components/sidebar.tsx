@@ -60,7 +60,7 @@ const NAV: NavGroup[] = [
       { href: '/inss/gestao', label: 'Painel Operacional', icon: Activity, needsRole: ['admin', 'gestor'], section: 'esteira' },
       // ── Config ──
       { href: '/inss/sofia-knowledge', label: 'Sofia — Knowledge', icon: BookOpen, needsRole: ['admin'], section: 'config' },
-      { href: '/inss/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['admin', 'gestor'], section: 'config' },
+      { href: '/inss/conexao-whatsapp', label: 'Conectar WhatsApp', icon: Smartphone, section: 'config' },
       { href: '/inss/motor-test', label: 'Motor — Testes', icon: Zap, needsRole: ['admin'], section: 'config' },
     ],
   },
