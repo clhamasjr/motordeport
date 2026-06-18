@@ -116,25 +116,18 @@ export interface QrResponse {
   state?: string;
 }
 
-/** Cria a instância Evolution e retorna o QR code pra parear. */
-export function useCreateInstance() {
-  return useMutation({
-    mutationFn: async (name: string) => {
-      const r = await api<QrResponse>('/api/evolution', { action: 'create', name });
-      return r;
-    },
-    onError: (err: Error) => toast.error(err.message || 'Erro ao criar instância'),
-  });
-}
-
-/** Reconecta uma instância existente e retorna QR (pra reparear). */
-export function useConnectInstance() {
+/**
+ * Cria/pareia a instância do vendedor JÁ deixando o webhook apontado pra Sofia
+ * (cria → connect → webhook /api/agent → desliga Chatwoot). Retorna QR + estado.
+ * É a ação "criar, conectar e vender" num passo só.
+ */
+export function useConnectMyWhatsapp() {
   return useMutation({
     mutationFn: async (instance: string) => {
-      const r = await api<QrResponse>('/api/evolution', { action: 'connect', instance });
+      const r = await api<QrResponse>('/api/agent', { action: 'connectMyWhatsapp', instance });
       return r;
     },
-    onError: (err: Error) => toast.error(err.message || 'Erro ao conectar'),
+    onError: (err: Error) => toast.error(err.message || 'Erro ao conectar WhatsApp'),
   });
 }
 

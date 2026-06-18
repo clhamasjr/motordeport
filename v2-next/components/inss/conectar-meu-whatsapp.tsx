@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/hooks/use-auth';
 import {
-  useCreateInstance, useConnectInstance, useInstanceStatus, useSaveMyWhatsapp,
+  useConnectMyWhatsapp, useInstanceStatus, useSaveMyWhatsapp,
 } from '@/hooks/use-inss-evolution';
 import { Smartphone, QrCode, CheckCircle2, RefreshCw, Loader2, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -45,8 +45,7 @@ export function ConectarMeuWhatsApp() {
   const [pareando, setPareando] = useState(false);
   const [instanciaAtiva, setInstanciaAtiva] = useState<string | null>(instanciaSalva || null);
 
-  const criar = useCreateInstance();
-  const conectar = useConnectInstance();
+  const conectarWpp = useConnectMyWhatsapp();
   const salvar = useSaveMyWhatsapp();
   const { data: estado } = useInstanceStatus(instanciaAtiva, pareando || !!instanciaSalva);
 
@@ -67,16 +66,13 @@ export function ConectarMeuWhatsApp() {
     const inst = slug(nome);
     if (!inst) { toast.error('Defina um nome pra sua conexão'); return; }
     setInstanciaAtiva(inst);
-    // Se já é a instância salva, tenta reconectar; senão cria nova.
-    const jaExiste = inst === slug(instanciaSalva);
-    const r = jaExiste
-      ? await conectar.mutateAsync(inst)
-      : await criar.mutateAsync(inst).catch(async () => conectar.mutateAsync(inst));
+    // Uma chamada só: cria/pareia + já configura webhook da Sofia.
+    const r = await conectarWpp.mutateAsync(inst);
     const img = normalizaQr(r?.qrcode);
     if (img) {
       setQr(img);
       setPareando(true);
-    } else if ((r?.state || (r as { instance?: { state?: string } })?.instance?.state) === 'open') {
+    } else if (r?.state === 'open') {
       // já estava conectado
       setPareando(false);
       salvar.mutate(inst, { onSuccess: () => toast.success('WhatsApp já conectado — vinculado ao seu usuário!') });
@@ -85,7 +81,7 @@ export function ConectarMeuWhatsApp() {
     }
   }
 
-  const carregando = criar.isPending || conectar.isPending;
+  const carregando = conectarWpp.isPending;
 
   return (
     <Card className="border-green-500/30">

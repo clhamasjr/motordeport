@@ -1519,6 +1519,64 @@ Use VALORES EXATOS do motor. SÓ a melhor opção. *Negrito* nos números. Termi
       return jsonResp({ success: true, conv }, 200, req);
     }
 
+    // ── CONNECT MY WHATSAPP — vendedor cria/pareia a propria instancia ──
+    // Faz TUDO de uma vez pra ele "criar, conectar e vender":
+    //   1) cria a instancia (ou reconecta se ja existe) e pega o QR
+    //   2) desliga Chatwoot nativo + aponta o webhook pra Sofia (/api/agent)
+    //   3) retorna { qrcode, state } pro front mostrar e fazer polling
+    if (action === 'connectMyWhatsapp') {
+      const inst = String(body.instance || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!inst) return jsonResp({ error: 'instance obrigatorio' }, 400, req);
+
+      let qrBase64 = null;
+      // 1) cria (qrcode:true). Se ja existir, a Evolution ignora/erra — tratamos no connect.
+      try {
+        const cr = await evoCall('POST', '/instance/create', {
+          instanceName: inst, integration: 'WHATSAPP-BAILEYS', qrcode: true,
+          rejectCall: false, groupsIgnore: true, alwaysOnline: false,
+          readMessages: false, readStatus: false, syncFullHistory: false,
+        });
+        if (cr) {
+          if (cr.qrcode && cr.qrcode.base64) qrBase64 = cr.qrcode.base64;
+          else if (cr.base64) qrBase64 = cr.base64;
+        }
+      } catch { /* pode ja existir */ }
+
+      // 2) se nao veio QR (instancia ja existia), pede connect
+      if (!qrBase64) {
+        try {
+          const cn = await evoCall('GET', '/instance/connect/' + inst);
+          if (cn) {
+            if (cn.base64) qrBase64 = cn.base64;
+            else if (cn.qrcode && cn.qrcode.base64) qrBase64 = cn.qrcode.base64;
+            else if (cn.code) qrBase64 = cn.code;
+          }
+        } catch {}
+      }
+
+      // 3) webhook pra Sofia + desliga Chatwoot (mesma logica do resetWebhook)
+      const appUrl = process.env.APP_URL || 'https://flowforce.vercel.app';
+      const secret = process.env.WEBHOOK_SECRET || '';
+      const webhookUrl = `${appUrl}/api/agent${secret ? '?s=' + encodeURIComponent(secret) : ''}`;
+      const events = ['MESSAGES_UPSERT'];
+      const headers = secret ? { 'x-webhook-secret': secret } : null;
+      try { await evoCall('POST', '/chatwoot/set/' + inst, { enabled: false, accountId: '0', token: '', url: '' }); } catch {}
+      try {
+        const payload = { enabled: true, url: webhookUrl, webhookByEvents: false, webhookBase64: false, events };
+        if (headers) payload.headers = headers;
+        const r = await evoCall('POST', '/webhook/set/' + inst, payload);
+        if (!(r && (r.enabled || r.webhook?.enabled))) {
+          await evoCall('POST', '/webhook/set/' + inst, { webhook: { enabled: true, url: webhookUrl, webhookByEvents: false, webhookBase64: false, events, headers } });
+        }
+      } catch {}
+
+      // 4) estado atual (open = ja conectado)
+      let state = null;
+      try { const st = await evoCall('GET', '/instance/connectionState/' + inst); state = st?.instance?.state || st?.state || null; } catch {}
+
+      return jsonResp({ success: true, instance: inst, qrcode: qrBase64, state }, 200, req);
+    }
+
     if (action === 'setWebhook') {
       const inst = body.instance || '';
       if (!inst) return jsonResp({ error: 'instance obrigatorio' }, 400, req);
