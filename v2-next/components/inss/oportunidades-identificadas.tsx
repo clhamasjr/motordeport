@@ -120,9 +120,9 @@ interface AnaliseNovaRegra {
   isLoas: boolean;
   // campos abaixo só significativos quando isLoas=true
   numCartoesLoas: number;       // total de cartões averbados (RMC + RCC)
-  tetoEmpLoas: number;          // benef * 0.30
+  tetoEmpLoas: number;          // benef * 0.35
   margemLivreEmpLoas: number;   // tetoEmpLoas - sumEmp (≥ 0)
-  margemLivreCartLoas: number;  // benef * 0.05 se numCartoesLoas === 0, senão 0
+  margemLivreCartLoas: number;  // 0 — LOAS não tem teto separado de cartão
   pctEmpLoas: number;           // sumEmp / benef * 100
   statusLoas: 'sem_dados' | 'com_margem' | 'extrapolado_emp' | 'extrapolado_cartoes';
 }
@@ -403,7 +403,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
 
   const {
     benef, total, compPct, teto40Total, tetoEmpReal, temAlgumCartao,
-    enquadraNovaRegra, excedente, margemLivreNova,
+    enquadraNovaRegra, excedente, margemLivreNova, sumEmp,
     contratosQueResolvem, cartoesQueResolvem,
     isLoas, numCartoesLoas, tetoEmpLoas, margemLivreEmpLoas,
     margemLivreCartLoas, pctEmpLoas, statusLoas,
@@ -513,8 +513,8 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
               </div>
               <div className="rounded-md border border-border bg-card/50 p-2">
                 <div className="text-[9px] uppercase text-muted-foreground font-semibold">Comprometido</div>
-                <div className={`font-mono font-bold ${pctEmpLoas >= 30 ? 'text-red-400' : pctEmpLoas >= 20 ? 'text-yellow-400' : 'text-foreground'}`}>
-                  {formatBRL(benef > 0 ? benef - margemLivreEmpLoas - tetoEmpLoas + benef * 0.30 : 0)} ({pctEmpLoas.toFixed(1)}%)
+                <div className={`font-mono font-bold ${pctEmpLoas >= 35 ? 'text-red-400' : pctEmpLoas >= 25 ? 'text-yellow-400' : 'text-foreground'}`}>
+                  {formatBRL(sumEmp)} ({pctEmpLoas.toFixed(1)}%)
                 </div>
               </div>
               <div className="rounded-md border border-border bg-card/50 p-2">
@@ -538,7 +538,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                   <div>
                     <div className="font-bold text-green-400">✅ LOAS com margem disponível</div>
                     <div className="text-xs text-foreground mt-1">
-                      Parcelas de emp <strong className="font-mono">{formatBRL(benef - margemLivreEmpLoas - tetoEmpLoas + benef * 0.30)}</strong>{' '}
+                      Parcelas de emp <strong className="font-mono">{formatBRL(sumEmp)}</strong>{' '}
                       de <strong className="font-mono">{formatBRL(tetoEmpLoas)}</strong> (teto 35%).
                       Sobra <strong className="font-mono text-green-400">{formatBRL(margemLivreEmpLoas)}</strong> pra empréstimo novo.
                       {margemLivreCartLoas > 0 && (
@@ -557,7 +557,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                   <div>
                     <div className="font-bold text-red-400">🔴 LOAS extrapolado — empréstimo acima de 35%</div>
                     <div className="text-xs text-foreground mt-1">
-                      Parcelas de emp <strong className="font-mono text-red-400">{formatBRL(benef - margemLivreEmpLoas - tetoEmpLoas + benef * 0.30)}</strong>{' '}
+                      Parcelas de emp <strong className="font-mono text-red-400">{formatBRL(sumEmp)}</strong>{' '}
                       ≥ teto <strong className="font-mono">{formatBRL(tetoEmpLoas)}</strong>. Sem margem pra novo contrato.
                       <div className="mt-1 text-muted-foreground">LOAS não permite portabilidade — não há como liberar margem operacionalmente.</div>
                     </div>
