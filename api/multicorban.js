@@ -4,7 +4,7 @@ import { json, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 import { dbInsert } from './_lib/supabase.js';
 
 const BASE = 'https://app.multicorban.com';
-let sessionCache = { cookie: null, ts: 0 };
+let sessionCache = { cookie: null, csrf: null, ts: 0 };
 const SESSION_TTL = 25 * 60 * 1000;
 
 function getCredentials() {
@@ -14,31 +14,79 @@ function getCredentials() {
   };
 }
 
-async function doLogin(user, pass) {
-  const body = new URLSearchParams({ login: user, senha: pass });
-  const res = await fetch(`${BASE}/access/validateLogin`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'Referer': `${BASE}/`, 'Origin': BASE },
-    body: body.toString(), redirect: 'manual'
-  });
+// Extrai cookies de uma resposta fetch (compat getSetCookie / get)
+function extractCookies(res) {
   const cookies = [];
   if (typeof res.headers.getSetCookie === 'function') { cookies.push(...res.headers.getSetCookie()); }
   else { const raw = res.headers.get('set-cookie'); if (raw) cookies.push(...raw.split(/,(?=\s*\w+=)/)); }
+  return cookies;
+}
+
+// Junta pares cookie em string "k=v; k2=v2" (dedup por nome, ultimo vence)
+function mergeCookies(...lists) {
+  const map = {};
+  for (const list of lists) {
+    for (const c of (list || [])) {
+      const kv = c.split(';')[0];
+      const idx = kv.indexOf('=');
+      if (idx > 0) { const k = kv.slice(0, idx).trim(); const v = kv.slice(idx + 1).trim(); if (k) map[k] = v; }
+    }
+  }
+  return Object.entries(map).map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+// Login Multicorban com CSRF (mudanca jun/2026: exige token de seguranca).
+// Fluxo: GET home -> captura PHPSESSID + <meta csrf-token> -> POST validateLogin
+// mandando o token no body (_token) + header (X-CSRF-TOKEN) + cookie da sessao.
+async function doLogin(user, pass) {
+  // 1) GET pagina inicial pra pegar cookie de sessao + csrf-token
+  let preCookies = [];
+  let csrf = '';
+  try {
+    const pre = await fetch(`${BASE}/`, {
+      method: 'GET',
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'Referer': BASE, 'Origin': BASE },
+      redirect: 'manual'
+    });
+    preCookies = extractCookies(pre);
+    const html = await pre.text();
+    const m = html.match(/name="csrf-token"\s+content="([^"]+)"/i) || html.match(/csrf[_-]token['"]?\s*[:=]\s*['"]([^'"]+)['"]/i);
+    if (m) csrf = m[1].trim();
+  } catch (e) {
+    return { ok: false, error: 'Falha ao abrir Multicorban: ' + e.message };
+  }
+  if (!csrf) return { ok: false, error: 'Token de seguranca (CSRF) nao encontrado na pagina do Multicorban' };
+
+  // 2) POST login com csrf no body + header + cookie da sessao
+  const preCookieStr = mergeCookies(preCookies);
+  const body = new URLSearchParams({ login: user, senha: pass, _token: csrf });
+  const res = await fetch(`${BASE}/access/validateLogin`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'X-Requested-With': 'XMLHttpRequest',
+      'X-CSRF-TOKEN': csrf,
+      'Referer': `${BASE}/`, 'Origin': BASE,
+      ...(preCookieStr ? { 'Cookie': preCookieStr } : {})
+    },
+    body: body.toString(), redirect: 'manual'
+  });
   let loginData;
   try { loginData = await res.json(); } catch { loginData = { code: -1, mensagem: 'Failed to parse' }; }
   if (loginData.code !== 0) return { ok: false, error: loginData.mensagem || 'Login failed', data: loginData };
-  const cookieStr = cookies.map(c => c.split(';')[0].trim()).filter(Boolean).join('; ');
+  // Cookie final = sessao do GET + qualquer cookie renovado no POST
+  const cookieStr = mergeCookies(preCookies, extractCookies(res));
   if (!cookieStr) return { ok: false, error: 'No session cookie', data: loginData };
-  return { ok: true, cookie: cookieStr, data: loginData };
+  return { ok: true, cookie: cookieStr, csrf, data: loginData };
 }
 
 async function ensureSession() {
   const now = Date.now();
-  if (sessionCache.cookie && (now - sessionCache.ts) < SESSION_TTL) return { ok: true, cookie: sessionCache.cookie };
+  if (sessionCache.cookie && (now - sessionCache.ts) < SESSION_TTL) return { ok: true, cookie: sessionCache.cookie, csrf: sessionCache.csrf };
   const creds = getCredentials();
   if (!creds.user || !creds.pass) return { ok: false, error: 'Credenciais Multicorban nao configuradas (env vars)' };
   const result = await doLogin(creds.user, creds.pass);
-  if (result.ok) sessionCache = { cookie: result.cookie, ts: now };
+  if (result.ok) sessionCache = { cookie: result.cookie, csrf: result.csrf, ts: now };
   return result;
 }
 
@@ -163,7 +211,7 @@ function parseCltHTML(html) {
   return result;
 }
 
-async function consultCltFgts(cookie, cpf) {
+async function consultCltFgts(cookie, csrf, cpf) {
   const cpfClean = cpf.replace(/\D/g, '').padStart(11, '0');
   const body = new URLSearchParams({
     methodOperation: 'dataBaseFgts',
@@ -175,11 +223,13 @@ async function consultCltFgts(cookie, cpf) {
     ddd: '',
     telefone: ''
   });
+  if (csrf) body.set('_token', csrf);
   const res = await fetch(`${BASE}/search/consult`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
       'X-Requested-With': 'XMLHttpRequest',
+      ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
       'Cookie': cookie,
       'Referer': `${BASE}/search/form/geral`,
       'Origin': BASE
@@ -195,12 +245,13 @@ async function consultCltFgts(cookie, cpf) {
   return { ok: true, cpf: cpfClean, parsed, raw_code: data.code };
 }
 
-async function consultCPF(cookie, cpf) {
+async function consultCPF(cookie, csrf, cpf) {
   const cpfClean = cpf.replace(/\D/g, '').padStart(11, '0');
   const body = new URLSearchParams({ methodOperation: 'dataBase', methodConsult: 'cpf', versaoTela: 'v2', dataConsult: cpfClean, dataOrgao: '', CPF: '', CPFRepresentante: '', ddd: '', telefone: '' });
+  if (csrf) body.set('_token', csrf);
   const res = await fetch(`${BASE}/search/consult`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'Cookie': cookie, 'Referer': `${BASE}/search`, 'Origin': BASE },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}), 'Cookie': cookie, 'Referer': `${BASE}/search`, 'Origin': BASE },
     body: body.toString()
   });
   const text = await res.text();
@@ -214,7 +265,7 @@ async function consultCPF(cookie, cpf) {
     if (lista.length > 0) {
       const ativo = lista.find(l => l.situacao === 'ATIVO') || lista[0];
       if (ativo && ativo.nb) {
-        const benefResult = await consultBeneficio(cookie, ativo.nb);
+        const benefResult = await consultBeneficio(cookie, csrf, ativo.nb);
         if (benefResult.ok) return { ok: true, cpf: cpfClean, parsed: benefResult.parsed, lista, auto_selected: ativo.nb, raw_code: data.code };
       }
       return { ok: true, cpf: cpfClean, parsed: { beneficiario: { cpf: cpfClean, nome: lista[0].nome || '' }, beneficio: {}, margem: {}, contratos: [], cartoes: [], telefones: [], endereco: {}, banco: {} }, lista, raw_code: data.code };
@@ -505,12 +556,13 @@ function parseConsultHTML(html) {
   return result;
 }
 
-async function consultBeneficio(cookie, beneficio) {
+async function consultBeneficio(cookie, csrf, beneficio) {
   const nbClean = beneficio.replace(/\D/g, '');
   const body = new URLSearchParams({ methodOperation: 'dataBase', methodConsult: 'beneficio', versaoTela: 'v2', dataConsult: nbClean, dataOrgao: '', CPF: '', CPFRepresentante: '', ddd: '', telefone: '' });
+  if (csrf) body.set('_token', csrf);
   const res = await fetch(`${BASE}/search/consult`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'Cookie': cookie, 'Referer': `${BASE}/search`, 'Origin': BASE },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}), 'Cookie': cookie, 'Referer': `${BASE}/search`, 'Origin': BASE },
     body: body.toString()
   });
   const text = await res.text();
@@ -537,18 +589,19 @@ export default async function handler(req) {
     if (action === 'login') {
       const creds = getCredentials();
       const result = await doLogin(creds.user, creds.pass);
-      if (result.ok) { sessionCache = { cookie: result.cookie, ts: Date.now() }; return json({ ok: true, mensagem: 'Sessao ativa', data: result.data }, 200, req); }
-      return json({ ok: false, error: result.error }, 401, req);
+      if (result.ok) { sessionCache = { cookie: result.cookie, csrf: result.csrf, ts: Date.now() }; return json({ ok: true, mensagem: 'Sessao ativa', data: result.data }, 200, req); }
+      // 502 (nao 401) — falha no Multicorban NAO deve deslogar o usuario do FlowForce
+      return json({ ok: false, error: 'Multicorban indisponivel: ' + result.error }, 502, req);
     }
 
     if (action === 'consult_cpf') {
       if (!cpf) return jsonError('CPF obrigatorio', 400, req);
-      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Login failed: ' + session.error }, 401, req);
-      let result = await consultCPF(session.cookie, cpf);
+      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Multicorban indisponivel: ' + session.error }, 502, req);
+      let result = await consultCPF(session.cookie, session.csrf, cpf);
       if (!result.ok && (result.error || '').includes('session')) {
-        sessionCache = { cookie: null, ts: 0 };
+        sessionCache = { cookie: null, csrf: null, ts: 0 };
         const retry = await ensureSession();
-        if (retry.ok) { result = await consultCPF(retry.cookie, cpf); }
+        if (retry.ok) { result = await consultCPF(retry.cookie, retry.csrf, cpf); }
       }
       // Salvar no historico
       if (result.ok) {
@@ -561,12 +614,12 @@ export default async function handler(req) {
     if (action === 'consult_clt') {
       if (!cpf) return jsonError('CPF obrigatorio', 400, req);
       const session = await ensureSession();
-      if (!session.ok) return json({ ok: false, error: 'Login failed: ' + session.error }, 401, req);
-      let result = await consultCltFgts(session.cookie, cpf);
+      if (!session.ok) return json({ ok: false, error: 'Multicorban indisponivel: ' + session.error }, 502, req);
+      let result = await consultCltFgts(session.cookie, session.csrf, cpf);
       if (!result.ok && (result.error || '').includes('session')) {
-        sessionCache = { cookie: null, ts: 0 };
+        sessionCache = { cookie: null, csrf: null, ts: 0 };
         const retry = await ensureSession();
-        if (retry.ok) result = await consultCltFgts(retry.cookie, cpf);
+        if (retry.ok) result = await consultCltFgts(retry.cookie, retry.csrf, cpf);
       }
       if (result.ok) {
         dbInsert('consultas', {
@@ -581,13 +634,13 @@ export default async function handler(req) {
 
     if (action === 'consult_beneficio') {
       if (!beneficio) return jsonError('Beneficio obrigatorio', 400, req);
-      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Login failed: ' + session.error }, 401, req);
-      let result = await consultBeneficio(session.cookie, beneficio);
+      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Multicorban indisponivel: ' + session.error }, 502, req);
+      let result = await consultBeneficio(session.cookie, session.csrf, beneficio);
       // Retry com novo login se a sessao expirou (resposta nao-JSON = pagina de login do Multicorban)
       if (!result.ok && (result.error || '').includes('session')) {
-        sessionCache = { cookie: null, ts: 0 };
+        sessionCache = { cookie: null, csrf: null, ts: 0 };
         const retry = await ensureSession();
-        if (retry.ok) result = await consultBeneficio(retry.cookie, beneficio);
+        if (retry.ok) result = await consultBeneficio(retry.cookie, retry.csrf, beneficio);
       }
       if (result.ok) {
         dbInsert('consultas', { user_id: user.id, tipo: 'beneficio', beneficio: beneficio.replace(/\D/g, ''), nome: result.parsed?.beneficiario?.nome, resultado: result.parsed, fonte: 'multicorban' }).catch(() => {});
@@ -598,13 +651,14 @@ export default async function handler(req) {
     // Debug: retorna HTML bruto da secao de contratos pra diagnostico
     if (action === 'debug_saldo') {
       if (!beneficio && !cpf) return jsonError('CPF ou beneficio obrigatorio', 400, req);
-      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Login failed' }, 401, req);
+      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Multicorban indisponivel: ' + session.error }, 502, req);
       let result;
-      if (beneficio) { result = await consultBeneficio(session.cookie, beneficio); }
+      if (beneficio) { result = await consultBeneficio(session.cookie, session.csrf, beneficio); }
       else {
         const cpfClean = cpf.replace(/\D/g, '').padStart(11, '0');
         const formBody = new URLSearchParams({ methodOperation: 'dataBase', methodConsult: 'cpf', versaoTela: 'v2', dataConsult: cpfClean, dataOrgao: '', CPF: '', CPFRepresentante: '', ddd: '', telefone: '' });
-        const res = await fetch(`${BASE}/search/consult`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'Cookie': session.cookie, 'Referer': `${BASE}/search`, 'Origin': BASE }, body: formBody.toString() });
+        if (session.csrf) formBody.set('_token', session.csrf);
+        const res = await fetch(`${BASE}/search/consult`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', ...(session.csrf ? { 'X-CSRF-TOKEN': session.csrf } : {}), 'Cookie': session.cookie, 'Referer': `${BASE}/search`, 'Origin': BASE }, body: formBody.toString() });
         const text = await res.text();
         let data; try { data = JSON.parse(text); } catch { return json({ raw_error: text.substring(0, 1000) }, 200, req); }
         const html = data.hash || '';
@@ -629,11 +683,12 @@ export default async function handler(req) {
 
     if (action === 'raw') {
       const { endpoint, params } = body; if (!endpoint) return jsonError('endpoint obrigatorio', 400, req);
-      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Login failed' }, 401, req);
+      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Multicorban indisponivel: ' + session.error }, 502, req);
       const formBody = new URLSearchParams(params || {});
+      if (session.csrf) formBody.set('_token', session.csrf);
       const res = await fetch(`${BASE}${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'Cookie': session.cookie, 'Referer': `${BASE}/search`, 'Origin': BASE },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', ...(session.csrf ? { 'X-CSRF-TOKEN': session.csrf } : {}), 'Cookie': session.cookie, 'Referer': `${BASE}/search`, 'Origin': BASE },
         body: formBody.toString()
       });
       const text = await res.text();
