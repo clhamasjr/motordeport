@@ -142,20 +142,36 @@ async function requestAutorizacao({ cpf, nome, telefone }) {
 }
 
 // ─── ACTION: checkEnrollment (vinculos empregaticios) ─────────
-async function checkEnrollment(cpf) {
+// IMPORTANTE: virou ASSINCRONO. 1a chamada retorna success:false com
+// "Consulta de vínculos em processamento. Aguarde". Precisa retry ate
+// retornar success:true com a lista de vinculos.
+async function checkEnrollment(cpf, maxTentativas = 5, intervalMs = 3000) {
   const cfg = getConfig();
-  return await nfCall('/clt-loan/v1/check-employee-enrollment', 'POST', {
-    document_number: onlyDigits(cpf),
-    service_type: cfg.SERVICE_TYPE,
-  });
+  let ultima;
+  for (let i = 0; i < maxTentativas; i++) {
+    ultima = await nfCall('/clt-loan/v1/check-employee-enrollment', 'POST', {
+      document_number: onlyDigits(cpf),
+      service_type: cfg.SERVICE_TYPE,
+    });
+    if (ultima.ok && ultima.data?.success === true) return ultima;
+    // Se a mensagem nao for "em processamento", para (erro real)
+    const msg = (ultima.data?.message || '').toLowerCase();
+    if (!msg.includes('processamento') && !msg.includes('aguarde')) return ultima;
+    if (i < maxTentativas - 1) await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return ultima;
 }
 
 // ─── ACTION: getMargem (margem do empregador) ─────────────────
-async function getMargem({ cpf, employerDocument }) {
+// IMPORTANTE: agora EXIGE `employee_registration` (matricula vinda do
+// check-employee-enrollment via work_registration). A doc publica NAO
+// mostra esse campo — descoberto testando a API ao vivo (2026-05-27).
+async function getMargem({ cpf, employerDocument, registration }) {
   const cfg = getConfig();
   return await nfCall('/clt-loan/v1/get-margin', 'POST', {
     document_number: onlyDigits(cpf),
     employer_document: onlyDigits(employerDocument),
+    employee_registration: registration, // matricula (work_registration)
     service_type: cfg.SERVICE_TYPE,
   });
 }
@@ -271,9 +287,9 @@ async function consultarAprovacao({ cpf, nome, telefone }) {
     };
   }
 
-  // 3) AUTHORIZED — busca vinculos empregaticios
+  // 3) AUTHORIZED — busca vinculos empregaticios (async, com retry)
   const enr = await checkEnrollment(cpfLimpo);
-  if (!enr.ok) {
+  if (!enr.ok || enr.data?.success !== true) {
     return {
       approved: false,
       etapa: 'ERRO',
@@ -290,8 +306,13 @@ async function consultarAprovacao({ cpf, nome, telefone }) {
   }
 
   // 4) Pega margem do primeiro vinculo (geralmente o ativo)
+  // get-margin EXIGE a matricula (work_registration) via employee_registration
   const v = vinculos[0];
-  const mg = await getMargem({ cpf: cpfLimpo, employerDocument: v.employer_cnpj });
+  const mg = await getMargem({
+    cpf: cpfLimpo,
+    employerDocument: v.employer_cnpj,
+    registration: v.work_registration,
+  });
   if (!mg.ok) {
     return {
       approved: false,
@@ -303,6 +324,20 @@ async function consultarAprovacao({ cpf, nome, telefone }) {
   const m = mg.data?.data || {};
   const margem = parseFloat(m.available_balance || 0) || 0;
   const margemUtilizavel = parseFloat(m.utilizable_balance || 0) || 0;
+
+  // Campo novo: can_continue indica se a Nossa Fintech permite seguir.
+  // restrictions traz motivos quando bloqueado.
+  const restricoes = Array.isArray(m.restrictions) ? m.restrictions : [];
+  if (m.can_continue === false) {
+    return {
+      approved: false,
+      etapa: 'SEM_MARGEM',
+      mensagem: restricoes.length
+        ? `Bloqueado: ${restricoes.map(r => (typeof r === 'string' ? r : (r.message || r.description || JSON.stringify(r)))).join('; ').substring(0, 200)}`
+        : 'Cliente nao pode prosseguir na Nossa Fintech (can_continue=false)',
+      vinculo: v,
+    };
+  }
 
   if (margem === 0 && margemUtilizavel === 0) {
     return {
@@ -319,9 +354,11 @@ async function consultarAprovacao({ cpf, nome, telefone }) {
     status: 'AUTHORIZED',
     mensagem: `Cliente elegivel — margem R$ ${margem.toFixed(2)}`,
     marginKey: m.margin_key,
+    selectedFundId: m.selected_fund_id ?? null,
     vinculo: {
       cnpj: m.employer?.document || v.employer_cnpj,
       empregador: m.employer?.name || v.employer_name,
+      cnae: m.employer?.cnae || null,
       matricula: v.work_registration,
       dataAdmissao: m.admission_date,
     },
@@ -337,6 +374,7 @@ async function consultarAprovacao({ cpf, nome, telefone }) {
       disponivel: margem,
       utilizavel: margemUtilizavel,
       base: parseFloat(m.base_margin_value || 0) || 0,
+      salarioBruto: m.total_gross_salary != null ? parseFloat(m.total_gross_salary) : null,
     },
   };
 }

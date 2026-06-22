@@ -93,9 +93,26 @@ function StatusPill({ state }: { state: BancoState }) {
   return <Badge variant="muted">Indisponível</Badge>;
 }
 
+// Coage mensagem pra string — APIs de banco às vezes devolvem erro como
+// objeto ({id, code, message}) e isso vaza pro jsonb. Renderizar objeto
+// direto quebra o React (error #31). Registros antigos no banco podem
+// ter o problema mesmo após o fix no backend, então blindamos aqui.
+function msgStr(m: unknown): string {
+  if (m == null) return '';
+  if (typeof m === 'string') return m;
+  if (typeof m === 'object') {
+    const o = m as Record<string, unknown>;
+    const inner = o.message || o.detail || o.error;
+    if (typeof inner === 'string') return inner;
+    try { return JSON.stringify(m).substring(0, 300); } catch { return '(erro)'; }
+  }
+  return String(m);
+}
+
 export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaId }: Props) {
   const label = BANCO_LABEL[banco] || banco;
   const cor = BANCO_COR[banco] || 'border-l-muted';
+  const mensagem = msgStr(state.mensagem);
   const isManutencao = state.emManutencao || state.status === 'em_manutencao';
   const margem = state.dados?.margemDisponivel || 0;
   const empregador = state.dados?.empregador;
@@ -219,7 +236,7 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
       {isC6Bloqueado && (
         <div className="space-y-2">
           <div className="text-xs text-yellow-400">
-            {state.mensagem || '📸 Cliente precisa autorizar a consulta C6 via selfie DataPrev.'}
+            {mensagem || '📸 Cliente precisa autorizar a consulta C6 via selfie DataPrev.'}
           </div>
           {isAguardandoSelfie && (
             <Badge variant="warning" className="gap-1 text-[10px]">
@@ -288,7 +305,7 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
 
       {/* Mensagem principal */}
       {isC6Bloqueado || isMercantilBloqueado ? null : isManutencao ? (
-        <div className="text-xs text-muted-foreground">{state.mensagem || '🔧 Em manutenção'}</div>
+        <div className="text-xs text-muted-foreground">{mensagem || '🔧 Em manutenção'}</div>
       ) : disponivel ? (
         <div className="space-y-1.5">
           {/* Valor liberado quando tem simulação detalhada */}
@@ -328,7 +345,7 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
           )}
         </div>
       ) : (
-        <div className="text-xs text-muted-foreground">{state.mensagem || 'Aguardando bancos...'}</div>
+        <div className="text-xs text-muted-foreground">{mensagem || 'Aguardando bancos...'}</div>
       )}
 
       {/* Selo extras */}

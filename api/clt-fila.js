@@ -76,6 +76,15 @@ async function patchBanco(id, banco, payload) {
   if (!row) return { error: 'fila nao encontrada' };
   const bancos = { ...(row.bancos || {}) };
   const merged = { ...(bancos[banco] || {}), ...payload, atualizado_em: new Date().toISOString() };
+  // GARANTIA: mensagem sempre string. Algumas APIs de banco retornam erro
+  // como objeto ({id, code, message}) — se vazar pro jsonb, o React do V2
+  // quebra ao renderizar (error #31: objects are not valid as React child).
+  if (merged.mensagem != null && typeof merged.mensagem !== 'string') {
+    const m = merged.mensagem;
+    merged.mensagem = (typeof m === 'object' && (m.message || m.detail || m.error))
+      ? String(m.message || m.detail || m.error)
+      : JSON.stringify(m).substring(0, 300);
+  }
   // Limpa flags transitorias quando status virou terminal
   const terminal = ['ok', 'falha', 'bloqueado', 'manual_aguardando', 'pulado'];
   if (terminal.includes(merged.status) && payload.processando !== true) {
