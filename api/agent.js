@@ -4,7 +4,7 @@ export const config = { runtime: 'edge' };
 const CLAUDE_KEY = () => process.env.CLAUDE_API_KEY;
 const EVO_URL = () => process.env.EVOLUTION_URL;
 const EVO_KEY = () => process.env.EVOLUTION_KEY;
-const CLAUDE_MODEL = 'claude-sonnet-4-5-20250929';
+const CLAUDE_MODEL = 'claude-sonnet-4-6';
 
 import { json as jsonResp, handleOptions } from './_lib/auth.js';
 import { dbSelect, dbInsert, dbUpdate } from './_lib/supabase.js';
@@ -915,6 +915,10 @@ async function callClaude(messages, systemOverride) {
   });
   const d = await r.json();
   if (d.content && d.content[0]) return d.content[0].text;
+  // Log do erro real da Claude API (antes era silenciado -> "Sofia fora de atendimento"
+  // sem pista da causa: modelo, chave/creditos, rate limit, etc.)
+  console.error('[SOFIA callClaude] HTTP ' + r.status + ' model=' + CLAUDE_MODEL +
+    ' erro=' + JSON.stringify(d.error || d).slice(0, 400));
   return null;
 }
 
