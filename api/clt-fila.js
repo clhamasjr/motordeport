@@ -74,16 +74,18 @@ const TODOS_BANCOS_CLT = [
 function isPrivCLT(user) {
   return !!(user && (user.role === 'admin' || user.role === 'gestor' || user._internal));
 }
+// Isolamento por USUARIO (nao por parceiro). Vendedores da mesma Lhamas
+// compartilham parceiro_id — se filtrasse por parceiro, todos veriam tudo
+// uns dos outros (= "todo mundo ve tudo"). Cada vendedor ve SO as proprias
+// consultas; admin/gestor veem tudo.
 function escopoFiltrosCLT(user) {
   if (isPrivCLT(user)) return {};
-  if (user?.parceiro_id) return { parceiro_id: user.parceiro_id };
   return { criada_por_user_id: user?.id ?? -1 };
 }
 // Checa se o usuario pode ver uma fila especifica (defense-in-depth no status).
 function podeVerFilaCLT(user, row) {
   if (isPrivCLT(user)) return true;
   if (!row) return false;
-  if (user?.parceiro_id) return row.parceiro_id === user.parceiro_id;
   return row.criada_por_user_id === user?.id;
 }
 
