@@ -1256,6 +1256,65 @@ export default async function handler(req) {
 
   const action = body.action || 'criar';
 
+  // ─── PRECHECK ──────────────────────────────────────────────
+  // Verifica se as bases (clt_clientes + CAGED) ja tem os dados basicos
+  // do CPF (nome, dataNasc, telefone). Usado pela tela de consulta pra
+  // decidir: se tem tudo → segue direto; se falta → obriga operador a
+  // digitar nome/dataNasc/telefone antes de criar a consulta.
+  if (action === 'precheck') {
+    const cpf = normalizeCPF(body.cpf);
+    if (!cpf) return jsonError('CPF inválido', 400, req);
+
+    let nome = null, dataNascimento = null, sexo = null;
+    let telefone = null;
+
+    // 1) clt_clientes (consultas anteriores — dados mais frescos)
+    try {
+      const { data: cli } = await dbSelect('clt_clientes', { filters: { cpf }, single: true });
+      if (cli) {
+        if (cli.nome) nome = cli.nome;
+        if (cli.data_nascimento) dataNascimento = cli.data_nascimento;
+        if (cli.sexo) sexo = cli.sexo;
+        if (Array.isArray(cli.telefones) && cli.telefones.length > 0) {
+          telefone = cli.telefones[0].completo || null;
+        }
+      }
+    } catch { /* segue */ }
+
+    // 2) Fallback CAGED (clt_base_funcionarios) — preenche o que faltou
+    try {
+      const { data: caged } = await dbSelect('clt_base_funcionarios', { filters: { cpf }, single: true });
+      if (caged) {
+        if (!nome && caged.nome) nome = caged.nome;
+        if (!dataNascimento && caged.data_nascimento) dataNascimento = caged.data_nascimento;
+        if (!sexo && caged.sexo) sexo = caged.sexo;
+        if (!telefone && caged.ddd && caged.telefone) telefone = caged.ddd + caged.telefone;
+      }
+    } catch { /* segue */ }
+
+    const temNome = !!(nome && nome.trim());
+    const temDataNascimento = !!dataNascimento;
+    const temTelefone = !!(telefone && String(telefone).replace(/\D/g, '').length >= 10);
+    const completo = temNome && temDataNascimento && temTelefone;
+
+    return jsonResp({
+      success: true,
+      completo,           // true = pode seguir direto; false = obrigar preenchimento
+      temNome, temDataNascimento, temTelefone,
+      faltam: [
+        !temNome && 'nome',
+        !temDataNascimento && 'dataNascimento',
+        !temTelefone && 'telefone',
+      ].filter(Boolean),
+      dados: {            // pre-preenche o form com o que ja existe
+        nome: nome || null,
+        dataNascimento: dataNascimento || null,
+        sexo: sexo || null,
+        telefone: telefone ? String(telefone).replace(/\D/g, '') : null,
+      },
+    }, 200, req);
+  }
+
   // ─── CRIAR ─────────────────────────────────────────────────
   if (action === 'criar') {
     const cpf = normalizeCPF(body.cpf);

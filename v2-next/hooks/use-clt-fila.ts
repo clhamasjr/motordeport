@@ -132,6 +132,34 @@ export interface ConsultaRecente {
 }
 
 /**
+ * Pré-check do CPF: verifica se as bases (clt_clientes + CAGED) já têm
+ * nome + data de nascimento + telefone. A tela de consulta usa isso pra
+ * decidir se segue direto ou obriga o operador a digitar os dados.
+ */
+export interface PrecheckResult {
+  success: boolean;
+  completo: boolean;
+  temNome: boolean;
+  temDataNascimento: boolean;
+  temTelefone: boolean;
+  faltam: string[];
+  dados: {
+    nome: string | null;
+    dataNascimento: string | null;
+    sexo: 'M' | 'F' | null;
+    telefone: string | null;
+  };
+  error?: string;
+}
+export function usePrecheckCpf() {
+  return useMutation({
+    mutationFn: async (cpf: string): Promise<PrecheckResult> => {
+      return api<PrecheckResult>('/api/clt-fila', { action: 'precheck', cpf });
+    },
+  });
+}
+
+/**
  * Re-dispara processamento de UM banco em uma consulta existente.
  * Backend `clt-fila.js action='processar'` aceita `force: true` que bypass
  * o guard de idempotencia — sem isso, ele recusa re-rodar bancos em estado
