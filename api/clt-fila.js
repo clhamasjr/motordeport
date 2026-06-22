@@ -63,7 +63,9 @@ function ddMmYyToIso(s) {
 const TODOS_BANCOS_CLT = [
   'presencabank', 'multicorban', 'v8_qi', 'v8_celcoin',
   'joinbank', 'mercantil', 'handbank', 'c6',
-  'fintech_qi', 'fintech_celcoin', 'unno', 'nossa_fintech',
+  'fintech_qi', 'fintech_celcoin', 'unno',
+  'nossa_fintech',       // A NOSSA FINTECH via QITECH
+  'nossa_fintech_uy3',   // A NOSSA FINTECH via UY3
 ];
 
 // ── Isolamento multi-tenant das consultas CLT ──────────────────
@@ -1047,17 +1049,18 @@ async function processarUnno(id, cpf, auth, secret) {
   });
 }
 
-// ─── A NOSSA FINTECH (Spixii, provedor QITECH) ──────────────────
-// Fluxo modelo Mercantil — exige SMS pro cliente autorizar consulta
-// DataPrev. Sistema dispara SMS automatico, card vira BLOQUEADO ate
-// cliente autorizar. Operador clica re-tentar pra finalizar.
-async function processarNossaFintech(id, cpf, auth, secret) {
-  const manut = await _bancoEmManutencao('nossa_fintech');
-  if (manut) { await _marcarEmManutencao(id, 'nossa_fintech', manut); return; }
-  await patchBanco(id, 'nossa_fintech', { status: 'processando' });
+// ─── A NOSSA FINTECH (Spixii) — multi-bancarizadora QITECH + UY3 ──
+// Cada bancarizadora vira 1 card: slug 'nossa_fintech' (QITECH) e
+// 'nossa_fintech_uy3' (UY3). Auto-autz modelo Handbank/UY3 (sistema
+// autoriza DataPrev sem o cliente clicar — procuracao). Se a
+// bancarizadora nao esta habilitada na conta (ex: UY3 em homolog),
+// etapa INDISPONIVEL → marca em_manutencao (some/cinza, sem erro feio).
+async function processarNossaFintech(id, cpf, slug, serviceType, auth, secret) {
+  const manut = await _bancoEmManutencao(slug);
+  if (manut) { await _marcarEmManutencao(id, slug, manut); return; }
+  await patchBanco(id, slug, { status: 'processando' });
 
-  // Espera dados do cliente — Nossa Fintech precisa de nome+telefone
-  // pra disparar SMS de autorização (caso ainda nao autorizado)
+  // Espera dados do cliente — precisa nome+telefone pra disparar autz
   const cli = await aguardarCliente(id, 6000);
   const telefone = cli?.telefones?.[0]?.completo || null;
   const nome = cli?.nome || null;
@@ -1067,11 +1070,12 @@ async function processarNossaFintech(id, cpf, auth, secret) {
     cpf,
     nome,
     telefone,
-  }, auth, secret, 18000);
+    serviceType, // 'QITECH' | 'UY3'
+  }, auth, secret, 20000);
 
   const u = r.data || {};
   if (!r.ok) {
-    await patchBanco(id, 'nossa_fintech', {
+    await patchBanco(id, slug, {
       status: 'falha',
       mensagem: u.error || u.message || `Erro Nossa Fintech (HTTP ${r.status})`,
       retryable: true,
@@ -1080,9 +1084,19 @@ async function processarNossaFintech(id, cpf, auth, secret) {
     return;
   }
 
+  // INDISPONIVEL — bancarizadora nao habilitada nesta conta
+  if (u.etapa === 'INDISPONIVEL') {
+    await patchBanco(id, slug, {
+      status: 'em_manutencao',
+      disponivel: false,
+      emManutencao: true,
+      mensagem: u.mensagem || `${serviceType} não habilitada`,
+    });
+    return;
+  }
+
   // APROVADO
   if (u.etapa === 'APROVADO') {
-    // Mescla dados do cliente (Nossa Fintech retorna nome/dataNasc/sexo/mae)
     const dc = u.dadosCliente || {};
     const novoCliente = {};
     if (dc.nome) novoCliente.nome = dc.nome;
@@ -1093,18 +1107,21 @@ async function processarNossaFintech(id, cpf, auth, secret) {
 
     // Persiste vinculo na fila se nao tem ainda
     if (u.vinculo?.cnpj && u.vinculo?.empregador) {
-      await dbUpdate('clt_consultas_fila', { id }, {
-        vinculo: {
-          cnpj: u.vinculo.cnpj,
-          empregador: u.vinculo.empregador,
-          matricula: u.vinculo.matricula,
-          dataAdmissao: u.vinculo.dataAdmissao,
-          fonte: 'nossa_fintech',
-        }
-      });
+      const { data: rowV } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+      if (!rowV?.vinculo?.cnpj) {
+        await dbUpdate('clt_consultas_fila', { id }, {
+          vinculo: {
+            cnpj: u.vinculo.cnpj,
+            empregador: u.vinculo.empregador,
+            matricula: u.vinculo.matricula,
+            dataAdmissao: u.vinculo.dataAdmissao,
+            fonte: slug,
+          }
+        });
+      }
     }
 
-    await patchBanco(id, 'nossa_fintech', {
+    await patchBanco(id, slug, {
       status: 'ok',
       disponivel: true,
       mensagem: u.mensagem,
@@ -1115,31 +1132,33 @@ async function processarNossaFintech(id, cpf, auth, secret) {
         empregador: u.vinculo?.empregador,
         empregadorCnpj: u.vinculo?.cnpj,
         matricula: u.vinculo?.matricula,
-        marginKey: u.marginKey, // pra simulacao futura
+        marginKey: u.marginKey,
+        bancarizadora: serviceType,
       },
     });
     if (u.vinculo?.cnpj) {
-      _registrarAprovacao(u.vinculo.cnpj, u.vinculo.empregador, 'nossa_fintech', null, null, null);
+      _registrarAprovacao(u.vinculo.cnpj, u.vinculo.empregador, slug, null, null, null);
     }
     return;
   }
 
-  // AGUARDA_AUTORIZACAO — SMS disparado, cliente precisa autorizar
+  // AGUARDA_AUTORIZACAO — auto-autz nao confirmou (ou autoAutorizar=false)
   if (u.etapa === 'AGUARDA_AUTORIZACAO') {
-    await patchBanco(id, 'nossa_fintech', {
+    await patchBanco(id, slug, {
       status: 'bloqueado',
       bloqueado: true,
       precisaAutorizacao: true,
       linkAutorizacao: u.linkAutorizacao || null,
       mensagem: u.mensagem,
       statusAutorizacao: u.status,
+      retryable: true,
     });
     return;
   }
 
   // SEM_VINCULO / SEM_MARGEM
   if (u.etapa === 'SEM_VINCULO' || u.etapa === 'SEM_MARGEM') {
-    await patchBanco(id, 'nossa_fintech', {
+    await patchBanco(id, slug, {
       status: 'falha',
       disponivel: false,
       mensagem: u.mensagem,
@@ -1149,7 +1168,7 @@ async function processarNossaFintech(id, cpf, auth, secret) {
   }
 
   // Outros erros
-  await patchBanco(id, 'nossa_fintech', {
+  await patchBanco(id, slug, {
     status: 'falha',
     mensagem: u.error || u.mensagem || `Etapa: ${u.etapa}`,
     retryable: true,
@@ -1559,8 +1578,9 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       else if (banco === 'fintech_qi') await processarFintech(id, 'qi', row.cpf, auth, secret);
       else if (banco === 'fintech_celcoin') await processarFintech(id, 'celcoin', row.cpf, auth, secret);
       else if (banco === 'unno') await processarUnno(id, row.cpf, auth, secret);
-      else if (banco === 'nossa_fintech') await processarNossaFintech(id, row.cpf, auth, secret);
-      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno, nossa_fintech', 400, req);
+      else if (banco === 'nossa_fintech') await processarNossaFintech(id, row.cpf, 'nossa_fintech', 'QITECH', auth, secret);
+      else if (banco === 'nossa_fintech_uy3') await processarNossaFintech(id, row.cpf, 'nossa_fintech_uy3', 'UY3', auth, secret);
+      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno, nossa_fintech, nossa_fintech_uy3', 400, req);
     } catch (e) {
       await patchBanco(id, banco, { status: 'falha', mensagem: 'Erro: ' + e.message });
       return jsonResp({ success: false, error: e.message }, 200, req);

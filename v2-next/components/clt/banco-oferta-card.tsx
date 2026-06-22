@@ -22,7 +22,8 @@ const BANCO_LABEL: Record<BancoSlug, string> = {
   fintech_qi: 'Fintech do Corban (QI Tech)',
   fintech_celcoin: 'Fintech do Corban (Celcoin)',
   unno: 'Unno (ITAPEMA/QITech)',
-  nossa_fintech: 'A NOSSA FINTECH',
+  nossa_fintech: 'A NOSSA FINTECH (QITECH)',
+  nossa_fintech_uy3: 'A NOSSA FINTECH (UY3)',
 };
 
 const BANCO_COR: Record<BancoSlug, string> = {
@@ -37,7 +38,8 @@ const BANCO_COR: Record<BancoSlug, string> = {
   fintech_qi: 'border-l-bank-fintech_qi',
   fintech_celcoin: 'border-l-bank-fintech_celcoin',
   unno: 'border-l-purple-500', // cor temp — sem token customizado ainda
-  nossa_fintech: 'border-l-orange-500', // cor temp pra A NOSSA FINTECH
+  nossa_fintech: 'border-l-orange-500', // A NOSSA FINTECH (QITECH)
+  nossa_fintech_uy3: 'border-l-amber-600', // A NOSSA FINTECH (UY3)
 };
 
 interface Props {

@@ -123,17 +123,23 @@ function splitPhone(telefone) {
 }
 
 // ─── ACTION: checkAutorizacao ─────────────────────────────────
-async function checkAutorizacao(cpf) {
+async function checkAutorizacao(cpf, serviceType) {
   const cfg = getConfig();
   const r = await nfCall('/clt-loan/v1/check-authorization', 'POST', {
     document_number: onlyDigits(cpf),
-    service_type: cfg.SERVICE_TYPE,
+    service_type: serviceType || cfg.SERVICE_TYPE,
   });
   return r;
 }
 
+// Lista as bancarizadoras habilitadas na conta (QITECH, UY3, ...)
+async function bancarizadorasHabilitadas() {
+  const r = await nfCall('/clt-loan/v1/banking-institutions', 'GET');
+  return Array.isArray(r.data?.data) ? r.data.data : [];
+}
+
 // ─── ACTION: requestAutorizacao (envia SMS pro cliente) ───────
-async function requestAutorizacao({ cpf, nome, telefone }) {
+async function requestAutorizacao({ cpf, nome, telefone, serviceType }) {
   const cfg = getConfig();
   const tel = splitPhone(telefone);
   if (!tel) return { ok: false, status: 0, data: { error: 'Telefone invalido' } };
@@ -142,7 +148,7 @@ async function requestAutorizacao({ cpf, nome, telefone }) {
     person_name: (nome || '').trim().toUpperCase(),
     ...tel,
     notification_method: 'sms',
-    service_type: cfg.SERVICE_TYPE,
+    service_type: serviceType || cfg.SERVICE_TYPE,
   });
 }
 
@@ -172,13 +178,13 @@ async function autorizarConsulta(uuid) {
 // IMPORTANTE: virou ASSINCRONO. 1a chamada retorna success:false com
 // "Consulta de vínculos em processamento. Aguarde". Precisa retry ate
 // retornar success:true com a lista de vinculos.
-async function checkEnrollment(cpf, maxTentativas = 5, intervalMs = 3000) {
+async function checkEnrollment(cpf, serviceType, maxTentativas = 5, intervalMs = 3000) {
   const cfg = getConfig();
   let ultima;
   for (let i = 0; i < maxTentativas; i++) {
     ultima = await nfCall('/clt-loan/v1/check-employee-enrollment', 'POST', {
       document_number: onlyDigits(cpf),
-      service_type: cfg.SERVICE_TYPE,
+      service_type: serviceType || cfg.SERVICE_TYPE,
     });
     if (ultima.ok && ultima.data?.success === true) return ultima;
     // Se a mensagem nao for "em processamento", para (erro real)
@@ -193,13 +199,13 @@ async function checkEnrollment(cpf, maxTentativas = 5, intervalMs = 3000) {
 // IMPORTANTE: agora EXIGE `employee_registration` (matricula vinda do
 // check-employee-enrollment via work_registration). A doc publica NAO
 // mostra esse campo — descoberto testando a API ao vivo (2026-05-27).
-async function getMargem({ cpf, employerDocument, registration }) {
+async function getMargem({ cpf, employerDocument, registration, serviceType }) {
   const cfg = getConfig();
   return await nfCall('/clt-loan/v1/get-margin', 'POST', {
     document_number: onlyDigits(cpf),
     employer_document: onlyDigits(employerDocument),
     employee_registration: registration, // matricula (work_registration)
-    service_type: cfg.SERVICE_TYPE,
+    service_type: serviceType || cfg.SERVICE_TYPE,
   });
 }
 
@@ -236,15 +242,31 @@ async function cancelarProposta(debtKey) {
 //     dadosCliente?: {...},
 //     vinculo?: {...},
 //   }
-async function consultarAprovacao({ cpf, nome, telefone, autoAutorizar = true }) {
+async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutorizar = true }) {
   const cpfLimpo = onlyDigits(cpf);
   if (cpfLimpo.length !== 11) return { approved: false, etapa: 'ERRO', error: 'CPF invalido' };
+
+  const cfg = getConfig();
+  const provider = (serviceType || cfg.SERVICE_TYPE).toUpperCase();
+
+  // 0) Bancarizadora habilitada na conta? (QITECH sempre; UY3 só em prod).
+  // Se nao habilitada, marca como indisponivel (nao erro) — degrada gracioso
+  // pra a homolog (so QITECH) e contas sem UY3.
+  const habilitadas = await bancarizadorasHabilitadas();
+  if (habilitadas.length && !habilitadas.includes(provider)) {
+    return {
+      approved: false,
+      etapa: 'INDISPONIVEL',
+      status: 'NOT_ENABLED',
+      mensagem: `Bancarizadora ${provider} não habilitada nesta conta`,
+    };
+  }
 
   // 1) Verifica status de autorização
   // A API retorna success:false / HTTP 4xx quando CPF NUNCA teve autorização
   // registrada — semanticamente isso eh "NOT_AUTHORIZED, cria + auto-autz".
   // Outros erros (5xx, mensagem diferente) cai em ERRO real.
-  const auth = await checkAutorizacao(cpfLimpo);
+  const auth = await checkAutorizacao(cpfLimpo, provider);
   const apiSucesso = auth.ok && auth.data?.success === true;
 
   let status, link;
@@ -282,7 +304,7 @@ async function consultarAprovacao({ cpf, nome, telefone, autoAutorizar = true })
         mensagem: 'Cliente não autorizou — faltam nome/telefone pra disparar autorização',
       };
     }
-    const req = await requestAutorizacao({ cpf: cpfLimpo, nome, telefone });
+    const req = await requestAutorizacao({ cpf: cpfLimpo, nome, telefone, serviceType: provider });
     link = req.data?.data?.authorization_link || link;
     status = req.data?.data?.status || 'PENDING';
   }
@@ -295,7 +317,7 @@ async function consultarAprovacao({ cpf, nome, telefone, autoAutorizar = true })
     if (autoAutorizar && uuid) {
       await autorizarConsulta(uuid);
       // Re-checa status apos auto-autz
-      const recheck = await checkAutorizacao(cpfLimpo);
+      const recheck = await checkAutorizacao(cpfLimpo, provider);
       status = recheck.data?.data?.status || status;
       link = recheck.data?.data?.authorization_link || link;
     }
@@ -323,7 +345,7 @@ async function consultarAprovacao({ cpf, nome, telefone, autoAutorizar = true })
   }
 
   // 3) AUTHORIZED — busca vinculos empregaticios (async, com retry)
-  const enr = await checkEnrollment(cpfLimpo);
+  const enr = await checkEnrollment(cpfLimpo, provider);
   if (!enr.ok || enr.data?.success !== true) {
     return {
       approved: false,
@@ -347,6 +369,7 @@ async function consultarAprovacao({ cpf, nome, telefone, autoAutorizar = true })
     cpf: cpfLimpo,
     employerDocument: v.employer_cnpj,
     registration: v.work_registration,
+    serviceType: provider,
   });
   if (!mg.ok) {
     return {
@@ -443,6 +466,7 @@ export default async function handler(req) {
         cpf: body.cpf,
         nome: body.nome || body.name,
         telefone: body.telefone || body.phone,
+        serviceType: body.serviceType || body.service_type, // QITECH | UY3
         // autoAutorizar default true (modelo Handbank/UY3). Passar false
         // pra forcar fluxo SMS (cliente clica) se precisar.
         autoAutorizar: body.autoAutorizar !== false,
