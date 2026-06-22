@@ -66,6 +66,27 @@ const TODOS_BANCOS_CLT = [
   'fintech_qi', 'fintech_celcoin', 'unno', 'nossa_fintech',
 ];
 
+// ── Isolamento multi-tenant das consultas CLT ──────────────────
+// Admin/gestor (e chamadas internas via WEBHOOK_SECRET) enxergam tudo.
+// Demais: isolados por parceiro_id (se tiver) ou pelo proprio user_id.
+// Sem isso, a action 'listar' devolvia TODAS as consultas pra qualquer
+// operador (vazamento de dados entre parceiros/vendedores).
+function isPrivCLT(user) {
+  return !!(user && (user.role === 'admin' || user.role === 'gestor' || user._internal));
+}
+function escopoFiltrosCLT(user) {
+  if (isPrivCLT(user)) return {};
+  if (user?.parceiro_id) return { parceiro_id: user.parceiro_id };
+  return { criada_por_user_id: user?.id ?? -1 };
+}
+// Checa se o usuario pode ver uma fila especifica (defense-in-depth no status).
+function podeVerFilaCLT(user, row) {
+  if (isPrivCLT(user)) return true;
+  if (!row) return false;
+  if (user?.parceiro_id) return row.parceiro_id === user.parceiro_id;
+  return row.criada_por_user_id === user?.id;
+}
+
 // Atualiza UM banco no jsonb bancos sem sobrescrever os outros.
 // Quando status muda pra terminal (ok/falha/bloqueado/manual_aguardando)
 // limpa flags transitorias (processando) automaticamente — evita ficarem
@@ -1552,6 +1573,9 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     if (!id) return jsonError('id obrigatório', 400, req);
     let { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
     if (!row) return jsonError('Fila não encontrada', 404, req);
+    // Isolamento: usuario so ve fila do proprio escopo (parceiro/user).
+    // Retorna 404 (nao 403) pra nao revelar que o id existe.
+    if (!podeVerFilaCLT(user, row)) return jsonError('Fila não encontrada', 404, req);
 
     // REFRESH ATIVO V8: se um V8 esta processando ha mais de 60s
     // (CONSENT_APPROVED ou WAITING_CREDIT_ANALYSIS), re-consulta sincronamente
@@ -1649,7 +1673,9 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
   // ─── LISTAR (paginado) ────────────────────────────────────
   if (action === 'listar') {
     const limit = Math.min(parseInt(body.limit || 50), 200);
-    const filters = {};
+    // Isolamento multi-tenant: aplica escopo do usuario (parceiro/user).
+    // Admin/gestor recebem {} (sem filtro) e veem tudo.
+    const filters = { ...escopoFiltrosCLT(user) };
     if (body.cpf) filters.cpf = body.cpf;
     if (body.status_geral) filters.status_geral = body.status_geral;
     const { data } = await dbSelect('clt_consultas_fila', {
