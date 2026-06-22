@@ -32,6 +32,11 @@ function getConfig() {
     PROMOT_ID: parseInt(process.env.NOSSA_FINTECH_PROMOT_ID || '0', 10),
     PASSWORD: (process.env.NOSSA_FINTECH_PASSWORD || '').trim(),
     SERVICE_TYPE: (process.env.NOSSA_FINTECH_SERVICE_TYPE || 'QITECH').trim(),
+    // Geolocalizacao da matriz (Sorocaba/SP) — exigida no authorize.
+    // Auto-autz roda "em nome do cliente" (procuracao), igual Handbank/UY3
+    // ChallengeInfo. Geo identifica a origem da autorizacao na auditoria.
+    LAT: parseFloat(process.env.NOSSA_FINTECH_LAT || '-23.5015'),
+    LON: parseFloat(process.env.NOSSA_FINTECH_LON || '-47.4526'),
   };
 }
 
@@ -141,6 +146,28 @@ async function requestAutorizacao({ cpf, nome, telefone }) {
   });
 }
 
+// Extrai o uuid do agreement/termo a partir do authorization_link
+// Ex: https://.../clt/termo/{uuid}  ou  .../clt/agreement/{uuid}
+function extrairUuidLink(link) {
+  if (!link) return null;
+  const m = String(link).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return m ? m[0] : null;
+}
+
+// ─── ACTION: autorizarConsulta (AUTO-AUTZ, modelo Handbank/UY3) ─
+// POST /clt-loan/v1/authorize/{uuid} — autoriza a consulta DataPrev
+// programaticamente, sem o cliente clicar no link do SMS. Endpoint
+// REAL capturado do trafego do painel (nao adivinhado). Exige
+// geolocation no body: {"geolocation":{"latitude","longitude"}}.
+// Pressupoe procuracao do cliente (igual ChallengeInfo do Handbank).
+async function autorizarConsulta(uuid) {
+  if (!uuid) return { ok: false, status: 0, data: { error: 'uuid obrigatorio' } };
+  const cfg = getConfig();
+  return await nfCall(`/clt-loan/v1/authorize/${uuid}`, 'POST', {
+    geolocation: { latitude: cfg.LAT, longitude: cfg.LON },
+  });
+}
+
 // ─── ACTION: checkEnrollment (vinculos empregaticios) ─────────
 // IMPORTANTE: virou ASSINCRONO. 1a chamada retorna success:false com
 // "Consulta de vínculos em processamento. Aguarde". Precisa retry ate
@@ -209,13 +236,13 @@ async function cancelarProposta(debtKey) {
 //     dadosCliente?: {...},
 //     vinculo?: {...},
 //   }
-async function consultarAprovacao({ cpf, nome, telefone }) {
+async function consultarAprovacao({ cpf, nome, telefone, autoAutorizar = true }) {
   const cpfLimpo = onlyDigits(cpf);
   if (cpfLimpo.length !== 11) return { approved: false, etapa: 'ERRO', error: 'CPF invalido' };
 
   // 1) Verifica status de autorização
   // A API retorna success:false / HTTP 4xx quando CPF NUNCA teve autorização
-  // registrada — semanticamente isso eh "NOT_AUTHORIZED, dispara SMS".
+  // registrada — semanticamente isso eh "NOT_AUTHORIZED, cria + auto-autz".
   // Outros erros (5xx, mensagem diferente) cai em ERRO real.
   const auth = await checkAutorizacao(cpfLimpo);
   const apiSucesso = auth.ok && auth.data?.success === true;
@@ -231,7 +258,6 @@ async function consultarAprovacao({ cpf, nome, telefone }) {
       msg.includes('not found') || msg.includes('autorização não') ||
       msg.includes('sem autorização');
     if (!isNotFound) {
-      // Erro real (5xx, sistema fora do ar, etc) — propaga
       return {
         approved: false,
         etapa: 'ERRO',
@@ -239,42 +265,51 @@ async function consultarAprovacao({ cpf, nome, telefone }) {
         _raw: auth.data,
       };
     }
-    // Caso "autorização não encontrada" — trata como NOT_AUTHORIZED
     status = 'NOT_AUTHORIZED';
     link = null;
   }
 
-  // 2) NOT_AUTHORIZED — dispara SMS automaticamente se temos telefone+nome
+  // 2) NOT_AUTHORIZED — cria autorização (request-authorization).
+  // Isso retorna o link com o uuid do agreement. Em seguida, se
+  // autoAutorizar=true, AUTO-AUTORIZA (modelo Handbank/UY3). Senão,
+  // fica aguardando o cliente clicar no SMS (modelo Mercantil).
   if (status === 'NOT_AUTHORIZED') {
     if (!telefone || !nome) {
       return {
         approved: false,
         etapa: 'AGUARDA_AUTORIZACAO',
         status,
-        mensagem: 'Cliente não autorizou — operador precisa enviar SMS (faltam nome/telefone)',
+        mensagem: 'Cliente não autorizou — faltam nome/telefone pra disparar autorização',
       };
     }
     const req = await requestAutorizacao({ cpf: cpfLimpo, nome, telefone });
-    const reqStatus = req.data?.data?.status;
-    const reqLink = req.data?.data?.authorization_link;
-    return {
-      approved: false,
-      etapa: 'AGUARDA_AUTORIZACAO',
-      status: reqStatus || 'PENDING',
-      mensagem: '📲 SMS enviado pro cliente autorizar consulta',
-      linkAutorizacao: reqLink || link,
-    };
+    link = req.data?.data?.authorization_link || link;
+    status = req.data?.data?.status || 'PENDING';
   }
 
-  // PENDING — cliente recebeu SMS mas ainda nao autorizou
+  // 3) PENDING — tenta AUTO-AUTORIZAR (bate no /authorize/{uuid}).
+  // Se conseguir, status vira AUTHORIZED e segue pra margem.
+  // Se nao (ou autoAutorizar=false), retorna aguardando cliente.
   if (status === 'PENDING') {
-    return {
-      approved: false,
-      etapa: 'AGUARDA_AUTORIZACAO',
-      status,
-      mensagem: '⏳ Aguardando cliente autorizar pelo SMS',
-      linkAutorizacao: link,
-    };
+    const uuid = extrairUuidLink(link);
+    if (autoAutorizar && uuid) {
+      await autorizarConsulta(uuid);
+      // Re-checa status apos auto-autz
+      const recheck = await checkAutorizacao(cpfLimpo);
+      status = recheck.data?.data?.status || status;
+      link = recheck.data?.data?.authorization_link || link;
+    }
+    if (status !== 'AUTHORIZED') {
+      return {
+        approved: false,
+        etapa: 'AGUARDA_AUTORIZACAO',
+        status,
+        mensagem: autoAutorizar
+          ? '⏳ Autorização disparada — aguardando confirmação DataPrev'
+          : '⏳ Aguardando cliente autorizar pelo SMS',
+        linkAutorizacao: link,
+      };
+    }
   }
 
   if (status !== 'AUTHORIZED') {
@@ -408,8 +443,18 @@ export default async function handler(req) {
         cpf: body.cpf,
         nome: body.nome || body.name,
         telefone: body.telefone || body.phone,
+        // autoAutorizar default true (modelo Handbank/UY3). Passar false
+        // pra forcar fluxo SMS (cliente clica) se precisar.
+        autoAutorizar: body.autoAutorizar !== false,
       });
       return jsonResp(out, 200, req);
+    }
+
+    if (action === 'autorizarConsulta') {
+      // Auto-autz manual: passa uuid (ou link) do agreement
+      const uuid = body.uuid || extrairUuidLink(body.link);
+      const r = await autorizarConsulta(uuid);
+      return jsonResp({ success: r.ok, uuid, ...r.data }, r.status, req);
     }
 
     if (action === 'enviarSms') {
