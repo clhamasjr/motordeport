@@ -11,9 +11,10 @@ import type { BancoSlug } from '@/lib/clt-types';
  * via BANCO_LABEL completo, mas seletores/filtros novos NÃO incluem.
  */
 export const BANCOS_OCULTOS: BancoSlug[] = [
-  'v8_qi',       // V8 saiu da operação — substituído por Fintech (QI Tech)
-  'v8_celcoin',  // idem — substituído por Fintech (Celcoin)
+  'v8_qi',       // V8 saiu da operação — substituído por Fintech do Corban (QI Tech)
+  'v8_celcoin',  // idem — substituído por Fintech do Corban (Celcoin)
   'joinbank',    // QualiBanking — fora da operação atual
+  'mercantil',   // tirado de produção (jun/2026)
 ];
 
 /**
@@ -29,8 +30,8 @@ export const BANCO_LABEL: Record<BancoSlug, string> = {
   mercantil: 'Mercantil',
   handbank: 'Handbank · UY3',
   c6: 'C6 Bank',
-  fintech_qi: 'Fintech (QI Tech)',
-  fintech_celcoin: 'Fintech (Celcoin)',
+  fintech_qi: 'Fintech do Corban (QI Tech)',
+  fintech_celcoin: 'Fintech do Corban (Celcoin)',
   unno: 'Unno (ITAPEMA/QITech)',
   nossa_fintech: 'A NOSSA FINTECH',
 };
@@ -43,7 +44,6 @@ export const BANCOS_VISIVEIS: BancoSlug[] = [
   'fintech_qi',
   'fintech_celcoin',
   'handbank',
-  'mercantil',
   'c6',
   'unno',
   'nossa_fintech',

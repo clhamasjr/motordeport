@@ -19,8 +19,8 @@ const BANCO_LABEL: Record<BancoSlug, string> = {
   mercantil: 'Mercantil',
   handbank: 'Handbank · UY3',
   c6: 'C6 Bank',
-  fintech_qi: 'Fintech (QI Tech)',
-  fintech_celcoin: 'Fintech (Celcoin)',
+  fintech_qi: 'Fintech do Corban (QI Tech)',
+  fintech_celcoin: 'Fintech do Corban (Celcoin)',
   unno: 'Unno (ITAPEMA/QITech)',
   nossa_fintech: 'A NOSSA FINTECH',
 };
