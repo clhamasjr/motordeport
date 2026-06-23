@@ -22,6 +22,21 @@ async function jb(method, path, body) {
 
 const j = (data, status = 200, req = null) => jsonResp(data, status, req);
 
+// A Ajin/FINANTO passou a devolver campos de status como OBJETO
+// ({code,key,name,date,color,note}) em vez de string — o que quebrava o
+// frontend (React error #31: nao da pra renderizar objeto) e o calculo de
+// elegivel (comparava objeto com string). Normaliza pra texto/chave.
+function fStr(v) {
+  if (v == null) return null;
+  if (typeof v === 'object') return v.name || v.key || v.code || null;
+  return v;
+}
+function fKey(v) {
+  if (v == null) return null;
+  if (typeof v === 'object') return v.key || v.code || null;
+  return v;
+}
+
 export default async function handler(req) {
   if (req.method === 'OPTIONS') return handleOptions(req);
 
@@ -102,11 +117,11 @@ export default async function handler(req) {
 
       return j({
         success: true, cpf, beneficio: ben,
-        nome: d.name || null, status: d.status || null,
-        benefitStatus: d.benefitStatus || d.benefitSituation || null,
-        elegivel: d.benefitStatus === 'elegible' || d.benefitSituation === 'active',
-        bloqueado: (d.blockType && d.blockType !== 'not_blocked') || false,
-        tipoBlock: d.blockType || null, especie: d.assistanceType || null,
+        nome: d.name || null, status: fStr(d.status),
+        benefitStatus: fStr(d.benefitStatus || d.benefitSituation),
+        elegivel: fKey(d.benefitStatus) === 'elegible' || fKey(d.benefitSituation) === 'active',
+        bloqueado: (fKey(d.blockType) && fKey(d.blockType) !== 'not_blocked') || false,
+        tipoBlock: fStr(d.blockType), especie: fStr(d.assistanceType),
         margemEmprestimo: d.consignedCreditBalance || 0,
         margemCartao: d.consignedCardBalance || 0,
         limiteCartao: d.consignedCardLimit || 0,
@@ -138,7 +153,11 @@ export default async function handler(req) {
       return j({
         success: true,
         nome: d.name || null,
-        elegivel: d.benefitStatus === 'elegible' || d.benefitSituation === 'active',
+        status: fStr(d.status),
+        benefitStatus: fStr(d.benefitStatus || d.benefitSituation),
+        especie: fStr(d.assistanceType),
+        tipoBlock: fStr(d.blockType),
+        elegivel: fKey(d.benefitStatus) === 'elegible' || fKey(d.benefitSituation) === 'active',
         margemEmprestimo: d.consignedCreditBalance || 0,
         margemCartao: d.consignedCardBalance || 0,
         saldoDisponivel: d.availableTotalBalance || 0,
