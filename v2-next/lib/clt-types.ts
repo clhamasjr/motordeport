@@ -13,7 +13,7 @@ export type StatusBanco =
   | 'pulado'
   | 'manual_aguardando';
 
-export type StatusGeral = 'processando' | 'concluido';
+export type StatusGeral = 'processando' | 'concluido' | 'standby';
 
 export type BancoSlug =
   | 'presencabank' | 'multicorban'

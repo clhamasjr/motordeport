@@ -62,6 +62,33 @@ export default async function handler(req) {
     if (l > 0 && l <= 200) limit = l;
   } catch { /* default */ }
 
+  const baseUrlEarly = APP_URL();
+  const secretEarly = process.env.WEBHOOK_SECRET || '';
+
+  // ── ETAPA 1: dispara filas em STANDBY ────────────────────────
+  // Consultas feitas pelos operadores antes de 26/06 ficaram paradas
+  // (status_geral='standby'). Agora dispara os bancos de cada uma.
+  let standbyDisparadas = 0;
+  try {
+    const { data: standbyFilas } = await dbSelect('clt_consultas_fila', {
+      filters: { status_geral: 'standby' }, order: 'iniciado_em.asc', limit,
+    });
+    for (const f of (standbyFilas || [])) {
+      const bancos = Object.keys(f.bancos || {});
+      if (bancos.length === 0) continue;
+      // Marca como processando ANTES (evita re-disparo se cron rodar de novo)
+      await dbUpdate('clt_consultas_fila', { id: f.id }, { status_geral: 'processando' }).catch(() => {});
+      for (const banco of bancos) {
+        fetch(baseUrlEarly + '/api/clt-fila', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-secret': secretEarly },
+          body: JSON.stringify({ action: 'processar', id: f.id, banco }),
+        }).catch(() => {});
+      }
+      standbyDisparadas++;
+    }
+  } catch { /* segue pra re-consulta do historico */ }
+
   // Pega os CPFs menos recentemente re-consultados (cursor = ultima_consulta_at)
   const { data: clientes } = await dbSelect('clt_clientes', {
     order: 'ultima_consulta_at.asc',
@@ -126,10 +153,11 @@ export default async function handler(req) {
 
   return jsonResp({
     success: true,
-    disparados,
-    semDono,          // quantos não tinham vendedor (re-atribuídos a Sistema)
+    standbyDisparadas,  // filas que estavam paradas (modo standby) e foram disparadas
+    disparados,         // re-consultas do historico disparadas
+    semDono,            // quantos não tinham vendedor (re-atribuídos a Sistema)
     erros,
     lote: limit,
-    mensagem: `Re-consulta disparada pra ${disparados} CPF(s) do histórico (bancos sem-SMS).`,
+    mensagem: `Standby: ${standbyDisparadas} disparada(s). Histórico: ${disparados} re-consulta(s) (bancos sem-SMS).`,
   }, 200, req);
 }

@@ -80,6 +80,7 @@ export function ConsultaCard({ filaId, onClose }: Props) {
   }
 
   const concluido = fila.status_geral === 'concluido';
+  const standby = fila.status_geral === 'standby';
   const cliente = fila.cliente || {};
   const vinculo = fila.vinculo;
 
@@ -108,7 +109,11 @@ export function ConsultaCard({ filaId, onClose }: Props) {
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                {concluido ? (
+                {standby ? (
+                  <Badge variant="warning" className="gap-1">
+                    ⏸️ AGENDADA 26/06
+                  </Badge>
+                ) : concluido ? (
                   <Badge variant="success" className="gap-1">
                     <CheckCircle2 className="w-3 h-3" /> CONCLUÍDA
                   </Badge>
@@ -166,8 +171,16 @@ export function ConsultaCard({ filaId, onClose }: Props) {
           </div>
         </div>
 
-        {/* Bancos parados (manutenção) */}
-        {parados.length > 0 && (
+        {/* Banner STANDBY — consulta agendada pra 26/06 */}
+        {standby && (
+          <div className="m-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-600">
+            ⏸️ <b>Consulta agendada.</b> Os bancos serão consultados automaticamente em
+            {' '}<b>26/06 às 07h</b>. Não precisa fazer nada — o resultado aparece aqui depois.
+          </div>
+        )}
+
+        {/* Bancos parados (manutenção) — escondidos em standby */}
+        {!standby && parados.length > 0 && (
           <div className="p-3 pb-0">
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">
               🔧 Bancos parados ({parados.length})
@@ -180,25 +193,28 @@ export function ConsultaCard({ filaId, onClose }: Props) {
           </div>
         )}
 
-        {/* Bancos operando */}
-        <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-          {operando.map(({ slug, state }) => (
-            <BancoOfertaCard
-              key={slug}
-              banco={slug}
-              state={state}
-              cliente={cliente}
-              filaId={fila.id}
-              onSimularDigitar={
-                state.disponivel && state.status === 'ok'
-                  ? () => setBancoDigitar(slug)
-                  : undefined
-              }
-            />
-          ))}
-        </div>
+        {/* Bancos operando — escondidos em standby (banner ja explica) */}
+        {!standby && (
+          <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {operando.map(({ slug, state }) => (
+              <BancoOfertaCard
+                key={slug}
+                banco={slug}
+                state={state}
+                cliente={cliente}
+                filaId={fila.id}
+                onSimularDigitar={
+                  state.disponivel && state.status === 'ok'
+                    ? () => setBancoDigitar(slug)
+                    : undefined
+                }
+              />
+            ))}
+          </div>
+        )}
 
-        {/* Resumo */}
+        {/* Resumo — escondido em standby */}
+        {!standby && (
         <div className="p-3 text-center text-xs border-t border-border bg-secondary/20">
           {totalDisponivel > 0 ? (
             <span className="text-green-400">
@@ -213,6 +229,7 @@ export function ConsultaCard({ filaId, onClose }: Props) {
             iniciada {formatDateBR(fila.iniciado_em)}
           </span>
         </div>
+        )}
       </CardContent>
 
       {/* Modal Digitar Proposta */}

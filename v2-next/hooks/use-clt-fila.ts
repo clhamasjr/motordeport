@@ -84,12 +84,14 @@ export function useFilaStatus(filaId: string | null) {
       if (query.state.error) return false;
       const fila = query.state.data;
       if (!fila) return 1500;
-      return fila.status_geral === 'concluido' ? false : 2000;
+      // 'standby' (agendada pra 26/06) e 'concluido' nao mudam — sem polling
+      if (fila.status_geral === 'concluido' || fila.status_geral === 'standby') return false;
+      return 2000;
     },
     refetchOnWindowFocus: false,
     staleTime: (query) => {
       const fila = query.state.data;
-      return fila?.status_geral === 'concluido' ? 30 * 60 * 1000 : 1000;
+      return (fila?.status_geral === 'concluido' || fila?.status_geral === 'standby') ? 30 * 60 * 1000 : 1000;
     },
   });
 }

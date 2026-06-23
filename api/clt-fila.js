@@ -69,6 +69,17 @@ const TODOS_BANCOS_CLT = [
   'facta_clt',           // FACTA Crédito do Trabalhador
 ];
 
+// ── MODO STANDBY ───────────────────────────────────────────────
+// Ate esta data, consultas de operador NAO disparam os bancos —
+// ficam em status_geral='standby' e sao disparadas em massa no dia
+// 26/06 07h (cron clt-cron-reconsulta), junto com a re-consulta do
+// historico. Motivo: bancarizadoras instaveis/virada de folha ate la.
+// Chamadas internas (cron, _internal) NUNCA entram em standby.
+const CLT_STANDBY_ATE = Date.parse('2026-06-26T07:00:00-03:00'); // 26/06 07h BRT
+function emStandbyAgora(user) {
+  return !user?._internal && Date.now() < CLT_STANDBY_ATE;
+}
+
 // ── Isolamento multi-tenant das consultas CLT ──────────────────
 // Admin/gestor (e chamadas internas via WEBHOOK_SECRET) enxergam tudo.
 // Demais: isolados por parceiro_id (se tiver) ou pelo proprio user_id.
@@ -1544,9 +1555,13 @@ export default async function handler(req) {
       ? `Reconsulta Lote · ${nomeOperador}`
       : nomeOperador;
 
+    // MODO STANDBY: ate 26/06 07h, consultas de operador ficam paradas
+    // (status_geral='standby') e disparam em massa no cron do dia 26.
+    const standby = emStandbyAgora(user);
+
     const { data: row, error } = await dbInsert('clt_consultas_fila', {
       cpf, nome_manual: nomeManual, incluir_c6: incluirC6,
-      status_geral: 'processando',
+      status_geral: standby ? 'standby' : 'processando',
       bancos: inicial,
       cliente: clienteInicial,
       vinculo: vinculoInicial, // pre-populado do CAGED se disponivel
@@ -1556,6 +1571,18 @@ export default async function handler(req) {
       parceiro_id: donoParceiroId // isolamento multi-tenant
     });
     if (error) return jsonError('Erro criando fila: ' + error, 500, req);
+
+    // Em standby: NAO dispara os processadores agora. O cron do dia 26/06
+    // (clt-cron-reconsulta) pega as filas 'standby' e dispara em massa.
+    if (standby) {
+      return jsonResp({
+        success: true,
+        id: row.id,
+        cpf,
+        standby: true,
+        mensagem: '⏸️ Consulta agendada — será processada em 26/06 às 07h (modo standby).',
+      }, 200, req);
+    }
 
     // DISPARA OS PROCESSADORES NO BACKEND — garantia de execucao mesmo se
     // o frontend fechar a janela. Cada um roda em paralelo (fetch sem await),
