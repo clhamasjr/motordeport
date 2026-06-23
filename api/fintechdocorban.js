@@ -123,6 +123,43 @@ export default async function handler(req) {
       }, 200, req);
     }
 
+    // ─── DIAG HEADERS: testa qual nome de header autentica ────
+    // 401 com corpo vazio sugere gateway (Azure APIM) — header pode ser
+    // 'Ocp-Apim-Subscription-Key' em vez de 'Subscription'. Testa varios.
+    if (action === 'testHeaders') {
+      const cfg = getConfig();
+      if (!cfg.apiKey) return j({ success: false, mensagem: 'chave nao configurada' }, 200, req);
+      const variacoes = [
+        'Subscription',
+        'Ocp-Apim-Subscription-Key',
+        'subscription',
+        'api-token',
+        'Api-Token',
+        'X-Subscription-Key',
+        'X-Api-Key',
+      ];
+      const url = cfg.baseUrl + '/Api/V1/Bank/Get-All';
+      const resultados = [];
+      for (const hname of variacoes) {
+        try {
+          const r = await fetch(url, { method: 'GET', headers: { [hname]: cfg.apiKey, 'Accept': 'application/json' } });
+          resultados.push({ header: hname, status: r.status, ok: r.ok });
+        } catch (e) { resultados.push({ header: hname, erro: e.message }); }
+      }
+      // Tambem testa Authorization: Bearer
+      try {
+        const r = await fetch(url, { method: 'GET', headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Accept': 'application/json' } });
+        resultados.push({ header: 'Authorization: Bearer', status: r.status, ok: r.ok });
+      } catch (e) { resultados.push({ header: 'Authorization: Bearer', erro: e.message }); }
+      const vencedor = resultados.find(x => x.ok);
+      return j({
+        success: !!vencedor,
+        vencedor: vencedor?.header || null,
+        keyLen: cfg.apiKey.length, // confirma que a chave nao ta vazia/curta
+        resultados,
+      }, 200, req);
+    }
+
     // ─── CONSULTAR POR CPF (lista dados se ja autorizado) ─────
     // GET /Api/V1/{Qi|Celcoin}/Get-All-Consult-Data-Worker-By-Cpf/{cpf}
     if (action === 'consultarPorCPF') {
