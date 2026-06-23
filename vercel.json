@@ -17,6 +17,10 @@
     {
       "path": "/api/sofia-cron-followups",
       "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/clt-cron-reconsulta",
+      "schedule": "*/15 10-11 26 6 *"
     }
   ]
 }

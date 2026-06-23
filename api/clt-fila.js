@@ -1528,9 +1528,20 @@ export default async function handler(req) {
     // Origem do registro: 'lote' (higienizacao em lote) muda o criada_por_nome
     // pra "Higienizacao Lote · <user>". Default 'unitaria' usa nome do user.
     const origem = body.origem === 'lote' ? 'lote' : 'unitaria';
-    const nomeOperador = user?.nome || user?.username || 'Sistema';
+
+    // OVERRIDE DE DONO (so chamada interna): cron de reconsulta atribui a
+    // consulta ao VENDEDOR ORIGINAL (preserva isolamento multi-tenant — cada
+    // vendedor ve as suas). body.comoUserId/comoUserNome/comoParceiroId.
+    let donoUserId = user?.id || null;
+    let donoParceiroId = user?.parceiro_id || null;
+    let nomeOperador = user?.nome || user?.username || 'Sistema';
+    if (user?._internal && body.comoUserId) {
+      donoUserId = body.comoUserId;
+      donoParceiroId = body.comoParceiroId ?? null;
+      nomeOperador = body.comoUserNome || nomeOperador;
+    }
     const criadaPorNome = origem === 'lote'
-      ? `Higienização Lote · ${nomeOperador}`
+      ? `Reconsulta Lote · ${nomeOperador}`
       : nomeOperador;
 
     const { data: row, error } = await dbInsert('clt_consultas_fila', {
@@ -1540,9 +1551,9 @@ export default async function handler(req) {
       cliente: clienteInicial,
       vinculo: vinculoInicial, // pre-populado do CAGED se disponivel
       iniciado_em: new Date().toISOString(),
-      criada_por_user_id: user?.id || null,
+      criada_por_user_id: donoUserId,
       criada_por_nome: criadaPorNome,
-      parceiro_id: user?.parceiro_id || null // isolamento multi-tenant
+      parceiro_id: donoParceiroId // isolamento multi-tenant
     });
     if (error) return jsonError('Erro criando fila: ' + error, 500, req);
 
