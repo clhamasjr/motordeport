@@ -140,6 +140,128 @@ export default async function handler(req) {
       }
     }
 
+    // ─── CLT: CONSULTA DE APROVAÇÃO (Crédito do Trabalhador) ──────
+    // Fluxo (manual v2.0 Consulta Dados CLT):
+    //   1) GET /consignado-trabalhador/autoriza-consulta?cpf= → margem se autorizado
+    //   2) Se "Token expirado/necessario autorizacao" → POST /solicita-autorizacao-consulta
+    //      (SMS/WhatsApp pro cliente; autz vale 30 dias)
+    //   3) "virada de folha" → indisponivel temporario (base offline e outro fluxo)
+    // Modelo Mercantil/Nossa Fintech (precisa cliente autorizar via SMS).
+    if (action === 'cltConsultarAprovacao') {
+      const cpf = String(body.cpf || '').replace(/\D/g, '');
+      if (!cpf || cpf.length !== 11) return jsonError('cpf invalido', 400, req);
+
+      // 1) Tenta consultar dados (se ja autorizado, retorna margem)
+      const cons = await fGet('/consignado-trabalhador/autoriza-consulta', { cpf });
+      const cd = cons.data || {};
+
+      // Sucesso: dados do trabalhador com margem
+      if (cd.erro === false && cd.dados_trabalhador?.dados?.length > 0) {
+        const t = cd.dados_trabalhador.dados[0];
+        const margem = parseFloat(t.valorMargemDisponivel || 0) || 0;
+        const elegivel = String(t.elegivel).toUpperCase() === 'SIM' || t.elegivel === true || t.elegivel === '1';
+        return j({
+          etapa: elegivel && margem > 0 ? 'APROVADO' : 'SEM_MARGEM',
+          approved: elegivel && margem > 0,
+          mensagem: elegivel && margem > 0
+            ? `Cliente elegivel — margem R$ ${margem.toFixed(2)}`
+            : (elegivel ? 'Elegivel mas sem margem disponivel' : 'Cliente nao elegivel'),
+          dadosCliente: {
+            nome: t.nome, dataNascimento: t.dataNascimento,
+            sexo: String(t.sexo_descricao).toUpperCase().startsWith('F') ? 'F' : 'M',
+            nomeMae: t.nomeMae, profissao: t.cbo_descricao,
+          },
+          vinculo: {
+            matricula: t.matricula,
+            cnpj: t.numeroInscricaoEmpregador,
+            empregador: t.nomeEmpregador,
+            dataAdmissao: t.dataAdmissao,
+            cnae: t.cnae_descricao,
+          },
+          margem: {
+            disponivel: margem,
+            base: parseFloat(t.valorBaseMargem || 0) || 0,
+            vencimentos: parseFloat(t.valorTotalVencimentos || 0) || 0,
+          },
+          _raw: cd,
+        }, 200, req);
+      }
+
+      const msg = String(cd.mensagem || '').toLowerCase();
+
+      // Virada de folha — usar base offline (fluxo separado, manual v3.0)
+      if (msg.includes('virada de folha') || msg.includes('offline')) {
+        return j({
+          etapa: 'INDISPONIVEL',
+          approved: false,
+          mensagem: '⏱ FACTA indisponivel (virada de folha). Tente mais tarde.',
+          _raw: cd,
+        }, 200, req);
+      }
+
+      // Precisa autorização — dispara SMS se temos nome+celular
+      if (msg.includes('autoriza') || msg.includes('expirado') || cons.status === 401) {
+        const nome = String(body.nome || '').trim();
+        const celular = String(body.telefone || body.celular || '').replace(/\D/g, '');
+        if (!nome || celular.length < 10) {
+          return j({
+            etapa: 'AGUARDA_AUTORIZACAO',
+            approved: false,
+            mensagem: 'Cliente precisa autorizar consulta FACTA. Faltam nome/telefone pra disparar SMS.',
+            _raw: cd,
+          }, 200, req);
+        }
+        // Formata celular (00) 00000-0000
+        const ddd = celular.substring(0, 2);
+        const num = celular.substring(2);
+        const celFmt = `(${ddd}) ${num.length === 9 ? num.substring(0,5)+'-'+num.substring(5) : num.substring(0,4)+'-'+num.substring(4)}`;
+        const sol = await fPost('/solicita-autorizacao-consulta', {
+          averbador: '10010',
+          nome,
+          cpf,
+          celular: celFmt,
+          tipo_envio: (body.tipoEnvio || 'WHATSAPP').toUpperCase(),
+          matricula: body.matricula || undefined,
+        });
+        const sd = sol.data || {};
+        // "Token válido. Não necessita de autorização." = já autorizado, re-consulta
+        if (sd.erro === false && /n[aã]o necessita/i.test(sd.mensagem || '')) {
+          // Re-tenta consulta imediatamente
+          const reCons = await fGet('/consignado-trabalhador/autoriza-consulta', { cpf });
+          const rd = reCons.data || {};
+          if (rd.erro === false && rd.dados_trabalhador?.dados?.length > 0) {
+            const t = rd.dados_trabalhador.dados[0];
+            const margem = parseFloat(t.valorMargemDisponivel || 0) || 0;
+            return j({
+              etapa: margem > 0 ? 'APROVADO' : 'SEM_MARGEM',
+              approved: margem > 0,
+              mensagem: margem > 0 ? `Cliente elegivel — margem R$ ${margem.toFixed(2)}` : 'Sem margem',
+              dadosCliente: { nome: t.nome, dataNascimento: t.dataNascimento, nomeMae: t.nomeMae },
+              vinculo: { matricula: t.matricula, cnpj: t.numeroInscricaoEmpregador, empregador: t.nomeEmpregador, dataAdmissao: t.dataAdmissao },
+              margem: { disponivel: margem, base: parseFloat(t.valorBaseMargem || 0) || 0 },
+              _raw: rd,
+            }, 200, req);
+          }
+        }
+        return j({
+          etapa: 'AGUARDA_AUTORIZACAO',
+          approved: false,
+          mensagem: sd.erro === false
+            ? '📲 SMS/WhatsApp enviado pro cliente autorizar consulta FACTA (vale 30 dias)'
+            : (sd.mensagem || 'Falha ao solicitar autorizacao'),
+          _raw: sd,
+        }, 200, req);
+      }
+
+      // Outro erro
+      return j({
+        etapa: 'ERRO',
+        approved: false,
+        mensagem: cd.mensagem || `Erro consulta FACTA (HTTP ${cons.status})`,
+        _raw: cd,
+      }, 200, req);
+    }
+
     // Diagnostico: mostra env vars + faz ping direto no proxy
     if (action === 'diag') {
       const cfg = getConfig();

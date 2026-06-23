@@ -24,6 +24,7 @@ const BANCO_LABEL: Record<BancoSlug, string> = {
   unno: 'Unno (ITAPEMA/QITech)',
   nossa_fintech: 'A NOSSA FINTECH (QITECH)',
   nossa_fintech_uy3: 'A NOSSA FINTECH (UY3)',
+  facta_clt: 'FACTA (Crédito do Trabalhador)',
 };
 
 const BANCO_COR: Record<BancoSlug, string> = {
@@ -40,6 +41,7 @@ const BANCO_COR: Record<BancoSlug, string> = {
   unno: 'border-l-purple-500', // cor temp — sem token customizado ainda
   nossa_fintech: 'border-l-orange-500', // A NOSSA FINTECH (QITECH)
   nossa_fintech_uy3: 'border-l-amber-600', // A NOSSA FINTECH (UY3)
+  facta_clt: 'border-l-blue-700', // FACTA
 };
 
 interface Props {

@@ -66,6 +66,7 @@ const TODOS_BANCOS_CLT = [
   'fintech_qi', 'fintech_celcoin', 'unno',
   'nossa_fintech',       // A NOSSA FINTECH via QITECH
   'nossa_fintech_uy3',   // A NOSSA FINTECH via UY3
+  'facta_clt',           // FACTA Crédito do Trabalhador
 ];
 
 // ── Isolamento multi-tenant das consultas CLT ──────────────────
@@ -1176,6 +1177,94 @@ async function processarNossaFintech(id, cpf, slug, serviceType, auth, secret) {
   });
 }
 
+// ─── FACTA Crédito do Trabalhador (CLT) — via proxy IP fixo ─────
+// Modelo Mercantil/Nossa Fintech: precisa cliente autorizar consulta
+// DataPrev via SMS/WhatsApp (vale 30 dias). Se autorizado, retorna
+// margem. Roda via facta-proxy (IP fixo autorizado pela FACTA).
+async function processarFacta(id, cpf, auth, secret) {
+  const manut = await _bancoEmManutencao('facta_clt');
+  if (manut) { await _marcarEmManutencao(id, 'facta_clt', manut); return; }
+  await patchBanco(id, 'facta_clt', { status: 'processando' });
+
+  const cli = await aguardarCliente(id, 6000);
+  const telefone = cli?.telefones?.[0]?.completo || null;
+  const nome = cli?.nome || null;
+
+  const r = await callApi('/api/facta', {
+    action: 'cltConsultarAprovacao',
+    cpf, nome, telefone,
+  }, auth, secret, 20000);
+
+  const u = r.data || {};
+  if (!r.ok) {
+    await patchBanco(id, 'facta_clt', {
+      status: 'falha',
+      mensagem: u.error || u.message || `Erro FACTA (HTTP ${r.status})`,
+      retryable: true,
+      _raw_response: u,
+    });
+    return;
+  }
+
+  if (u.etapa === 'APROVADO') {
+    const dc = u.dadosCliente || {};
+    const novoCliente = {};
+    if (dc.nome) novoCliente.nome = dc.nome;
+    if (dc.dataNascimento) novoCliente.dataNascimento = dc.dataNascimento;
+    if (dc.sexo) novoCliente.sexo = dc.sexo;
+    if (dc.nomeMae) novoCliente.nomeMae = dc.nomeMae;
+    if (Object.keys(novoCliente).length > 0) await mesclarCliente(id, novoCliente);
+
+    await patchBanco(id, 'facta_clt', {
+      status: 'ok',
+      disponivel: true,
+      mensagem: u.mensagem,
+      dados: {
+        margemDisponivel: u.margem?.disponivel || 0,
+        margemBase: u.margem?.base || 0,
+        empregador: u.vinculo?.empregador,
+        empregadorCnpj: u.vinculo?.cnpj,
+        matricula: u.vinculo?.matricula,
+      },
+    });
+    if (u.vinculo?.cnpj) {
+      _registrarAprovacao(u.vinculo.cnpj, u.vinculo.empregador, 'facta_clt', null, null, null);
+    }
+    return;
+  }
+
+  if (u.etapa === 'AGUARDA_AUTORIZACAO') {
+    await patchBanco(id, 'facta_clt', {
+      status: 'bloqueado',
+      bloqueado: true,
+      precisaAutorizacao: true,
+      mensagem: u.mensagem,
+      retryable: true,
+    });
+    return;
+  }
+
+  if (u.etapa === 'INDISPONIVEL') {
+    await patchBanco(id, 'facta_clt', {
+      status: 'manual_aguardando',
+      disponivel: false,
+      manual: false,
+      mensagem: u.mensagem,
+      retryable: true,
+    });
+    return;
+  }
+
+  // SEM_MARGEM / ERRO
+  await patchBanco(id, 'facta_clt', {
+    status: 'falha',
+    disponivel: false,
+    mensagem: u.mensagem || 'FACTA nao retornou margem',
+    retryable: u.etapa === 'ERRO',
+    _raw_response: u,
+  });
+}
+
 async function processarC6(id, cpf, incluirC6, auth, secret) {
   const manut = await _bancoEmManutencao('c6');
   if (manut) { await _marcarEmManutencao(id, 'c6', manut); return; }
@@ -1639,7 +1728,8 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       else if (banco === 'unno') await processarUnno(id, row.cpf, auth, secret);
       else if (banco === 'nossa_fintech') await processarNossaFintech(id, row.cpf, 'nossa_fintech', 'QITECH', auth, secret);
       else if (banco === 'nossa_fintech_uy3') await processarNossaFintech(id, row.cpf, 'nossa_fintech_uy3', 'UY3', auth, secret);
-      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno, nossa_fintech, nossa_fintech_uy3', 400, req);
+      else if (banco === 'facta_clt') await processarFacta(id, row.cpf, auth, secret);
+      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno, nossa_fintech, nossa_fintech_uy3, facta_clt', 400, req);
     } catch (e) {
       await patchBanco(id, banco, { status: 'falha', mensagem: 'Erro: ' + e.message });
       return jsonResp({ success: false, error: e.message }, 200, req);
