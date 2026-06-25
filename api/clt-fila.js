@@ -1899,7 +1899,10 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
   // Dedup por CPF — fica a consulta mais recente apta de cada cliente.
   if (action === 'aptos') {
     const limit = Math.min(parseInt(body.limit || 400), 800);
-    const filters = { ...escopoFiltrosCLT(user) };
+    // POOL COMUM (pedido do dono): aptos visiveis pra TODOS os operadores —
+    // qualquer um pode trabalhar qualquer lead apto. Diferente da LISTA de
+    // consultas (action 'listar'/'status'), que continua isolada por vendedor.
+    const filters = {};
     const { data } = await dbSelect('clt_consultas_fila', {
       filters, order: 'iniciado_em.desc', limit
     });

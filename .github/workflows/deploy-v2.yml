@@ -61,11 +61,27 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
-      # ── 5. Resumo do deploy ────────────────────────────────────────
+      # ── 5. FORÇA redeploy na VPS (fix do Watchtower que trava) ─────
+      # Em vez de esperar o Watchtower (que trava aplicando updates em
+      # Docker Swarm), dispara o redeploy ativamente via webhook do
+      # Portainer. Configurar o secret PORTAINER_WEBHOOK (ver README).
+      # Se nao configurado, nao quebra (so avisa — Watchtower segue como fallback).
+      - name: Forçar redeploy (Portainer webhook)
+        env:
+          WEBHOOK: ${{ secrets.PORTAINER_WEBHOOK }}
+        run: |
+          if [ -n "$WEBHOOK" ]; then
+            echo "Disparando redeploy via Portainer webhook..."
+            curl -fsS -X POST "$WEBHOOK" && echo "Redeploy disparado com sucesso" || echo "Webhook falhou — confira o secret PORTAINER_WEBHOOK"
+          else
+            echo "PORTAINER_WEBHOOK nao configurado — pulando. (Watchtower vai tentar, pode travar.)"
+          fi
+
+      # ── 6. Resumo do deploy ────────────────────────────────────────
       - name: Resumo
         run: |
-          echo "## ✅ Deploy V2 iniciado" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Deploy V2" >> $GITHUB_STEP_SUMMARY
           echo "**Imagem:** \`ghcr.io/clhamasjr/flowforce-v2:latest\`" >> $GITHUB_STEP_SUMMARY
           echo "**SHA:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "O Watchtower detecta a nova imagem em até 60s e faz rolling update." >> $GITHUB_STEP_SUMMARY
+          echo "Redeploy forçado via Portainer webhook (ou SSH). Sem depender do Watchtower." >> $GITHUB_STEP_SUMMARY
           echo "🌐 [flowforce.tec.br](https://flowforce.tec.br)" >> $GITHUB_STEP_SUMMARY
