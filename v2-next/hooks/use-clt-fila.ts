@@ -153,6 +153,42 @@ export interface PrecheckResult {
   };
   error?: string;
 }
+/**
+ * Pipeline de clientes APTOS — quem ficou com margem disponível em >=1
+ * banco. Lista trabalhável pós-consulta. Mesmo isolamento (vendedor vê
+ * os seus, admin vê todos). Ordenado por maior margem.
+ */
+export interface ClienteApto {
+  id: string;
+  cpf: string;
+  nome: string;
+  telefone: string | null;
+  empregador: string | null;
+  empregadorCnpj: string | null;
+  melhorBanco: string;
+  melhorMargem: number;
+  totalBancosAptos: number;
+  bancosAptos: { banco: string; margem: number }[];
+  vendedor: string;
+  iniciado_em: string;
+}
+interface AptosResponse {
+  success: boolean;
+  total: number;
+  somaMargem: number;
+  aptos: ClienteApto[];
+}
+export function useCltAptos() {
+  return useQuery({
+    queryKey: ['clt', 'aptos'],
+    queryFn: async (): Promise<AptosResponse> => {
+      return api<AptosResponse>('/api/clt-fila', { action: 'aptos' });
+    },
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+}
+
 export function usePrecheckCpf() {
   return useMutation({
     mutationFn: async (cpf: string): Promise<PrecheckResult> => {

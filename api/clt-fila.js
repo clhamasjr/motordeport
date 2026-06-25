@@ -1893,6 +1893,50 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     return jsonResp({ success: true, items: data || [] }, 200, req);
   }
 
+  // ─── APTOS ── pipeline de clientes APTOS (margem disponivel em >=1 banco)
+  // Lista trabalhavel pos-consulta: quem deu certo, melhor margem/banco,
+  // vendedor. Mesmo isolamento (vendedor ve os seus, admin ve todos).
+  // Dedup por CPF — fica a consulta mais recente apta de cada cliente.
+  if (action === 'aptos') {
+    const limit = Math.min(parseInt(body.limit || 400), 800);
+    const filters = { ...escopoFiltrosCLT(user) };
+    const { data } = await dbSelect('clt_consultas_fila', {
+      filters, order: 'iniciado_em.desc', limit
+    });
+    const porCpf = new Map(); // cpf → melhor registro apto (mais recente)
+    for (const c of (data || [])) {
+      const bancosAptos = [];
+      for (const [slug, st] of Object.entries(c.bancos || {})) {
+        if (slug === 'multicorban') continue;
+        if (st?.disponivel === true && st?.status === 'ok') {
+          const m = parseFloat(st.dados?.margemDisponivel ?? st.dados?.valorLiquido ?? 0) || 0;
+          bancosAptos.push({ banco: slug, margem: m });
+        }
+      }
+      if (bancosAptos.length === 0) continue;
+      if (porCpf.has(c.cpf)) continue; // ja tem registro mais recente desse CPF
+      bancosAptos.sort((a, b) => b.margem - a.margem);
+      const melhor = bancosAptos[0];
+      porCpf.set(c.cpf, {
+        id: c.id,
+        cpf: c.cpf,
+        nome: c.cliente?.nome || c.nome_manual || '(sem nome)',
+        telefone: c.cliente?.telefones?.[0]?.completo || null,
+        empregador: c.vinculo?.empregador || null,
+        empregadorCnpj: c.vinculo?.cnpj || null,
+        melhorBanco: melhor.banco,
+        melhorMargem: melhor.margem,
+        totalBancosAptos: bancosAptos.length,
+        bancosAptos,
+        vendedor: (c.criada_por_nome || '').replace(/^(Reconsulta|Higienização) Lote · /, ''),
+        iniciado_em: c.iniciado_em,
+      });
+    }
+    const aptos = Array.from(porCpf.values()).sort((a, b) => b.melhorMargem - a.melhorMargem);
+    const somaMargem = aptos.reduce((s, a) => s + (a.melhorMargem || 0), 0);
+    return jsonResp({ success: true, total: aptos.length, somaMargem, aptos }, 200, req);
+  }
+
   // ─── COMPLEMENTAR CLIENTE ─────────────────────────────────
   // Operador completa dados que faltaram (nome/dataNasc/sexo/nomeMae) e o
   // sistema re-dispara automaticamente os bancos que estavam bloqueados por
