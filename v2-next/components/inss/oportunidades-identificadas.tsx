@@ -6,16 +6,15 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatBRL } from '@/lib/utils';
-import { InssParsedResult, InssContrato } from '@/lib/inss-types';
+import { InssParsedResult } from '@/lib/inss-types';
 import {
   testarTodos, calcPortRefin108, parseBR, pC, pEN, ESP_INV, ESP_AUX, ESP_LOAS, BD,
   type BancoSimul, type PortRefin108Result,
 } from '@/lib/inss-motor';
 import {
   TrendingUp, Sparkles, AlertTriangle,
-  CheckCircle2, XCircle, Scissors, RefreshCw, Send,
+  CheckCircle2, XCircle, Scissors, RefreshCw,
 } from 'lucide-react';
-import { DigitarFinantoModal } from './digitar-finanto-modal';
 import { EnviarOportunidadesButton } from './enviar-oportunidades';
 
 // Coef pra estimativa rápida em 108 MESES @ 1.85% (teto INSS, tabela alta)
@@ -373,16 +372,11 @@ function calcularTudo(
 
 interface Props {
   parsed: InssParsedResult;
-  cpf?: string; // opcional pra retrocompat — quando passado, habilita botão "Digitar FINANTO"
+  cpf?: string; // opcional pra retrocompat — passado pro card de oportunidades (WhatsApp)
 }
-
-type DigitarOport =
-  | { tipo: 'emprestimo_novo'; banco: string; valor: number; novaParc: number; prazo: number; taxa: number }
-  | { tipo: 'portabilidade'; banco: string; contrato: InssContrato; troco: number; reducao: number; novaParc: number; prazo: number; taxa: number };
 
 export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
   const [saldoOverrides, setSaldoOverrides] = useState<Record<number, number>>({});
-  const [digitarOport, setDigitarOport] = useState<DigitarOport | null>(null);
   const { contratos, analise } = useMemo(
     () => calcularTudo(parsed, saldoOverrides),
     [parsed, saldoOverrides],
@@ -763,22 +757,6 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                     Regras iguais ao QUALI (mín saldo, troco, idade etc).
                   </div>
                 </div>
-                {cpf && empNovoVlr185 > 0 && (
-                  <Button
-                    size="sm"
-                    className="bg-orange-500 hover:bg-orange-600 shrink-0"
-                    onClick={() => setDigitarOport({
-                      tipo: 'emprestimo_novo',
-                      banco: 'FINANTO',
-                      valor: Math.round(empNovoVlr185 * 100) / 100,
-                      novaParc: Math.round(margemLivreNova * 100) / 100,
-                      prazo: 108,
-                      taxa: 1.85,
-                    })}
-                  >
-                    <Send className="size-3.5" /> Digitar na FINANTO
-                  </Button>
-                )}
               </div>
             </div>
 
@@ -874,34 +852,6 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                           {formatBRL(r.port_troco)}
                         </div>
                       </div>
-                      {cpf && (
-                        <Button
-                          size="sm"
-                          className="bg-orange-500 hover:bg-orange-600 shrink-0 h-7 text-[10px]"
-                          onClick={() => setDigitarOport({
-                            tipo: 'portabilidade',
-                            banco: 'FINANTO',
-                            contrato: {
-                              contrato: c.contrato,
-                              banco: c.bancoOrigem,
-                              banco_nome: c.bancoOrigem,
-                              banco_codigo: c.codOrigem,
-                              taxa: c.taxaOrig.toString(),
-                              parcela: c.parcela.toString(),
-                              saldo: c.saldo.toString(),
-                              prazo: String(c.prazoRest),
-                              prazo_original: String(c.prazoTotal),
-                            },
-                            troco: Math.round(r.port_troco * 100) / 100,
-                            reducao: Math.round(r.refin_reducao * 100) / 100,
-                            novaParc: Math.round(r.refin_novaParc * 100) / 100,
-                            prazo: 108,
-                            taxa: r.taxa,
-                          })}
-                        >
-                          <Send className="size-3" /> Digitar FINANTO
-                        </Button>
-                      )}
                     </div>
                   );
                 })}
@@ -1050,17 +1000,6 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
           </details>
         )}
       </CardContent>
-
-      {/* ─── MODAL DE DIGITAÇÃO FINANTO ──────────────────────────────── */}
-      {cpf && digitarOport && (
-        <DigitarFinantoModal
-          open={!!digitarOport}
-          onOpenChange={(v) => { if (!v) setDigitarOport(null); }}
-          cpf={cpf}
-          parsed={parsed}
-          oportunidade={digitarOport}
-        />
-      )}
     </Card>
   );
 }
