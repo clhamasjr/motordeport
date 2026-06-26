@@ -25,20 +25,12 @@ export const config = { runtime: 'edge' };
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 
 // ── Config ─────────────────────────────────────────────────────
-// URLs confirmadas: PROD = api.anossafintech.com.br ; HOMOLOG (teste, dados
-// fake EMPRESA XYZ/R$500) = nossa-fintech-api.spixiiservices.com.br.
-const NF_PROD_URL = 'https://api.anossafintech.com.br';
-function resolveBaseUrl() {
-  const env = (process.env.NOSSA_FINTECH_BASE_URL || '').trim();
-  const allowHomolog = String(process.env.NOSSA_FINTECH_ALLOW_HOMOLOG || '').toLowerCase() === 'true';
-  // À prova de erro: se vazio OU apontando pro sandbox (sem liberar teste de
-  // propósito), FORÇA produção. Evita ficar preso no homolog por env errada.
-  if (!env || (/spixiiservices\.com\.br/i.test(env) && !allowHomolog)) return NF_PROD_URL;
-  return env;
-}
+// URL de PRODUÇÃO (doc oficial nossa-fintech-doc.spixiiservices.com.br/docs):
+//   https://nossa-fintech-api.spixiiservices.com.br  ← é a produção mesmo.
+// (NÃO é teste — a doc só documenta esse endpoint como produção.)
 function getConfig() {
   return {
-    BASE: resolveBaseUrl(),
+    BASE: (process.env.NOSSA_FINTECH_BASE_URL || 'https://nossa-fintech-api.spixiiservices.com.br').trim(),
     CPF: (process.env.NOSSA_FINTECH_CPF || '').trim(),
     PROMOT_ID: parseInt(process.env.NOSSA_FINTECH_PROMOT_ID || '0', 10),
     PASSWORD: (process.env.NOSSA_FINTECH_PASSWORD || '').trim(),
@@ -260,23 +252,6 @@ async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutori
   const cfg = getConfig();
   const provider = (serviceType || cfg.SERVICE_TYPE).toUpperCase();
 
-  // 0-PRE) GUARD DE HOMOLOGAÇÃO: a URL spixiiservices.com.br é o ambiente de
-  // TESTE (retorna dados fake: "EMPRESA XYZ LTDA", margem R$ 500). Em produção
-  // a base é outra (anossafintech.com.br). Pra NÃO mostrar lead fantasma como
-  // real, recusa o sandbox a menos que liberado de propósito
-  // (NOSSA_FINTECH_ALLOW_HOMOLOG=true). Configure NOSSA_FINTECH_BASE_URL com a
-  // URL de produção pra ativar de verdade.
-  const isHomolog = /spixiiservices\.com\.br/i.test(cfg.BASE);
-  const permiteHomolog = String(process.env.NOSSA_FINTECH_ALLOW_HOMOLOG || '').toLowerCase() === 'true';
-  if (isHomolog && !permiteHomolog) {
-    return {
-      approved: false,
-      etapa: 'INDISPONIVEL',
-      status: 'HOMOLOG',
-      mensagem: 'Ambiente de homologação (teste) — configure NOSSA_FINTECH_BASE_URL de produção',
-    };
-  }
-
   // 0) Bancarizadora habilitada na conta? (QITECH sempre; UY3 só em prod).
   // Se nao habilitada, marca como indisponivel (nao erro) — degrada gracioso
   // pra a homolog (so QITECH) e contas sem UY3.
@@ -481,23 +456,21 @@ export default async function handler(req) {
   try {
     if (action === 'test') {
       const cfg = getConfig();
-      const isHomolog = /spixiiservices\.com\.br/i.test(cfg.BASE);
       const base = {
         baseUrl: cfg.BASE,
-        ambiente: isHomolog ? 'HOMOLOGACAO (teste)' : 'PRODUCAO',
-        envBaseUrl: process.env.NOSSA_FINTECH_BASE_URL || '(vazia)',
+        envBaseUrl: process.env.NOSSA_FINTECH_BASE_URL || '(usando default)',
         temCpf: !!cfg.CPF, temPromotId: !!cfg.PROMOT_ID, temPassword: !!cfg.PASSWORD,
       };
       let r;
       try {
         r = await nfCall('/clt-loan/v1/banking-institutions', 'GET');
       } catch (e) {
-        // Login/chamada falhou — reporta ambiente + erro (não estoura 500)
+        // Login/chamada falhou — reporta config + erro (não estoura 500)
         return jsonResp({
           success: false, login: 'falhou', ...base,
           erro: e.message || String(e),
           _dica: /credenc|401/i.test(e.message || '')
-            ? 'URL de produção OK, mas as credenciais (NOSSA_FINTECH_CPF/PROMOT_ID/PASSWORD) são de homologação — troque pelas de PRODUÇÃO.'
+            ? 'Login recusado — confira NOSSA_FINTECH_CPF/PROMOT_ID/PASSWORD.'
             : null,
         }, 200, req);
       }
