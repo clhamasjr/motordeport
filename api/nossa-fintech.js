@@ -469,11 +469,16 @@ export default async function handler(req) {
 
   try {
     if (action === 'test') {
+      const cfg = getConfig();
+      const isHomolog = /spixiiservices\.com\.br/i.test(cfg.BASE);
       const r = await nfCall('/clt-loan/v1/banking-institutions', 'GET');
       return jsonResp({
         success: r.ok,
         login: 'ok',
-        bancarizadoras: r.data?.data ?? null,
+        baseUrl: cfg.BASE,                                  // qual URL esta ativa
+        ambiente: isHomolog ? 'HOMOLOGACAO (teste)' : 'PRODUCAO',
+        baseUrlConfigurada: !!process.env.NOSSA_FINTECH_BASE_URL, // env setada?
+        bancarizadoras: r.data?.data ?? null,               // mostra se UY3 aparece
         status: r.status,
       }, 200, req);
     }
