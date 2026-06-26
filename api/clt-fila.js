@@ -1911,6 +1911,7 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
 
       let melhorMargem = 0, melhorBanco = null, nAptos = 0;
       const bancosAptos = [];
+      const aguardandoBancos = []; // slugs dos bancos que travam por autorizacao
       let temOk = false, temAguardando = false, temFalha = false, temPending = false;
       for (const [slug, st] of Object.entries(c.bancos || {})) {
         if (slug === 'multicorban') continue;
@@ -1925,6 +1926,7 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
           }
         } else if (s === 'bloqueado' || s === 'manual_aguardando') {
           temAguardando = true;
+          aguardandoBancos.push(slug);
         } else if (s === 'falha') {
           temFalha = true;
         } else if (s === 'pending' || s === 'processando') {
@@ -1932,14 +1934,23 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
         }
       }
 
+      // "Sem dados": cliente que so esta aguardando autorizacao e nao temos
+      // nome nem empregador — nao da pra trabalhar (sem contato/contexto).
+      const temNome = !!(c.cliente?.nome || c.nome_manual);
+      const temContato = !!(c.cliente?.telefones?.[0]?.completo);
+      const semDados = !temNome && !temContato;
+      // C6 precisa de selfie/liveness do cliente — destacamos pra acao.
+      const precisaSelfieC6 = aguardandoBancos.includes('c6');
+
       // Categoria (prioridade): apto > standby > processando > sem_margem
-      // (elegivel s/ margem) > aguardando (precisa autz) > inapto
+      // (elegivel s/ margem) > aguardando (precisa autz, com dados) >
+      // sem_dados (aguardando mas sem nome/telefone) > inapto
       let categoria;
       if (melhorMargem > 0) categoria = 'apto';
       else if (c.status_geral === 'standby') categoria = 'standby';
       else if (c.status_geral === 'processando' && temPending && !temOk && !temFalha) categoria = 'processando';
       else if (temOk) categoria = 'sem_margem';
-      else if (temAguardando) categoria = 'aguardando';
+      else if (temAguardando) categoria = semDados ? 'sem_dados' : 'aguardando';
       else categoria = 'inapto';
 
       bancosAptos.sort((a, b) => b.margem - a.margem);
@@ -1955,6 +1966,8 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
         melhorMargem,
         totalBancosAptos: nAptos,
         bancosAptos,
+        aguardandoBancos,    // quais bancos travam por autorizacao
+        precisaSelfieC6,     // C6 esperando selfie do cliente
         vendedor: (c.criada_por_nome || '').replace(/^(Reconsulta|Higienização) Lote · /, ''),
         iniciado_em: c.iniciado_em,
       });
@@ -1966,7 +1979,7 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     return jsonResp({
       success: true,
       total: clientes.length,
-      contadores,        // { apto, sem_margem, aguardando, inapto, standby, processando }
+      contadores,        // { apto, sem_margem, aguardando, sem_dados, inapto, standby, processando }
       somaMargem,        // soma das margens dos aptos
       clientes,          // lista completa categorizada (frontend filtra por aba)
       // compat com tela antiga:

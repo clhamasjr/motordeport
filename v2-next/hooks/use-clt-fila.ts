@@ -158,7 +158,7 @@ export interface PrecheckResult {
  * banco. Lista trabalhável pós-consulta. Mesmo isolamento (vendedor vê
  * os seus, admin vê todos). Ordenado por maior margem.
  */
-export type CategoriaCliente = 'apto' | 'sem_margem' | 'aguardando' | 'inapto' | 'standby' | 'processando';
+export type CategoriaCliente = 'apto' | 'sem_margem' | 'aguardando' | 'sem_dados' | 'inapto' | 'standby' | 'processando';
 export interface ClientePipeline {
   id: string;
   cpf: string;
@@ -171,6 +171,8 @@ export interface ClientePipeline {
   melhorMargem: number;
   totalBancosAptos: number;
   bancosAptos: { banco: string; margem: number }[];
+  aguardandoBancos: string[];
+  precisaSelfieC6: boolean;
   vendedor: string;
   iniciado_em: string;
 }

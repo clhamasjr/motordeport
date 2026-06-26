@@ -15,10 +15,19 @@ const CATEGORIAS: { key: CategoriaCliente; label: string; cor: string }[] = [
   { key: 'apto', label: 'Aptos', cor: 'text-green-500' },
   { key: 'sem_margem', label: 'Sem margem', cor: 'text-yellow-500' },
   { key: 'aguardando', label: 'Aguardando autorização', cor: 'text-orange-400' },
+  { key: 'sem_dados', label: 'Sem dados', cor: 'text-zinc-400' },
   { key: 'inapto', label: 'Inaptos', cor: 'text-red-400' },
   { key: 'processando', label: 'Processando', cor: 'text-cyan-400' },
   { key: 'standby', label: 'Agendados (26/06)', cor: 'text-amber-400' },
 ];
+
+// Rótulo curto do banco que está travando a autorização
+const BANCO_CURTO: Record<string, string> = {
+  c6: 'C6', handbank: 'UY3', presencabank: 'Presença', joinbank: 'Join',
+  v8_qi: 'V8/QI', v8_celcoin: 'V8/Celcoin', fintech_qi: 'Fintech',
+  unno: 'Unno', nossa_fintech: 'N.Fintech', nossa_fintech_uy3: 'N.Fintech/UY3',
+  facta_clt: 'FACTA',
+};
 
 export default function PipelineCltPage() {
   const { data, isLoading, error } = useCltPipeline();
@@ -26,6 +35,7 @@ export default function PipelineCltPage() {
 
   const clientes = (data?.clientes || []).filter((c) => c.categoria === aba);
   const mostraMargem = aba === 'apto' || aba === 'sem_margem';
+  const mostraTravado = aba === 'aguardando';
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-4">
@@ -57,7 +67,7 @@ export default function PipelineCltPage() {
       {data && (
         <>
           {/* Cards por categoria — clicáveis (filtram a tabela) */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
             {CATEGORIAS.map((cat) => {
               const n = data.contadores?.[cat.key] || 0;
               const ativo = aba === cat.key;
@@ -85,6 +95,20 @@ export default function PipelineCltPage() {
               <b className="text-cyan-400">{formatBRL(data.somaMargem)}</b>
             </div>
           )}
+          {aba === 'aguardando' && (
+            <div className="text-sm text-muted-foreground">
+              Têm dados e contato, mas algum banco precisa de autorização. Veja em
+              <b className="text-orange-400"> Travado em</b> qual banco — <b>C6 · selfie</b> significa
+              que falta o cliente fazer a selfie (reenvie o link na consulta do cliente).
+            </div>
+          )}
+          {aba === 'sem_dados' && (
+            <div className="text-sm text-muted-foreground">
+              Aguardando autorização, mas <b>sem nome e sem telefone</b> nas bases — não dá pra
+              trabalhar. Vão ser reconsultados no lote de 26/06; se voltarem com dados, sobem de
+              categoria.
+            </div>
+          )}
 
           {/* Tabela da categoria selecionada */}
           {clientes.length === 0 ? (
@@ -103,6 +127,7 @@ export default function PipelineCltPage() {
                         <th className="text-left p-3">Cliente</th>
                         {mostraMargem && <th className="text-right p-3">Melhor margem</th>}
                         {mostraMargem && <th className="text-left p-3">Melhor banco</th>}
+                        {mostraTravado && <th className="text-left p-3">Travado em</th>}
                         <th className="text-left p-3">Empregador</th>
                         <th className="text-left p-3">Vendedor</th>
                         <th className="text-left p-3">Consultado em</th>
@@ -130,6 +155,30 @@ export default function PipelineCltPage() {
                               ) : (
                                 <span className="text-xs text-muted-foreground">—</span>
                               )}
+                            </td>
+                          )}
+                          {mostraTravado && (
+                            <td className="p-3">
+                              <div className="flex flex-wrap gap-1">
+                                {a.precisaSelfieC6 && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-400 font-medium">
+                                    C6 · selfie
+                                  </span>
+                                )}
+                                {(a.aguardandoBancos || [])
+                                  .filter((b) => b !== 'c6')
+                                  .map((b) => (
+                                    <span
+                                      key={b}
+                                      className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
+                                    >
+                                      {BANCO_CURTO[b] || b}
+                                    </span>
+                                  ))}
+                                {(a.aguardandoBancos || []).length === 0 && !a.precisaSelfieC6 && (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                )}
+                              </div>
                             </td>
                           )}
                           <td className="p-3 text-xs text-muted-foreground">
