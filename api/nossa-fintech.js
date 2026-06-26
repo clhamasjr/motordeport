@@ -25,9 +25,20 @@ export const config = { runtime: 'edge' };
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 
 // ── Config ─────────────────────────────────────────────────────
+// URLs confirmadas: PROD = api.anossafintech.com.br ; HOMOLOG (teste, dados
+// fake EMPRESA XYZ/R$500) = nossa-fintech-api.spixiiservices.com.br.
+const NF_PROD_URL = 'https://api.anossafintech.com.br';
+function resolveBaseUrl() {
+  const env = (process.env.NOSSA_FINTECH_BASE_URL || '').trim();
+  const allowHomolog = String(process.env.NOSSA_FINTECH_ALLOW_HOMOLOG || '').toLowerCase() === 'true';
+  // À prova de erro: se vazio OU apontando pro sandbox (sem liberar teste de
+  // propósito), FORÇA produção. Evita ficar preso no homolog por env errada.
+  if (!env || (/spixiiservices\.com\.br/i.test(env) && !allowHomolog)) return NF_PROD_URL;
+  return env;
+}
 function getConfig() {
   return {
-    BASE: (process.env.NOSSA_FINTECH_BASE_URL || 'https://nossa-fintech-api.spixiiservices.com.br').trim(),
+    BASE: resolveBaseUrl(),
     CPF: (process.env.NOSSA_FINTECH_CPF || '').trim(),
     PROMOT_ID: parseInt(process.env.NOSSA_FINTECH_PROMOT_ID || '0', 10),
     PASSWORD: (process.env.NOSSA_FINTECH_PASSWORD || '').trim(),
