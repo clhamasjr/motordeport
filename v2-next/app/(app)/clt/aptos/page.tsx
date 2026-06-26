@@ -1,15 +1,18 @@
 'use client';
 
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ConsultaCard } from '@/components/clt/consulta-card';
-import { useCltPipeline, type CategoriaCliente } from '@/hooks/use-clt-fila';
+import { useCltPipeline, useEnriquecerNovaVida, type CategoriaCliente } from '@/hooks/use-clt-fila';
 import { BANCO_LABEL } from '@/lib/clt-bancos';
 import { formatBRL, formatCpf, formatDateBR } from '@/lib/utils';
-import { GitBranch, AlertCircle } from 'lucide-react';
+import { GitBranch, AlertCircle, Sparkles, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import type { BancoSlug } from '@/lib/clt-types';
 
 // Ordem e rótulo das categorias do pipeline
@@ -32,14 +35,36 @@ const BANCO_CURTO: Record<string, string> = {
 };
 
 export default function PipelineCltPage() {
+  const qc = useQueryClient();
   const { data, isLoading, error } = useCltPipeline();
+  const enriquecer = useEnriquecerNovaVida();
   const [aba, setAba] = useState<CategoriaCliente>('apto');
   // Cliente aberto inline (modal com o ConsultaCard completo, leitura pool-comum)
   const [aberto, setAberto] = useState<{ id: string; nome: string } | null>(null);
+  // Progresso do enriquecimento em lote (Nova Vida)
+  const [enrich, setEnrich] = useState<{ rodando: boolean; feitos: number; total: number; ok: number } | null>(null);
 
   const clientes = (data?.clientes || []).filter((c) => c.categoria === aba);
   const mostraMargem = aba === 'apto' || aba === 'sem_margem';
   const mostraTravado = aba === 'aguardando';
+
+  // Enriquece TODOS os "sem dados" da lista atual, 1 por vez (Nova Vida).
+  async function enriquecerTodos() {
+    const alvo = (data?.clientes || []).filter((c) => c.categoria === 'sem_dados');
+    if (alvo.length === 0) return;
+    setEnrich({ rodando: true, feitos: 0, total: alvo.length, ok: 0 });
+    let ok = 0;
+    for (let i = 0; i < alvo.length; i++) {
+      try {
+        const r = await enriquecer.mutateAsync(alvo[i].id);
+        if (r.enriquecido) ok++;
+      } catch { /* segue pro próximo */ }
+      setEnrich({ rodando: true, feitos: i + 1, total: alvo.length, ok });
+    }
+    setEnrich({ rodando: false, feitos: alvo.length, total: alvo.length, ok });
+    toast.success(`Nova Vida: ${ok}/${alvo.length} clientes enriquecidos`);
+    qc.invalidateQueries({ queryKey: ['clt', 'pipeline'] });
+  }
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-4">
@@ -107,10 +132,40 @@ export default function PipelineCltPage() {
             </div>
           )}
           {aba === 'sem_dados' && (
-            <div className="text-sm text-muted-foreground">
-              Aguardando autorização, mas <b>sem nome e sem telefone</b> nas bases — não dá pra
-              trabalhar. Vão ser reconsultados no lote de 26/06; se voltarem com dados, sobem de
-              categoria.
+            <div className="space-y-2">
+              <div className="text-sm text-muted-foreground">
+                Aguardando autorização, mas <b>sem nome e sem telefone</b> nas bases. Use o
+                <b> Nova Vida</b> pra puxar nome/telefone por CPF e destravar a consulta.
+              </div>
+              <div className="flex items-center gap-3">
+                <Button
+                  size="sm"
+                  onClick={enriquecerTodos}
+                  disabled={enrich?.rodando || (data.contadores?.sem_dados || 0) === 0}
+                >
+                  {enrich?.rodando ? (
+                    <Loader2 className="size-4 mr-1.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="size-4 mr-1.5" />
+                  )}
+                  Enriquecer todos com Nova Vida ({data.contadores?.sem_dados || 0})
+                </Button>
+                {enrich && (
+                  <span className="text-xs text-muted-foreground">
+                    {enrich.rodando
+                      ? `Processando ${enrich.feitos}/${enrich.total}… (${enrich.ok} com dados)`
+                      : `Concluído: ${enrich.ok}/${enrich.total} enriquecidos`}
+                  </span>
+                )}
+              </div>
+              {enrich?.rodando && (
+                <div className="h-1.5 w-full max-w-md rounded bg-muted overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all"
+                    style={{ width: `${Math.round((enrich.feitos / enrich.total) * 100)}%` }}
+                  />
+                </div>
+              )}
             </div>
           )}
 

@@ -204,6 +204,28 @@ export function usePrecheckCpf() {
 }
 
 /**
+ * Enriquece UM cliente "Sem dados" puxando nome/nascimento/telefone do Nova
+ * Vida TI por CPF, e re-dispara os bancos que dependem desses dados. O front
+ * chama 1x por cliente (lote = loop no componente, com barra de progresso).
+ */
+export interface EnriquecerResult {
+  success: boolean;
+  id: string;
+  cpf: string;
+  enriquecido: boolean;
+  campos?: { nome: string | null; dataNascimento: string | null; telefone: string | null; totalTelefones: number };
+  redisparados?: string[];
+  mensagem?: string;
+}
+export function useEnriquecerNovaVida() {
+  return useMutation({
+    mutationFn: async (id: string): Promise<EnriquecerResult> => {
+      return api<EnriquecerResult>('/api/clt-fila', { action: 'enriquecerNovaVida', id });
+    },
+  });
+}
+
+/**
  * Re-dispara processamento de UM banco em uma consulta existente.
  * Backend `clt-fila.js action='processar'` aceita `force: true` que bypass
  * o guard de idempotencia — sem isso, ele recusa re-rodar bancos em estado

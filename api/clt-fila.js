@@ -2073,5 +2073,102 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     }, 200, req);
   }
 
-  return jsonError('Action inválida. Válidas: criar, processar, status, listar, complementarCliente', 400, req);
+  // ─── ENRIQUECER COM NOVA VIDA ─────────────────────────────
+  // Pega os dados que faltam (nome / nascimento / telefone) no Nova Vida TI
+  // por CPF e mescla na consulta. Usado pra "ressuscitar" clientes da categoria
+  // "Sem dados" do Pipeline. Depois re-dispara os bancos que dependem desses
+  // dados (UY3/Handbank, JoinBank, Unno, Nossa Fintech) pra a consulta andar.
+  // Body: { id } (uma fila). Frontend chama 1x por cliente (sem estourar timeout).
+  if (action === 'enriquecerNovaVida') {
+    const id = body.id;
+    if (!id) return jsonError('id obrigatório', 400, req);
+    const { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+    if (!row) return jsonError('Fila não encontrada', 404, req);
+    const cpf = String(row.cpf || '').replace(/\D/g, '');
+    if (cpf.length !== 11) return jsonError('CPF inválido na fila', 400, req);
+
+    // Chama a integração Nova Vida (tem cache de 30d lá dentro)
+    const nv = await callApi('/api/novavida', { cpf }, auth, secret).catch(() => ({ ok: false }));
+    const d = nv?.data || {};
+    if (!d || d.success === false) {
+      return jsonResp({
+        success: false, id, cpf, enriquecido: false,
+        mensagem: d?.error || 'Nova Vida não retornou dados pra esse CPF',
+      }, 200, req);
+    }
+
+    // Normaliza nascimento (NASC pode vir DD/MM/AAAA, AAAA-MM-DD ou AAAAMMDD)
+    let dataNasc = null;
+    const ns = String(d.nascimento || '').trim();
+    let mm;
+    if ((mm = ns.match(/^(\d{2})\/(\d{2})\/(\d{4})$/))) dataNasc = `${mm[3]}-${mm[2]}-${mm[1]}`;
+    else if ((mm = ns.match(/^(\d{4})-(\d{2})-(\d{2})/))) dataNasc = `${mm[1]}-${mm[2]}-${mm[3]}`;
+    else if ((mm = ns.match(/^(\d{4})(\d{2})(\d{2})$/))) dataNasc = `${mm[1]}-${mm[2]}-${mm[3]}`;
+
+    // Telefones: prioriza WhatsApp; formata { completo, ddd, numero, whatsapp }
+    const tels = Array.isArray(d.telefones) ? d.telefones : [];
+    const telsFmt = tels
+      .map(t => ({
+        ddd: String(t.ddd || '').replace(/\D/g, ''),
+        numero: String(t.telefone || '').replace(/\D/g, ''),
+        completo: `${String(t.ddd || '')}${String(t.telefone || '')}`.replace(/\D/g, ''),
+        whatsapp: !!t.whatsapp,
+        operadora: t.operadora || null,
+      }))
+      .filter(t => t.completo.length >= 10)
+      .sort((a, b) => (b.whatsapp ? 1 : 0) - (a.whatsapp ? 1 : 0));
+
+    const novoBloco = {};
+    if (d.nome) novoBloco.nome = d.nome;
+    if (dataNasc) novoBloco.dataNascimento = dataNasc;
+    if (telsFmt.length) novoBloco.telefones = telsFmt;
+    if (Array.isArray(d.emails) && d.emails.length) novoBloco.emails = d.emails;
+
+    const achouAlgo = !!(novoBloco.nome || novoBloco.dataNascimento || novoBloco.telefones);
+    if (!achouAlgo) {
+      return jsonResp({ success: true, id, cpf, enriquecido: false, mensagem: 'Nova Vida não tinha nome/telefone pra esse CPF' }, 200, req);
+    }
+
+    // Mescla (sem sobrescrever o que já existe) na fila + clt_clientes
+    await mesclarCliente(id, novoBloco);
+    const { data: rowAtu } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+    const cli = rowAtu?.cliente || {};
+    const temBasicos = !!(cli.nome && cli.dataNascimento);
+    const temTelefone = Array.isArray(cli.telefones) && cli.telefones.length > 0;
+
+    // Re-dispara bancos que dependem de nome/data/telefone (se temos o básico).
+    // Só re-dispara os que NÃO estão 'ok' ainda — evita refazer trabalho.
+    let redisparados = [];
+    if ((temBasicos || temTelefone) && body.redisparar !== false) {
+      const baseUrl = APP_URL();
+      const candidatos = ['handbank', 'joinbank', 'unno', 'nossa_fintech', 'nossa_fintech_uy3'];
+      for (const banco of candidatos) {
+        const st = rowAtu?.bancos?.[banco]?.status;
+        if (st === 'ok') continue;
+        redisparados.push(banco);
+        fetch(baseUrl + '/api/clt-fila', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
+          body: JSON.stringify({ action: 'processar', id, banco, force: true }),
+        }).catch(() => {});
+      }
+      if (redisparados.length && rowAtu?.status_geral === 'concluido') {
+        await dbUpdate('clt_consultas_fila', { id }, { status_geral: 'processando' });
+      }
+    }
+
+    return jsonResp({
+      success: true, id, cpf, enriquecido: true,
+      campos: {
+        nome: novoBloco.nome || null,
+        dataNascimento: novoBloco.dataNascimento || null,
+        telefone: telsFmt[0]?.completo || null,
+        totalTelefones: telsFmt.length,
+      },
+      redisparados,
+      mensagem: `Enriquecido via Nova Vida${redisparados.length ? ` — re-disparei ${redisparados.length} banco(s)` : ''}.`,
+    }, 200, req);
+  }
+
+  return jsonError('Action inválida. Válidas: criar, processar, status, listar, complementarCliente, enriquecerNovaVida, pipeline', 400, req);
 }
