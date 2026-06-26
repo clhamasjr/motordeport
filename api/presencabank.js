@@ -338,16 +338,21 @@ export default async function handler(req) {
         }, 200, req);
       }
 
-      // Usa o primeiro elegivel
+      // Usa o primeiro elegivel. CNPJ/matricula com fallback robusto — o
+      // PresencaBank ja variou esses nomes; sem fallback o CNPJ vinha undefined
+      // e a consulta de margem voltava zerada ("resposta incompleta").
       const v = elegiveis[0];
-      const matricula = v.matricula || v.registroEmpregaticio;
-      const cnpj = v.numeroInscricaoEmpregador;
+      const matricula = v.matricula || v.registroEmpregaticio || v.registro || null;
+      const cnpj = v.numeroInscricaoEmpregador || v.cnpj || v.cnpjEmpregador || v.numeroInscricao || null;
 
       // 2) Margem
       const margR = await pbCall('/v3/operacoes/consignado-privado/consultar-margem', 'POST', {
         cpf, matricula, cnpj
       });
       const m = margR.data || {};
+      // Campos de margem com fallback (nomes ja mudaram no PB)
+      const margemDisp = parseFloat(m.valorMargemDisponivel ?? m.margemDisponivel ?? m.valorMargem ?? m.margem ?? 0) || 0;
+      const margemBase = parseFloat(m.valorMargemBase ?? m.margemBase ?? m.valorBase ?? 0) || 0;
 
       return j({
         success: true, etapa: 'completo',
@@ -356,13 +361,13 @@ export default async function handler(req) {
         vinculo: {
           matricula,
           cnpj,
-          empregador: v.empregador || null,
+          empregador: v.empregador || v.nomeEmpregador || v.razaoSocial || null,
           dataAdmissao: m.dataAdmissao || null
         },
         margem: {
-          disponivel: m.valorMargemDisponivel || 0,
-          base: m.valorMargemBase || 0,
-          totalDevido: m.valorTotalDevido || 0
+          disponivel: margemDisp,
+          base: margemBase,
+          totalDevido: m.valorTotalDevido || m.totalDevido || 0
         },
         dadosCliente: {
           dataNascimento: m.dataNascimento || null,
