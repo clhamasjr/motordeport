@@ -71,9 +71,13 @@ async function getAccessToken(cfg, force = false) {
     return { token: _tokenCache.token, status: 200, fromCache: true };
   }
   try {
+    // O gateway (Azure APIM) exige a chave Subscription em TODAS as chamadas,
+    // INCLUSIVE no login (senao: 401 "missing subscription key").
+    const loginHeaders = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
+    if (cfg.apiKey) loginHeaders['Subscription'] = cfg.apiKey;
     const r = await fetch(cfg.baseUrl + '/Api/V1/User/Login?saveLog=false', {
       method: 'POST',
-      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      headers: loginHeaders,
       body: JSON.stringify({ login: cfg.login, password: cfg.password })
     });
     const text = await r.text();
