@@ -156,9 +156,10 @@ export const BD: Record<string, BancoRegra> = {
   },
 };
 
-// ORDEM = bancos ATIVOS no motor. FACTA/DIGIO/DAYCOVAL desativados.
+// ORDEM = bancos ATIVOS no motor. FACTA/DIGIO desativados.
 // C6 reativado (mar/2026) — aceita correspondentes BMG 318 e BRB 070 com pgMin=12.
-export const ORDEM = ['QUALI', 'C6', 'BRB', 'ICRED'];
+// DAYCOVAL reativado (jun/2026) — 11 tabelas oficiais COEFS_DAY, faixa 1.56-1.85.
+export const ORDEM = ['QUALI', 'C6', 'BRB', 'ICRED', 'DAYCOVAL'];
 
 export const PICPAY_CODE = '380';
 export const B1P: string[] = ['149','422','739','925','380','033','326','290','041','389','121'];
