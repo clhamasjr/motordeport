@@ -409,6 +409,22 @@ async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutori
     };
   }
 
+  // GUARD ANTI-DEMO: a conta Spixii ainda devolve dados FICTÍCIOS em alguns
+  // casos ("EMPRESA XYZ LTDA", margem R$ 500). Isso é mock do lado deles
+  // (conta não ativada pra dados reais) — NÃO mostrar como lead real, senão
+  // o operador persegue um cliente que não existe. Marca indisponível com
+  // aviso claro. Quando a Spixii ativar dados reais, some sozinho.
+  const empNome = String(m.employer?.name || v.employer_name || '');
+  if (/empresa\s*xyz/i.test(empNome)) {
+    return {
+      approved: false,
+      etapa: 'INDISPONIVEL',
+      status: 'DADOS_DEMO',
+      mensagem: 'Conta A NOSSA FINTECH retornando dados de demonstração (EMPRESA XYZ) — pedir ativação de dados reais à Spixii',
+      vinculo: v,
+    };
+  }
+
   return {
     approved: true,
     etapa: 'APROVADO',
