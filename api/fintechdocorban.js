@@ -7,14 +7,19 @@
 //  - QI Tech (provider='qi')        → /Api/V1/Qi/*
 //  - Celcoin  (provider='celcoin') → /Api/V1/Celcoin/*
 //
-// AUTH:
-//   Header `Subscription: <api_key>` em TODAS as requests.
-//   Sem Bearer/Login (a API key sozinha autoriza).
+// AUTH (HIBRIDO — cobre os dois sinais que temos):
+//   - Header `Subscription: <api_key>` (confirmado no portal deles: "Envie a
+//     chave no cabecalho Subscription") — chave de gateway/APIM.
+//   - E, SE login/senha estiverem configurados, faz POST /Api/V1/User/Login
+//     {login,password} -> access_token e manda tambem `Authorization: Bearer`.
+//   Mandar os dois e seguro: API so-Subscription ignora o Bearer; API que exige
+//   token de app pega o Bearer. Token tem cache (25min) + relogin em 401.
 //
 // ENV VARS (Vercel):
-//   FINTECH_API_KEY_PRD  — chave de producao
-//   FINTECH_API_KEY_HML  — chave de homologacao
-//   FINTECH_AMBIENTE     — 'PRD' (default) ou 'HML'
+//   FINTECH_API_KEY_PRD / FINTECH_API_KEY_HML        — chave Subscription
+//   FINTECH_LOGIN_PRD / FINTECH_LOGIN_HML            — email do portal (Bearer)
+//   FINTECH_PASSWORD_PRD / FINTECH_PASSWORD_HML      — senha do portal (Bearer)
+//   FINTECH_AMBIENTE                                 — 'PRD' (default) ou 'HML'
 //
 // FLUXO CLT (mesma sequencia pros 2 providers):
 //   1. consultarPorCPF        → GET .../Get-All-Consult-Data-Worker-By-Cpf/{cpf}
@@ -45,29 +50,64 @@ function getConfig() {
     ambiente,
     isPrd,
     apiKey: isPrd ? process.env.FINTECH_API_KEY_PRD : process.env.FINTECH_API_KEY_HML,
+    login: isPrd ? process.env.FINTECH_LOGIN_PRD : process.env.FINTECH_LOGIN_HML,
+    password: isPrd ? process.env.FINTECH_PASSWORD_PRD : process.env.FINTECH_PASSWORD_HML,
     baseUrl: isPrd
       ? 'https://api.fintechdocorban.com.br/super-simples'
       : 'https://api.hml.fintechdocorban.com.br/super-simples'
   };
 }
 
-// Helper: faz request autenticado
-async function fc(path, method = 'GET', body = null) {
-  const cfg = getConfig();
-  if (!cfg.apiKey) {
-    return { ok: false, status: 0, data: { error: `FINTECH_API_KEY_${cfg.ambiente} nao configurada nas env vars do Vercel` } };
+// Cache de token de login (escopo de modulo, reaproveitado entre invocacoes
+// na mesma instancia Edge). TTL conservador de 25min.
+let _tokenCache = { token: null, exp: 0, ambiente: null };
+
+// Faz login (POST /Api/V1/User/Login) -> access_token. So roda se login/senha
+// estiverem configurados. Retorna { token, status, error, raw }.
+async function getAccessToken(cfg, force = false) {
+  if (!cfg.login || !cfg.password) return { token: null, status: 0, error: 'login/senha nao configurados' };
+  const agora = Date.now();
+  if (!force && _tokenCache.token && _tokenCache.exp > agora && _tokenCache.ambiente === cfg.ambiente) {
+    return { token: _tokenCache.token, status: 200, fromCache: true };
   }
-  const opts = {
-    method,
-    headers: {
-      'Subscription': cfg.apiKey,
-      'Accept': 'application/json',
-      'Content-Type': 'application/json'
-    }
-  };
+  try {
+    const r = await fetch(cfg.baseUrl + '/Api/V1/User/Login?saveLog=false', {
+      method: 'POST',
+      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: cfg.login, password: cfg.password })
+    });
+    const text = await r.text();
+    let d; try { d = JSON.parse(text); } catch { d = { raw: text.substring(0, 500) }; }
+    if (!r.ok) return { token: null, status: r.status, error: d?.message || d?.mensagem || `Login HTTP ${r.status}`, raw: d };
+    const tok = d.access_token || d.accessToken || d.token || d?.result?.access_token || d?.data?.access_token || null;
+    if (!tok) return { token: null, status: r.status, error: 'Login OK mas sem access_token', raw: d };
+    _tokenCache = { token: tok, exp: agora + 25 * 60 * 1000, ambiente: cfg.ambiente };
+    return { token: tok, status: r.status, raw: d };
+  } catch (e) {
+    return { token: null, status: 0, error: e.message };
+  }
+}
+
+// Helper: faz request autenticado HIBRIDO (Subscription + Bearer se houver).
+async function fc(path, method = 'GET', body = null, _retry = true) {
+  const cfg = getConfig();
+  if (!cfg.apiKey && !(cfg.login && cfg.password)) {
+    return { ok: false, status: 0, data: { error: `Configure FINTECH_API_KEY_${cfg.ambiente} (ou FINTECH_LOGIN_${cfg.ambiente}+FINTECH_PASSWORD_${cfg.ambiente}) no Vercel` } };
+  }
+  const headers = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
+  if (cfg.apiKey) headers['Subscription'] = cfg.apiKey; // gateway (portal confirma)
+  // Bearer via login (se configurado). Falha de login nao bloqueia — segue so com Subscription.
+  const auth = await getAccessToken(cfg);
+  if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
+  const opts = { method, headers };
   if (body && method !== 'GET') opts.body = JSON.stringify(body);
   try {
     const r = await fetch(cfg.baseUrl + path, opts);
+    // 401 com Bearer ativo? token pode ter expirado — re-loga 1x e tenta de novo.
+    if (r.status === 401 && _retry && cfg.login && cfg.password) {
+      await getAccessToken(cfg, true);
+      return fc(path, method, body, false);
+    }
     const text = await r.text();
     let data;
     try { data = JSON.parse(text); } catch { data = { raw: text.substring(0, 1000) }; }
@@ -101,24 +141,34 @@ export default async function handler(req) {
     const provider = (body.provider || 'qi').toLowerCase();
     const prefix = pathPrefix(provider);
 
-    // ─── TEST: valida auth ────────────────────────────────────
+    // ─── TEST: valida auth (Subscription + login Bearer + endpoint) ──
     if (action === 'test') {
       const cfg = getConfig();
-      if (!cfg.apiKey) {
+      if (!cfg.apiKey && !(cfg.login && cfg.password)) {
         return j({
           success: false,
-          mensagem: `FINTECH_API_KEY_${cfg.ambiente} nao configurada`,
+          mensagem: `Configure FINTECH_API_KEY_${cfg.ambiente} ou FINTECH_LOGIN_${cfg.ambiente}+FINTECH_PASSWORD_${cfg.ambiente}`,
           ambiente: cfg.ambiente
         }, 200, req);
       }
-      // Pinga um endpoint barato — Get-All bancos (FGTS) — só pra validar key
+      // ETAPA 1: login (se configurado) — reporta sem vazar credencial
+      let loginInfo = { configurado: !!(cfg.login && cfg.password), ok: false, httpStatus: null, erro: null };
+      if (cfg.login && cfg.password) {
+        const auth = await getAccessToken(cfg, true);
+        loginInfo.ok = !!auth.token;
+        loginInfo.httpStatus = auth.status;
+        loginInfo.erro = auth.token ? null : (auth.error || null);
+      }
+      // ETAPA 2: pinga endpoint barato com os headers hibridos
       const r = await fc('/Api/V1/Bank/Get-All', 'GET');
       return j({
         success: r.ok,
         ambiente: cfg.ambiente,
         baseUrl: cfg.baseUrl,
+        temSubscriptionKey: !!cfg.apiKey,
+        login: loginInfo,
         httpStatus: r.status,
-        mensagem: r.ok ? 'API Fintech do Corban autenticada com sucesso' : `HTTP ${r.status}`,
+        mensagem: r.ok ? 'API Fintech do Corban autenticada com sucesso' : `Endpoint HTTP ${r.status}`,
         amostra: Array.isArray(r.data) ? r.data.slice(0, 3) : r.data
       }, 200, req);
     }
