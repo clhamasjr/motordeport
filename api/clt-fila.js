@@ -1918,7 +1918,12 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
         const s = st?.status;
         if (s === 'ok' && st?.disponivel === true) {
           temOk = true;
-          const m = parseFloat(st.dados?.margemDisponivel ?? st.dados?.valorLiquido ?? 0) || 0;
+          let m = parseFloat(st.dados?.margemDisponivel ?? st.dados?.valorLiquido ?? 0) || 0;
+          // Normaliza dados LEGADOS: Handbank/UY3 gravava `valor_margem` em
+          // CENTAVOS (ex: 226799 = R$ 2.267,99). Margem mensal CLT real nunca
+          // passa de ~R$20k → se veio de margemDisponivel e está absurda, ÷100.
+          // Idempotente: dados já corrigidos (em reais) ficam abaixo do teto.
+          if (st.dados?.margemDisponivel != null && m > 20000) m = m / 100;
           if (m > 0) {
             nAptos++;
             bancosAptos.push({ banco: slug, margem: m });

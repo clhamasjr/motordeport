@@ -238,9 +238,12 @@ export default async function handler(req) {
 
     // 201 Created: cliente autorizado → retorna margem e dados
     // Estrutura real do response: { cnpj, matricula, valor_margem, mensagem, http_code }
+    // IMPORTANTE: a UY3 devolve `valor_margem` em CENTAVOS (ex: 226799 = R$ 2.267,99).
+    // Por isso dividimos por 100. Os campos de fallback (d.margem, etc) já vêm em reais.
+    const _vmCentavos = (typeof d.valor_margem === 'number' ? d.valor_margem : null);
+    const margem = (_vmCentavos != null ? _vmCentavos / 100 : null)
+      ?? d.margem ?? d.margemDisponivel ?? d.valor_disponivel ?? d.available_margin ?? null;
     if (httpStatus === 201 || (r.ok && d && Object.keys(d).length > 0)) {
-      const margem = (typeof d.valor_margem === 'number' ? d.valor_margem : null)
-        ?? d.margem ?? d.margemDisponivel ?? d.valor_disponivel ?? d.available_margin ?? null;
       const empregadorCnpj = d.cnpj || d.empregador_cnpj || null;
       const matricula = d.matricula || null;
       const empregadorNome = d.empregador || d.employer_name || d.razao_social || null;
