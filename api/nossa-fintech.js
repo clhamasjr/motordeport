@@ -482,13 +482,27 @@ export default async function handler(req) {
     if (action === 'test') {
       const cfg = getConfig();
       const isHomolog = /spixiiservices\.com\.br/i.test(cfg.BASE);
-      const r = await nfCall('/clt-loan/v1/banking-institutions', 'GET');
-      return jsonResp({
-        success: r.ok,
-        login: 'ok',
-        baseUrl: cfg.BASE,                                  // qual URL esta ativa
+      const base = {
+        baseUrl: cfg.BASE,
         ambiente: isHomolog ? 'HOMOLOGACAO (teste)' : 'PRODUCAO',
-        baseUrlConfigurada: !!process.env.NOSSA_FINTECH_BASE_URL, // env setada?
+        envBaseUrl: process.env.NOSSA_FINTECH_BASE_URL || '(vazia)',
+        temCpf: !!cfg.CPF, temPromotId: !!cfg.PROMOT_ID, temPassword: !!cfg.PASSWORD,
+      };
+      let r;
+      try {
+        r = await nfCall('/clt-loan/v1/banking-institutions', 'GET');
+      } catch (e) {
+        // Login/chamada falhou — reporta ambiente + erro (não estoura 500)
+        return jsonResp({
+          success: false, login: 'falhou', ...base,
+          erro: e.message || String(e),
+          _dica: /credenc|401/i.test(e.message || '')
+            ? 'URL de produção OK, mas as credenciais (NOSSA_FINTECH_CPF/PROMOT_ID/PASSWORD) são de homologação — troque pelas de PRODUÇÃO.'
+            : null,
+        }, 200, req);
+      }
+      return jsonResp({
+        success: r.ok, login: 'ok', ...base,
         bancarizadoras: r.data?.data ?? null,               // mostra se UY3 aparece
         status: r.status,
       }, 200, req);
