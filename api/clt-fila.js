@@ -323,15 +323,25 @@ async function processarPresencaBank(id, cpf, auth, secret) {
       return;
     }
 
+    const totalDevido = parseFloat(pb.margem?.totalDevido || 0) || 0;
+    let msgPB;
+    if (margemDisp > 0) {
+      msgPB = `Cliente elegível — margem R$ ${margemDisp.toFixed(2)}`;
+    } else if (totalDevido > 0) {
+      // Margem livre <= 0 mas tem dívida → oportunidade de PORTABILIDADE
+      msgPB = `Sem margem p/ novo, mas tem R$ ${totalDevido.toFixed(2)} em dívida (potencial portabilidade) · base R$ ${margemBase.toFixed(2)}`;
+    } else {
+      msgPB = 'Cliente elegível mas sem margem disponível';
+    }
     await patchBanco(id, 'presencabank', {
       status: 'ok',
       disponivel: true,
-      mensagem: margemDisp > 0
-        ? `Cliente elegível — margem R$ ${margemDisp.toFixed(2)}`
-        : 'Cliente elegível mas sem margem disponível',
+      mensagem: msgPB,
       dados: {
         margemDisponivel: margemDisp,
         margemBase: margemBase,
+        totalDevido,
+        portabilidade: margemDisp <= 0 && totalDevido > 0,
         empregador: pb.vinculo?.empregador,
         empregadorCnpj: pb.vinculo?.cnpj
       }
