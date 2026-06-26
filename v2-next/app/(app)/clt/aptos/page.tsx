@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCltPipeline, type CategoriaCliente } from '@/hooks/use-clt-fila';
 import { BANCO_LABEL } from '@/lib/clt-bancos';
-import { formatBRL, formatCpf } from '@/lib/utils';
+import { formatBRL, formatCpf, formatDateBR } from '@/lib/utils';
 import { GitBranch, AlertCircle } from 'lucide-react';
 import type { BancoSlug } from '@/lib/clt-types';
 
@@ -105,6 +105,7 @@ export default function PipelineCltPage() {
                         {mostraMargem && <th className="text-left p-3">Melhor banco</th>}
                         <th className="text-left p-3">Empregador</th>
                         <th className="text-left p-3">Vendedor</th>
+                        <th className="text-left p-3">Consultado em</th>
                         <th className="text-center p-3">WhatsApp</th>
                       </tr>
                     </thead>
@@ -135,6 +136,7 @@ export default function PipelineCltPage() {
                             {a.empregador ? a.empregador.substring(0, 32) : '—'}
                           </td>
                           <td className="p-3 text-xs">{a.vendedor || '—'}</td>
+                          <td className="p-3 text-xs text-muted-foreground">{formatDateBR(a.iniciado_em)}</td>
                           <td className="p-3 text-center">
                             {a.telefone ? (
                               <a
