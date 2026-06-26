@@ -137,6 +137,21 @@ Rate limit: 30 req/min (recomendado 1 req a cada 2s).
 
 Webhook publico: `https://motordeport.vercel.app/api/crefaz-webhook?secret={CREFAZ_WEBHOOK_SECRET}` — registrar essa URL no campo `urlNotificacaoParceiro` ao criar proposta via `POST /Proposta`.
 
+### Fintech do Corban (Super Simples — Consignado Privado CLT) — novo jun/2026
+Integrador que dá acesso a 2 bancarizadoras CLT: **QI Tech** e **Celcoin**.
+Doc: https://docs.fintechdocorban.com.br/ · Auth: header `Subscription: <api_key>`.
+
+| Variavel | Valor | Descricao |
+|----------|-------|-----------|
+| `FINTECH_API_KEY_PRD` | *(passar via Vercel, nao commitar)* | Chave de API de PRODUCAO (fornecida pelo Fintech do Corban) |
+| `FINTECH_API_KEY_HML` | *(opcional)* | Chave de homologacao |
+| `FINTECH_AMBIENTE` | `PRD` ou `HML` | Ambiente ativo. Default `PRD` |
+
+> Endpoint base: `POST /api/fintechdocorban` com `{ action, provider, ... }`. provider = `qi` (default) ou `celcoin`.
+> Actions: `test`, `testHeaders`, `consultarPorCPF`, `enviarLinkAutorizacao`, `autorizacaoSimples`, `consultarVinculos`, `simular`, `criarOperacao`, `cltCheckEligibility`, `rawCall`.
+> As **regras/tabelas (taxa, prazo, valor)** vêm da plataforma deles via `idCommissionTable` na simulação — não são hardcoded aqui.
+> Tela: **CLT → Fintech do Corban** (`/clt/fintech-corban`).
+
 ### JoinBank/QualiBanking CLT — reutiliza credenciais INSS existentes
 Não precisa nenhuma env var nova. Usa `JOINBANK_URL` e `JOINBANK_KEY` já configuradas. Os endpoints CLT usam o prefixo `/v3/loan-private-payroll-simulations/...` em vez do INSS `/v3/loan-inss-simulations/...`.
 

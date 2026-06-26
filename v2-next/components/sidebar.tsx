@@ -69,6 +69,7 @@ const NAV: NavGroup[] = [
     items: [
       // ── Consultar ──
       { href: '/clt/consulta', label: 'Consulta Unitária', icon: Search, section: 'consultar' },
+      { href: '/clt/fintech-corban', label: 'Fintech do Corban', icon: Building2, section: 'consultar' },
       { href: '/clt/analise', label: 'Análise de Cliente', icon: Target, section: 'consultar' },
       { href: '/clt/catalogo', label: 'Catálogo de Bancos', icon: BookOpen, section: 'consultar' },
       // ── Operar ──
