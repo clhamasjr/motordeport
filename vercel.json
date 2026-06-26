@@ -20,7 +20,7 @@
     },
     {
       "path": "/api/clt-cron-reconsulta",
-      "schedule": "*/15 10-11 26 6 *"
+      "schedule": "*/20 10-13 26 6 *"
     }
   ]
 }

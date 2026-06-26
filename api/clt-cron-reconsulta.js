@@ -23,9 +23,12 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions } from './_lib/auth.js';
-import { dbSelect, dbUpdate } from './_lib/supabase.js';
+import { dbSelect, dbUpdate, dbQuery } from './_lib/supabase.js';
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
+
+// Teto de segurança de encadeamentos (anti-loop). 1000 passes × 60 = 60k CPFs.
+const MAX_PASS = 1000;
 
 // Bancos que NÃO disparam SMS/WhatsApp pro cliente no fluxo de consulta
 // (auto-autz, autz simples, enriquecimento ou bloqueio passivo).
@@ -55,24 +58,37 @@ export default async function handler(req) {
   }
 
   // Limite por execução (lote). Default 60 — seguro pro timeout Edge.
-  let limit = 60;
+  // Cada execução processa `limit` CPFs e, se ainda sobrou histórico, chama
+  // a SI MESMA (auto-encadeamento) pro próximo lote — até esvaziar TODOS.
+  let limit = 60, pass = 1;
   try {
     const u = new URL(req.url);
     const l = parseInt(u.searchParams.get('limit') || '60', 10);
     if (l > 0 && l <= 200) limit = l;
+    const p = parseInt(u.searchParams.get('pass') || '1', 10);
+    if (p > 0) pass = p;
   } catch { /* default */ }
 
   const baseUrlEarly = APP_URL();
   const secretEarly = process.env.WEBHOOK_SECRET || '';
 
+  // CUTOFF FIXO da rodada = início do dia atual (UTC). Tudo que JÁ foi
+  // reconsultado hoje fica com ultima_consulta_at >= cutoff e sai do conjunto.
+  // Garante: (a) terminação (cada CPF processado some do filtro), (b) que o
+  // auto-encadeamento E as execuções agendadas de retomada usem o MESMO corte,
+  // sem reprocessar ninguém. CPFs nunca consultados (null) entram primeiro.
+  const _now = new Date();
+  const cutoff = new Date(Date.UTC(_now.getUTCFullYear(), _now.getUTCMonth(), _now.getUTCDate())).toISOString();
+
   // ── ETAPA 1: dispara filas em STANDBY ────────────────────────
   // Consultas feitas pelos operadores antes de 26/06 ficaram paradas
   // (status_geral='standby'). Agora dispara os bancos de cada uma.
-  let standbyDisparadas = 0;
+  let standbyDisparadas = 0, standbyCheio = false;
   try {
     const { data: standbyFilas } = await dbSelect('clt_consultas_fila', {
       filters: { status_geral: 'standby' }, order: 'iniciado_em.asc', limit,
     });
+    if (Array.isArray(standbyFilas) && standbyFilas.length >= limit) standbyCheio = true;
     for (const f of (standbyFilas || [])) {
       const bancos = Object.keys(f.bancos || {});
       if (bancos.length === 0) continue;
@@ -89,14 +105,35 @@ export default async function handler(req) {
     }
   } catch { /* segue pra re-consulta do historico */ }
 
-  // Pega os CPFs menos recentemente re-consultados (cursor = ultima_consulta_at)
-  const { data: clientes } = await dbSelect('clt_clientes', {
-    order: 'ultima_consulta_at.asc',
-    limit,
-  }).catch(() => ({ data: [] }));
+  // Pega os CPFs ainda NÃO reconsultados nesta rodada (ultima_consulta_at <
+  // cutoff OU nunca consultado), os mais antigos/nulos primeiro. dbQuery
+  // permite o filtro `lt` + `is.null` que o dbSelect (só `eq`) não cobre.
+  const filtro =
+    `select=*` +
+    `&or=(ultima_consulta_at.lt.${encodeURIComponent(cutoff)},ultima_consulta_at.is.null)` +
+    `&order=ultima_consulta_at.asc.nullsfirst` +
+    `&limit=${limit}`;
+  const { data: clientes } = await dbQuery('clt_clientes', filtro).catch(() => ({ data: [] }));
 
   if (!Array.isArray(clientes) || clientes.length === 0) {
-    return jsonResp({ success: true, disparados: 0, mensagem: 'Sem CPFs no histórico pra re-consultar' }, 200, req);
+    // Histórico esgotado. Mas se ainda há standby (lote veio cheio), encadeia
+    // pra drenar o resto das filas paradas antes de encerrar.
+    let encadeouStandby = false;
+    if (standbyCheio && pass < MAX_PASS) {
+      fetch(baseUrlEarly + `/api/clt-cron-reconsulta?limit=${limit}&pass=${pass + 1}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-secret': secretEarly },
+      }).catch(() => {});
+      encadeouStandby = true;
+    }
+    return jsonResp({
+      success: true, pass, standbyDisparadas, disparados: 0,
+      concluido: !encadeouStandby,
+      encadeou: encadeouStandby,
+      mensagem: encadeouStandby
+        ? `Pass ${pass} — histórico vazio, mas ainda há standby. Encadeando (pass ${pass + 1}).`
+        : `Rodada concluída — sem mais CPFs pra reconsultar (pass ${pass}).`,
+    }, 200, req);
   }
 
   const baseUrl = APP_URL();
@@ -151,13 +188,31 @@ export default async function handler(req) {
     } catch { /* nao quebra */ }
   }
 
+  // ── AUTO-ENCADEAMENTO ────────────────────────────────────────
+  // Se o lote veio CHEIO (== limit), provavelmente ainda há histórico →
+  // dispara o PRÓXIMO lote chamando a si mesmo (fire-and-forget). O cutoff
+  // fixo garante que não reprocessa quem já rodou; o teto MAX_PASS evita loop.
+  // Se veio incompleto, esvaziou → para (a cadeia termina sozinha).
+  let encadeou = false;
+  if ((clientes.length >= limit || standbyCheio) && pass < MAX_PASS) {
+    fetch(baseUrl + `/api/clt-cron-reconsulta?limit=${limit}&pass=${pass + 1}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': webhookSecret },
+    }).catch(() => {});
+    encadeou = true;
+  }
+
   return jsonResp({
     success: true,
+    pass,               // numero do lote nesta cadeia
     standbyDisparadas,  // filas que estavam paradas (modo standby) e foram disparadas
-    disparados,         // re-consultas do historico disparadas
+    disparados,         // re-consultas do historico disparadas neste lote
     semDono,            // quantos não tinham vendedor (re-atribuídos a Sistema)
     erros,
     lote: limit,
-    mensagem: `Standby: ${standbyDisparadas} disparada(s). Histórico: ${disparados} re-consulta(s) (bancos sem-SMS).`,
+    encadeou,           // true = chamou o proximo lote; false = ultima rodada
+    cutoff,
+    mensagem: `Pass ${pass} — Standby: ${standbyDisparadas} disparada(s). Histórico: ${disparados} re-consulta(s).` +
+      (encadeou ? ` Encadeando próximo lote (pass ${pass + 1}).` : ` Fim da cadeia.`),
   }, 200, req);
 }
