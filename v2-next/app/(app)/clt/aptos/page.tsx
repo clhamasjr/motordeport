@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ConsultaCard } from '@/components/clt/consulta-card';
 import { useCltPipeline, type CategoriaCliente } from '@/hooks/use-clt-fila';
 import { BANCO_LABEL } from '@/lib/clt-bancos';
 import { formatBRL, formatCpf, formatDateBR } from '@/lib/utils';
@@ -32,6 +34,8 @@ const BANCO_CURTO: Record<string, string> = {
 export default function PipelineCltPage() {
   const { data, isLoading, error } = useCltPipeline();
   const [aba, setAba] = useState<CategoriaCliente>('apto');
+  // Cliente aberto inline (modal com o ConsultaCard completo, leitura pool-comum)
+  const [aberto, setAberto] = useState<{ id: string; nome: string } | null>(null);
 
   const clientes = (data?.clientes || []).filter((c) => c.categoria === aba);
   const mostraMargem = aba === 'apto' || aba === 'sem_margem';
@@ -136,9 +140,17 @@ export default function PipelineCltPage() {
                     </thead>
                     <tbody className="divide-y divide-border">
                       {clientes.map((a) => (
-                        <tr key={a.id} className="hover:bg-muted/20">
+                        <tr
+                          key={a.id}
+                          className="hover:bg-muted/20 cursor-pointer"
+                          onClick={() => setAberto({ id: a.id, nome: a.nome })}
+                          title="Clique para abrir o cliente"
+                        >
                           <td className="p-3">
-                            <div className="font-medium">{a.nome}</div>
+                            <div className="font-medium flex items-center gap-1.5">
+                              {a.nome}
+                              <span className="text-[10px] text-primary/60">↗</span>
+                            </div>
                             <div className="text-xs text-muted-foreground">{formatCpf(a.cpf)}</div>
                           </td>
                           {mostraMargem && (
@@ -192,6 +204,7 @@ export default function PipelineCltPage() {
                                 href={`https://wa.me/55${a.telefone.replace(/\D/g, '')}`}
                                 target="_blank"
                                 rel="noreferrer"
+                                onClick={(e) => e.stopPropagation()}
                                 className="inline-block text-[11px] px-2 py-1 rounded bg-green-500/10 text-green-500 hover:bg-green-500/20"
                               >
                                 📱 Chamar
@@ -210,6 +223,16 @@ export default function PipelineCltPage() {
           )}
         </>
       )}
+
+      {/* Cliente aberto inline — ConsultaCard completo (leitura pool-comum) */}
+      <Dialog open={!!aberto} onOpenChange={(o) => { if (!o) setAberto(null); }}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base">{aberto?.nome || 'Cliente'}</DialogTitle>
+          </DialogHeader>
+          {aberto && <ConsultaCard filaId={aberto.id} pool onClose={() => setAberto(null)} />}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

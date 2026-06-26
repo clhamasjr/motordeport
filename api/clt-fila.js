@@ -1784,7 +1784,12 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     if (!row) return jsonError('Fila não encontrada', 404, req);
     // Isolamento: usuario so ve fila do proprio escopo (parceiro/user).
     // Retorna 404 (nao 403) pra nao revelar que o id existe.
-    if (!podeVerFilaCLT(user, row)) return jsonError('Fila não encontrada', 404, req);
+    // EXCECAO pool-comum: o Pipeline CLT (action 'pipeline') e compartilhado
+    // entre todos os operadores ("disponivel para todos que consultaram"). Ao
+    // abrir um cliente DE LA, o front manda `pool:true` — leitura liberada
+    // (so leitura; processar/digitar continuam isolados pelas suas actions).
+    const leituraPool = body.pool === true;
+    if (!leituraPool && !podeVerFilaCLT(user, row)) return jsonError('Fila não encontrada', 404, req);
 
     // REFRESH ATIVO V8: se um V8 esta processando ha mais de 60s
     // (CONSENT_APPROVED ou WAITING_CREDIT_ANALYSIS), re-consulta sincronamente

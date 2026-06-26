@@ -21,10 +21,12 @@ const BANCOS_ORDEM: BancoSlug[] = BANCOS_VISIVEIS;
 interface Props {
   filaId: string;
   onClose?: () => void;
+  /** Leitura pool-comum (cliente aberto a partir do Pipeline CLT). */
+  pool?: boolean;
 }
 
-export function ConsultaCard({ filaId, onClose }: Props) {
-  const { data: fila, isLoading, error } = useFilaStatus(filaId);
+export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
+  const { data: fila, isLoading, error } = useFilaStatus(filaId, pool);
   const [bancoDigitar, setBancoDigitar] = useState<string | null>(null);
 
   // Se backend retorna 4xx (id antigo no localStorage que ja sumiu), avisa o pai

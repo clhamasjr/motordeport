@@ -57,15 +57,16 @@ export function useCriarConsultaCLT() {
 // numeros, etc — que viravam request com `id` ruim e voltavam 400 do backend
 const ID_VALIDO_RE = /^[0-9a-fA-F-]{8,}$/;
 
-export function useFilaStatus(filaId: string | null) {
+export function useFilaStatus(filaId: string | null, pool = false) {
   const idValido = !!filaId && typeof filaId === 'string' && ID_VALIDO_RE.test(filaId);
   return useQuery({
-    queryKey: ['clt', 'fila', filaId],
+    queryKey: ['clt', 'fila', filaId, pool ? 'pool' : 'own'],
     queryFn: async (): Promise<FilaConsulta> => {
       if (!filaId) throw new Error('filaId obrigatorio');
       const r = await api<StatusFilaResponse>('/api/clt-fila', {
         action: 'status',
         id: filaId,
+        ...(pool ? { pool: true } : {}),
       });
       if (!r.success || !r.fila) throw new Error(r.error || 'Fila não encontrada');
       return r.fila;
