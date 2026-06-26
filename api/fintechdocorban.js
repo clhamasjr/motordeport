@@ -160,6 +160,58 @@ export default async function handler(req) {
       }, 200, req);
     }
 
+    // ─── LISTAR TABELAS DE COMISSÃO (as "regras": produto/taxa/prazo) ──
+    // GET /Api/V1/CommissionTableCorban/Get-All-To-Partner
+    // Endpoint GENÉRICO (nao depende de provider). Tabelas de INSS tem "INSS"
+    // no nome. Use ?produto=inss pra filtrar so as tabelas INSS.
+    if (action === 'listarTabelas') {
+      const r = await fc('/Api/V1/CommissionTableCorban/Get-All-To-Partner', 'GET');
+      const d = r.data || {};
+      const arr = Array.isArray(d) ? d : (d.result || d.data || d.objResult || []);
+      const lista = Array.isArray(arr) ? arr : [];
+      const nomeDe = (t) => String(t.nome || t.name || t.descricao || t.description || t.Descricao || '');
+      let norm = lista.map((t) => {
+        const nome = nomeDe(t);
+        return {
+          idTabela: t.idTabela ?? t.IdTabela ?? t.id ?? null,
+          idProduto: t.idProduto ?? t.IdProduto ?? t.idTypeOperation ?? null,
+          nome,
+          isInss: /inss/i.test(nome),
+          _raw: t,
+        };
+      });
+      const filtro = String(body.produto || '').toLowerCase().trim();
+      if (filtro === 'inss') norm = norm.filter((t) => t.isInss);
+      return j({
+        success: r.ok,
+        httpStatus: r.status,
+        total: norm.length,
+        tabelasInss: norm.filter((t) => t.isInss).length,
+        tabelas: norm,
+        _raw: d,
+      }, 200, req);
+    }
+
+    // ─── CONSULTAR SALDO/MARGEM DO BENEFICIÁRIO INSS ──────────
+    // GET /Api/V1/Operation/Check-Available-Balance?cpf=&typeQuery=
+    // typeQuery: 1=QISCD, 2=QIDTVM, 3=J17, 4=BMP. Retorna status pending/completed.
+    if (action === 'consultarSaldoInss') {
+      const cpf = String(body.cpf || '').replace(/\D/g, '');
+      if (cpf.length !== 11) return jsonError('cpf invalido (11 digitos)', 400, req);
+      const typeQuery = parseInt(body.typeQuery || 1);
+      const r = await fc(`/Api/V1/Operation/Check-Available-Balance?cpf=${cpf}&typeQuery=${typeQuery}`, 'GET');
+      const d = r.data || {};
+      const dados = d.result || d.data || d.objResult || d;
+      return j({
+        success: r.ok,
+        httpStatus: r.status,
+        cpf,
+        statusConsulta: (dados && dados.status) || d.status || null,
+        dados,
+        _raw: d,
+      }, 200, req);
+    }
+
     // ─── CONSULTAR POR CPF (lista dados se ja autorizado) ─────
     // GET /Api/V1/{Qi|Celcoin}/Get-All-Consult-Data-Worker-By-Cpf/{cpf}
     if (action === 'consultarPorCPF') {
@@ -393,7 +445,7 @@ export default async function handler(req) {
     }
 
     return jsonError(
-      'action invalida. Disponiveis: test, consultarPorCPF, enviarLinkAutorizacao, autorizacaoSimples, consultarVinculos, simular, criarOperacao, cltCheckEligibility, rawCall',
+      'action invalida. Disponiveis: test, listarTabelas, consultarSaldoInss, consultarPorCPF, enviarLinkAutorizacao, autorizacaoSimples, consultarVinculos, simular, criarOperacao, cltCheckEligibility, rawCall',
       400, req
     );
   } catch (err) {

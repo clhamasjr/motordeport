@@ -149,8 +149,9 @@ Doc: https://docs.fintechdocorban.com.br/ · Auth: header `Subscription: <api_ke
 
 > Endpoint base: `POST /api/fintechdocorban` com `{ action, provider, ... }`. provider = `qi` (default) ou `celcoin`.
 > Actions: `test`, `testHeaders`, `consultarPorCPF`, `enviarLinkAutorizacao`, `autorizacaoSimples`, `consultarVinculos`, `simular`, `criarOperacao`, `cltCheckEligibility`, `rawCall`.
-> As **regras/tabelas (taxa, prazo, valor)** vêm da plataforma deles via `idCommissionTable` na simulação — não são hardcoded aqui.
-> Tela: **CLT → Fintech do Corban** (`/clt/fintech-corban`).
+> As **regras/tabelas (taxa, prazo, valor)** vêm da plataforma deles — listadas em `GET /Api/V1/CommissionTableCorban/Get-All-To-Partner` (action `listarTabelas`). Tabelas de INSS têm "INSS" no nome.
+> **INSS** (mesma key): `consultarSaldoInss` (margem), `listarTabelas` (regras), simulação via `Operation/Simulation-FGTS` + `Operation/Online-Hiring`.
+> Tela: **INSS → Fintech do Corban** (`/inss/fintech-corban`).
 
 ### JoinBank/QualiBanking CLT — reutiliza credenciais INSS existentes
 Não precisa nenhuma env var nova. Usa `JOINBANK_URL` e `JOINBANK_KEY` já configuradas. Os endpoints CLT usam o prefixo `/v3/loan-private-payroll-simulations/...` em vez do INSS `/v3/loan-inss-simulations/...`.

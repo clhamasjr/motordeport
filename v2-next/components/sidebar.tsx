@@ -46,6 +46,7 @@ const NAV: NavGroup[] = [
       { href: '/inss/consulta', label: 'Consulta Unitária', icon: Search, section: 'consultar' },
       { href: '/inss/extrato-pdf', label: 'Ler Extrato PDF', icon: FileText, section: 'consultar' },
       { href: '/inss/in100', label: 'IN100 (DataPrev)', icon: Trophy, section: 'consultar' },
+      { href: '/inss/fintech-corban', label: 'Fintech do Corban', icon: Landmark, section: 'consultar' },
       { href: '/inss/enquadramento', label: 'Enquadramento (Manual)', icon: Target, section: 'consultar' },
       // ── Operar ──
       { href: '/inss/higienizacao', label: 'Higienização (XLSX)', icon: Sparkles, section: 'operar' },
@@ -69,7 +70,6 @@ const NAV: NavGroup[] = [
     items: [
       // ── Consultar ──
       { href: '/clt/consulta', label: 'Consulta Unitária', icon: Search, section: 'consultar' },
-      { href: '/clt/fintech-corban', label: 'Fintech do Corban', icon: Building2, section: 'consultar' },
       { href: '/clt/analise', label: 'Análise de Cliente', icon: Target, section: 'consultar' },
       { href: '/clt/catalogo', label: 'Catálogo de Bancos', icon: BookOpen, section: 'consultar' },
       // ── Operar ──
