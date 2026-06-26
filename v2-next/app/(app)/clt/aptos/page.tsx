@@ -1,27 +1,42 @@
 'use client';
 
+import { useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useCltAptos } from '@/hooks/use-clt-fila';
+import { useCltPipeline, type CategoriaCliente } from '@/hooks/use-clt-fila';
 import { BANCO_LABEL } from '@/lib/clt-bancos';
 import { formatBRL, formatCpf } from '@/lib/utils';
-import { CheckCircle2, AlertCircle, TrendingUp, Users } from 'lucide-react';
+import { GitBranch, AlertCircle } from 'lucide-react';
 import type { BancoSlug } from '@/lib/clt-types';
 
-export default function AptosCltPage() {
-  const { data, isLoading, error } = useCltAptos();
+// Ordem e rótulo das categorias do pipeline
+const CATEGORIAS: { key: CategoriaCliente; label: string; cor: string }[] = [
+  { key: 'apto', label: 'Aptos', cor: 'text-green-500' },
+  { key: 'sem_margem', label: 'Sem margem', cor: 'text-yellow-500' },
+  { key: 'aguardando', label: 'Aguardando autorização', cor: 'text-orange-400' },
+  { key: 'inapto', label: 'Inaptos', cor: 'text-red-400' },
+  { key: 'processando', label: 'Processando', cor: 'text-cyan-400' },
+  { key: 'standby', label: 'Agendados (26/06)', cor: 'text-amber-400' },
+];
+
+export default function PipelineCltPage() {
+  const { data, isLoading, error } = useCltPipeline();
+  const [aba, setAba] = useState<CategoriaCliente>('apto');
+
+  const clientes = (data?.clientes || []).filter((c) => c.categoria === aba);
+  const mostraMargem = aba === 'apto' || aba === 'sem_margem';
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-4">
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
-          <CheckCircle2 className="size-6 text-green-500" />
-          CLT — Clientes Aptos
+          <GitBranch className="size-6 text-orange-400" />
+          CLT — Pipeline de Clientes
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Clientes que ficaram com margem disponível em pelo menos um banco. Pronto pra trabalhar:
-          ordenado pela maior margem. Cada vendedor vê os seus; admin vê todos.
+          Todos os clientes consultados, segmentados por situação. Pool comum — todos os operadores
+          veem. Clique numa categoria pra filtrar.
         </p>
       </div>
 
@@ -41,36 +56,44 @@ export default function AptosCltPage() {
 
       {data && (
         <>
-          {/* KPIs */}
-          <div className="grid grid-cols-2 gap-2">
-            <Card>
-              <CardContent className="p-3">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                  <Users className="size-3" /> Clientes aptos
-                </div>
-                <div className="text-2xl font-black text-green-500">{data.total}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-3">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                  <TrendingUp className="size-3" /> Soma das margens
-                </div>
-                <div className="text-2xl font-black text-cyan-400">{formatBRL(data.somaMargem)}</div>
-              </CardContent>
-            </Card>
+          {/* Cards por categoria — clicáveis (filtram a tabela) */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            {CATEGORIAS.map((cat) => {
+              const n = data.contadores?.[cat.key] || 0;
+              const ativo = aba === cat.key;
+              return (
+                <button
+                  key={cat.key}
+                  onClick={() => setAba(cat.key)}
+                  className={`text-left rounded-md p-3 border transition-colors ${
+                    ativo ? 'border-primary bg-primary/5' : 'border-border bg-surface-1 hover:bg-muted/30'
+                  }`}
+                >
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground leading-tight">
+                    {cat.label}
+                  </div>
+                  <div className={`text-2xl font-black ${cat.cor}`}>{n}</div>
+                </button>
+              );
+            })}
           </div>
 
-          {data.total === 0 && (
-            <Card>
-              <CardContent className="p-8 text-center text-sm text-muted-foreground">
-                Nenhum cliente apto ainda. Depois das consultas processarem, os clientes com margem
-                aparecem aqui.
-              </CardContent>
-            </Card>
+          {/* Soma das margens (só faz sentido em aptos) */}
+          {aba === 'apto' && (
+            <div className="text-sm text-muted-foreground">
+              Potencial total em margem dos aptos:{' '}
+              <b className="text-cyan-400">{formatBRL(data.somaMargem)}</b>
+            </div>
           )}
 
-          {data.total > 0 && (
+          {/* Tabela da categoria selecionada */}
+          {clientes.length === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-center text-sm text-muted-foreground">
+                Nenhum cliente nesta categoria.
+              </CardContent>
+            </Card>
+          ) : (
             <Card>
               <CardContent className="p-0">
                 <div className="overflow-x-auto">
@@ -78,32 +101,36 @@ export default function AptosCltPage() {
                     <thead className="bg-muted/30 text-[11px] uppercase tracking-wider text-muted-foreground">
                       <tr>
                         <th className="text-left p-3">Cliente</th>
-                        <th className="text-right p-3">Melhor margem</th>
-                        <th className="text-left p-3">Melhor banco</th>
-                        <th className="text-center p-3">Bancos</th>
+                        {mostraMargem && <th className="text-right p-3">Melhor margem</th>}
+                        {mostraMargem && <th className="text-left p-3">Melhor banco</th>}
                         <th className="text-left p-3">Empregador</th>
                         <th className="text-left p-3">Vendedor</th>
                         <th className="text-center p-3">WhatsApp</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {data.aptos.map((a) => (
+                      {clientes.map((a) => (
                         <tr key={a.id} className="hover:bg-muted/20">
                           <td className="p-3">
                             <div className="font-medium">{a.nome}</div>
                             <div className="text-xs text-muted-foreground">{formatCpf(a.cpf)}</div>
                           </td>
-                          <td className="p-3 text-right font-bold text-green-500">
-                            {formatBRL(a.melhorMargem)}
-                          </td>
-                          <td className="p-3">
-                            <Badge variant="muted" className="text-[10px]">
-                              {BANCO_LABEL[a.melhorBanco as BancoSlug] || a.melhorBanco}
-                            </Badge>
-                          </td>
-                          <td className="p-3 text-center">
-                            <span className="font-mono text-xs">{a.totalBancosAptos}</span>
-                          </td>
+                          {mostraMargem && (
+                            <td className="p-3 text-right font-bold text-green-500">
+                              {a.melhorMargem > 0 ? formatBRL(a.melhorMargem) : '—'}
+                            </td>
+                          )}
+                          {mostraMargem && (
+                            <td className="p-3">
+                              {a.melhorBanco ? (
+                                <Badge variant="muted" className="text-[10px]">
+                                  {BANCO_LABEL[a.melhorBanco as BancoSlug] || a.melhorBanco}
+                                </Badge>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                            </td>
+                          )}
                           <td className="p-3 text-xs text-muted-foreground">
                             {a.empregador ? a.empregador.substring(0, 32) : '—'}
                           </td>

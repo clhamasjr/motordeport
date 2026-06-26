@@ -8,7 +8,7 @@ import {
   Home, Search, BookOpen, Target, Trophy, Download,
   ListChecks, FileText, MessageSquare, Settings, Building2, Landmark,
   Briefcase, Zap, ChevronRight, Smartphone, Sparkles, Activity, ChevronDown,
-  Compass, CheckCircle2,
+  Compass, GitBranch,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -72,7 +72,7 @@ const NAV: NavGroup[] = [
       { href: '/clt/analise', label: 'Análise de Cliente', icon: Target, section: 'consultar' },
       { href: '/clt/catalogo', label: 'Catálogo de Bancos', icon: BookOpen, section: 'consultar' },
       // ── Operar ──
-      { href: '/clt/aptos', label: 'Clientes Aptos', icon: CheckCircle2, section: 'operar' },
+      { href: '/clt/aptos', label: 'Pipeline CLT', icon: GitBranch, section: 'operar' },
       { href: '/clt/analise-lote', label: 'Análise em Lote', icon: ListChecks, section: 'operar' },
       { href: '/clt/empresas-aprovadas', label: 'Empresas Aprovadas', icon: Trophy, section: 'operar' },
       { href: '/clt/extrair-caged', label: 'Extrair Base CAGED', icon: Download, needsRole: ['gestor', 'admin'], section: 'operar' },

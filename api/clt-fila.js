@@ -1897,29 +1897,52 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
   // Lista trabalhavel pos-consulta: quem deu certo, melhor margem/banco,
   // vendedor. Mesmo isolamento (vendedor ve os seus, admin ve todos).
   // Dedup por CPF — fica a consulta mais recente apta de cada cliente.
-  if (action === 'aptos') {
-    const limit = Math.min(parseInt(body.limit || 400), 800);
-    // POOL COMUM (pedido do dono): aptos visiveis pra TODOS os operadores —
-    // qualquer um pode trabalhar qualquer lead apto. Diferente da LISTA de
-    // consultas (action 'listar'/'status'), que continua isolada por vendedor.
-    const filters = {};
+  // PIPELINE: categoriza TODOS os clientes consultados (apto / sem_margem /
+  // aguardando / inapto / standby / processando). POOL COMUM — todos veem.
+  // 'aptos' mantido como alias (retorna o mesmo payload; frontend filtra).
+  if (action === 'pipeline' || action === 'aptos') {
+    const limit = Math.min(parseInt(body.limit || 600), 1000);
     const { data } = await dbSelect('clt_consultas_fila', {
-      filters, order: 'iniciado_em.desc', limit
+      order: 'iniciado_em.desc', limit
     });
-    const porCpf = new Map(); // cpf → melhor registro apto (mais recente)
+    const porCpf = new Map(); // cpf → registro (consulta mais recente)
     for (const c of (data || [])) {
+      if (porCpf.has(c.cpf)) continue; // ja tem o mais recente desse CPF
+
+      let melhorMargem = 0, melhorBanco = null, nAptos = 0;
       const bancosAptos = [];
+      let temOk = false, temAguardando = false, temFalha = false, temPending = false;
       for (const [slug, st] of Object.entries(c.bancos || {})) {
         if (slug === 'multicorban') continue;
-        if (st?.disponivel === true && st?.status === 'ok') {
+        const s = st?.status;
+        if (s === 'ok' && st?.disponivel === true) {
+          temOk = true;
           const m = parseFloat(st.dados?.margemDisponivel ?? st.dados?.valorLiquido ?? 0) || 0;
-          bancosAptos.push({ banco: slug, margem: m });
+          if (m > 0) {
+            nAptos++;
+            bancosAptos.push({ banco: slug, margem: m });
+            if (m > melhorMargem) { melhorMargem = m; melhorBanco = slug; }
+          }
+        } else if (s === 'bloqueado' || s === 'manual_aguardando') {
+          temAguardando = true;
+        } else if (s === 'falha') {
+          temFalha = true;
+        } else if (s === 'pending' || s === 'processando') {
+          temPending = true;
         }
       }
-      if (bancosAptos.length === 0) continue;
-      if (porCpf.has(c.cpf)) continue; // ja tem registro mais recente desse CPF
+
+      // Categoria (prioridade): apto > standby > processando > sem_margem
+      // (elegivel s/ margem) > aguardando (precisa autz) > inapto
+      let categoria;
+      if (melhorMargem > 0) categoria = 'apto';
+      else if (c.status_geral === 'standby') categoria = 'standby';
+      else if (c.status_geral === 'processando' && temPending && !temOk && !temFalha) categoria = 'processando';
+      else if (temOk) categoria = 'sem_margem';
+      else if (temAguardando) categoria = 'aguardando';
+      else categoria = 'inapto';
+
       bancosAptos.sort((a, b) => b.margem - a.margem);
-      const melhor = bancosAptos[0];
       porCpf.set(c.cpf, {
         id: c.id,
         cpf: c.cpf,
@@ -1927,17 +1950,28 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
         telefone: c.cliente?.telefones?.[0]?.completo || null,
         empregador: c.vinculo?.empregador || null,
         empregadorCnpj: c.vinculo?.cnpj || null,
-        melhorBanco: melhor.banco,
-        melhorMargem: melhor.margem,
-        totalBancosAptos: bancosAptos.length,
+        categoria,
+        melhorBanco,
+        melhorMargem,
+        totalBancosAptos: nAptos,
         bancosAptos,
         vendedor: (c.criada_por_nome || '').replace(/^(Reconsulta|Higienização) Lote · /, ''),
         iniciado_em: c.iniciado_em,
       });
     }
-    const aptos = Array.from(porCpf.values()).sort((a, b) => b.melhorMargem - a.melhorMargem);
-    const somaMargem = aptos.reduce((s, a) => s + (a.melhorMargem || 0), 0);
-    return jsonResp({ success: true, total: aptos.length, somaMargem, aptos }, 200, req);
+    const clientes = Array.from(porCpf.values()).sort((a, b) => b.melhorMargem - a.melhorMargem);
+    const contadores = {};
+    for (const c of clientes) contadores[c.categoria] = (contadores[c.categoria] || 0) + 1;
+    const somaMargem = clientes.filter(c => c.categoria === 'apto').reduce((s, a) => s + a.melhorMargem, 0);
+    return jsonResp({
+      success: true,
+      total: clientes.length,
+      contadores,        // { apto, sem_margem, aguardando, inapto, standby, processando }
+      somaMargem,        // soma das margens dos aptos
+      clientes,          // lista completa categorizada (frontend filtra por aba)
+      // compat com tela antiga:
+      aptos: clientes.filter(c => c.categoria === 'apto'),
+    }, 200, req);
   }
 
   // ─── COMPLEMENTAR CLIENTE ─────────────────────────────────

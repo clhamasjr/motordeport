@@ -158,31 +158,34 @@ export interface PrecheckResult {
  * banco. Lista trabalhável pós-consulta. Mesmo isolamento (vendedor vê
  * os seus, admin vê todos). Ordenado por maior margem.
  */
-export interface ClienteApto {
+export type CategoriaCliente = 'apto' | 'sem_margem' | 'aguardando' | 'inapto' | 'standby' | 'processando';
+export interface ClientePipeline {
   id: string;
   cpf: string;
   nome: string;
   telefone: string | null;
   empregador: string | null;
   empregadorCnpj: string | null;
-  melhorBanco: string;
+  categoria: CategoriaCliente;
+  melhorBanco: string | null;
   melhorMargem: number;
   totalBancosAptos: number;
   bancosAptos: { banco: string; margem: number }[];
   vendedor: string;
   iniciado_em: string;
 }
-interface AptosResponse {
+interface PipelineResponse {
   success: boolean;
   total: number;
+  contadores: Partial<Record<CategoriaCliente, number>>;
   somaMargem: number;
-  aptos: ClienteApto[];
+  clientes: ClientePipeline[];
 }
-export function useCltAptos() {
+export function useCltPipeline() {
   return useQuery({
-    queryKey: ['clt', 'aptos'],
-    queryFn: async (): Promise<AptosResponse> => {
-      return api<AptosResponse>('/api/clt-fila', { action: 'aptos' });
+    queryKey: ['clt', 'pipeline'],
+    queryFn: async (): Promise<PipelineResponse> => {
+      return api<PipelineResponse>('/api/clt-fila', { action: 'pipeline' });
     },
     staleTime: 60 * 1000,
     refetchOnWindowFocus: false,
