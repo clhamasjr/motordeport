@@ -34,6 +34,7 @@ interface Filtros {
   cartao: string;
   invalidez: string;
   enquadramento: string;
+  bancoRede: string;     // '' | 'rede' (recebe+todos contratos em banco de rede) | 'concentrado' (todos no mesmo banco)
   elegReal: ElegRealMode;
   busca: string;
 }
@@ -42,7 +43,7 @@ const INITIAL: Filtros = {
   banco: '', taxa: '', trocoMin: '', trocoMax: '', vcMin: '', vcMax: '',
   parMin: '', parMax: '', salMin: '', salMax: '', pagasMin: '', pagasMax: '',
   idadeMin: '', idadeMax: '', margemPctMin: '', margemPctMax: '',
-  cartao: '', invalidez: '', enquadramento: '', elegReal: 'nova', busca: '',
+  cartao: '', invalidez: '', enquadramento: '', bancoRede: '', elegReal: 'nova', busca: '',
 };
 
 const pN = (v: string) => parseFloat(v.replace(',', '.')) || 0;
@@ -121,6 +122,9 @@ export function ElegiveisTable() {
 
     if (f.enquadramento) arr = arr.filter((r) => r.compStatus === f.enquadramento);
 
+    if (f.bancoRede === 'rede') arr = arr.filter((r) => r.bancoRedeConhecido === true);
+    else if (f.bancoRede === 'concentrado') arr = arr.filter((r) => r.bancoRede === true);
+
     if (f.busca) {
       const q = f.busca.toLowerCase();
       const cpfNum = f.busca.replace(/\D/g, '');
@@ -177,7 +181,8 @@ export function ElegiveisTable() {
     const header = [
       'CPF', 'Nome', 'Benefício', 'Contrato', 'Banco origem', 'Parcela', 'Nova parcela estim.', 'Saldo', 'Prazo', 'Pagas',
       'Idade', 'Taxa origem', 'Banco destino', 'Tabela', 'Vlr Contrato', 'Troco 96m', 'Troco 108m', 'Taxa nova',
-      'Comp. %', 'Status enquadramento', 'Resolve sozinho', 'Redução estim.', 'Tel 1', 'Tel 2', 'Tel 3',
+      'Comp. %', 'Status enquadramento', 'Resolve sozinho', 'Redução estim.',
+      'Banco pagador', 'Banco de rede', 'Tel 1', 'Tel 2', 'Tel 3',
     ];
     const rows = filtered.map((r) => [
       r.cpf, r.nome, r.ben || '', r.con || '', r.cod, r.par, r.parcelaNovaEstim || '', r.sal, r.prazo, r.pag,
@@ -187,6 +192,7 @@ export function ElegiveisTable() {
       r.vc, r.troco, r.portRefin108?.port_troco || '',
       r.portRefin108?.taxa ?? r.taxa,
       r.compPct || '', r.compStatus || '', r.resolveExc ? 'SIM' : '', r.reducaoEstim || '',
+      r.bancoPagador || '', r.bancoRede ? (r.bancoRedeConhecido ? 'REDE' : 'concentrado') : '',
       r.t1 || '', r.t2 || '', r.t3 || '',
     ]);
     const csv = [header, ...rows]
@@ -322,6 +328,13 @@ export function ElegiveisTable() {
                 <option value="nao">Sem invalidez</option>
               </select>
             </Field>
+            <Field label="Banco de rede">
+              <select className="h-9 rounded-md border border-input bg-background px-2 text-xs" value={f.bancoRede} onChange={(e) => update('bancoRede', e.target.value)}>
+                <option value="">Todos</option>
+                <option value="rede">Só banco de rede (001/033/104/341)</option>
+                <option value="concentrado">Todos contratos no banco que recebe</option>
+              </select>
+            </Field>
             <div className="flex items-end">
               <Button variant="ghost" size="sm" onClick={() => setF(INITIAL)} className="text-xs">
                 <X className="size-3" /> Limpar filtros
@@ -415,7 +428,18 @@ function ElegivelRowRender({ row: r, checked, onToggle }: { row: ElegivelRow; ch
           <input type="checkbox" checked={checked} onChange={onToggle} className="cursor-pointer" />
         )}
       </td>
-      <td className="p-2 font-medium">{r.nome || '—'}</td>
+      <td className="p-2 font-medium">
+        {r.nome || '—'}
+        {r.bancoRede && (
+          <Badge
+            variant={r.bancoRedeConhecido ? 'warning' : 'muted'}
+            className="text-[9px] ml-1.5 align-middle"
+            title={`Recebe no banco ${r.bancoPagador} e tem todos os contratos nele`}
+          >
+            rede {r.bancoPagador}
+          </Badge>
+        )}
+      </td>
       <td className="p-2 font-mono text-[10px]">{formatCpf(r.cpf)}</td>
       <td className="p-2">
         {r._semContrato ? (

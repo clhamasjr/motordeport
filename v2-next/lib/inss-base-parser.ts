@@ -58,6 +58,10 @@ export interface ElegivelRow {
   t1: string;
   t2: string;
   t3: string;
+  // ── Banco de rede (recebe + concentração de contratos) ──
+  bancoPagador?: string;        // código do banco onde recebe o benefício (coluna "Banco")
+  bancoRede?: boolean;          // recebe no banco E todos os contratos estão nesse banco
+  bancoRedeConhecido?: boolean; // bancoRede E o banco está na lista (001/033/104/341)
   // Enriquecimento de enquadramento (post-process)
   compPct?: number;
   compStatus?: CompStatusBase;
@@ -175,6 +179,25 @@ function normalize(s: string): string {
     .trim();
 }
 
+// Bancos de rede (varejo) conhecidos: BB, Santander, Caixa, Itaú.
+export const BANCOS_REDE = ['001', '033', '104', '341'];
+
+// Extrai o código (3 dígitos) do banco pagador a partir da coluna "Banco",
+// que pode vir como "001", "1", "001 - Banco do Brasil" ou só o nome.
+function bancoPagadorCod(v: unknown): string {
+  if (v == null || v === '') return '';
+  const s = String(v).trim();
+  const m = s.match(/(\d{1,3})/);
+  if (m) return m[1].padStart(3, '0');
+  const up = s.toUpperCase();
+  if (/BRASIL|\bBB\b/.test(up)) return '001';
+  if (/SANTANDER/.test(up)) return '033';
+  if (/CAIXA|\bCEF\b/.test(up)) return '104';
+  if (/ITA[UÚ]/.test(up)) return '341';
+  if (/BRADESCO/.test(up)) return '237';
+  return '';
+}
+
 function findAllPos(H: string[], nm: string): number[] {
   const r: number[] = [];
   const n = normalize(nm);
@@ -222,6 +245,8 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
   const cT3 = findFirst(H, ['Telefone3']);
   const cVB = findFirst(H, ['Valor Beneficio', 'Valor Benefício', 'ValorBeneficio', 'Valor do Beneficio', 'Valor do Benefício', 'Renda', 'Salario', 'Salário', 'Valor Renda', 'Vlr Beneficio', 'Vlr Renda']);
   const cMg = findFirst(H, ['Margem']);
+  // Banco pagador (onde o cliente recebe o benefício) — coluna "Banco"
+  const cBanco = findFirst(H, ['Banco', 'Banco Pagamento', 'Banco Pagador', 'Banco do Beneficio', 'Banco Benefício', 'Banco Recebimento']);
 
   const allTE = findAllPos(H, 'Tipo Emprestimo');
   const allCon = findAllPos(H, 'Contrato');
@@ -361,6 +386,8 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
       continue; // LOAS não porta — pula loop de contratos
     }
 
+    const bancoPag = bancoPagadorCod(gr(row, cBanco));
+    const rowRegs: ElegivelRow[] = [];
     for (const lb of lbs) {
       const con = g(row, lb.cc);
       const par = gv(row, lb.cp);
@@ -400,8 +427,19 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
         })),
         t1, t2, t3,
       };
+      rowRegs.push(reg);
+    }
+    // ── Banco de rede ── recebe no banco (coluna "Banco") que concentra TODOS
+    // os contratos. bancoRedeConhecido = esse banco está na lista 001/033/104/341.
+    const codsCtr = rowRegs.map((r) => r.cod).filter(Boolean);
+    const bancoRede = !!bancoPag && codsCtr.length > 0 && codsCtr.every((c) => c === bancoPag);
+    const bancoRedeConhecido = bancoRede && BANCOS_REDE.includes(bancoPag);
+    for (const reg of rowRegs) {
+      reg.bancoPagador = bancoPag || undefined;
+      reg.bancoRede = bancoRede;
+      reg.bancoRedeConhecido = bancoRedeConhecido;
       analise.push(reg);
-      if (res) elegiveis.push(reg);
+      if (reg.ok) elegiveis.push(reg);
     }
   }
 
