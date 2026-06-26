@@ -245,7 +245,7 @@ async function cancelarProposta(debtKey) {
 //     dadosCliente?: {...},
 //     vinculo?: {...},
 //   }
-async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutorizar = true }) {
+async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutorizar = true, forcar = false }) {
   const cpfLimpo = onlyDigits(cpf);
   if (cpfLimpo.length !== 11) return { approved: false, etapa: 'ERRO', error: 'CPF invalido' };
 
@@ -255,7 +255,9 @@ async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutori
   // 0) Bancarizadora habilitada na conta? (QITECH sempre; UY3 só em prod).
   // Se nao habilitada, marca como indisponivel (nao erro) — degrada gracioso
   // pra a homolog (so QITECH) e contas sem UY3.
-  const habilitadas = await bancarizadorasHabilitadas();
+  // `forcar:true` PULA esse gate — pra testar UY3 direto quando a conta
+  // diz que tem UY3 mas /banking-institutions nao lista (quirk da Spixii).
+  const habilitadas = forcar ? [] : await bancarizadorasHabilitadas();
   if (habilitadas.length && !habilitadas.includes(provider)) {
     return {
       approved: false,
@@ -506,6 +508,7 @@ export default async function handler(req) {
         // autoAutorizar default true (modelo Handbank/UY3). Passar false
         // pra forcar fluxo SMS (cliente clica) se precisar.
         autoAutorizar: body.autoAutorizar !== false,
+        forcar: body.forcar === true, // pula gate de bancarizadora (teste UY3)
       });
       return jsonResp(out, 200, req);
     }
