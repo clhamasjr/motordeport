@@ -1905,6 +1905,41 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       }
     }
 
+    // ─── AUTO-RETRY: rotina propria de re-tentativa (sem o operador clicar) ──
+    // Bancos em 'falha' marcados como `retryable` (timeout / banco lento /
+    // glitch transitorio) sao re-disparados SOZINHOS, ate MAX_AUTO_RETRY vezes.
+    // Throttle de 6s entre tentativas; conta em `tentativas` por banco. Quando
+    // um banco volta pra 'processando', o status_geral volta a 'processando' e
+    // o polling do frontend continua ate resolver (ou esgotar as tentativas).
+    {
+      const MAX_AUTO_RETRY = 2;
+      const baseUrl = APP_URL();
+      let mexeu = false;
+      for (const [slug, b] of Object.entries(row.bancos || {})) {
+        if (!b || b.status !== 'falha' || b.retryable !== true) continue;
+        const tent = b.tentativas || 0;
+        if (tent >= MAX_AUTO_RETRY) continue;
+        const idadeMs = b.atualizado_em ? Date.now() - new Date(b.atualizado_em).getTime() : Infinity;
+        if (idadeMs < 6000) continue; // throttle entre tentativas
+        // marca processando + incrementa ANTES (evita corrida / re-disparo duplo)
+        await patchBanco(id, slug, {
+          status: 'processando',
+          tentativas: tent + 1,
+          mensagem: `🔄 Re-tentando automaticamente (${tent + 1}/${MAX_AUTO_RETRY})...`,
+        });
+        fetch(baseUrl + '/api/clt-fila', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
+          body: JSON.stringify({ action: 'processar', id, banco: slug, force: true }),
+        }).catch(() => {});
+        mexeu = true;
+      }
+      if (mexeu) {
+        const { data: refreshed } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+        if (refreshed) row = refreshed;
+      }
+    }
+
     // TIMEOUT ABSOLUTO: se a fila esta processando ha mais de 10min, forca
     // conclusao marcando bancos pendentes como falha (V8 pode ficar
     // WAITING_CREDIT_ANALYSIS eternamente se DataPrev nao confirmar)

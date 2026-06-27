@@ -85,8 +85,14 @@ export function useFilaStatus(filaId: string | null, pool = false) {
       if (query.state.error) return false;
       const fila = query.state.data;
       if (!fila) return 1500;
-      // 'standby' (agendada pra 26/06) e 'concluido' nao mudam — sem polling
-      if (fila.status_geral === 'concluido' || fila.status_geral === 'standby') return false;
+      if (fila.status_geral === 'standby') return false;
+      // Continua pollando se ainda processa OU se ha falha RE-TENTÁVEL pendente —
+      // a rotina de auto-retry do backend precisa dos polls pra re-disparar sozinha.
+      const temRetryPendente = Object.values(fila.bancos || {}).some(
+        (b) => b?.status === 'falha' && (b as { retryable?: boolean }).retryable === true &&
+               (((b as { tentativas?: number }).tentativas) || 0) < 2,
+      );
+      if (fila.status_geral === 'concluido' && !temRetryPendente) return false;
       return 2000;
     },
     refetchOnWindowFocus: false,
