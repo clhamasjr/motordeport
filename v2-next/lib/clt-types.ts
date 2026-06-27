@@ -59,6 +59,7 @@ export interface BancoState {
   dados?: {
     margemDisponivel?: number;
     margemBase?: number;
+    totalDevido?: number;
     empregador?: string | null;
     empregadorCnpj?: string | null;
     matricula?: string | null;
