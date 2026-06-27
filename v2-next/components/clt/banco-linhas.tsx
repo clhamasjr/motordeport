@@ -138,6 +138,10 @@ export function BancoLinhas({ ofertas, cliente, filaId, onSimularDigitar }: Prop
             const disponivel = state.disponivel && state.status === 'ok';
             const precisaAutz = state.precisaAutorizacao && !state.linkAutorizacao;
             const podeRetentar = state.status === 'falha';
+            const rodando = state.status === 'processando' || state.status === 'pending';
+            // ↻ atualizar: re-consulta a margem mesmo quando já está OK (a margem
+            // muda com o tempo). Não mostra quando já há Re-tentar/Liberar ou rodando.
+            const podeAtualizar = !rodando && !podeRetentar && !precisaAutz;
             const carregando = reprocessar.isPending;
 
             const fazerRetentar = (e: React.MouseEvent) => {
@@ -198,6 +202,15 @@ export function BancoLinhas({ ofertas, cliente, filaId, onSimularDigitar }: Prop
                           onClick={fazerRetentar} disabled={carregando}
                         >
                           <RefreshCw className={cn3(carregando)} /> Re-tentar
+                        </Button>
+                      )}
+                      {podeAtualizar && (
+                        <Button
+                          variant="ghost" size="sm" className="h-7 w-7 p-0"
+                          title="Atualizar margem (re-consultar)"
+                          onClick={fazerRetentar} disabled={carregando}
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${carregando ? 'animate-spin' : ''}`} />
                         </Button>
                       )}
                       {expandido ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
