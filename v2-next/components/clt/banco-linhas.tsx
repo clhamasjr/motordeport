@@ -69,13 +69,26 @@ function resumir(slug: BancoSlug, state: BancoState): Resumo {
   return { txt: '—', variant: 'muted', margem: 0, base, ordem: 8 };
 }
 
+// Borda esquerda sutil por situação (verde=disponível, amarelo=aguardando, etc).
+const BORDA_VARIANT: Record<Variant, string> = {
+  success: 'border-l-green-500',
+  warning: 'border-l-yellow-500',
+  info: 'border-l-cyan-500',
+  muted: 'border-l-border',
+};
+
 export function BancoLinhas({ ofertas, cliente, filaId, onSimularDigitar }: Props) {
   const [aberto, setAberto] = useState<Set<string>>(new Set());
+  const [soComMargem, setSoComMargem] = useState(false);
   const reprocessar = useReprocessarBanco();
 
-  const linhas = ofertas
+  const todas = ofertas
     .map((o) => ({ ...o, resumo: resumir(o.slug, o.state) }))
     .sort((a, b) => a.resumo.ordem - b.resumo.ordem || b.resumo.margem - a.resumo.margem);
+
+  const comMargem = todas.filter((l) => l.resumo.margem > 0);
+  const maiorMargem = comMargem.length ? comMargem[0].resumo.margem : 0;
+  const linhas = soComMargem ? comMargem : todas;
 
   const toggle = (slug: string) =>
     setAberto((prev) => {
@@ -85,7 +98,30 @@ export function BancoLinhas({ ofertas, cliente, filaId, onSimularDigitar }: Prop
     });
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden">
+    <div className="space-y-2">
+      {/* Resumo + filtro */}
+      <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+        <div className="text-muted-foreground">
+          {comMargem.length > 0 ? (
+            <span>
+              <b className="text-green-500">{comMargem.length}</b> com margem
+              {maiorMargem > 0 && <> · maior <b className="text-green-500">{formatBRL(maiorMargem)}</b></>}
+            </span>
+          ) : (
+            <span>Nenhum banco com margem disponível ainda</span>
+          )}
+        </div>
+        {comMargem.length > 0 && (
+          <button
+            onClick={() => setSoComMargem((v) => !v)}
+            className={`px-2 py-1 rounded border text-[11px] ${soComMargem ? 'border-green-500 text-green-500 bg-green-500/10' : 'border-border text-muted-foreground hover:bg-muted/30'}`}
+          >
+            {soComMargem ? '✓ Só com margem' : 'Só com margem'}
+          </button>
+        )}
+      </div>
+
+      <div className="border border-border rounded-lg overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-muted/30 text-[10px] uppercase tracking-wider text-muted-foreground">
           <tr>
@@ -111,7 +147,10 @@ export function BancoLinhas({ ofertas, cliente, filaId, onSimularDigitar }: Prop
 
             return (
               <Fragment key={slug}>
-                <tr className="hover:bg-muted/20 cursor-pointer align-top" onClick={() => toggle(slug)}>
+                <tr
+                  className={`hover:bg-muted/20 cursor-pointer align-top border-l-2 ${BORDA_VARIANT[resumo.variant]}`}
+                  onClick={() => toggle(slug)}
+                >
                   {/* Banco + retorno resumido */}
                   <td className="p-2 pl-3">
                     <div className="font-medium">{BANCO_LABEL[slug] || slug}</div>
@@ -185,6 +224,7 @@ export function BancoLinhas({ ofertas, cliente, filaId, onSimularDigitar }: Prop
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
