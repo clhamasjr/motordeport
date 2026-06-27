@@ -8,9 +8,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useFilaStatus } from '@/hooks/use-clt-fila';
 import { BancoSlug, FilaConsulta } from '@/lib/clt-types';
 import { BancoOfertaCard } from './banco-oferta-card';
+import { BancoLinhas } from './banco-linhas';
 import { ModalDigitar } from './modal-digitar';
 import { formatCpf, formatCnpj, formatDateBR } from '@/lib/utils';
-import { X, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { X, Loader2, CheckCircle2, AlertCircle, List, LayoutGrid } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 
 // Ordem que os cards aparecem — vem do catalogo central (lib/clt-bancos).
@@ -25,9 +26,23 @@ interface Props {
   pool?: boolean;
 }
 
+const VISAO_KEY = 'flowforce_clt_visao';
+
 export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
   const { data: fila, isLoading, error } = useFilaStatus(filaId, pool);
   const [bancoDigitar, setBancoDigitar] = useState<string | null>(null);
+  // Visão dos bancos: 'linhas' (tabela, padrão) ou 'cards'. Persiste a escolha.
+  const [visao, setVisao] = useState<'linhas' | 'cards'>('linhas');
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(VISAO_KEY);
+      if (v === 'cards' || v === 'linhas') setVisao(v);
+    } catch { /* ignore */ }
+  }, []);
+  const trocarVisao = (v: 'linhas' | 'cards') => {
+    setVisao(v);
+    try { localStorage.setItem(VISAO_KEY, v); } catch { /* ignore */ }
+  };
 
   // Se backend retorna 4xx (id antigo no localStorage que ja sumiu), avisa o pai
   // pra remover da pilha automaticamente — evita "card de erro" eterno na tela.
@@ -181,8 +196,43 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
           </div>
         )}
 
-        {/* Bancos parados (manutenção) — escondidos em standby */}
-        {!standby && parados.length > 0 && (
+        {/* Toggle Linhas / Cards — escondido em standby */}
+        {!standby && (
+          <div className="px-3 pt-3 flex items-center justify-end gap-1">
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground mr-1">Visão</span>
+            <Button
+              variant={visao === 'linhas' ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              onClick={() => trocarVisao('linhas')}
+            >
+              <List className="w-3.5 h-3.5" /> Linhas
+            </Button>
+            <Button
+              variant={visao === 'cards' ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              onClick={() => trocarVisao('cards')}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" /> Cards
+            </Button>
+          </div>
+        )}
+
+        {/* VISÃO LINHAS — tabela única (manutenção/sem vínculo afundam) */}
+        {!standby && visao === 'linhas' && (
+          <div className="p-3">
+            <BancoLinhas
+              ofertas={[...operando, ...parados]}
+              cliente={cliente}
+              filaId={fila.id}
+              onSimularDigitar={(slug) => setBancoDigitar(slug)}
+            />
+          </div>
+        )}
+
+        {/* VISÃO CARDS — bancos parados (manutenção) */}
+        {!standby && visao === 'cards' && parados.length > 0 && (
           <div className="p-3 pb-0">
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">
               🔧 Bancos parados ({parados.length})
@@ -195,8 +245,8 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
           </div>
         )}
 
-        {/* Bancos operando — escondidos em standby (banner ja explica) */}
-        {!standby && (
+        {/* VISÃO CARDS — bancos operando */}
+        {!standby && visao === 'cards' && (
           <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {operando.map(({ slug, state }) => (
               <BancoOfertaCard
