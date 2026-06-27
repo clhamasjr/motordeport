@@ -817,40 +817,59 @@ async function processarFintech(id, provider, cpf, auth, secret) {
     return;
   }
   if (d.disponivel && d.dadosWorker) {
-    // Extrai margem do dadosWorker (estrutura varia conforme provider).
-    // Lista ampla de nomes + objetos aninhados (margin/margem) pra cobrir as
-    // variacoes do Fintech do Corban (QI/Celcoin).
+    // Estrutura REAL do Fintech do Corban (PascalCase, confirmado 2026-06-27):
+    //   ProdutoSaldoDisponivel = margem LIVRE (pode ser negativa = sem espaço)
+    //   ValorMargemBase        = margem base (35% etc)
+    //   TotalRendimentos       = renda
     const w = d.dadosWorker || {};
-    const mNest = w.margin || w.margem || w.marginData || {};
     const margem = parseFloat(
-      w.availableMargin ?? w.margem_disponivel ?? w.available_margin ??
-      w.margem ?? w.margemDisponivel ?? w.valorMargem ?? w.valorMargemDisponivel ??
-      w.marginValue ?? w.availableMarginValue ?? w.availableBalance ??
-      w.saldoDisponivel ?? w.limiteDisponivel ?? w.valorDisponivel ??
-      mNest.available ?? mNest.disponivel ?? mNest.value ?? mNest.valor ?? 0
+      w.ProdutoSaldoDisponivel ?? w.availableMargin ?? w.margemDisponivel ??
+      w.valorMargemDisponivel ?? w.saldoDisponivel ?? 0
+    ) || 0;
+    const margemBase = parseFloat(
+      w.ValorMargemBase ?? w.valorMargemBase ?? w.margemBase ?? 0
     ) || 0;
     const renda = parseFloat(
-      w.salary ?? w.salario ?? w.renda ?? w.income ?? w.grossSalary ??
-      w.totalGrossSalary ?? w.valorRenda ?? 0
+      w.TotalRendimentos ?? w.salary ?? w.salario ?? w.renda ?? w.valorRenda ?? 0
     ) || null;
+
+    // Captura dados do cliente p/ digitação (mescla na fila + clt_clientes)
+    const novoCli = {};
+    if (w.EmpregadoNome) novoCli.nome = w.EmpregadoNome;
+    if (w.DataNascimento) novoCli.dataNascimento = String(w.DataNascimento).slice(0, 10);
+    if (w.GeneroDescricao) novoCli.sexo = /fem/i.test(w.GeneroDescricao) ? 'F' : (/mas/i.test(w.GeneroDescricao) ? 'M' : null);
+    if (w.NomeMae) novoCli.nomeMae = w.NomeMae;
+    if (Object.keys(novoCli).length) await mesclarCliente(id, novoCli);
+
+    const empregador = w.EmpregadorNome || d.vinculo?.empregador || null;
+    const empregadorCnpj = w.EmpregadorDocumento || d.vinculo?.cnpj || null;
+    const matricula = w.EmpregadoCodigo || d.vinculo?.matricula || null;
+
+    let msgF;
+    if (margem > 0) msgF = `Cliente elegível — margem R$ ${margem.toFixed(2)}`;
+    else if (margemBase > 0) msgF = `Margem base R$ ${margemBase.toFixed(2)} — sem margem livre p/ novo (saldo R$ ${margem.toFixed(2)})`;
+    else msgF = 'Cliente elegível — margem em consulta';
+
     await patchBanco(id, banco, {
       status: 'ok',
       disponivel: true,
-      mensagem: margem > 0
-        ? `Cliente elegível — margem R$ ${margem.toFixed(2)}`
-        : 'Cliente elegível — margem em consulta',
+      mensagem: msgF,
       dados: {
         margemDisponivel: margem,
-        empregador: d.vinculo?.empregador,
-        empregadorCnpj: d.vinculo?.cnpj,
-        matricula: d.vinculo?.matricula,
+        margemBase,
+        empregador,
+        empregadorCnpj,
+        matricula,
         renda,
-        workerId: w.id || w.workerId || w.idWorker || null
+        // IDs p/ simulação (Id = vinculo da consulta no Fintech do Corban)
+        workerId: w.Id || w.EmpregadoId || w.IdCadastro || w.id || null,
+        idCadastro: w.IdCadastro || null,
+        produtoId: w.ProdutoId || null,
       },
       _raw_response: d
     });
     // Tracking: registra empresa aprovada
-    _registrarAprovacao(d.vinculo?.cnpj, d.vinculo?.empregador, banco, null, null, null);
+    _registrarAprovacao(empregadorCnpj, empregador, banco, null, null, null);
     return;
   }
 
