@@ -16,13 +16,15 @@
 import Link from 'next/link';
 import { useAuth } from '@/hooks/use-auth';
 import { useOrquestradorSaude } from '@/hooks/use-orquestrador-saude';
+import { useSaudeAlertas } from '@/hooks/use-saude-alertas';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Compass, Building2, Landmark, Briefcase, Settings,
   Server, Bot, MessageSquare, Users, AlertCircle, CheckCircle2,
-  ExternalLink, BookOpen, Wrench,
+  ExternalLink, BookOpen, Wrench, Bell, BellRing, BellOff,
 } from 'lucide-react';
 import type { ModuloStatus, BancoSaude } from '@/lib/orquestrador-types';
 
@@ -79,6 +81,7 @@ function BancoLinha({ b }: { b: BancoSaude }) {
 export default function OrquestradorPage() {
   const { user } = useAuth();
   const { data, isLoading, error } = useOrquestradorSaude();
+  const { armado, armar, permissao, caidos } = useSaudeAlertas(data);
 
   if (user?.role !== 'admin') {
     return (
@@ -112,7 +115,7 @@ export default function OrquestradorPage() {
         <div className="w-12 h-12 rounded-lg bg-aurora flex items-center justify-center ring-1 ring-primary/30 shadow-[0_0_22px_-4px_hsl(var(--primary)/.7)] flex-shrink-0">
           <Compass className="w-6 h-6 text-primary-foreground" />
         </div>
-        <div>
+        <div className="flex-1">
           <h1 className="text-2xl font-bold tracking-tight text-gradient">Orquestrador</h1>
           <p className="text-sm text-muted-foreground mt-1">
             Visão de cima do FlowForce. Saúde, módulos e governança.
@@ -123,7 +126,50 @@ export default function OrquestradorPage() {
             </Link>
           </p>
         </div>
+        {/* Botão de alertas em tempo real */}
+        {armado ? (
+          <Badge
+            variant="outline"
+            className="border-green-500/40 text-green-500 gap-1.5 py-1.5 px-3 self-start"
+            title={permissao === 'granted' ? 'Som + notificação ativos' : 'Som ativo (notificação bloqueada pelo navegador)'}
+          >
+            {permissao === 'granted' ? <BellRing className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
+            Alertas ativos
+          </Badge>
+        ) : (
+          <Button variant="outline" size="sm" onClick={armar} className="gap-1.5 self-start" title="Toca som e notifica quando um módulo cair">
+            <Bell className="w-4 h-4" />
+            Ativar alertas
+          </Button>
+        )}
       </div>
+
+      {/* Banner de queda — só aparece quando algo está caído AGORA */}
+      {!isLoading && caidos.length > 0 && (
+        <Card className="border-red-500/50 bg-red-500/5 animate-pulse-glow">
+          <CardContent className="p-4 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold text-red-400">
+                {caidos.length === 1 ? '1 integração fora do ar' : `${caidos.length} integrações fora do ar`}
+              </div>
+              <ul className="text-sm text-muted-foreground mt-1 space-y-0.5">
+                {caidos.map((c) => (
+                  <li key={c.label} className="flex items-baseline gap-2">
+                    <span className="font-medium text-foreground/90">{c.label}</span>
+                    {c.detalhe && <span className="text-xs text-red-400/80 truncate">{c.detalhe}</span>}
+                  </li>
+                ))}
+              </ul>
+              {!armado && (
+                <button onClick={armar} className="text-xs text-primary hover:underline mt-2">
+                  Ativar som + notificação pra ser avisado na próxima queda
+                </button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Erro global */}
       {error && (
