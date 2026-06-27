@@ -391,6 +391,23 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
         </Button>
       )}
 
+      {/* Autorização pendente SEM link (FACTA manda o token/SMS direto pro
+          cliente — não retorna link). Mostra a mensagem ("SMS enviado") + um
+          botão claro pra RECONSULTAR depois que o cliente autorizar. É a
+          "liberação aqui" — o operador dispara/recheca a autorização. */}
+      {state.precisaAutorizacao && !state.linkAutorizacao && filaId && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full mt-2 gap-1"
+          onClick={dispararRetentar}
+          disabled={reprocessar.isPending}
+        >
+          <RefreshCw className={cn('w-3 h-3', reprocessar.isPending && 'animate-spin')} />
+          {reprocessar.isPending ? 'Verificando...' : '📲 Já autorizou? Liberar/Reconsultar'}
+        </Button>
+      )}
+
       {/* Re-tentar — aparece em QUALQUER banco em falha (operador decide).
           Re-dispara o handler 'processar' com force=true, que bypassa
           idempotencia e roda novamente. Disabled durante o request. */}
