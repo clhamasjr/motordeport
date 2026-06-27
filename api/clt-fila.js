@@ -925,17 +925,21 @@ async function processarUnno(id, cpf, auth, secret) {
       return;
     }
 
-    // Aprovado
-    if (u.etapa === 'APROVADO') {
+    // Aprovado OU disponível (proposta existe com margem — em análise no painel)
+    if (u.etapa === 'APROVADO' || u.etapa === 'DISPONIVEL') {
       await patchBanco(id, 'unno', {
         status: 'ok',
         disponivel: true,
         mensagem: u.mensagem,
+        portalUrl: u.linkPainel || null,
         dados: {
+          margemDisponivel: u.margem?.disponivel || 0,
+          margemBase: u.margem?.base || 0,
           proposalUuid: u.proposalUuid,
           termUuid: termUuidExistente,
           bancoProvedor: u.bancoProvedor,
           linkPainel: u.linkPainel,
+          statusProposta: u.statusProposta || null,
         },
       });
       return;
@@ -1023,19 +1027,21 @@ async function processarUnno(id, cpf, auth, secret) {
     return;
   }
 
-  // APROVADO
-  if (u.etapa === 'APROVADO') {
-    const dc = u.dadosCliente || {};
+  // APROVADO OU disponível (proposta com margem — em análise no painel)
+  if (u.etapa === 'APROVADO' || u.etapa === 'DISPONIVEL') {
     await patchBanco(id, 'unno', {
       status: 'ok',
       disponivel: true,
       mensagem: u.mensagem,
+      portalUrl: u.linkPainel || null,
       dados: {
+        margemDisponivel: u.margem?.disponivel || 0,
+        margemBase: u.margem?.base || 0,
         proposalUuid: u.proposalUuid,
         termUuid: u.termUuid,
         bancoProvedor: u.bancoProvedor,
         linkPainel: u.linkPainel,
-        empregador: null, // Unno nao retorna na listagem (precisa GET detalhado)
+        statusProposta: u.statusProposta || null,
       },
     });
     return;

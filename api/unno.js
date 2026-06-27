@@ -241,6 +241,27 @@ async function iniciarSimulacao({ cpf, nome, telefone, email, dataNascimento, se
 //   motivoRecusa?: string,
 //   linkPainel?: string
 // }
+// Extrai margem/salario da proposta (best-effort — nomes variam; checa tambem
+// objetos aninhados comuns). Se nao achar, vem 0 e o _rawProposta permite tunar.
+function extrairMargemProposta(p) {
+  const out = { disponivel: 0, base: 0, salario: 0 };
+  if (!p || typeof p !== 'object') return out;
+  const cand = [p, p.worker, p.workerConsultation, p.worker_consultation, p.consultation,
+                p.simulation, p.margin, p.margem, p.eligibility, p.details, p.detalhe]
+                .filter(o => o && typeof o === 'object');
+  const pick = (names) => {
+    for (const o of cand) for (const n of names) {
+      const v = o[n];
+      if (v != null && v !== '' && !isNaN(parseFloat(v))) return parseFloat(v);
+    }
+    return 0;
+  };
+  out.disponivel = pick(['available_margin', 'availableMargin', 'ValorMargemDisponivel', 'margin_available', 'margemDisponivel', 'available_balance', 'availableBalance', 'produtoSaldoDisponivel', 'ProdutoSaldoDisponivel']);
+  out.base = pick(['base_margin', 'baseMargin', 'margin_base', 'ValorBaseMargem', 'margemBase', 'base_value', 'valorMargemBase']);
+  out.salario = pick(['gross_salary', 'grossSalary', 'salary', 'TotalRendimentos', 'salario', 'income', 'totalRendimentos']);
+  return out;
+}
+
 async function verificarStatus({ termUuid, cpf }) {
   // 1) Status do termo
   const term = await unnoCall(`/auth/api/v1/terms/latest/${termUuid}`, 'GET');
@@ -289,6 +310,8 @@ async function verificarStatus({ termUuid, cpf }) {
 
   const p = propostas[0];
   const status = (p.status || '').toLowerCase();
+  const mg = extrairMargemProposta(p);
+  const linkPainel = `https://app.unnotech.com.br/loans/clt/${p.uuid}`;
 
   // APROVADOS
   if (status === 'integrated' || status === 'disbursed') {
@@ -298,9 +321,11 @@ async function verificarStatus({ termUuid, cpf }) {
       mensagem: status === 'disbursed'
         ? '💰 Aprovada e desembolsada'
         : '✅ Aprovada — pronta pra prosseguir no painel Unno',
+      margem: mg,
       proposalUuid: p.uuid,
       bancoProvedor: p.bank_provider_name,
-      linkPainel: `https://app.unnotech.com.br/loans/clt/${p.uuid}`,
+      linkPainel,
+      _rawProposta: p,
     };
   }
 
@@ -335,14 +360,24 @@ async function verificarStatus({ termUuid, cpf }) {
     };
   }
 
-  // Outros status — em análise ainda
+  // Outros status (em análise/pré-proposta) — a proposta JÁ EXISTE e já traz a
+  // MARGEM. Em vez de ficar em loop até timeout, retorna DISPONIVEL com a margem
+  // e o link do painel pro parceiro continuar a digitação. A margem é o que
+  // importa pro operador; a aprovação final ele acompanha no painel.
   return {
-    etapa: 'AUTORIZADO_EM_ANALISE',
-    approved: false,
-    mensagem: `⏳ Em análise (status: ${p.status})`,
+    etapa: 'DISPONIVEL',
+    approved: true,
+    mensagem: mg.disponivel > 0
+      ? `Margem R$ ${mg.disponivel.toFixed(2)} — continue no painel Unno`
+      : (mg.base > 0
+          ? `Margem base R$ ${mg.base.toFixed(2)} — continue no painel Unno`
+          : `Disponível — continue no painel Unno (status: ${p.status})`),
+    margem: mg,
+    statusProposta: p.status,
     proposalUuid: p.uuid,
     bancoProvedor: p.bank_provider_name,
-    linkPainel: `https://app.unnotech.com.br/loans/clt/${p.uuid}`,
+    linkPainel,
+    _rawProposta: p,
   };
 }
 
@@ -445,17 +480,25 @@ async function simulacaoCompleta(params) {
     };
   }
 
-  // Em análise — proposta criada mas motor ainda processando
+  // Proposta criada e analisando — JÁ TEM MARGEM. Retorna DISPONIVEL (mostra a
+  // margem) em vez de ficar "em análise" até timeout. Parceiro continua no painel.
+  const mg = extrairMargemProposta(p);
   return {
     sucesso: true,
-    etapa: 'EM_ANALISE',
-    approved: false,
-    mensagem: `⏳ Em análise (status: ${p.status})`,
+    etapa: 'DISPONIVEL',
+    approved: true,
+    mensagem: mg.disponivel > 0
+      ? `Margem R$ ${mg.disponivel.toFixed(2)} — continue no painel Unno`
+      : (mg.base > 0
+          ? `Margem base R$ ${mg.base.toFixed(2)} — continue no painel Unno`
+          : `Disponível — continue no painel Unno (status: ${p.status})`),
+    margem: mg,
+    statusProposta: p.status,
     termUuid: termo.uuid,
     proposalUuid: p.uuid,
     bancoProvedor: p.bank_provider_name,
     linkPainel: `https://app.unnotech.com.br/loans/clt/${p.uuid}`,
-    retryable: true,
+    _rawProposta: p,
   };
 }
 
