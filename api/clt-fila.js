@@ -817,13 +817,22 @@ async function processarFintech(id, provider, cpf, auth, secret) {
     return;
   }
   if (d.disponivel && d.dadosWorker) {
-    // Extrai margem do dadosWorker (estrutura varia conforme provider)
+    // Extrai margem do dadosWorker (estrutura varia conforme provider).
+    // Lista ampla de nomes + objetos aninhados (margin/margem) pra cobrir as
+    // variacoes do Fintech do Corban (QI/Celcoin).
     const w = d.dadosWorker || {};
+    const mNest = w.margin || w.margem || w.marginData || {};
     const margem = parseFloat(
-      w.availableMargin || w.margem_disponivel || w.available_margin ||
-      w.margem || w.margemDisponivel || 0
+      w.availableMargin ?? w.margem_disponivel ?? w.available_margin ??
+      w.margem ?? w.margemDisponivel ?? w.valorMargem ?? w.valorMargemDisponivel ??
+      w.marginValue ?? w.availableMarginValue ?? w.availableBalance ??
+      w.saldoDisponivel ?? w.limiteDisponivel ?? w.valorDisponivel ??
+      mNest.available ?? mNest.disponivel ?? mNest.value ?? mNest.valor ?? 0
     ) || 0;
-    const renda = parseFloat(w.salary || w.salario || w.renda || w.income || 0) || null;
+    const renda = parseFloat(
+      w.salary ?? w.salario ?? w.renda ?? w.income ?? w.grossSalary ??
+      w.totalGrossSalary ?? w.valorRenda ?? 0
+    ) || null;
     await patchBanco(id, banco, {
       status: 'ok',
       disponivel: true,
