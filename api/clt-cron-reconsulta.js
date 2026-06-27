@@ -35,6 +35,7 @@ const MAX_PASS = 1000;
 const BANCOS_RECONSULTA = [
   'multicorban',        // enriquecimento (nome/telefone)
   'fintech_qi',         // autz simples (sem SMS)
+  'fintech_celcoin',    // autz simples (sem SMS) — igual o QI
   'handbank',           // auto-autz UY3 ChallengeInfo
   'c6',                 // bloqueado passivo (selfie só com clique)
   'unno',               // cria termo + auto-autz

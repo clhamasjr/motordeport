@@ -313,12 +313,9 @@ export default async function handler(req) {
     }
 
     // ─── AUTORIZAÇÃO SIMPLES (corban autoriza — sem SMS) ──────
-    // POST /Api/V1/Qi/Consult-Data-Worker-Simple
-    // Precisa cpf + matricula + cnpj empregador (vem de Consult-Employment-Relationship)
+    // POST /Api/V1/{Qi|Celcoin}/Consult-Data-Worker-Simple
+    // Vale pros dois providers (QI e Celcoin). Precisa cpf + matricula + cnpj.
     if (action === 'autorizacaoSimples') {
-      if (provider !== 'qi') {
-        return jsonError('autorizacaoSimples disponivel so pro provider=qi', 400, req);
-      }
       const cpf = String(body.cpf || '').replace(/\D/g, '');
       const matricula = String(body.matricula || body.registrationNumber || '').trim();
       const cnpj = String(body.cnpj || body.employerDocument || '').replace(/\D/g, '');
@@ -453,18 +450,8 @@ export default async function handler(req) {
       const cnpj = v.employerDocument || v.cnpj || v.employer_document_number;
       const empregador = v.employerName || v.empregador || v.razao_social;
 
-      // 3) Autorizacao simples (so QI tem). Se Celcoin, retorna que precisa link SMS.
-      if (provider !== 'qi') {
-        return j({
-          success: true, provider, cpf,
-          disponivel: false, temVinculo: true,
-          jaAutorizado: false,
-          precisaAutorizacao: true,
-          vinculo: { matricula, cnpj, empregador },
-          mensagem: 'Vinculo encontrado. Precisa enviar link de autorizacao por SMS pra cliente.'
-        }, 200, req);
-      }
-
+      // 3) Autorizacao simples (corban autoriza pelo cliente — SEM SMS).
+      // Vale pros DOIS providers (QI e Celcoin); o `prefix` já resolve a rota.
       const r3 = await fc(`${prefix}/Consult-Data-Worker-Simple`, 'POST', {
         document_number: cpf,
         registration_number: matricula,
