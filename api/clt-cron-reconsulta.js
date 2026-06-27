@@ -22,7 +22,7 @@
 
 export const config = { runtime: 'edge' };
 
-import { json as jsonResp, jsonError, handleOptions } from './_lib/auth.js';
+import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 import { dbSelect, dbUpdate, dbQuery } from './_lib/supabase.js';
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
@@ -46,14 +46,20 @@ const BANCOS_RECONSULTA = [
 export default async function handler(req) {
   if (req.method === 'OPTIONS') return handleOptions(req);
 
-  // Auth: CRON_SECRET (Vercel cron) OU x-internal-secret
+  // Auth: CRON_SECRET (Vercel cron) OU x-internal-secret OU admin/gestor logado
+  // (o admin pode disparar a higienização da carteira manualmente).
   const cronSecret = process.env.CRON_SECRET;
   const cronAuth = req.headers.get('authorization') || '';
   const internalSecret = req.headers.get('x-internal-secret') || '';
   const webhookSecret = process.env.WEBHOOK_SECRET || '';
   const isVercelCron = cronSecret && cronAuth === `Bearer ${cronSecret}`;
   const isInternal = webhookSecret && internalSecret === webhookSecret;
+  let isAdmin = false;
   if (!isVercelCron && !isInternal) {
+    const u = await requireAuth(req).catch(() => null);
+    isAdmin = !!(u && !(u instanceof Response) && (u.role === 'admin' || u.role === 'gestor' || u._internal));
+  }
+  if (!isVercelCron && !isInternal && !isAdmin) {
     return jsonError('Não autorizado (cron)', 401, req);
   }
 
