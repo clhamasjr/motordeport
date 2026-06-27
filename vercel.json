@@ -11,6 +11,10 @@
   ],
   "crons": [
     {
+      "path": "/api/healthcheck-cron",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/clt-cron-followups",
       "schedule": "*/5 * * * *"
     },
