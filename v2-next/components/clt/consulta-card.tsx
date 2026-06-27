@@ -5,13 +5,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useFilaStatus } from '@/hooks/use-clt-fila';
+import { useFilaStatus, useReprocessarBanco } from '@/hooks/use-clt-fila';
 import { BancoSlug, FilaConsulta } from '@/lib/clt-types';
 import { BancoOfertaCard } from './banco-oferta-card';
 import { BancoLinhas } from './banco-linhas';
 import { ModalDigitar } from './modal-digitar';
 import { formatCpf, formatCnpj, formatDateBR } from '@/lib/utils';
-import { X, Loader2, CheckCircle2, AlertCircle, List, LayoutGrid } from 'lucide-react';
+import { X, Loader2, CheckCircle2, AlertCircle, List, LayoutGrid, RefreshCw } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 
 // Ordem que os cards aparecem — vem do catalogo central (lib/clt-bancos).
@@ -43,6 +43,7 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
     setVisao(v);
     try { localStorage.setItem(VISAO_KEY, v); } catch { /* ignore */ }
   };
+  const reprocessar = useReprocessarBanco();
 
   // Se backend retorna 4xx (id antigo no localStorage que ja sumiu), avisa o pai
   // pra remover da pilha automaticamente — evita "card de erro" eterno na tela.
@@ -196,9 +197,25 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
           </div>
         )}
 
-        {/* Toggle Linhas / Cards — escondido em standby */}
+        {/* Toggle Linhas / Cards + Re-tentar todos — escondido em standby */}
         {!standby && (
-          <div className="px-3 pt-3 flex items-center justify-end gap-1">
+          <div className="px-3 pt-3 flex items-center justify-between gap-2 flex-wrap">
+            {(() => {
+              const falhas = operando.filter((o) => o.state.status === 'falha');
+              return falhas.length > 0 ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1 text-xs"
+                  disabled={reprocessar.isPending}
+                  onClick={() => falhas.forEach((o) => reprocessar.mutate({ filaId: fila.id, banco: o.slug }))}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${reprocessar.isPending ? 'animate-spin' : ''}`} />
+                  Re-tentar todos ({falhas.length})
+                </Button>
+              ) : <span />;
+            })()}
+            <div className="flex items-center gap-1">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground mr-1">Visão</span>
             <Button
               variant={visao === 'linhas' ? 'secondary' : 'ghost'}
@@ -216,6 +233,7 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
             >
               <LayoutGrid className="w-3.5 h-3.5" /> Cards
             </Button>
+            </div>
           </div>
         )}
 
