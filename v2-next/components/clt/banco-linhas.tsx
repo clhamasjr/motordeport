@@ -38,10 +38,10 @@ function resumir(slug: BancoSlug, state: BancoState): Resumo {
 
   if (state.status === 'ok' && state.disponivel) {
     if (margem > 0) return { txt: 'Disponível', variant: 'success', margem, base, ordem: 0 };
-    if (base > 0) return { txt: 'Base, sem livre', variant: 'warning', margem: 0, base, ordem: 2 };
+    if (base > 0) return { txt: 'Base, sem margem livre', variant: 'warning', margem: 0, base, ordem: 2 };
     return { txt: 'Disponível', variant: 'success', margem: 0, base, ordem: 1 };
   }
-  if (state.jaTemContrato) return { txt: 'Já contratado', variant: 'muted', margem: 0, base, ordem: 5 };
+  if (state.jaTemContrato) return { txt: 'Já tem contrato na UY3', variant: 'muted', margem: 0, base, ordem: 5 };
   if (state.status === 'bloqueado' || state.status === 'manual_aguardando' || state.precisaAutorizacao)
     return { txt: slug === 'c6' ? 'Aguarda selfie' : 'Aguarda autorização', variant: 'warning', margem: 0, base, ordem: 3 };
   if (state.status === 'processando' || state.status === 'pending')
@@ -74,7 +74,7 @@ export function BancoLinhas({ ofertas, cliente, filaId, onSimularDigitar }: Prop
           <tr>
             <th className="text-left p-2 pl-3">Banco</th>
             <th className="text-left p-2">Situação</th>
-            <th className="text-right p-2">Margem</th>
+            <th className="text-right p-2">Margem disp.</th>
             <th className="w-8 p-2"></th>
           </tr>
         </thead>

@@ -82,7 +82,7 @@ function StatusPill({ state }: { state: BancoState }) {
   // marca status='bloqueado' quando cliente ja tem contrato ativo, mas isso
   // NAO eh falta de autorizacao — eh impedimento permanente.
   if (state.jaTemContrato) {
-    return <Badge variant="muted">Já contratado</Badge>;
+    return <Badge variant="muted">Já tem contrato na UY3</Badge>;
   }
   // C6 usa `requiresLiveness`; Mercantil/Celcoin usam `precisaAutorizacao`;
   // genericamente, qualquer 'bloqueado' que nao seja "ja contratado" cai aqui
@@ -120,7 +120,6 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
   const isManutencao = state.emManutencao || state.status === 'em_manutencao';
   const margem = state.dados?.margemDisponivel || 0;
   const margemBase = state.dados?.margemBase || 0;
-  const totalDevido = state.dados?.totalDevido || 0;
   const empregador = state.dados?.empregador;
   const cnpj = state.dados?.empregadorCnpj;
   const valorLiquido = state.dados?.valorLiquido || 0;
@@ -338,17 +337,12 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
             </div>
           )}
 
-          {/* Sem margem livre, mas tem base — mostra o quadro (cliente estourado) */}
+          {/* Sem margem livre, mas tem base */}
           {margem <= 0 && margemBase > 0 && (
             <div className="text-sm">
               <span className="text-muted-foreground">Margem base:</span>{' '}
               <b>{formatBRL(margemBase)}</b>
-              <span className="text-xs text-yellow-500"> · sem margem livre p/ novo</span>
-              {totalDevido > 0 && (
-                <div className="text-xs text-muted-foreground">
-                  Dívida atual: {formatBRL(totalDevido)} (potencial portabilidade)
-                </div>
-              )}
+              <span className="text-xs text-yellow-500"> · sem margem livre</span>
             </div>
           )}
 

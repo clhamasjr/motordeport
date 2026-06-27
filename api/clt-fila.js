@@ -323,13 +323,11 @@ async function processarPresencaBank(id, cpf, auth, secret) {
       return;
     }
 
-    const totalDevido = parseFloat(pb.margem?.totalDevido || 0) || 0;
     let msgPB;
     if (margemDisp > 0) {
       msgPB = `Cliente elegível — margem R$ ${margemDisp.toFixed(2)}`;
-    } else if (totalDevido > 0) {
-      // Margem livre <= 0 mas tem dívida → oportunidade de PORTABILIDADE
-      msgPB = `Sem margem p/ novo, mas tem R$ ${totalDevido.toFixed(2)} em dívida (potencial portabilidade) · base R$ ${margemBase.toFixed(2)}`;
+    } else if (margemBase > 0) {
+      msgPB = `Margem base R$ ${margemBase.toFixed(2)} — sem margem livre`;
     } else {
       msgPB = 'Cliente elegível mas sem margem disponível';
     }
@@ -340,8 +338,6 @@ async function processarPresencaBank(id, cpf, auth, secret) {
       dados: {
         margemDisponivel: margemDisp,
         margemBase: margemBase,
-        totalDevido,
-        portabilidade: margemDisp <= 0 && totalDevido > 0,
         empregador: pb.vinculo?.empregador,
         empregadorCnpj: pb.vinculo?.cnpj
       }
@@ -847,7 +843,7 @@ async function processarFintech(id, provider, cpf, auth, secret) {
 
     let msgF;
     if (margem > 0) msgF = `Cliente elegível — margem R$ ${margem.toFixed(2)}`;
-    else if (margemBase > 0) msgF = `Margem base R$ ${margemBase.toFixed(2)} — sem margem livre p/ novo (saldo R$ ${margem.toFixed(2)})`;
+    else if (margemBase > 0) msgF = `Margem base R$ ${margemBase.toFixed(2)} — sem margem livre`;
     else msgF = 'Cliente elegível — margem em consulta';
 
     await patchBanco(id, banco, {
