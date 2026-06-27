@@ -2,10 +2,12 @@
 
 import { Fragment, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { BancoOfertaCard } from './banco-oferta-card';
+import { useReprocessarBanco } from '@/hooks/use-clt-fila';
 import { BANCO_LABEL } from '@/lib/clt-bancos';
 import { formatBRL } from '@/lib/utils';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, RefreshCw, FileText } from 'lucide-react';
 import type { BancoSlug, BancoState, ClienteData } from '@/lib/clt-types';
 
 interface Oferta {
@@ -28,6 +30,20 @@ interface Resumo {
   ordem: number;
 }
 
+// Coage a mensagem do banco a string (backend já sanitiza, mas defensivo).
+function msgStr(m: unknown): string {
+  if (typeof m === 'string') return m;
+  if (m == null) return '';
+  return '';
+}
+
+// Resume um retorno grande num texto curto (ex: recusa da UY3 com várias
+// restrições) — pega o começo + "…". Mantém a linha enxuta.
+function resumirMsg(m: string, max = 90): string {
+  const s = m.replace(/\s+/g, ' ').trim();
+  return s.length > max ? s.slice(0, max).trim() + '…' : s;
+}
+
 // Resume o estado de um banco numa linha: situação + margem + ordem de exibição.
 function resumir(slug: BancoSlug, state: BancoState): Resumo {
   const margem = state.dados?.margemDisponivel || 0;
@@ -47,7 +63,7 @@ function resumir(slug: BancoSlug, state: BancoState): Resumo {
   if (state.status === 'processando' || state.status === 'pending')
     return { txt: 'Processando', variant: 'info', margem: 0, base, ordem: 4 };
   if (state.status === 'falha') {
-    const semVinc = /v[íi]nculo/i.test(typeof state.mensagem === 'string' ? state.mensagem : '');
+    const semVinc = /v[íi]nculo/i.test(msgStr(state.mensagem));
     return { txt: semVinc ? 'Sem vínculo' : 'Indisponível', variant: 'muted', margem: 0, base, ordem: 6 };
   }
   return { txt: '—', variant: 'muted', margem: 0, base, ordem: 8 };
@@ -55,6 +71,7 @@ function resumir(slug: BancoSlug, state: BancoState): Resumo {
 
 export function BancoLinhas({ ofertas, cliente, filaId, onSimularDigitar }: Props) {
   const [aberto, setAberto] = useState<Set<string>>(new Set());
+  const reprocessar = useReprocessarBanco();
 
   const linhas = ofertas
     .map((o) => ({ ...o, resumo: resumir(o.slug, o.state) }))
@@ -72,38 +89,80 @@ export function BancoLinhas({ ofertas, cliente, filaId, onSimularDigitar }: Prop
       <table className="w-full text-sm">
         <thead className="bg-muted/30 text-[10px] uppercase tracking-wider text-muted-foreground">
           <tr>
-            <th className="text-left p-2 pl-3">Banco</th>
-            <th className="text-left p-2">Situação</th>
-            <th className="text-right p-2">Margem disp.</th>
-            <th className="w-8 p-2"></th>
+            <th className="text-left p-2 pl-3">Banco / retorno</th>
+            <th className="text-left p-2 w-32">Situação</th>
+            <th className="text-right p-2 w-24">Margem disp.</th>
+            <th className="text-right p-2 w-40">Ação</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
           {linhas.map(({ slug, state, resumo }) => {
             const expandido = aberto.has(slug);
-            const margemTxt =
-              resumo.margem > 0
-                ? formatBRL(resumo.margem)
-                : resumo.base > 0
-                ? <span className="text-muted-foreground">base {formatBRL(resumo.base)}</span>
-                : <span className="text-muted-foreground">—</span>;
+            const msg = resumirMsg(msgStr(state.mensagem));
+            const disponivel = state.disponivel && state.status === 'ok';
+            const precisaAutz = state.precisaAutorizacao && !state.linkAutorizacao;
+            const podeRetentar = state.status === 'falha';
+            const carregando = reprocessar.isPending;
+
+            const fazerRetentar = (e: React.MouseEvent) => {
+              e.stopPropagation();
+              reprocessar.mutate({ filaId, banco: slug });
+            };
+
             return (
               <Fragment key={slug}>
-                <tr
-                  className="hover:bg-muted/20 cursor-pointer"
-                  onClick={() => toggle(slug)}
-                >
-                  <td className="p-2 pl-3 font-medium">{BANCO_LABEL[slug] || slug}</td>
+                <tr className="hover:bg-muted/20 cursor-pointer align-top" onClick={() => toggle(slug)}>
+                  {/* Banco + retorno resumido */}
+                  <td className="p-2 pl-3">
+                    <div className="font-medium">{BANCO_LABEL[slug] || slug}</div>
+                    {msg && !disponivel && (
+                      <div className="text-[11px] text-muted-foreground leading-snug mt-0.5">{msg}</div>
+                    )}
+                  </td>
+                  {/* Situação */}
                   <td className="p-2">
-                    <Badge variant={resumo.variant} className="text-[10px]">
-                      {resumo.txt}
-                    </Badge>
+                    <Badge variant={resumo.variant} className="text-[10px]">{resumo.txt}</Badge>
                   </td>
-                  <td className="p-2 text-right font-bold text-green-500">
-                    {resumo.margem > 0 ? margemTxt : <span className="font-normal">{margemTxt}</span>}
+                  {/* Margem */}
+                  <td className="p-2 text-right">
+                    {resumo.margem > 0 ? (
+                      <b className="text-green-500">{formatBRL(resumo.margem)}</b>
+                    ) : resumo.base > 0 ? (
+                      <span className="text-xs text-muted-foreground">base {formatBRL(resumo.base)}</span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </td>
-                  <td className="p-2 text-muted-foreground">
-                    {expandido ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                  {/* Ação inline + expandir */}
+                  <td className="p-2">
+                    <div className="flex items-center justify-end gap-1">
+                      {disponivel && onSimularDigitar && (
+                        <Button
+                          size="sm"
+                          className="h-7 text-[11px] px-2"
+                          onClick={(e) => { e.stopPropagation(); onSimularDigitar(slug); }}
+                        >
+                          <FileText className="w-3 h-3 mr-1" /> Digitar
+                        </Button>
+                      )}
+                      {!disponivel && precisaAutz && (
+                        <Button
+                          variant="outline" size="sm" className="h-7 text-[11px] px-2"
+                          onClick={fazerRetentar} disabled={carregando}
+                        >
+                          <RefreshCw className={cn3(carregando)} /> Liberar
+                        </Button>
+                      )}
+                      {!disponivel && !precisaAutz && podeRetentar && (
+                        <Button
+                          variant="outline" size="sm" className="h-7 text-[11px] px-2"
+                          onClick={fazerRetentar} disabled={carregando}
+                        >
+                          <RefreshCw className={cn3(carregando)} /> Re-tentar
+                        </Button>
+                      )}
+                      {expandido ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+                    </div>
                   </td>
                 </tr>
                 {expandido && (
@@ -115,9 +174,7 @@ export function BancoLinhas({ ofertas, cliente, filaId, onSimularDigitar }: Prop
                         cliente={cliente}
                         filaId={filaId}
                         onSimularDigitar={
-                          state.disponivel && state.status === 'ok' && onSimularDigitar
-                            ? () => onSimularDigitar(slug)
-                            : undefined
+                          disponivel && onSimularDigitar ? () => onSimularDigitar(slug) : undefined
                         }
                       />
                     </td>
@@ -130,4 +187,8 @@ export function BancoLinhas({ ofertas, cliente, filaId, onSimularDigitar }: Prop
       </table>
     </div>
   );
+}
+
+function cn3(spin: boolean): string {
+  return 'w-3 h-3 mr-1' + (spin ? ' animate-spin' : '');
 }
