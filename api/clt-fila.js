@@ -1178,6 +1178,20 @@ async function processarNossaFintech(id, cpf, slug, serviceType, auth, secret) {
     return;
   }
 
+  // PROCESSANDO_VINCULOS — enrollment ainda rodando na Spixii (assíncrono).
+  // NAO falha — marca aguardando e deixa re-checar (operador re-tenta, ou
+  // o cron/status re-dispara). Quando os vínculos ficam prontos, vira ok.
+  if (u.etapa === 'PROCESSANDO_VINCULOS') {
+    await patchBanco(id, slug, {
+      status: 'manual_aguardando',
+      disponivel: false,
+      manual: false,
+      mensagem: u.mensagem || '⏳ Consultando vínculos — re-checando...',
+      retryable: true,
+    });
+    return;
+  }
+
   // SEM_VINCULO / SEM_MARGEM
   if (u.etapa === 'SEM_VINCULO' || u.etapa === 'SEM_MARGEM') {
     await patchBanco(id, slug, {

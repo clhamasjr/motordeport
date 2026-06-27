@@ -181,7 +181,7 @@ async function autorizarConsulta(uuid) {
 // IMPORTANTE: virou ASSINCRONO. 1a chamada retorna success:false com
 // "Consulta de vínculos em processamento. Aguarde". Precisa retry ate
 // retornar success:true com a lista de vinculos.
-async function checkEnrollment(cpf, serviceType, maxTentativas = 5, intervalMs = 3000) {
+async function checkEnrollment(cpf, serviceType, maxTentativas = 3, intervalMs = 2000) {
   const cfg = getConfig();
   let ultima;
   for (let i = 0; i < maxTentativas; i++) {
@@ -349,9 +349,22 @@ async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutori
     };
   }
 
-  // 3) AUTHORIZED — busca vinculos empregaticios (async, com retry)
+  // 3) AUTHORIZED — busca vinculos empregaticios (async, com retry).
+  // Esse passo pode demorar do lado da Spixii. Se ainda estiver "em
+  // processamento" depois das tentativas rapidas, NAO estoura timeout/erro —
+  // retorna PROCESSANDO_VINCULOS (retry-able), e a re-checagem (status/operador)
+  // pega quando ficar pronto. Evita o "Timeout 18s — banco lento".
   const enr = await checkEnrollment(cpfLimpo, provider);
   if (!enr.ok || enr.data?.success !== true) {
+    const msgEnr = String(enr.data?.message || '').toLowerCase();
+    if (msgEnr.includes('processamento') || msgEnr.includes('aguarde')) {
+      return {
+        approved: false,
+        etapa: 'PROCESSANDO_VINCULOS',
+        status: 'PROCESSING',
+        mensagem: '⏳ Consultando vínculos na Nossa Fintech — aguarde, re-checando...',
+      };
+    }
     return {
       approved: false,
       etapa: 'ERRO',
