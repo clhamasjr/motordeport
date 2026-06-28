@@ -512,6 +512,59 @@ export default async function handler(req) {
       }, 200, req);
     }
 
+    // ─── DIAGNÓSTICO: roda o fluxo inteiro e mostra o cru de cada etapa ──
+    // Investigação completa pra UM cpf: login → bancarizadoras → check-auth →
+    // (request-auth) → (authorize) → enrollment → get-margin. Mostra status +
+    // dados crus de cada passo, e detecta dado demo (EMPRESA XYZ).
+    if (action === 'diagnostico') {
+      const cpf = onlyDigits(body.cpf);
+      const provider = (body.serviceType || body.service_type || getConfig().SERVICE_TYPE).toUpperCase();
+      if (cpf.length !== 11) return jsonError('cpf invalido (11 digitos)', 400, req);
+      const passos = {};
+
+      // 1) bancarizadoras habilitadas
+      const bi = await nfCall('/clt-loan/v1/banking-institutions', 'GET');
+      passos['1_bancarizadoras'] = { status: bi.status, habilitadas: bi.data?.data ?? bi.data };
+
+      // 2) check-authorization
+      const ca = await checkAutorizacao(cpf, provider);
+      passos['2_check_auth'] = { status: ca.status, data: ca.data };
+      const statusAutz = ca.data?.data?.status || (ca.data?.success ? 'OK' : 'NOT_AUTHORIZED');
+
+      // 3) enrollment (vínculos)
+      const enr = await checkEnrollment(cpf, provider);
+      passos['3_enrollment'] = { status: enr.status, success: enr.data?.success, message: enr.data?.message, vinculos: enr.data?.data };
+
+      // 4) get-margin (primeiro vínculo, se houver)
+      const vincs = Array.isArray(enr.data?.data) ? enr.data.data : [];
+      if (vincs.length > 0) {
+        const v0 = vincs[0];
+        const mg = await getMargem({ cpf, employerDocument: v0.employer_cnpj, registration: v0.work_registration, serviceType: provider });
+        const m = mg.data?.data || {};
+        passos['4_margem'] = {
+          status: mg.status,
+          available_balance: m.available_balance,
+          base_margin_value: m.base_margin_value,
+          empregador: m.employer?.name,
+          can_continue: m.can_continue,
+          restrictions: m.restrictions,
+          ehDemo: /empresa\s*xyz/i.test(String(m.employer?.name || '')),
+          _raw: mg.data,
+        };
+      }
+
+      return jsonResp({
+        success: true,
+        cpf, provider,
+        statusAutorizacao: statusAutz,
+        passos,
+        veredito: passos['4_margem']
+          ? (passos['4_margem'].ehDemo ? 'CONTA EM DEMO (EMPRESA XYZ) — pedir ativação real à Spixii'
+             : passos['4_margem'].available_balance != null ? 'DADOS REAIS retornando' : 'sem margem')
+          : 'não chegou na margem (ver passos)',
+      }, 200, req);
+    }
+
     if (action === 'consultarAprovacao' || action === 'consultarStatus') {
       const out = await consultarAprovacao({
         cpf: body.cpf,
