@@ -329,10 +329,10 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
             </div>
           )}
 
-          {/* Margem real (sempre que tem) */}
+          {/* Margem disponível (sempre que tem) */}
           {margem > 0 && (
             <div className="text-sm">
-              <span className="text-muted-foreground">Margem real:</span>{' '}
+              <span className="text-muted-foreground">Margem disponível:</span>{' '}
               <b>{formatBRL(margem)}</b>
             </div>
           )}
