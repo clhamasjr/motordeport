@@ -99,7 +99,10 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
 
   const concluido = fila.status_geral === 'concluido';
   const standby = fila.status_geral === 'standby';
-  const cliente = fila.cliente || {};
+  // CPF fica em fila.cpf (topo), não dentro de fila.cliente. Injeta aqui pra o
+  // cliente sempre ter cpf — senão ações como "Gerar Selfie C6" mandam cpf vazio
+  // e o backend recusa ("cpf obrigatório").
+  const cliente = { ...(fila.cliente || {}), cpf: fila.cliente?.cpf || fila.cpf };
   const vinculo = fila.vinculo;
 
   // Separa bancos em manutenção do resto
