@@ -388,6 +388,47 @@ export default async function handler(req) {
       }, 200, req);
     }
 
+    // ─── SIMULAR AUTO: busca tabelas + simula sozinho ────────────
+    // Não precisa passar id de tabela: busca as tabelas de comissão, filtra as
+    // de CLT/Crédito do Trabalhador e simula em cada uma. Retorna o cru de cada
+    // simulação (pra a gente montar o parser + ligar no botão da tela).
+    if (action === 'cltSimularAuto') {
+      const cpf = String(body.cpf || body.cpfCliente || '').replace(/\D/g, '');
+      const workerId = parseInt(body.workerId || 0);
+      const dataNasc = body.dataNascimento || body.birthDate || '';
+      const genero = String(body.genero || body.sexo || 'M').toUpperCase().charAt(0);
+      const idTipoOperacao = parseInt(body.idTipoOperacao || 1);
+      if (!cpf || !workerId || !dataNasc) {
+        return jsonError('cpf, workerId e dataNascimento obrigatorios', 400, req);
+      }
+      // 1) Tabelas de comissão
+      const tabR = await fc('/Api/V1/CommissionTableCorban/Get-All-To-Partner', 'GET');
+      const td = tabR.data || {};
+      const arr = Array.isArray(td) ? td : (td.result || td.data || td.objResult || []);
+      const norm = (Array.isArray(arr) ? arr : []).map((t) => ({
+        idTabela: t.idTabela ?? t.IdTabela ?? t.id ?? t.cod_tabela ?? null,
+        nome: String(t.nome || t.name || t.descricao || t.description || t.Descricao || ''),
+      })).filter((t) => t.idTabela != null);
+      // Filtra CLT/trabalhador; se nenhuma, usa as primeiras.
+      let candidatas = norm.filter((t) => /clt|trabalhad/i.test(t.nome));
+      if (candidatas.length === 0) candidatas = norm;
+      candidatas = candidatas.slice(0, 3);
+
+      // 2) Simula em cada tabela candidata
+      const endpoint = provider === 'celcoin'
+        ? '/Api/V1/Celcoin/Simulation-CLT-Celcoin'
+        : '/Api/V1/Qi/Simulation-Debt-Consigned-Private';
+      const simulacoes = [];
+      for (const t of candidatas) {
+        const sr = await fc(endpoint + `?idCommissionTable=${t.idTabela}`, 'POST', {
+          data: {}, cpfCliente: cpf, workerId, dataNascimento: dataNasc, genero,
+          tabela: parseInt(t.idTabela) || t.idTabela, idTipoOperacao,
+        });
+        simulacoes.push({ idTabela: t.idTabela, nome: t.nome, ok: sr.ok, status: sr.status, _raw: sr.data });
+      }
+      return j({ success: true, provider, totalTabelas: norm.length, candidatas, simulacoes }, 200, req);
+    }
+
     // ─── CRIAR OPERAÇÃO / CONTRATAÇÃO ─────────────────────────
     // POST /Api/V1/Operation/Online-Hiring-Private-Credit
     if (action === 'criarOperacao') {
