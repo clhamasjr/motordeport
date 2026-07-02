@@ -394,12 +394,25 @@ export default async function handler(req) {
     // simulação (pra a gente montar o parser + ligar no botão da tela).
     if (action === 'cltSimularAuto') {
       const cpf = String(body.cpf || body.cpfCliente || '').replace(/\D/g, '');
-      const workerId = parseInt(body.workerId || 0);
-      const dataNasc = body.dataNascimento || body.birthDate || '';
-      const genero = String(body.genero || body.sexo || 'M').toUpperCase().charAt(0);
+      if (cpf.length !== 11) return jsonError('cpf invalido (11 digitos)', 400, req);
       const idTipoOperacao = parseInt(body.idTipoOperacao || 1);
-      if (!cpf || !workerId || !dataNasc) {
-        return jsonError('cpf, workerId e dataNascimento obrigatorios', 400, req);
+
+      // Resolve workerId/dataNasc/genero: usa o que veio no body, senão BUSCA
+      // pelo CPF (Get-All-Consult-Data-Worker) — assim basta passar o CPF.
+      let workerId = parseInt(body.workerId || 0);
+      let dataNasc = body.dataNascimento || body.birthDate || '';
+      let genero = body.genero ? String(body.genero).toUpperCase().charAt(0) : '';
+      if (!workerId || !dataNasc || !genero) {
+        const wr = await fc(`${prefix}/Get-All-Consult-Data-Worker-By-Cpf/${cpf}`, 'GET');
+        const wd = wr.data?.result || wr.data?.data || wr.data || {};
+        const lst = Array.isArray(wd) ? wd : (Array.isArray(wd?.items) ? wd.items : []);
+        const w = lst[0] || (typeof wd === 'object' && !Array.isArray(wd) ? wd : {});
+        if (!workerId) workerId = parseInt(w.Id || w.EmpregadoId || w.IdCadastro || w.id || 0);
+        if (!dataNasc) dataNasc = String(w.DataNascimento || w.dataNascimento || '').slice(0, 10);
+        if (!genero) genero = /fem/i.test(String(w.GeneroDescricao || '')) ? 'F' : 'M';
+      }
+      if (!workerId || !dataNasc) {
+        return jsonError('Não consegui obter workerId/dataNascimento pelo CPF — cliente precisa estar consultado/autorizado no Fintech do Corban primeiro', 400, req);
       }
       // 1) Tabelas de comissão
       const tabR = await fc('/Api/V1/CommissionTableCorban/Get-All-To-Partner', 'GET');
