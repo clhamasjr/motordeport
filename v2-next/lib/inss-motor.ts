@@ -124,6 +124,9 @@ export const BD: Record<string, BancoRegra> = {
     block: ['070','623','935','149','012','071','925','380','079'],
     // BRB aceita port com QUALQUER taxa origem (sem mínimo)
     taxaOrigemMinDefault: 0,
+    // ─── PG MÍN POR ORIGEM ───
+    // BRB só compra contrato do C6 (336/626) com 12+ parcelas pagas.
+    pgMinMap: { '336': 12, '626': 12 },
     invRules: { minAge: 60 },
   },
   DIGIO: {
