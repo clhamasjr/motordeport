@@ -450,18 +450,33 @@ export default async function handler(req) {
       if (semTabelaCLT) candidatas = unicas; // fallback: simula nas primeiras pra debug
       candidatas = candidatas.slice(0, 3);
 
-      // 2) Simula em cada tabela candidata
-      const endpoint = provider === 'celcoin'
-        ? '/Api/V1/Celcoin/Simulation-CLT-Celcoin'
-        : '/Api/V1/Qi/Simulation-Debt-Consigned-Private';
+      // 2) Simula em cada tabela candidata.
+      // O endpoint de Celcoin era um chute — o erro "Bancarizadora não suportada"
+      // indica rota errada. Testa uma LISTA de candidatos e reporta qual responde.
+      // body.endpoint força um único endpoint (pra travar quando achar o certo).
+      const candidatosEndpoint = body.endpoint
+        ? [body.endpoint]
+        : (provider === 'celcoin'
+            ? [
+                '/Api/V1/Celcoin/Simulation-Debt-Consigned-Private',   // espelha o QI (mais provável)
+                '/Api/V1/Celcoin/Simulation-CLT-Celcoin',              // chute original
+                '/Api/V1/Simulation/Simulation-Debt-Consigned-Private',// rota genérica
+                '/Api/V1/Celcoin/Simulation-Private-Credit',
+              ]
+            : ['/Api/V1/Qi/Simulation-Debt-Consigned-Private']);
       const simulacoes = [];
       for (const t of candidatas) {
         const payload = {
           data: { ...vFields }, cpfCliente: cpf, workerId, dataNascimento: dataNasc, genero,
           tabela: parseInt(t.idTabela) || t.idTabela, idTipoOperacao, ...vFields,
         };
-        const sr = await fc(endpoint + `?idCommissionTable=${t.idTabela}`, 'POST', payload);
-        simulacoes.push({ idTabela: t.idTabela, nome: t.nome, ok: sr.ok, status: sr.status, _raw: sr.data, _payloadEnviado: payload });
+        for (const endpoint of candidatosEndpoint) {
+          const sr = await fc(endpoint + `?idCommissionTable=${t.idTabela}`, 'POST', payload);
+          simulacoes.push({ idTabela: t.idTabela, nome: t.nome, endpoint, ok: sr.ok, status: sr.status, _raw: sr.data });
+          if (sr.ok) break; // achou o endpoint certo pra essa tabela
+        }
+        // só expõe o payload uma vez (é igual pra todas)
+        if (simulacoes.length && !simulacoes[0]._payloadEnviado) simulacoes[0]._payloadEnviado = payload;
       }
       return j({
         success: true, provider, totalTabelas: unicas.length,
