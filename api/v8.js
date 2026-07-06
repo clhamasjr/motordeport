@@ -283,9 +283,15 @@ async function handleAction(body, req) {
     }
 
     // ─── 2) AUTORIZAR TERMO (auto-aprova) ─────────────────────
+    // Doc pede os campos de device no body do authorize.
     if (action === 'autorizarTermo') {
       if (!body.consultId) return jsonError('consultId obrigatorio', 400, req);
-      const r = await v8Call(`/private-consignment/consult/${encodeURIComponent(body.consultId)}/authorize`, 'POST', {});
+      const r = await v8Call(`/private-consignment/consult/${encodeURIComponent(body.consultId)}/authorize`, 'POST', {
+        operationalSystem: 'API',
+        deviceModel: 'FlowForce',
+        deviceName: 'FlowForce CLT',
+        deviceType: 'desktop',
+      });
       return j({ success: r.ok, httpStatus: r.status, _raw: r.data }, 200, req);
     }
 
