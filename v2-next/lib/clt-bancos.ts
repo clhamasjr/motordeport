@@ -45,6 +45,8 @@ export const BANCO_LABEL: Record<BancoSlug, string> = {
 export const BANCOS_VISIVEIS: BancoSlug[] = [
   'fintech_qi',
   'fintech_celcoin',
+  'v8_qi',        // V8 reativado (nova API v8sistema — Crédito Privado CLT)
+  'v8_celcoin',
   'handbank',
   'c6',
   'unno',
