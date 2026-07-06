@@ -417,12 +417,15 @@ export default async function handler(req) {
       // Valor: a simulação EXIGE valor da parcela OU de desembolso.
       const valorParcela = parseFloat(body.valorParcela || 0) || 0;
       const valorDesembolso = parseFloat(body.valorDesembolso || body.valorLiberado || 0) || 0;
-      // Monta os campos de valor (tenta nomes PT variados — API é PascalCase/pt).
-      const vFields = {};
+      const parcelas = parseInt(body.parcelas || body.quantidadeParcelas || body.numberOfInstallments || 12);
+      // Monta os campos de valor + prazo (tenta nomes PT/EN variados — API mista).
+      const vFields = {
+        parcelas, quantidadeParcelas: parcelas, numberOfInstallments: parcelas, prazo: parcelas, qtdeParcelas: parcelas,
+      };
       if (valorParcela > 0) {
         Object.assign(vFields, { valorParcela, valor_parcela: valorParcela, installmentFaceValue: valorParcela });
       } else if (valorDesembolso > 0) {
-        Object.assign(vFields, { valorDesembolso, valor_desembolso: valorDesembolso, valorLiquido: valorDesembolso, disbursedAmount: valorDesembolso });
+        Object.assign(vFields, { valorDesembolso, valor_desembolso: valorDesembolso, valorLiquido: valorDesembolso, disbursedAmount: valorDesembolso, valorSolicitado: valorDesembolso });
       }
 
       // 1) Tabelas de comissão
@@ -453,11 +456,12 @@ export default async function handler(req) {
         : '/Api/V1/Qi/Simulation-Debt-Consigned-Private';
       const simulacoes = [];
       for (const t of candidatas) {
-        const sr = await fc(endpoint + `?idCommissionTable=${t.idTabela}`, 'POST', {
+        const payload = {
           data: { ...vFields }, cpfCliente: cpf, workerId, dataNascimento: dataNasc, genero,
           tabela: parseInt(t.idTabela) || t.idTabela, idTipoOperacao, ...vFields,
-        });
-        simulacoes.push({ idTabela: t.idTabela, nome: t.nome, ok: sr.ok, status: sr.status, _raw: sr.data });
+        };
+        const sr = await fc(endpoint + `?idCommissionTable=${t.idTabela}`, 'POST', payload);
+        simulacoes.push({ idTabela: t.idTabela, nome: t.nome, ok: sr.ok, status: sr.status, _raw: sr.data, _payloadEnviado: payload });
       }
       return j({
         success: true, provider, totalTabelas: unicas.length,
