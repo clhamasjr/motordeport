@@ -226,21 +226,25 @@ export default async function handler(req) {
       const nomeDe = (t) => String(t.nome || t.name || t.descricao || t.description || t.Descricao || '');
       let norm = lista.map((t) => {
         const nome = nomeDe(t);
+        const produto = String(t.NomeProduto || t.nomeProduto || '');
         return {
           idTabela: t.idTabela ?? t.IdTabela ?? t.id ?? null,
           idProduto: t.idProduto ?? t.IdProduto ?? t.idTypeOperation ?? null,
           nome,
           isInss: /inss/i.test(nome),
+          isFgts: /fgts|saque/i.test(nome + ' ' + produto),
           _raw: t,
         };
       });
       const filtro = String(body.produto || '').toLowerCase().trim();
       if (filtro === 'inss') norm = norm.filter((t) => t.isInss);
+      if (filtro === 'fgts') norm = norm.filter((t) => t.isFgts);
       return j({
         success: r.ok,
         httpStatus: r.status,
         total: norm.length,
         tabelasInss: norm.filter((t) => t.isInss).length,
+        tabelasFgts: norm.filter((t) => t.isFgts).length,
         tabelas: norm,
         _raw: d,
       }, 200, req);
@@ -263,6 +267,41 @@ export default async function handler(req) {
         statusConsulta: (dados && dados.status) || d.status || null,
         dados,
         _raw: d,
+      }, 200, req);
+    }
+
+    // ─── FGTS: CONSULTAR SALDO NAS BANCARIZADORAS (QI SCD + J17) ──
+    // GET /Api/V1/Operation/Check-Available-Balance?cpf=&typeQuery=
+    // typeQuery: 1=QISCD, 2=QIDTVM, 3=J17, 4=BMP.
+    // O cliente PRECISA ter liberado a instituicao no app FGTS da Caixa
+    // (menu Autorizacoes) — sem isso a consulta volta pending/negada.
+    // Consulta QI SCD (1) e J17 (3) em paralelo e retorna por instituicao.
+    if (action === 'fgtsConsultarSaldo') {
+      const cpf = String(body.cpf || '').replace(/\D/g, '');
+      if (cpf.length !== 11) return jsonError('cpf invalido (11 digitos)', 400, req);
+      // typeQueries customizavel; default QI SCD + J17 (as duas que operamos)
+      const tipos = Array.isArray(body.typeQueries) && body.typeQueries.length
+        ? body.typeQueries.map(Number)
+        : [1, 3];
+      const NOMES = { 1: 'QI Sociedade de Crédito Direto', 2: 'QI DTVM', 3: 'J17 SCD', 4: 'BMP' };
+      const consultas = await Promise.all(tipos.map(async (tq) => {
+        const r = await fc(`/Api/V1/Operation/Check-Available-Balance?cpf=${cpf}&typeQuery=${tq}`, 'GET');
+        const d = r.data || {};
+        const dados = d.result || d.data || d.objResult || d;
+        return {
+          typeQuery: tq,
+          instituicao: NOMES[tq] || `typeQuery ${tq}`,
+          ok: r.ok,
+          httpStatus: r.status,
+          statusConsulta: (dados && dados.status) || d.status || null,
+          dados,
+          _raw: d,
+        };
+      }));
+      return j({
+        success: consultas.some((c) => c.ok),
+        cpf,
+        consultas,
       }, 200, req);
     }
 
@@ -451,18 +490,15 @@ export default async function handler(req) {
       candidatas = candidatas.slice(0, 3);
 
       // 2) Simula em cada tabela candidata.
-      // O endpoint de Celcoin era um chute — o erro "Bancarizadora não suportada"
-      // indica rota errada. Testa uma LISTA de candidatos e reporta qual responde.
-      // body.endpoint força um único endpoint (pra travar quando achar o certo).
+      // Endpoints CONFIRMADOS na varredura de 06/07: só estas rotas existem
+      // (as outras davam 404). O Celcoin ainda responde 409 "Bancarizadora não
+      // suportada / Erro de Configuração" = habilitação pendente do lado da
+      // Fintech do Corban (chamado aberto). Quando liberarem, esta rota resolve.
+      // body.endpoint força outra rota pra debug.
       const candidatosEndpoint = body.endpoint
         ? [body.endpoint]
         : (provider === 'celcoin'
-            ? [
-                '/Api/V1/Celcoin/Simulation-Debt-Consigned-Private',   // espelha o QI (mais provável)
-                '/Api/V1/Celcoin/Simulation-CLT-Celcoin',              // chute original
-                '/Api/V1/Simulation/Simulation-Debt-Consigned-Private',// rota genérica
-                '/Api/V1/Celcoin/Simulation-Private-Credit',
-              ]
+            ? ['/Api/V1/Celcoin/Simulation-CLT-Celcoin']
             : ['/Api/V1/Qi/Simulation-Debt-Consigned-Private']);
       const simulacoes = [];
       for (const t of candidatas) {
@@ -586,7 +622,7 @@ export default async function handler(req) {
     }
 
     return jsonError(
-      'action invalida. Disponiveis: test, listarTabelas, consultarSaldoInss, consultarPorCPF, enviarLinkAutorizacao, autorizacaoSimples, consultarVinculos, simular, criarOperacao, cltCheckEligibility, rawCall',
+      'action invalida. Disponiveis: test, listarTabelas, consultarSaldoInss, fgtsConsultarSaldo, consultarPorCPF, enviarLinkAutorizacao, autorizacaoSimples, consultarVinculos, simular, criarOperacao, cltCheckEligibility, rawCall',
       400, req
     );
   } catch (err) {
