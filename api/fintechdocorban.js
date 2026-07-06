@@ -145,6 +145,59 @@ export default async function handler(req) {
     const provider = (body.provider || 'qi').toLowerCase();
     const prefix = pathPrefix(provider);
 
+    // ─── DEBUG: baixa o swagger deles pelo backend (Vercel alcança o host) e
+    // extrai o schema exato do(s) endpoint(s) de simulação CLT/Celcoin. TEMP.
+    if (action === 'swaggerDump') {
+      const specUrl = body.specUrl || 'https://api.nossafintech.com.br/swagger/partners/swagger.json';
+      let spec;
+      try {
+        const r = await fetch(specUrl, { headers: { Accept: 'application/json' } });
+        spec = await r.json();
+      } catch (e) {
+        return j({ success: false, erro: 'fetch swagger falhou: ' + e.message, specUrl }, 200, req);
+      }
+      const paths = spec.paths || {};
+      const comps = (spec.components && spec.components.schemas) || spec.definitions || {};
+      // resolve $ref -> objeto de schema (1 nível, o suficiente pra ver os campos)
+      const resolveRef = (ref) => {
+        if (!ref) return null;
+        const nome = ref.split('/').pop();
+        return comps[nome] || null;
+      };
+      const descrever = (schema, prof = 0) => {
+        if (!schema || prof > 2) return schema && (schema.type || (schema.$ref ? '$ref:' + schema.$ref.split('/').pop() : 'obj'));
+        if (schema.$ref) return descrever(resolveRef(schema.$ref), prof + 1);
+        if (schema.type === 'array') return [descrever(schema.items, prof + 1)];
+        if (schema.properties) {
+          const o = {};
+          for (const [k, v] of Object.entries(schema.properties)) {
+            o[k] = (v.$ref || v.type === 'object' || v.type === 'array') ? descrever(v, prof + 1) : (v.type + (v.format ? `(${v.format})` : '') + (v.enum ? ' enum:' + JSON.stringify(v.enum) : ''));
+          }
+          return { _required: schema.required || undefined, ...o };
+        }
+        return schema.type || 'obj';
+      };
+      // filtra rotas de interesse (Simulation / CLT / Celcoin / Private)
+      const rx = new RegExp(body.filtro || 'simulation|celcoin|clt|private|worker', 'i');
+      const achados = {};
+      for (const [p, defs] of Object.entries(paths)) {
+        if (!rx.test(p)) continue;
+        for (const [metodo, def] of Object.entries(defs)) {
+          if (typeof def !== 'object') continue;
+          const key = `${metodo.toUpperCase()} ${p}`;
+          const rb = def.requestBody?.content?.['application/json']?.schema
+                  || def.requestBody?.content?.['application/*+json']?.schema
+                  || (def.parameters && def.parameters.find(x => x.in === 'body')?.schema);
+          achados[key] = {
+            summary: def.summary || undefined,
+            query: (def.parameters || []).filter(x => x.in === 'query').map(x => `${x.name}${x.required ? '*' : ''}:${x.schema?.type || x.type || '?'}`),
+            body: rb ? descrever(rb) : undefined,
+          };
+        }
+      }
+      return j({ success: true, totalPaths: Object.keys(paths).length, achados }, 200, req);
+    }
+
     // ─── TEST: valida auth (Subscription + login Bearer + endpoint) ──
     if (action === 'test') {
       const cfg = getConfig();
