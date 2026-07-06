@@ -431,14 +431,20 @@ export default async function handler(req) {
       const arr = Array.isArray(td) ? td : (td.result || td.data || td.objResult || []);
       const lista = Array.isArray(arr) ? arr : [];
       const norm = lista.map((t) => ({
-        idTabela: t.idTabela ?? t.IdTabela ?? t.id ?? t.Id ?? t.cod_tabela ?? t.codTabela ?? null,
-        nome: String(t.nome || t.name || t.descricao || t.description || t.Descricao || t.Nome || ''),
+        idTabela: t.IdTabela ?? t.idTabela ?? t.id ?? t.Id ?? null,
+        idProduto: t.IdProduto ?? t.idProduto ?? null,
+        nome: String(t.NomeTabela || t.nome || t.name || ''),
+        produto: String(t.NomeProduto || ''),
+        maxParcelas: t.MaximoParcelas ?? null,
       })).filter((t) => t.idTabela != null);
-      // Dedup por idTabela + filtra CLT/trabalhador; se nenhuma, usa as primeiras.
+      // Dedup por idTabela + filtra CLT/trabalhador/consignado (exclui FGTS/SAQUE/INSS).
       const vistos = new Set();
       const unicas = norm.filter((t) => (vistos.has(t.idTabela) ? false : vistos.add(t.idTabela)));
-      let candidatas = unicas.filter((t) => /clt|trabalhad/i.test(t.nome));
-      if (candidatas.length === 0) candidatas = unicas;
+      const ehCLT = (t) => /clt|trabalhad|consignad|privad/i.test(t.nome + ' ' + t.produto)
+        && !/fgts|saque/i.test(t.nome + ' ' + t.produto);
+      let candidatas = unicas.filter(ehCLT);
+      const semTabelaCLT = candidatas.length === 0;
+      if (semTabelaCLT) candidatas = unicas; // fallback: simula nas primeiras pra debug
       candidatas = candidatas.slice(0, 3);
 
       // 2) Simula em cada tabela candidata
@@ -454,11 +460,12 @@ export default async function handler(req) {
         simulacoes.push({ idTabela: t.idTabela, nome: t.nome, ok: sr.ok, status: sr.status, _raw: sr.data });
       }
       return j({
-        success: true, provider, totalTabelas: norm.length,
+        success: true, provider, totalTabelas: unicas.length,
+        semTabelaCLT,                                  // true = nenhuma tabela CLT achada
         valorEnviado: { valorParcela, valorDesembolso },
         candidatas, simulacoes,
-        _camposTabela: Object.keys(lista[0] || {}),   // nomes reais dos campos da tabela
-        _amostraTabelas: lista.slice(0, 3),            // 3 tabelas cruas
+        // Lista compacta de TODAS as tabelas (id + nome + produto) pra identificar as de CLT
+        _todasTabelas: unicas.map((t) => ({ id: t.idTabela, produto: t.produto, nome: t.nome })),
       }, 200, req);
     }
 
