@@ -106,7 +106,13 @@ export default async function handler(req) {
   const url = new URL(req.url);
   if (url.pathname.endsWith('/v8') && req.method === 'POST') {
     const body = await req.json().catch(() => ({}));
-    if (body.type && (body.type.startsWith('private.consignment.') || body.type.startsWith('webhook.'))) {
+    if (body.type && (
+      body.type.startsWith('private.consignment.') ||
+      body.type.startsWith('webhook.') ||
+      body.type.startsWith('balance.') ||        // FGTS: balance.status.received.*
+      body.type.startsWith('proposal.') ||       // FGTS: proposta atualizada
+      body.type.startsWith('fgts.')
+    )) {
       return await handleWebhook(body, req);
     }
     // Reprocessa como request normal (precisa auth)
@@ -499,8 +505,232 @@ async function handleAction(body, req) {
       }, 200, req);
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // FGTS — ANTECIPAÇÃO SAQUE-ANIVERSÁRIO
+    // Doc: docs.v8sistema.com/guide/saque-aniversário-fgts
+    // Providers FGTS: 'bms' | 'qi' | 'cartos' (minúsculo!)
+    // Fluxo: fgtsConsultarSaldo (async) → fgtsBuscarSaldo (poll) →
+    //        fgtsTabelas → fgtsSimular → fgtsCriarProposta → formalizationLink
+    // ═══════════════════════════════════════════════════════════
+    const FGTS_PROVIDERS = ['bms', 'qi', 'cartos'];
+    const fgtsProvider = String(body.fgtsProvider || body.provider || 'qi').toLowerCase();
+
+    // ─── FGTS 1) INICIAR CONSULTA DE SALDO (async — resposta é null) ─
+    if (action === 'fgtsConsultarSaldo') {
+      const cpf = normalizeCPF(body.cpf);
+      if (!cpf) return jsonError('CPF invalido', 400, req);
+      if (!FGTS_PROVIDERS.includes(fgtsProvider)) {
+        return jsonError(`provider FGTS invalido. Validos: ${FGTS_PROVIDERS.join(',')}`, 400, req);
+      }
+      const r = await v8Call('/fgts/balance', 'POST', { documentNumber: cpf, provider: fgtsProvider });
+      // Resposta esperada: null (processamento async). Busca depois via fgtsBuscarSaldo.
+      return j({
+        success: r.ok, httpStatus: r.status, cpf, provider: fgtsProvider,
+        mensagem: r.ok ? 'Consulta iniciada — aguarde e busque o resultado' : 'Falha ao iniciar consulta',
+        _raw: r.data
+      }, 200, req);
+    }
+
+    // ─── FGTS 2) BUSCAR RESULTADO DO SALDO ────────────────────
+    if (action === 'fgtsBuscarSaldo') {
+      const cpf = normalizeCPF(body.cpf);
+      if (!cpf) return jsonError('CPF invalido', 400, req);
+      const r = await v8Call(`/fgts/balance?search=${cpf}`, 'GET');
+      const items = r.data?.data || [];
+      // Mais recente primeiro (a API pode devolver várias consultas do mesmo CPF)
+      const sorted = [...items].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      const atual = sorted[0] || null;
+      return j({
+        success: r.ok, httpStatus: r.status, cpf,
+        encontrado: !!atual,
+        balanceId: atual?.id || null,
+        status: atual?.status || null,     // success | fail | (processando se ausente)
+        saldoTotal: atual?.amount ?? null,
+        provider: atual?.provider || null,
+        periods: atual?.periods || [],     // [{amount, dueDate}]
+        erro: atual?.errorMessage || atual?.reason || null,
+        _all: items
+      }, 200, req);
+    }
+
+    // ─── FGTS 3) LIMPAR CACHE DE SALDO (reconsultar) ──────────
+    if (action === 'fgtsLimparCache') {
+      const cpf = normalizeCPF(body.cpf);
+      if (!cpf) return jsonError('CPF invalido', 400, req);
+      const r = await v8Call(`/fgts/balance/cache/${cpf}`, 'DELETE');
+      return j({ success: r.ok, httpStatus: r.status, _raw: r.data }, 200, req);
+    }
+
+    // ─── FGTS 4) TABELAS DE TAXA (fees) ───────────────────────
+    if (action === 'fgtsTabelas') {
+      const r = await v8Call('/fgts/simulations/fees/new', 'GET');
+      const arr = Array.isArray(r.data) ? r.data : (r.data?.data || []);
+      const tabelas = arr.map((t) => ({
+        ativa: t.active === true,
+        padrao: t.default === true,
+        id: t.simulation_fees?.id_simulation_fees || null,
+        nome: t.simulation_fees?.label || '',
+        taxaMensal: t.simulation_fees?.monthly_interest_rates ?? null,
+        taxaAnual: t.simulation_fees?.annual_interest_fees ?? null,
+        spread: t.simulation_fees?.spread_value ?? null,
+      })).filter((t) => t.id);
+      return j({ success: r.ok, httpStatus: r.status, tabelas, _raw: r.data }, 200, req);
+    }
+
+    // ─── FGTS 5) SIMULAR ──────────────────────────────────────
+    // desiredInstallments: mínimo 2 itens [{totalAmount, dueDate}] — use os
+    // periods retornados pelo saldo. targetAmount 0 = máximo disponível.
+    if (action === 'fgtsSimular') {
+      const cpf = normalizeCPF(body.cpf || body.documentNumber);
+      const faltam = ['simulationFeesId', 'balanceId'].filter(k => !body[k]);
+      if (!cpf) faltam.push('cpf');
+      if (faltam.length) return jsonError('Faltam: ' + faltam.join(', '), 400, req);
+      const installments = Array.isArray(body.desiredInstallments) ? body.desiredInstallments : [];
+      if (installments.length < 2) {
+        return jsonError('desiredInstallments precisa de no minimo 2 parcelas [{totalAmount, dueDate}]', 400, req);
+      }
+      const payload = {
+        simulationFeesId: body.simulationFeesId,
+        balanceId: body.balanceId,
+        targetAmount: parseFloat(body.targetAmount || 0) || 0,
+        documentNumber: cpf,
+        desiredInstallments: installments.map(p => ({
+          totalAmount: parseFloat(p.totalAmount ?? p.amount ?? 0),
+          dueDate: p.dueDate
+        })),
+        provider: fgtsProvider
+      };
+      const r = await v8Call('/fgts/simulations', 'POST', payload);
+      const d = r.data || {};
+      return j({
+        success: r.ok, httpStatus: r.status,
+        simulationId: d.id || null,
+        valorLiquido: d.availableBalance ?? null,     // líquido pro cliente
+        valorOperacao: d.emissionAmount ?? null,      // total com custos
+        saldoBloqueado: d.totalBalance ?? null,
+        iof: d.iof ?? null,
+        taxaMensal: d.tax ?? null,
+        cetMensal: d.cet ?? null,
+        cetAnual: d.annualCet ?? null,
+        tc: d.tc ?? null,
+        qtdParcelas: d.totalInstallments ?? null,
+        _raw: d
+      }, 200, req);
+    }
+
+    // ─── FGTS 6) LISTA DE BANCOS (bankId pro pagamento transfer) ─
+    if (action === 'fgtsListarBancos' || action === 'listarBancos') {
+      const r = await v8Call('/banks', 'GET');
+      const bancos = (r.data?.data || []).map(b => ({ id: b.id, nome: b.name, codigo: b.code }));
+      return j({ success: r.ok, httpStatus: r.status, bancos }, 200, req);
+    }
+
+    // ─── FGTS 7) CRIAR PROPOSTA ───────────────────────────────
+    // Pagamento: transfer com dados bancários (bankId da lista /banks).
+    if (action === 'fgtsCriarProposta') {
+      const cpf = normalizeCPF(body.cpf);
+      const faltam = ['fgtsSimulationId', 'simulationFeesId', 'nome', 'dataNascimento'].filter(k => !body[k]);
+      if (!cpf) faltam.push('cpf');
+      if (faltam.length) return jsonError('Faltam: ' + faltam.join(', '), 400, req);
+      const phone = normalizePhone(body.telefone);
+      if (!phone) return jsonError('Telefone invalido (DDD+numero)', 400, req);
+      const pagto = body.payment || {};
+      if (!pagto.bankId || !pagto.agency || !pagto.account) {
+        return jsonError('payment.bankId, payment.agency e payment.account obrigatorios (transfer)', 400, req);
+      }
+      const periods = Array.isArray(body.periods) ? body.periods : [];
+      const payload = {
+        fgtsSimulationId: body.fgtsSimulationId,
+        simulationFeesId: body.simulationFeesId,
+        name: body.nome,
+        individualDocumentNumber: cpf,
+        documentIdentificationNumber: body.rg || cpf,
+        motherName: body.nomeMae || '',
+        nationality: 'Brasileiro(a)',
+        isPEP: body.pep === true,
+        email: body.email || `cliente${cpf}@gmail.com`,
+        birthDate: body.dataNascimento,             // YYYY-MM-DD
+        maritalStatus: body.maritalStatus || 'single',
+        personType: 'natural',
+        phone: phone.number,
+        phoneCountryCode: phone.countryCode,
+        phoneRegionCode: phone.areaCode,
+        postalCode: (body.address?.postalCode || '').replace(/\D/g, ''),
+        state: body.address?.state || '',
+        neighborhood: body.address?.neighborhood || '',
+        addressNumber: String(body.address?.number || ''),
+        city: body.address?.city || '',
+        street: body.address?.street || '',
+        complement: body.address?.complement || '',
+        formalizationLink: '',
+        payment: {
+          type: 'transfer',
+          data: {
+            bankId: pagto.bankId,
+            accountType: pagto.accountType || 'checking_account',
+            agency: String(pagto.agency),
+            account: String(pagto.account),
+            digit: String(pagto.digit || '')
+          }
+        },
+        fgtsProposalsPeriods: periods.map(p => ({
+          amount: parseFloat(p.amount ?? p.totalAmount ?? 0),
+          dueDate: p.dueDate
+        }))
+      };
+      const r = await v8Call('/fgts/proposal', 'POST', payload);
+      return j({
+        success: r.ok, httpStatus: r.status,
+        proposalId: r.data?.id || null,
+        contractNumber: r.data?.contractNumber || null,
+        formalizationLink: r.data?.formalizationLink || null,
+        _raw: r.data
+      }, 200, req);
+    }
+
+    // ─── FGTS 8) LISTAR PROPOSTAS ─────────────────────────────
+    if (action === 'fgtsListarPropostas') {
+      const params = [];
+      if (body.search) params.push(`search=${encodeURIComponent(normalizeCPF(body.search) || body.search)}`);
+      if (body.startDate) params.push(`startDate=${encodeURIComponent(body.startDate)}`);
+      if (body.endDate) params.push(`endDate=${encodeURIComponent(body.endDate)}`);
+      params.push(`limit=${body.limit || 50}`);
+      params.push(`page=${body.page || 1}`);
+      const r = await v8Call(`/fgts/proposal?${params.join('&')}`, 'GET');
+      return j({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
+    }
+
+    // ─── FGTS 9) DETALHE DA PROPOSTA ──────────────────────────
+    if (action === 'fgtsDetalheProposta') {
+      if (!body.proposalId) return jsonError('proposalId obrigatorio', 400, req);
+      const r = await v8Call(`/fgts/proposal/${encodeURIComponent(body.proposalId)}`, 'GET');
+      return j({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
+    }
+
+    // ─── FGTS 10) CANCELAR PROPOSTA ───────────────────────────
+    if (action === 'fgtsCancelarProposta') {
+      if (!body.proposalId) return jsonError('proposalId obrigatorio', 400, req);
+      const r = await v8Call(`/fgts/proposal/${encodeURIComponent(body.proposalId)}/cancel`, 'PATCH', {
+        reason: body.reason || body.cancelReason || 'Cancelado pelo operador'
+      });
+      return j({ success: r.ok, httpStatus: r.status, _raw: r.data }, 200, req);
+    }
+
+    // ─── FGTS 11) REGISTRAR WEBHOOKS (saldo + proposta) ───────
+    if (action === 'fgtsRegistrarWebhooks') {
+      const url = body.url || `${process.env.APP_URL || 'https://flowforce.vercel.app'}/api/v8`;
+      const r1 = await v8Call('/user/webhook/balance', 'POST', { url });
+      const r2 = await v8Call('/user/webhook/proposal', 'POST', { url });
+      return j({
+        success: r1.ok && r2.ok,
+        balanceWebhook: { ok: r1.ok, status: r1.status, data: r1.data },
+        proposalWebhook: { ok: r2.ok, status: r2.status, data: r2.data },
+        url
+      }, 200, req);
+    }
+
     return jsonError(
-      'action invalida. Disponiveis: test, gerarTermo, autorizarTermo, listarConsultas, consultarPorCPF, simularConfigs, simular, criarOperacao, listarOperacoes, detalheOperacao, cancelar, pendenciaPix, uploadDocumento, pendenciaDocumentos, registrarWebhooks',
+      'action invalida. Disponiveis: test, gerarTermo, autorizarTermo, listarConsultas, consultarPorCPF, simularConfigs, simular, criarOperacao, listarOperacoes, detalheOperacao, cancelar, pendenciaPix, uploadDocumento, pendenciaDocumentos, registrarWebhooks, fgtsConsultarSaldo, fgtsBuscarSaldo, fgtsLimparCache, fgtsTabelas, fgtsSimular, fgtsListarBancos, fgtsCriarProposta, fgtsListarPropostas, fgtsDetalheProposta, fgtsCancelarProposta, fgtsRegistrarWebhooks',
       400, req
     );
   } catch (err) {

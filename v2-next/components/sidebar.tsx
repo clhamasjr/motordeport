@@ -89,7 +89,9 @@ const NAV: NavGroup[] = [
   {
     k: 'fgts', icon: PiggyBank, label: 'FGTS',
     items: [
-      { href: '/fgts/simulacao', label: 'Simulação & Digitação', icon: Search },
+      { href: '/fgts/fintech-corban', label: 'Fintech do Corban (QI/J17)', icon: Landmark, section: 'consultar' },
+      { href: '/fgts/v8', label: 'V8 Sistema', icon: Zap, section: 'operar' },
+      { href: '/fgts/simulacao', label: 'FINANTO', icon: Search, section: 'operar' },
     ],
   },
   {

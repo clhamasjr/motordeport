@@ -28,7 +28,7 @@ const PRODUTOS = [
     cardClass: 'hover:border-emerald-500/50 hover:shadow-emerald-500/10',
   },
   {
-    href: '/fgts/simulacao',
+    href: '/fgts/fintech-corban',
     label: 'FGTS',
     desc: 'Antecipação saque-aniversário',
     icon: PiggyBank,
