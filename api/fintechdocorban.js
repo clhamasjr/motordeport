@@ -414,17 +414,31 @@ export default async function handler(req) {
       if (!workerId || !dataNasc) {
         return jsonError('Não consegui obter workerId/dataNascimento pelo CPF — cliente precisa estar consultado/autorizado no Fintech do Corban primeiro', 400, req);
       }
+      // Valor: a simulação EXIGE valor da parcela OU de desembolso.
+      const valorParcela = parseFloat(body.valorParcela || 0) || 0;
+      const valorDesembolso = parseFloat(body.valorDesembolso || body.valorLiberado || 0) || 0;
+      // Monta os campos de valor (tenta nomes PT variados — API é PascalCase/pt).
+      const vFields = {};
+      if (valorParcela > 0) {
+        Object.assign(vFields, { valorParcela, valor_parcela: valorParcela, installmentFaceValue: valorParcela });
+      } else if (valorDesembolso > 0) {
+        Object.assign(vFields, { valorDesembolso, valor_desembolso: valorDesembolso, valorLiquido: valorDesembolso, disbursedAmount: valorDesembolso });
+      }
+
       // 1) Tabelas de comissão
       const tabR = await fc('/Api/V1/CommissionTableCorban/Get-All-To-Partner', 'GET');
       const td = tabR.data || {};
       const arr = Array.isArray(td) ? td : (td.result || td.data || td.objResult || []);
-      const norm = (Array.isArray(arr) ? arr : []).map((t) => ({
-        idTabela: t.idTabela ?? t.IdTabela ?? t.id ?? t.cod_tabela ?? null,
-        nome: String(t.nome || t.name || t.descricao || t.description || t.Descricao || ''),
+      const lista = Array.isArray(arr) ? arr : [];
+      const norm = lista.map((t) => ({
+        idTabela: t.idTabela ?? t.IdTabela ?? t.id ?? t.Id ?? t.cod_tabela ?? t.codTabela ?? null,
+        nome: String(t.nome || t.name || t.descricao || t.description || t.Descricao || t.Nome || ''),
       })).filter((t) => t.idTabela != null);
-      // Filtra CLT/trabalhador; se nenhuma, usa as primeiras.
-      let candidatas = norm.filter((t) => /clt|trabalhad/i.test(t.nome));
-      if (candidatas.length === 0) candidatas = norm;
+      // Dedup por idTabela + filtra CLT/trabalhador; se nenhuma, usa as primeiras.
+      const vistos = new Set();
+      const unicas = norm.filter((t) => (vistos.has(t.idTabela) ? false : vistos.add(t.idTabela)));
+      let candidatas = unicas.filter((t) => /clt|trabalhad/i.test(t.nome));
+      if (candidatas.length === 0) candidatas = unicas;
       candidatas = candidatas.slice(0, 3);
 
       // 2) Simula em cada tabela candidata
@@ -434,12 +448,18 @@ export default async function handler(req) {
       const simulacoes = [];
       for (const t of candidatas) {
         const sr = await fc(endpoint + `?idCommissionTable=${t.idTabela}`, 'POST', {
-          data: {}, cpfCliente: cpf, workerId, dataNascimento: dataNasc, genero,
-          tabela: parseInt(t.idTabela) || t.idTabela, idTipoOperacao,
+          data: { ...vFields }, cpfCliente: cpf, workerId, dataNascimento: dataNasc, genero,
+          tabela: parseInt(t.idTabela) || t.idTabela, idTipoOperacao, ...vFields,
         });
         simulacoes.push({ idTabela: t.idTabela, nome: t.nome, ok: sr.ok, status: sr.status, _raw: sr.data });
       }
-      return j({ success: true, provider, totalTabelas: norm.length, candidatas, simulacoes }, 200, req);
+      return j({
+        success: true, provider, totalTabelas: norm.length,
+        valorEnviado: { valorParcela, valorDesembolso },
+        candidatas, simulacoes,
+        _camposTabela: Object.keys(lista[0] || {}),   // nomes reais dos campos da tabela
+        _amostraTabelas: lista.slice(0, 3),            // 3 tabelas cruas
+      }, 200, req);
     }
 
     // ─── CRIAR OPERAÇÃO / CONTRATAÇÃO ─────────────────────────
