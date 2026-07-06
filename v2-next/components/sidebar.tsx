@@ -8,7 +8,7 @@ import {
   Home, Search, BookOpen, Target, Trophy, Download,
   ListChecks, FileText, MessageSquare, Settings, Building2, Landmark,
   Briefcase, Zap, ChevronRight, Smartphone, Sparkles, Activity, ChevronDown,
-  Compass, GitBranch,
+  Compass, GitBranch, PiggyBank,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -84,6 +84,12 @@ const NAV: NavGroup[] = [
       // ── Config ──
       { href: '/clt/autorizacoes', label: 'Autorizações LGPD', icon: FileText, section: 'config' },
       { href: '/clt/painel', label: 'Painel Operacional', icon: Activity, needsRole: ['admin', 'gestor'], section: 'config' },
+    ],
+  },
+  {
+    k: 'fgts', icon: PiggyBank, label: 'FGTS',
+    items: [
+      { href: '/fgts/simulacao', label: 'Simulação & Digitação', icon: Search },
     ],
   },
   {

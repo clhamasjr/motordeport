@@ -152,6 +152,26 @@ export interface FinantoInssSimulation {
   note?: string | null;
 }
 
+// ── Simulação FGTS (saque-aniversário antecipado) ────────────────────
+export interface FinantoFgtsSimulation {
+  id: string;
+  code?: string;
+  status?: FinantoStatus;
+  proposalDate?: string;
+  borrower?: FinantoBorrower;
+  items?: FinantoSimulationItem[];
+  creditBankAccount?: FinantoCreditBankAccount;
+  signature?: {
+    provider?: { code?: string };
+    url?: string;
+    status?: FinantoStatus;
+    key?: string;
+  };
+  step?: { code?: number; name?: string | null };
+  note?: string | null;
+  brokerId?: string | null;
+}
+
 // ── Loan (proposta digitada) ─────────────────────────────────────────
 export interface FinantoLoan {
   id: string;

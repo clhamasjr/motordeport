@@ -15,6 +15,7 @@ import type {
   FinantoBorrower,
   FinantoCreditBankAccount,
   FinantoEmploymentRelationship,
+  FinantoFgtsSimulation,
   FinantoInssBalance,
   FinantoInssSimulation,
   FinantoIn100Job,
@@ -497,24 +498,69 @@ export function useFinantoFgtsCriarSimulacao() {
       creditBankAccount?: FinantoCreditBankAccount;
       brokerId?: string;
     }) => {
-      const r = await api<{ success: boolean; simulationId: string | null }>(
+      const r = await api<{
+        success: boolean; simulationId: string | null;
+        error?: string; message?: string; mensagem?: string;
+      }>(
         ENDPOINT, { action: 'fgtsCreateSimulation', ...params },
       );
-      if (!r.success || !r.simulationId) throw new Error('Falha ao criar simulação FGTS');
+      if (!r.success || !r.simulationId) {
+        throw new Error(r.error || r.message || r.mensagem || 'Falha ao criar simulação FGTS');
+      }
       return r;
     },
     onError: (err: Error) => toast.error(err.message),
   });
 }
 
+// Busca a simulação FGTS por ID. Faz polling enquanto os valores ainda
+// não foram calculados (Ajin processa a consulta de saldo na Caixa async).
+export function useFinantoFgtsSimulacao(simulationId?: string | null) {
+  return useQuery({
+    queryKey: ['finanto', 'fgts-sim', simulationId],
+    queryFn: async () => {
+      return await api<{ success: boolean; httpStatus: number } & FinantoFgtsSimulation>(
+        ENDPOINT, { action: 'fgtsGetSimulation', simulationId },
+      );
+    },
+    enabled: !!simulationId,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      // Sem items calculados ainda → continua consultando a cada 8s
+      const calculado = !!d?.items?.some((it) => (it.netValue ?? it.loanValue ?? 0) > 0);
+      return calculado ? false : 8_000;
+    },
+  });
+}
+
 export function useFinantoFgtsCriarContratos() {
   return useMutation({
     mutationFn: async (simulationId: string) => {
-      return await api<{ success: boolean }>(
+      const r = await api<{ success: boolean; error?: string; message?: string; mensagem?: string }>(
         ENDPOINT, { action: 'fgtsActions', simulationId, command: 'create_loans' },
       );
+      if (!r.success) {
+        throw new Error(r.error || r.message || r.mensagem || 'Falha ao criar contratos FGTS');
+      }
+      return r;
     },
     onError: (err: Error) => toast.error(err.message),
+  });
+}
+
+// Contratos (loans) gerados a partir de uma simulação FGTS.
+// Usa o search genérico de loans filtrando por simulationId.
+export function useFinantoFgtsContratos(simulationId?: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['finanto', 'fgts-loans', simulationId],
+    queryFn: async () => {
+      const r = await api<{ success: boolean; items?: FinantoLoan[] }>(
+        ENDPOINT, { action: 'searchLoans', simulationId: { eq: simulationId } },
+      );
+      return r.items || [];
+    },
+    enabled: !!simulationId && enabled,
+    refetchInterval: 15_000,
   });
 }
 

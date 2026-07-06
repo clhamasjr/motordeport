@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/hooks/use-auth';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Briefcase, Building2, Landmark, FileSpreadsheet, Users, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Briefcase, Building2, Landmark, FileSpreadsheet, Users, ArrowRight, CheckCircle2, PiggyBank } from 'lucide-react';
 import Link from 'next/link';
 
 // Portas de entrada por PRODUTO — o parceiro escolhe por onde quer operar.
@@ -26,6 +26,15 @@ const PRODUTOS = [
     iconClass: 'text-emerald-400',
     boxClass: 'bg-emerald-500/10 ring-emerald-500/25 group-hover:ring-emerald-400/60',
     cardClass: 'hover:border-emerald-500/50 hover:shadow-emerald-500/10',
+  },
+  {
+    href: '/fgts/simulacao',
+    label: 'FGTS',
+    desc: 'Antecipação saque-aniversário',
+    icon: PiggyBank,
+    iconClass: 'text-cyan-400',
+    boxClass: 'bg-cyan-500/10 ring-cyan-500/25 group-hover:ring-cyan-400/60',
+    cardClass: 'hover:border-cyan-500/50 hover:shadow-cyan-500/10',
   },
   {
     href: '/federal/analise',
