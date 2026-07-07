@@ -661,8 +661,20 @@ export function calcPortRefin108(
 
 export type EnquadramentoStatus =
   | 'ENQUADRA' | 'ENQUADRA_TROCAR_CARTAO'
-  | 'VIA_PORT_REDUCAO' | 'VIA_CANCELA_CARTAO'
+  | 'VIA_PORT_REDUCAO' | 'VIA_PORT_MULTI' | 'VIA_CANCELA_CARTAO'
   | 'INVIAVEL';
+
+/** Enquadramento via BRB INCONTA portando ATÉ 3 contratos (regra 07/05/2026). */
+export interface ViaBrbInconta {
+  /** Contratos que o BRB INCONTA porta pra enquadrar (máx 3, os de maior redução). */
+  contratos: ReducaoResult[];
+  /** Soma da redução de parcela desses contratos. */
+  reducaoTotal: number;
+  /** true se a redução cobre o excedente dentro de 3 contratos. */
+  enquadra: boolean;
+  /** Quanto ainda falta cobrir se nem 3 contratos resolvem (0 se enquadra). */
+  excedenteRestante: number;
+}
 
 export interface EnquadramentoFull {
   status: EnquadramentoStatus;
@@ -675,6 +687,54 @@ export interface EnquadramentoFull {
   reducaoDetalhes: ReducaoResult[];
   contratoSugerido?: ReducaoResult;
   cartaoSugerido?: { tipo: string; valor: number };
+  /** Solução do BRB INCONTA (porta até 3 contratos) — sempre presente quando há excedente. */
+  viaBrbInconta?: ViaBrbInconta;
+}
+
+/**
+ * Redução de parcela de UM contrato se portado pro BRB INCONTA.
+ * Usa a tabela TETO 1,85% / 108m (coef 0.02153) — cenário CONSERVADOR:
+ * se enquadra a 1,85%, enquadra em qualquer tabela do BRB INCONTA.
+ * (BRB INCONTA "reduz parcela no refin de port" — nova parcela = saldo × coef.)
+ */
+export function calcReducaoBrbInconta(c: ContratoReducao): ReducaoResult | null {
+  if (!c || !c.par || !c.sal) return null;
+  const coef = coefFor(1.85, 108); // 0.02153
+  const novaParc = c.sal * coef;
+  const reducao = c.par - novaParc;
+  if (reducao <= 0) return null;
+  return {
+    reducao, novaParc, taxa: 1.85, prazo: 108,
+    contrato: c.con || c.contrato, banco: c.cod || c.banco,
+  };
+}
+
+/**
+ * BRB INCONTA enquadra portando ATÉ 3 contratos (os de MAIOR redução).
+ * Acumula até cobrir o excedente ou atingir 3 contratos. Redução conservadora
+ * (tabela teto 1,85%). Retorna sempre — `enquadra` diz se resolveu em ≤3.
+ */
+export function calcViaBrbInconta(excedente: number, contratos: ContratoReducao[] = []): ViaBrbInconta {
+  const MAX_CTR = 3;
+  const reds = (Array.isArray(contratos) ? contratos : [])
+    .map(calcReducaoBrbInconta)
+    .filter((r): r is ReducaoResult => r != null)
+    .sort((a, b) => b.reducao - a.reducao);
+  const usados: ReducaoResult[] = [];
+  let acc = 0;
+  for (const r of reds) {
+    if (acc >= excedente - 0.01) break;
+    if (usados.length >= MAX_CTR) break;
+    usados.push(r);
+    acc += r.reducao;
+  }
+  const enquadra = acc >= excedente - 0.01 && usados.length > 0;
+  return {
+    contratos: usados,
+    reducaoTotal: acc,
+    enquadra,
+    excedenteRestante: enquadra ? 0 : Math.max(0, excedente - acc),
+  };
 }
 
 export function calcEnquadramentoPlus(
@@ -706,6 +766,9 @@ export function calcEnquadramentoPlus(
     reducaoDetalhes.sort((a, b) => b.reducao - a.reducao);
   }
 
+  // BRB INCONTA — enquadra portando ATÉ 3 contratos (só relevante se há excedente).
+  const viaBrbInconta = excedente > 0 ? calcViaBrbInconta(excedente, contratos) : undefined;
+
   const fmt = (v: number) => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   if (sumTotal <= tetoGlobal && sumEmp <= tetoEmp35 && sumRmc <= tetoCartao && sumRcc <= tetoCartao) {
@@ -729,7 +792,7 @@ export function calcEnquadramentoPlus(
       acao: 'port/refin 1 contrato',
       excedente, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
       livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,
-      reducaoTotal, reducaoDetalhes, contratoSugerido: portSuf,
+      reducaoTotal, reducaoDetalhes, contratoSugerido: portSuf, viaBrbInconta,
     };
   }
 
@@ -741,7 +804,21 @@ export function calcEnquadramentoPlus(
       acao: `cancelar ${cartaoSuf.tipo}`,
       excedente, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
       livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,
-      reducaoTotal, reducaoDetalhes, cartaoSugerido: cartaoSuf,
+      reducaoTotal, reducaoDetalhes, cartaoSugerido: cartaoSuf, viaBrbInconta,
+    };
+  }
+
+  // Nenhum contrato/cartão isolado resolve. BRB INCONTA porta até 3 contratos.
+  if (viaBrbInconta && viaBrbInconta.enquadra) {
+    const nCtr = viaBrbInconta.contratos.length;
+    const nomes = viaBrbInconta.contratos.map((c) => c.contrato || c.banco || '?').join(' + ');
+    return {
+      status: 'VIA_PORT_MULTI',
+      detalhe: `Excede ${fmt(excedente)}. BRB INCONTA enquadra portando ${nCtr} contrato${nCtr > 1 ? 's' : ''} (${nomes}) — reduz ${fmt(viaBrbInconta.reducaoTotal)} no total.`,
+      acao: `BRB INCONTA — portar ${nCtr} contrato${nCtr > 1 ? 's' : ''}`,
+      excedente, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
+      livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,
+      reducaoTotal, reducaoDetalhes, viaBrbInconta,
     };
   }
 
@@ -751,10 +828,10 @@ export function calcEnquadramentoPlus(
   const falta = excedente - melhorIsolada;
   return {
     status: 'INVIAVEL',
-    detalhe: `Excede ${fmt(excedente)}. Melhor isolada absorve ${fmt(melhorIsolada)} — falta ${fmt(falta)}. Precisa múltiplas operações.`,
+    detalhe: `Excede ${fmt(excedente)}. Melhor isolada absorve ${fmt(melhorIsolada)} — falta ${fmt(falta)}. Nem o BRB INCONTA (3 contratos) resolve — precisa múltiplas operações.`,
     acao: 'múltiplas operações',
     excedente, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
     livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,
-    reducaoTotal, reducaoDetalhes,
+    reducaoTotal, reducaoDetalhes, viaBrbInconta,
   };
 }
