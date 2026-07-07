@@ -142,8 +142,10 @@ const NEMESYS_BASE = (process.env.FINTECH_PORTAL_URL || 'https://fintechdocorban
 let _nemToken = { token: null, exp: 0 };
 
 async function nemesysLogin(force = false) {
-  const login = process.env.FINTECH_PORTAL_LOGIN;
-  const password = process.env.FINTECH_PORTAL_PASSWORD;
+  // Usa credenciais dedicadas do portal; se não houver, reaproveita as da API
+  // de parceiro (FINTECH_LOGIN_PRD/PASSWORD_PRD) — funciona se forem as mesmas.
+  const login = process.env.FINTECH_PORTAL_LOGIN || process.env.FINTECH_LOGIN_PRD;
+  const password = process.env.FINTECH_PORTAL_PASSWORD || process.env.FINTECH_PASSWORD_PRD;
   if (!login || !password) return { token: null, error: 'Configure FINTECH_PORTAL_LOGIN e FINTECH_PORTAL_PASSWORD no Vercel' };
   const agora = Date.now();
   if (!force && _nemToken.token && _nemToken.exp > agora) return { token: _nemToken.token, fromCache: true };
