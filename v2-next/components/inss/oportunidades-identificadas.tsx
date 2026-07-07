@@ -729,7 +729,6 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="text-[10px] uppercase tracking-wider font-bold text-orange-400">💰 Empréstimo Novo</div>
-                <Badge variant="muted" className="text-[9px]">Parcela {formatBRL(margemLivreParaEmpNovo)}/mês</Badge>
                 {isLoas ? (
                   <Badge variant="info" className="text-[9px]">teto 35% LOAS</Badge>
                 ) : (
@@ -747,22 +746,34 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
               <TrendingUp className="size-4 text-orange-400" />
             </div>
 
-            {/* FINANTO destacado — primeira opção operacional pra contrato novo */}
-            <div className="rounded-md border border-orange-500/60 bg-orange-500/10 p-3">
-              <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
-                <Badge variant="success" className="text-[10px] font-mono">FINANTO ⭐</Badge>
-                <span className="text-[10px] font-mono text-muted-foreground">108m · 1,85%</span>
-              </div>
-              <div className="flex items-end justify-between flex-wrap gap-2">
-                <div className="flex-1 min-w-[180px]">
-                  <div className="text-2xl font-mono font-bold text-orange-400">{formatBRL(empNovoVlr185)}</div>
-                  <div className="text-[10px] text-muted-foreground">
-                    <strong className="text-orange-300">Banco primário</strong> — contrato novo INSS · taxa única 1,85% em 108 meses · coef PRICE 0.02153.
-                    Regras iguais ao QUALI (mín saldo, troco, idade etc).
+            {/* BRB INCONTA — contrato novo INSS (parcela mín R$25, valor mín R$500, até 72a) */}
+            {margemLivreParaEmpNovo >= 25 && empNovoVlr185 >= 500 && (idadeNum === null || idadeNum <= 72) ? (
+              <div className="rounded-md border border-cyan-500/60 bg-cyan-500/10 p-3">
+                <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                  <Badge variant="success" className="text-[10px] font-mono">BRB INCONTA</Badge>
+                  <span className="text-[10px] font-mono text-muted-foreground">108m · 1,85%</span>
+                </div>
+                <div className="flex items-end justify-between flex-wrap gap-x-6 gap-y-2">
+                  <div>
+                    <div className="text-2xl font-mono font-bold text-cyan-400">{formatBRL(empNovoVlr185)}</div>
+                    <div className="text-[10px] text-muted-foreground">valor liberado na conta</div>
+                  </div>
+                  <div>
+                    <div className="text-xl font-mono font-bold text-orange-400">{formatBRL(margemLivreParaEmpNovo)}<span className="text-xs text-muted-foreground font-normal">/mês</span></div>
+                    <div className="text-[10px] text-muted-foreground">parcela (margem livre)</div>
                   </div>
                 </div>
+                <div className="text-[10px] text-muted-foreground mt-1.5">
+                  Contrato novo INSS · taxa 1,85% em 108 meses · coef PRICE 0.02153 · parcela mín R$ 25 · valor mín R$ 500 · até 72 anos.
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="rounded-md border border-border bg-card/50 p-2 text-[10px] text-muted-foreground">
+                {idadeNum !== null && idadeNum > 72
+                  ? `Cliente com ${idadeNum} anos — acima do teto de 72 anos pra contrato novo 108m.`
+                  : `Margem livre ${formatBRL(margemLivreParaEmpNovo)}/mês gera ${formatBRL(empNovoVlr185)} — abaixo dos mínimos do contrato novo (parcela R$ 25 / valor R$ 500).`}
+              </div>
+            )}
 
             {/* Outros destinos disponíveis pelo motor (opções secundárias) */}
             {empNovoOpcoes.length > 0 && (
@@ -792,7 +803,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                   ))}
                 </div>
                 <div className="text-[9px] text-muted-foreground mt-1.5 italic">
-                  💡 FINANTO é a primeira opção operacional. Os bancos acima são fallback se FINANTO indisponível.
+                  💡 BRB INCONTA é a primeira opção operacional. Os bancos acima são alternativas.
                 </div>
               </div>
             )}
