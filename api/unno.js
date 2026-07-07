@@ -592,6 +592,36 @@ export default async function handler(req) {
       return jsonResp({ success: r.ok, ...r.data }, r.status, req);
     }
 
+    // ─── DEBUG TEMP: mostra dado cru do Unno pra entender por que a proposta
+    // nao aparece / o termo da 404. body: { cpf, termUuid }
+    if (action === 'debug') {
+      const cpf = onlyDigits(body.cpf || '');
+      const termUuid = body.termUuid || body.uuid || null;
+      const out = { cpf, termUuid };
+      // 1) Ultimas 20 propostas CLT
+      const list = await unnoCall('/proposal/api/v1/proposals?size=20&sort=createdAt,desc&productType=CONSIGNADO_CLT', 'GET');
+      out.proposalsStatus = list.status;
+      out.proposalsTotal = list.data?.total_elements ?? (list.data?.content?.length ?? null);
+      out.proposals = (list.data?.content || []).map((p) => ({
+        uuid: p.uuid, doc: p.customer_document, nome: p.customer_full_name,
+        status: p.status, created_at: p.created_at, produto: p.product_type, banco: p.bank_provider_name,
+      }));
+      out.matchCpf = out.proposals.filter((p) => onlyDigits(p.doc || '') === cpf);
+      // 2) Termo por 2 caminhos (pra achar o certo)
+      if (termUuid) {
+        const a = await unnoCall(`/auth/api/v1/terms/latest/${termUuid}`, 'GET');
+        const b = await unnoCall(`/auth/api/v1/terms/${termUuid}`, 'GET');
+        out.term_latest = { httpStatus: a.status, status: a.data?.status, proposal_ref: a.data?.proposal_uuid_ref, agreed_at: a.data?.agreed_at };
+        out.term_byId = { httpStatus: b.status, status: b.data?.status, proposal_ref: b.data?.proposal_uuid_ref, agreed_at: b.data?.agreed_at };
+      }
+      // 3) Termo mais recente por CPF (talvez o lookup certo seja por cpf)
+      if (cpf) {
+        const c = await unnoCall(`/auth/api/v1/terms/latest/${cpf}`, 'GET');
+        out.term_latest_byCpf = { httpStatus: c.status, uuid: c.data?.uuid, status: c.data?.status, proposal_ref: c.data?.proposal_uuid_ref };
+      }
+      return jsonResp({ success: true, ...out }, 200, req);
+    }
+
     return jsonError(
       'Action invalida. Validas: test, iniciarSimulacao, verificarStatus, cancelarSimulacao, listarTabelas',
       400, req
