@@ -131,6 +131,56 @@ function pathPrefix(provider) {
 const j = (data, status = 200, req = null) => jsonResp(data, status, req);
 
 // ══════════════════════════════════════════════════════════════════
+// NEMESYS — API interna do PORTAL (fintechdocorban.nossafintech.com.br).
+// É onde a simulação de CLT-Celcoin realmente funciona (a API de parceiro
+// super-simples devolve "Bancarizadora não suportada"). Auth por login do
+// portal (JWE Bearer, expira 12h). Credenciais em env (NUNCA hardcode):
+//   FINTECH_PORTAL_LOGIN / FINTECH_PORTAL_PASSWORD  (+ FINTECH_PORTAL_URL opc.)
+// Fluxo: Login -> worker-data (margem/workerId) -> comission-table -> simulation
+// ══════════════════════════════════════════════════════════════════
+const NEMESYS_BASE = (process.env.FINTECH_PORTAL_URL || 'https://fintechdocorban.nossafintech.com.br').replace(/\/$/, '');
+let _nemToken = { token: null, exp: 0 };
+
+async function nemesysLogin(force = false) {
+  const login = process.env.FINTECH_PORTAL_LOGIN;
+  const password = process.env.FINTECH_PORTAL_PASSWORD;
+  if (!login || !password) return { token: null, error: 'Configure FINTECH_PORTAL_LOGIN e FINTECH_PORTAL_PASSWORD no Vercel' };
+  const agora = Date.now();
+  if (!force && _nemToken.token && _nemToken.exp > agora) return { token: _nemToken.token, fromCache: true };
+  try {
+    const r = await fetch(NEMESYS_BASE + '/api/Api/V1/User/Login?saveLog=false', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ Login: login, Password: password, UrlFront: NEMESYS_BASE, OrigemFront: 1 }),
+    });
+    const text = await r.text();
+    let d; try { d = JSON.parse(text); } catch { d = {}; }
+    const tok = d.access_token || String(d.token_bearer || '').replace(/^Bearer\s+/i, '') || null;
+    if (!r.ok || !tok) return { token: null, status: r.status, error: d.message || d.mensagem || `login portal HTTP ${r.status}` };
+    const ttl = parseInt(d.expires_in) || 43200; // seg (12h)
+    _nemToken = { token: tok, exp: agora + Math.max(60, ttl - 600) * 1000 }; // -10min de margem
+    return { token: tok };
+  } catch (e) { return { token: null, error: e.message }; }
+}
+
+// Request autenticado na nemesys. Re-loga 1x em 401.
+async function nem(path, method = 'GET', body = null, _retry = true) {
+  const auth = await nemesysLogin();
+  if (!auth.token) return { ok: false, status: 0, data: { error: auth.error } };
+  try {
+    const r = await fetch(NEMESYS_BASE + path, {
+      method,
+      headers: { 'Authorization': 'Bearer ' + auth.token, 'Accept': 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (r.status === 401 && _retry) { await nemesysLogin(true); return nem(path, method, body, false); }
+    const text = await r.text();
+    let d; try { d = JSON.parse(text); } catch { d = { raw: text.slice(0, 800) }; }
+    return { ok: r.ok, status: r.status, data: d };
+  } catch (e) { return { ok: false, status: 0, data: { error: e.message } }; }
+}
+
+// ══════════════════════════════════════════════════════════════════
 // HANDLER
 // ══════════════════════════════════════════════════════════════════
 export default async function handler(req) {
@@ -484,6 +534,68 @@ export default async function handler(req) {
     // Não precisa passar id de tabela: busca as tabelas de comissão, filtra as
     // de CLT/Crédito do Trabalhador e simula em cada uma. Retorna o cru de cada
     // simulação (pra a gente montar o parser + ligar no botão da tela).
+    // ─── SIMULAÇÃO VIA PORTAL (NEMESYS) — a que FUNCIONA pro Celcoin CLT ──
+    // Login portal -> worker-data (margem+workerId) -> tabela -> simulation.
+    // body: { cpf, parcelas(18/24), comSeguro?, installmentValue?/valorParcela? }
+    if (action === 'cltSimularPortal') {
+      const cpf = String(body.cpf || '').replace(/\D/g, '');
+      if (cpf.length !== 11) return jsonError('cpf inválido', 400, req);
+      const operationType = parseInt(body.operationType || 96); // 96 = CLT-CELCOIN
+      const termMonths = parseInt(body.parcelas || body.termMonths || 18);
+      const comSeguro = body.comSeguro !== false; // default: tabela com seguro (1019)
+
+      // 1) Dados do trabalhador (margem + workerId + elegibilidade)
+      const wr = await nem(`/api/nemesys/clt/worker-data?cpf=${cpf}&operationType=${operationType}&queryMode=1`);
+      const worker = Array.isArray(wr.data?.items) ? wr.data.items[0] : null;
+      if (!wr.ok || !worker) {
+        return j({ success: false, etapa: 'worker-data', status: wr.status, erro: wr.data?.error, _raw: wr.data }, 200, req);
+      }
+      const margin = Number(worker.valorMargemDisponivel) || 0;
+      if (!worker.elegivel || margin <= 0) {
+        return j({
+          success: false, elegivel: !!worker.elegivel,
+          motivo: worker.motivoIneligibilidade || (margin <= 0 ? 'Sem margem disponível' : 'Inelegível'),
+          cliente: { nome: worker.nome, empregador: worker.nomeEmpregador, margem: margin },
+        }, 200, req);
+      }
+
+      // 2) Tabela de comissão (escolhe com/sem seguro)
+      const tr = await nem(`/api/nemesys/fgts/operation/${operationType}/comission-table`);
+      const tabelas = Array.isArray(tr.data) ? tr.data : [];
+      const tab = tabelas.find((t) => (comSeguro ? t.GeraSeguro : !t.GeraSeguro)) || tabelas[0];
+      if (!tab) return j({ success: false, etapa: 'tabelas', _raw: tr.data }, 200, req);
+
+      // 3) Simulação
+      const gender = /fem/i.test(String(worker.genero)) ? 'female' : 'male';
+      const birthDate = String(worker.dataNascimento || '').slice(0, 10);
+      const installmentValue = parseFloat(body.installmentValue || body.valorParcela || margin) || margin;
+      const payload = {
+        operationType, cpf, workerId: worker.id, birthDate, gender,
+        commissionTableId: tab.Id, termMonths, installmentValue, margin,
+      };
+      const sr = await nem('/api/nemesys/clt/simulation', 'POST', payload);
+      const sum = sr.data?.summary || null;
+      return j({
+        success: sr.ok && !!sum,
+        status: sr.status,
+        cliente: { nome: worker.nome, empregador: worker.nomeEmpregador, margem: margin },
+        tabela: { id: tab.Id, nome: tab.Description, taxaMensal: tab.InterestRate, seguro: !!tab.GeraSeguro },
+        resultado: sum ? {
+          valorLiberado: sum.disbursedAmount,
+          valorFinanciado: sum.financedAmount,
+          parcela: sum.installmentValue,
+          parcelas: sum.termMonths,
+          primeiroVencimento: sum.firstDueDate,
+          cetMensal: sum.cetMonthly,
+          cetAnual: sum.cetAnnual,
+          simulationId: sr.data?.simulationId,
+        } : null,
+        erro: sum ? null : (sr.data?.Message || sr.data?.message || (Array.isArray(sr.data) ? sr.data.join(' | ') : null)),
+        _payloadEnviado: payload,
+        _raw: sr.data,
+      }, 200, req);
+    }
+
     if (action === 'cltSimularAuto') {
       const cpf = String(body.cpf || body.cpfCliente || '').replace(/\D/g, '');
       if (cpf.length !== 11) return jsonError('cpf invalido (11 digitos)', 400, req);
