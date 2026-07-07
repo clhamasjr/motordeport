@@ -150,9 +150,20 @@ async function nemesysLogin(force = false) {
   const agora = Date.now();
   if (!force && _nemToken.token && _nemToken.exp > agora) return { token: _nemToken.token, fromCache: true };
   try {
+    // O portal pode barrar request "pelado" com 403 (WAF). Mandamos com cara de
+    // navegador. O cookie app_token (opcional) vem de env, nunca hardcode.
+    const appToken = process.env.FINTECH_PORTAL_APP_TOKEN || '';
     const r = await fetch(NEMESYS_BASE + '/api/Api/V1/User/Login?saveLog=false', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Origin': NEMESYS_BASE,
+        'Referer': NEMESYS_BASE + '/session/login',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+        ...(appToken ? { 'Cookie': `app_token=${appToken}` } : {}),
+      },
       body: JSON.stringify({ Login: login, Password: password, UrlFront: NEMESYS_BASE, OrigemFront: 1 }),
     });
     const text = await r.text();
@@ -170,9 +181,19 @@ async function nem(path, method = 'GET', body = null, _retry = true) {
   const auth = await nemesysLogin();
   if (!auth.token) return { ok: false, status: 0, data: { error: auth.error } };
   try {
+    const appToken = process.env.FINTECH_PORTAL_APP_TOKEN || '';
     const r = await fetch(NEMESYS_BASE + path, {
       method,
-      headers: { 'Authorization': 'Bearer ' + auth.token, 'Accept': 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      headers: {
+        'Authorization': 'Bearer ' + auth.token,
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Origin': NEMESYS_BASE,
+        'Referer': NEMESYS_BASE + '/home/overview',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+        ...(appToken ? { 'Cookie': `app_token=${appToken}` } : {}),
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     if (r.status === 401 && _retry) { await nemesysLogin(true); return nem(path, method, body, false); }
