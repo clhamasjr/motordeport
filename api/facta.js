@@ -452,6 +452,83 @@ export default async function handler(req) {
       return j({ success: d.erro === false, tipo_operacao: tipoOp, tabelas: d.tabelas || undefined, tabelas_portabilidade: d.tabelas_portabilidade || undefined, tabelas_refin_portabilidade: d.tabelas_refin_portabilidade || undefined, mensagem: d.mensagem || null }, 200, req);
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // FGTS — ANTECIPAÇÃO SAQUE-ANIVERSÁRIO
+    // FACTA expõe FGTS num namespace próprio (/fgts/*). Os paths exatos
+    // vêm no manual "FGTS v11.0" (PDF do portal). Aqui usamos os nomes
+    // mais prováveis + fallback; use rawCall pra sondar/ajustar ao vivo.
+    // Pré-requisito do cliente: saque-aniversário ativo + FACTA autorizada
+    // no app FGTS da Caixa.
+    // ═══════════════════════════════════════════════════════════
+
+    // Consulta o saldo/base FGTS do cliente. Tenta /fgts/saldo e, se a FACTA
+    // devolver erro de rota, cai pra /fgts/consulta-saldo.
+    if (action === 'fgtsSaldo') {
+      const cpf = (body.cpf || '').replace(/\D/g, '');
+      if (!cpf) return jsonError('CPF obrigatorio', 400, req);
+      let r = await fGet('/fgts/saldo', { cpf });
+      const rotaRuim = (x) => x.status === 404 || /rota|endpoint|n[aã]o encontrad|not found/i.test(String(x.data?.mensagem || x.data?.raw || ''));
+      if (!r.ok && rotaRuim(r)) {
+        r = await fGet('/fgts/consulta-saldo', { cpf });
+      }
+      const d = r.data || {};
+      // Normaliza os nomes mais comuns que a FACTA usa
+      const saldo = d.saldo_total ?? d.saldoTotal ?? d.valor_liberado ?? d.saldo ?? null;
+      const periodos = d.periodos || d.periods || d.retornoSaldo || d.parcelas || [];
+      return j({
+        success: d.erro === false && r.ok,
+        erro: d.erro,
+        mensagem: d.mensagem || null,
+        cpf,
+        saldoTotal: saldo,
+        periodos,
+        _raw: d,
+      }, 200, req);
+    }
+
+    // Tabelas FGTS ativas (produto FGTS)
+    if (action === 'fgtsTabelas') {
+      let r = await fGet('/fgts/tabelas', {});
+      const rotaRuim = (x) => x.status === 404 || /rota|endpoint|n[aã]o encontrad|not found/i.test(String(x.data?.mensagem || x.data?.raw || ''));
+      if (!r.ok && rotaRuim(r)) r = await fGet('/fgts/consulta-tabelas', {});
+      const d = r.data || {};
+      return j({ success: d.erro === false && r.ok, tabelas: d.tabelas || d.tabelas_fgts || [], mensagem: d.mensagem || null, _raw: d }, 200, req);
+    }
+
+    // Simulador FGTS — valor liberado (líquido). Precisa cpf + data_nascimento.
+    if (action === 'fgtsSimular') {
+      const cpf = (body.cpf || '').replace(/\D/g, '');
+      if (!cpf || !body.data_nascimento) return jsonError('cpf e data_nascimento obrigatorios', 400, req);
+      const p = { cpf, data_nascimento: body.data_nascimento };
+      if (body.codigo_tabela) p.codigo_tabela = body.codigo_tabela;
+      if (body.taxa) p.taxa = body.taxa;
+      if (body.parcelas) p.parcelas = body.parcelas;
+      let r = await fGet('/fgts/simulador', p);
+      const rotaRuim = (x) => x.status === 404 || /rota|endpoint|n[aã]o encontrad|not found/i.test(String(x.data?.mensagem || x.data?.raw || ''));
+      if (!r.ok && rotaRuim(r)) r = await fGet('/fgts/simulacao', p);
+      const d = r.data || {};
+      const liquido = d.valor_liquido ?? d.valorLiquido ?? d.valor_liberado ?? d.valorLiberado ?? null;
+      return j({
+        success: d.erro === false && r.ok,
+        erro: d.erro,
+        mensagem: d.mensagem || null,
+        valorLiquido: liquido,
+        _raw: d,
+      }, 200, req);
+    }
+
+    // Sondagem genérica (probe) — pra achar/validar o path FGTS certo ao vivo,
+    // sem precisar de novo deploy. Ex: { action:'rawCall', method:'GET', path:'/fgts/saldo', params:{cpf} }
+    if (action === 'rawCall') {
+      if (!body.path) return jsonError('path obrigatorio', 400, req);
+      const method = (body.method || 'GET').toUpperCase();
+      let r;
+      if (method === 'GET') r = await fGet(body.path, body.params || {});
+      else if (body.json) r = await fPostJson(body.path, body.body || {});
+      else r = await fPost(body.path, body.fields || body.body || {});
+      return j({ httpStatus: r.status, ok: r.ok, data: r.data }, 200, req);
+    }
+
     return jsonError('action invalida', 400, req);
   } catch (err) {
     console.error('[FACTA] erro interno:', err?.message, err?.stack);

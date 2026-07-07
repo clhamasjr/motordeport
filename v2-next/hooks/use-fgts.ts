@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 
 const FINTECH = '/api/fintechdocorban';
 const V8 = '/api/v8';
+const FACTA = '/api/facta';
 
 // ══════════════════════════════════════════════════════════════════
 // FINTECH DO CORBAN
@@ -66,6 +67,31 @@ export function useFintechFgtsTabelas() {
       );
     },
     onError: (err: Error) => toast.error(err.message || 'Erro ao listar tabelas'),
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// FACTA
+// ══════════════════════════════════════════════════════════════════
+
+export interface FactaFgtsSaldo {
+  success: boolean;
+  cpf?: string;
+  saldoTotal?: number | null;
+  periodos?: Array<{ dataRepasse?: string; valor?: number } | Record<string, unknown>>;
+  mensagem?: string | null;
+  erro?: boolean;
+}
+
+/** Consulta o saldo/base FGTS na FACTA (roteia pelo proxy do escritório). */
+export function useFactaFgtsSaldo() {
+  return useMutation({
+    mutationFn: async (cpf: string) => {
+      const c = cpf.replace(/\D/g, '');
+      if (c.length !== 11) throw new Error('CPF inválido — precisa ter 11 dígitos');
+      return await api<FactaFgtsSaldo>(FACTA, { action: 'fgtsSaldo', cpf: c });
+    },
+    onError: (err: Error) => toast.error(err.message || 'Erro na consulta FACTA'),
   });
 }
 

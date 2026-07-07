@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { formatBRL, formatCpf, formatDateBR } from '@/lib/utils';
 import {
-  useFintechFgtsSaldo,
+  useFintechFgtsSaldo, useFactaFgtsSaldo,
   useV8FgtsIniciarConsulta, useV8FgtsSaldo, useV8FgtsTabelas, useV8FgtsSimular,
   type V8FgtsProvider,
 } from '@/hooks/use-fgts';
@@ -54,7 +54,7 @@ function lerPilha(): ConsultaFgts[] {
 }
 
 // ── Resultado que cada linha reporta pro card (pra achar o melhor) ──
-type Fonte = 'fintech' | 'v8' | 'finanto';
+type Fonte = 'fintech' | 'v8' | 'finanto' | 'facta';
 interface Resultado {
   fonte: Fonte;
   label: string;
@@ -71,11 +71,12 @@ function toIso(s: string): string {
 }
 
 // ── Linha genérica (mesmo layout pra todos os bancos) ──
+// operarHref opcional: bancos sem página de digitação própria não mostram o botão.
 function Linha({
   icon, nome, sub, children, operarHref,
 }: {
   icon: React.ReactNode; nome: string; sub?: string;
-  children: React.ReactNode; operarHref: string;
+  children: React.ReactNode; operarHref?: string;
 }) {
   return (
     <div className="flex items-center justify-between gap-3 py-2.5 px-3 border-b border-border last:border-b-0">
@@ -88,11 +89,13 @@ function Linha({
       </div>
       <div className="flex items-center gap-3 shrink-0">
         {children}
-        <Link href={operarHref}>
-          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
-            Operar <ArrowRight className="size-3" />
-          </Button>
-        </Link>
+        {operarHref && (
+          <Link href={operarHref}>
+            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
+              Operar <ArrowRight className="size-3" />
+            </Button>
+          </Link>
+        )}
       </div>
     </div>
   );
@@ -295,6 +298,54 @@ function LinhaFinanto({
 }
 
 // ════════════════════════════════════════════════════════════════════
+// LINHA FACTA — saldo/base FGTS (via proxy do escritório)
+// ════════════════════════════════════════════════════════════════════
+function LinhaFacta({ cpf, onResult }: { cpf: string; onResult: (r: Resultado) => void }) {
+  const saldo = useFactaFgtsSaldo();
+  const disparado = useRef(false);
+
+  useEffect(() => {
+    if (!disparado.current && cpf) { disparado.current = true; saldo.mutate(cpf); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cpf]);
+
+  const temSaldo = (saldo.data?.saldoTotal ?? 0) > 0;
+
+  useEffect(() => {
+    if (saldo.isPending) { onResult({ fonte: 'facta', label: 'FACTA', liquido: null, tipoValor: null, status: 'processando' }); return; }
+    if (saldo.isError) { onResult({ fonte: 'facta', label: 'FACTA', liquido: null, tipoValor: null, status: 'indisponivel' }); return; }
+    if (saldo.data) {
+      // saldoTotal aqui é a base FGTS (bruto); o líquido vem do simulador (fase 2)
+      onResult({ fonte: 'facta', label: 'FACTA', liquido: saldo.data.saldoTotal ?? null, tipoValor: temSaldo ? 'bruto' : null, status: temSaldo || saldo.data.success ? 'ok' : 'indisponivel' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saldo.isPending, saldo.isError, saldo.data]);
+
+  return (
+    <Linha
+      icon={<Landmark className="size-4 text-cyan-400 shrink-0" />}
+      nome="FACTA"
+      sub="Financeira"
+    >
+      {saldo.isPending ? (
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" /> consultando…</span>
+      ) : saldo.isError ? (
+        <span className="text-xs text-red-400 flex items-center gap-1"><AlertCircle className="size-3.5" /> indisponível</span>
+      ) : temSaldo ? (
+        <div className="text-right">
+          <div className="text-sm font-bold">{formatBRL(saldo.data?.saldoTotal || 0)}</div>
+          <div className="text-[9px] text-muted-foreground uppercase">base FGTS</div>
+        </div>
+      ) : (
+        <span className="text-xs text-yellow-500 flex items-center gap-1 max-w-[220px] truncate" title={saldo.data?.mensagem || ''}>
+          <AlertCircle className="size-3.5 shrink-0" /> {saldo.data?.mensagem ? 'sem saldo/autorização' : 'sem retorno'}
+        </span>
+      )}
+    </Linha>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
 // CARD DE CONSULTA (um por CPF) — cabeçalho + linhas + rodapé
 // ════════════════════════════════════════════════════════════════════
 function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClose: () => void }) {
@@ -312,7 +363,7 @@ function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClo
   }, [resultados]);
 
   const processando = Object.values(resultados).some((r) => r?.status === 'processando')
-    || Object.keys(resultados).length < 3;
+    || Object.keys(resultados).length < 4;
 
   const telDigits = consulta.telefone.replace(/\D/g, '');
 
@@ -366,6 +417,7 @@ function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClo
         {/* Linhas dos bancos */}
         <div>
           <LinhaFintech cpf={consulta.cpf} onResult={onResult} />
+          <LinhaFacta cpf={consulta.cpf} onResult={onResult} />
           <LinhaV8 cpf={consulta.cpf} onResult={onResult} />
           <LinhaFinanto cpf={consulta.cpf} nome={consulta.nome} nascimento={consulta.nascimento} onResult={onResult} />
         </div>
