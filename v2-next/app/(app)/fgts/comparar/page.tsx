@@ -1,0 +1,486 @@
+'use client';
+
+// ════════════════════════════════════════════════════════════════════
+// FGTS — Consulta comparativa (mesmo padrão do Consulta CLT)
+//
+// Form no topo → cada CPF vira um CARD de consulta com cabeçalho do
+// cliente e os bancos como LINHAS que preenchem sozinhas:
+//   - Fintech do Corban → QI SCD + J17 (saldo/autorização)
+//   - V8 Sistema        → saldo async + auto-simulação do líquido
+//   - FINANTO           → simulação (precisa nome + nascimento)
+// Rodapé do card mostra a melhor oferta. A pilha de consultas abertas
+// persiste em localStorage (sobrevive F5), igual ao CLT.
+// ════════════════════════════════════════════════════════════════════
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { formatBRL, formatCpf, formatDateBR } from '@/lib/utils';
+import {
+  useFintechFgtsSaldo,
+  useV8FgtsIniciarConsulta, useV8FgtsSaldo, useV8FgtsTabelas, useV8FgtsSimular,
+  type V8FgtsProvider,
+} from '@/hooks/use-fgts';
+import { useFinantoFgtsCriarSimulacao, useFinantoFgtsSimulacao } from '@/hooks/use-finanto';
+import {
+  PiggyBank, Search, Loader2, Landmark, Zap, AlertCircle, CheckCircle2,
+  ArrowRight, Trophy, Copy, X,
+} from 'lucide-react';
+import { toast } from 'sonner';
+
+// ── Pilha persistida (não temos fila no backend, guardamos local) ──
+const PILHA_KEY = 'flowforce_fgts_pilha_v1';
+
+interface ConsultaFgts {
+  id: string;      // cpf + timestamp
+  cpf: string;
+  nome: string;
+  nascimento: string;
+  telefone: string;
+  quando: string;  // ISO
+}
+
+function lerPilha(): ConsultaFgts[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const arr = JSON.parse(localStorage.getItem(PILHA_KEY) || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+
+// ── Resultado que cada linha reporta pro card (pra achar o melhor) ──
+type Fonte = 'fintech' | 'v8' | 'finanto';
+interface Resultado {
+  fonte: Fonte;
+  label: string;
+  liquido: number | null;
+  tipoValor: 'líquido' | 'bruto' | null;
+  status: 'processando' | 'ok' | 'indisponivel' | 'faltam_dados';
+}
+
+function toIso(s: string): string {
+  const t = s.trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.substring(0, 10);
+  const m = t.match(/^(\d{2})[/\-](\d{2})[/\-](\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+}
+
+// ── Linha genérica (mesmo layout pra todos os bancos) ──
+function Linha({
+  icon, nome, sub, children, operarHref,
+}: {
+  icon: React.ReactNode; nome: string; sub?: string;
+  children: React.ReactNode; operarHref: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-2.5 px-3 border-b border-border last:border-b-0">
+      <div className="flex items-center gap-2 min-w-0">
+        {icon}
+        <div className="min-w-0">
+          <div className="text-sm font-medium truncate">{nome}</div>
+          {sub && <div className="text-[10px] text-muted-foreground truncate">{sub}</div>}
+        </div>
+      </div>
+      <div className="flex items-center gap-3 shrink-0">
+        {children}
+        <Link href={operarHref}>
+          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
+            Operar <ArrowRight className="size-3" />
+          </Button>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LINHA FINTECH DO CORBAN — QI SCD + J17 (2 sub-linhas)
+// ════════════════════════════════════════════════════════════════════
+function LinhaFintech({ cpf, onResult }: { cpf: string; onResult: (r: Resultado) => void }) {
+  const saldo = useFintechFgtsSaldo();
+  const disparado = useRef(false);
+
+  useEffect(() => {
+    if (!disparado.current && cpf) { disparado.current = true; saldo.mutate(cpf); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cpf]);
+
+  useEffect(() => {
+    if (saldo.isPending) { onResult({ fonte: 'fintech', label: 'Fintech do Corban', liquido: null, tipoValor: null, status: 'processando' }); return; }
+    if (saldo.data?.consultas) {
+      const algumLiberado = saldo.data.consultas.some((c) => /complet|success|conclu|ok/i.test(String(c.statusConsulta || '')));
+      onResult({ fonte: 'fintech', label: 'Fintech do Corban', liquido: null, tipoValor: null, status: algumLiberado ? 'ok' : 'indisponivel' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saldo.isPending, saldo.data]);
+
+  const consultas = saldo.data?.consultas || [
+    { typeQuery: 1, instituicao: 'QI Sociedade de Crédito Direto', statusConsulta: null, ok: false },
+    { typeQuery: 3, instituicao: 'J17 SCD', statusConsulta: null, ok: false },
+  ];
+
+  return (
+    <>
+      {consultas.map((c) => {
+        const liberado = /complet|success|conclu|ok/i.test(String(c.statusConsulta || ''));
+        return (
+          <Linha
+            key={c.typeQuery}
+            icon={<Landmark className="size-4 text-cyan-400 shrink-0" />}
+            nome={c.instituicao}
+            sub="Fintech do Corban"
+            operarHref="/fgts/fintech-corban"
+          >
+            {saldo.isPending ? (
+              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+            ) : liberado ? (
+              <Badge variant="success" className="text-[10px]">liberado</Badge>
+            ) : (
+              <Badge variant="warning" className="text-[10px]">{c.statusConsulta || 'sem autorização'}</Badge>
+            )}
+          </Linha>
+        );
+      })}
+    </>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LINHA V8 — saldo async + auto-simulação do líquido
+// ════════════════════════════════════════════════════════════════════
+function LinhaV8({ cpf, onResult }: { cpf: string; onResult: (r: Resultado) => void }) {
+  const [provider] = useState<V8FgtsProvider>('qi');
+  const iniciar = useV8FgtsIniciarConsulta();
+  const saldo = useV8FgtsSaldo(cpf);
+  const iniciado = useRef(false);
+  const simDisparada = useRef(false);
+  const [erroIniciar, setErroIniciar] = useState<string | null>(null);
+
+  const saldoOk = saldo.data?.status === 'success' && !!saldo.data?.balanceId;
+  const tabelas = useV8FgtsTabelas(saldoOk);
+  const simular = useV8FgtsSimular();
+
+  useEffect(() => {
+    if (iniciado.current || !cpf) return;
+    iniciado.current = true;
+    iniciar.mutateAsync({ cpf, provider }).catch((e: Error) => setErroIniciar(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cpf]);
+
+  useEffect(() => {
+    if (simDisparada.current) return;
+    if (!saldoOk || !saldo.data?.balanceId) return;
+    const tabela = (tabelas.data || []).find((t) => t.padrao) || (tabelas.data || [])[0];
+    const periods = saldo.data.periods || [];
+    if (!tabela || periods.length < 2) return;
+    simDisparada.current = true;
+    simular.mutate({
+      cpf, simulationFeesId: tabela.id, balanceId: saldo.data.balanceId,
+      desiredInstallments: periods.map((p) => ({ totalAmount: p.amount, dueDate: p.dueDate })),
+      provider,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saldoOk, tabelas.data]);
+
+  useEffect(() => {
+    if (erroIniciar || saldo.data?.status === 'fail') {
+      onResult({ fonte: 'v8', label: 'V8 Sistema', liquido: null, tipoValor: null, status: 'indisponivel' });
+    } else if (simular.data?.valorLiquido != null) {
+      onResult({ fonte: 'v8', label: 'V8 Sistema', liquido: simular.data.valorLiquido, tipoValor: 'líquido', status: 'ok' });
+    } else if (saldoOk) {
+      onResult({ fonte: 'v8', label: 'V8 Sistema', liquido: saldo.data?.saldoTotal ?? null, tipoValor: 'bruto', status: 'ok' });
+    } else {
+      onResult({ fonte: 'v8', label: 'V8 Sistema', liquido: null, tipoValor: null, status: 'processando' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [erroIniciar, saldo.data, saldoOk, simular.data]);
+
+  const processando = !erroIniciar && saldo.data?.status !== 'fail' && !saldoOk;
+  const falhou = !!erroIniciar || saldo.data?.status === 'fail';
+
+  return (
+    <Linha
+      icon={<Zap className="size-4 text-cyan-400 shrink-0" />}
+      nome="V8 Sistema"
+      sub="QI Tech"
+      operarHref="/fgts/v8"
+    >
+      {processando && <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" /> consultando…</span>}
+      {falhou && (
+        <span className="text-xs text-red-400 flex items-center gap-1 max-w-[220px] truncate" title={erroIniciar || saldo.data?.erro || ''}>
+          <AlertCircle className="size-3.5 shrink-0" /> indisponível
+        </span>
+      )}
+      {saldoOk && (
+        simular.data?.valorLiquido != null ? (
+          <div className="text-right">
+            <div className="text-sm font-bold text-primary">{formatBRL(simular.data.valorLiquido)}</div>
+            <div className="text-[9px] text-muted-foreground uppercase">líquido</div>
+          </div>
+        ) : simular.isPending ? (
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" /> simulando…</span>
+        ) : (
+          <div className="text-right">
+            <div className="text-sm font-bold">{formatBRL(saldo.data?.saldoTotal || 0)}</div>
+            <div className="text-[9px] text-muted-foreground uppercase">bruto</div>
+          </div>
+        )
+      )}
+    </Linha>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LINHA FINANTO — precisa nome + nascimento
+// ════════════════════════════════════════════════════════════════════
+function LinhaFinanto({
+  cpf, nome, nascimento, onResult,
+}: { cpf: string; nome: string; nascimento: string; onResult: (r: Resultado) => void }) {
+  const criar = useFinantoFgtsCriarSimulacao();
+  const [simId, setSimId] = useState<string | null>(null);
+  const sim = useFinantoFgtsSimulacao(simId);
+  const disparado = useRef(false);
+
+  const nascIso = toIso(nascimento);
+  const temDados = !!nome.trim() && !!nascIso;
+
+  useEffect(() => {
+    if (disparado.current || !cpf || !temDados) return;
+    disparado.current = true;
+    criar.mutateAsync({
+      borrower: { name: nome.trim(), identity: cpf, birthDate: nascIso },
+      items: [],
+    }).then((r) => setSimId(r.simulationId)).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cpf, temDados]);
+
+  const items = useMemo(() => sim.data?.items || [], [sim.data]);
+  const liquido = items.reduce((acc, it) => acc + (it.netValue || 0), 0);
+  const calculado = items.some((it) => (it.netValue ?? it.loanValue ?? 0) > 0);
+
+  useEffect(() => {
+    if (!temDados) { onResult({ fonte: 'finanto', label: 'FINANTO', liquido: null, tipoValor: null, status: 'faltam_dados' }); return; }
+    if (calculado) onResult({ fonte: 'finanto', label: 'FINANTO', liquido, tipoValor: 'líquido', status: 'ok' });
+    else if (criar.isError) onResult({ fonte: 'finanto', label: 'FINANTO', liquido: null, tipoValor: null, status: 'indisponivel' });
+    else onResult({ fonte: 'finanto', label: 'FINANTO', liquido: null, tipoValor: null, status: 'processando' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [temDados, calculado, liquido, criar.isError]);
+
+  return (
+    <Linha
+      icon={<PiggyBank className="size-4 text-cyan-400 shrink-0" />}
+      nome="FINANTO"
+      sub="Ajin / QI Tech"
+      operarHref="/fgts/simulacao"
+    >
+      {!temDados ? (
+        <span className="text-[11px] text-yellow-500">preencha nome + nascimento</span>
+      ) : calculado ? (
+        <div className="text-right">
+          <div className="text-sm font-bold text-primary">{formatBRL(liquido)}</div>
+          <div className="text-[9px] text-muted-foreground uppercase">líquido</div>
+        </div>
+      ) : criar.isError ? (
+        <span className="text-xs text-red-400 flex items-center gap-1"><AlertCircle className="size-3.5" /> indisponível</span>
+      ) : (
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" /> consultando…</span>
+      )}
+    </Linha>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CARD DE CONSULTA (um por CPF) — cabeçalho + linhas + rodapé
+// ════════════════════════════════════════════════════════════════════
+function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClose: () => void }) {
+  const [resultados, setResultados] = useState<Record<Fonte, Resultado | undefined>>({} as Record<Fonte, Resultado | undefined>);
+  const onResult = useCallback((r: Resultado) => {
+    setResultados((prev) => ({ ...prev, [r.fonte]: r }));
+  }, []);
+
+  const melhor = useMemo(() => {
+    const comLiquido = Object.values(resultados).filter(
+      (r): r is Resultado => !!r && r.status === 'ok' && r.tipoValor === 'líquido' && (r.liquido ?? 0) > 0,
+    );
+    if (!comLiquido.length) return null;
+    return comLiquido.reduce((a, b) => ((b.liquido ?? 0) > (a.liquido ?? 0) ? b : a));
+  }, [resultados]);
+
+  const processando = Object.values(resultados).some((r) => r?.status === 'processando')
+    || Object.keys(resultados).length < 3;
+
+  const telDigits = consulta.telefone.replace(/\D/g, '');
+
+  const copiarWhats = () => {
+    const t = melhor
+      ? `Boa notícia! Consegui liberar pra você um valor de FGTS de ${formatBRL(melhor.liquido || 0)} (via ${melhor.label}). Quer que eu já adiante pra sua conta?`
+      : `Oi! Pra eu consultar seu FGTS, preciso que você autorize no app FGTS da Caixa. Te explico rapidinho?`;
+    navigator.clipboard.writeText(t).then(
+      () => toast.success('Mensagem copiada'),
+      () => toast.error('Não consegui copiar'),
+    );
+  };
+
+  return (
+    <Card className="border-2 border-primary/30">
+      <CardContent className="p-0">
+        {/* Cabeçalho do cliente */}
+        <div className="p-4 bg-gradient-to-br from-primary/5 to-accent/5 border-b border-border">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                {processando ? (
+                  <Badge variant="info" className="gap-1"><Loader2 className="w-3 h-3 animate-spin" /> CONSULTANDO</Badge>
+                ) : (
+                  <Badge variant="success" className="gap-1"><CheckCircle2 className="w-3 h-3" /> CONCLUÍDA</Badge>
+                )}
+                <span className="font-bold text-base truncate">{consulta.nome || '(sem nome)'}</span>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                CPF {formatCpf(consulta.cpf)} · {formatDateBR(consulta.quando)}
+              </div>
+              {telDigits.length >= 10 && (
+                <div className="mt-2">
+                  <a
+                    href={`https://wa.me/55${telDigits}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[11px] px-2 py-0.5 rounded bg-green-500/10 text-green-400 hover:bg-green-500/20"
+                  >
+                    📱 {telDigits}
+                  </a>
+                </div>
+              )}
+            </div>
+            <Button variant="ghost" size="icon" onClick={onClose} title="Fechar">
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Linhas dos bancos */}
+        <div>
+          <LinhaFintech cpf={consulta.cpf} onResult={onResult} />
+          <LinhaV8 cpf={consulta.cpf} onResult={onResult} />
+          <LinhaFinanto cpf={consulta.cpf} nome={consulta.nome} nascimento={consulta.nascimento} onResult={onResult} />
+        </div>
+
+        {/* Rodapé — melhor oferta */}
+        <div className="p-3 border-t border-border bg-secondary/20 flex items-center justify-between gap-3 flex-wrap">
+          {melhor ? (
+            <span className="flex items-center gap-2 text-sm">
+              <Trophy className="size-4 text-green-400" />
+              Melhor líquido: <b>{formatBRL(melhor.liquido || 0)}</b>
+              <span className="text-muted-foreground">via {melhor.label}</span>
+            </span>
+          ) : processando ? (
+            <span className="text-xs text-muted-foreground">⏳ Aguardando bancos…</span>
+          ) : (
+            <span className="text-xs text-muted-foreground">⚠️ Nenhum banco retornou oferta líquida — confira autorização no app FGTS</span>
+          )}
+          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={copiarWhats}>
+            <Copy className="size-3 mr-1" /> Msg pro cliente
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PÁGINA
+// ════════════════════════════════════════════════════════════════════
+export default function FgtsCompararPage() {
+  const [cpf, setCpf] = useState('');
+  const [nome, setNome] = useState('');
+  const [nascimento, setNascimento] = useState('');
+  const [telefone, setTelefone] = useState('');
+  const [pilha, setPilha] = useState<ConsultaFgts[]>([]);
+  const [hidratada, setHidratada] = useState(false);
+
+  useEffect(() => { setPilha(lerPilha()); setHidratada(true); }, []);
+  useEffect(() => {
+    if (!hidratada) return;
+    try { localStorage.setItem(PILHA_KEY, JSON.stringify(pilha)); } catch { /* ignore */ }
+  }, [pilha, hidratada]);
+
+  const cpfDigits = cpf.replace(/\D/g, '');
+  const cpfValido = cpfDigits.length === 11;
+
+  const consultar = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cpfValido) { toast.error('CPF inválido'); return; }
+    const nova: ConsultaFgts = {
+      id: `${cpfDigits}-${Date.now()}`,
+      cpf: cpfDigits, nome, nascimento, telefone,
+      quando: new Date().toISOString(),
+    };
+    setPilha((prev) => [nova, ...prev].slice(0, 30));
+    setCpf(''); setNome(''); setNascimento(''); setTelefone('');
+    toast.success('Consultando nos 3 bancos…');
+  };
+
+  const fechar = (id: string) => setPilha((prev) => prev.filter((c) => c.id !== id));
+
+  return (
+    <div className="max-w-4xl mx-auto p-6 space-y-4">
+      <div>
+        <h1 className="text-2xl font-bold flex items-center gap-2">
+          <PiggyBank className="size-6 text-cyan-400" /> FGTS — Consulta comparativa
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Digite o CPF e os 3 bancos consultam em paralelo. Cada linha atualiza sozinha conforme termina.
+        </p>
+      </div>
+
+      {/* Form */}
+      <Card>
+        <CardContent className="p-4">
+          <form onSubmit={consultar} className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-[2fr_auto] gap-3">
+              <Input
+                placeholder="CPF (só números)"
+                maxLength={14}
+                value={cpfDigits.length === 11 ? formatCpf(cpf) : cpf}
+                onChange={(e) => setCpf(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                inputMode="numeric"
+                autoFocus
+                className="h-11 text-base font-mono"
+              />
+              <Button type="submit" disabled={!cpfValido} className="h-11 px-6">
+                <Search className="w-4 h-4" /> Consultar
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <Input placeholder="Nome (p/ FINANTO)" value={nome} onChange={(e) => setNome(e.target.value)} className="h-10" />
+              <Input placeholder="Nascimento DD/MM/AAAA (p/ FINANTO)" value={nascimento} onChange={(e) => setNascimento(e.target.value)} className="h-10" />
+              <Input placeholder="Telefone (DDD+número)" value={telefone} onChange={(e) => setTelefone(e.target.value)} inputMode="numeric" className="h-10" />
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Pilha de consultas abertas */}
+      {pilha.length > 0 && (
+        <div className="space-y-4">
+          <div className="text-xs text-muted-foreground">
+            📌 {pilha.length} consulta(s) aberta(s) — fica salvo aqui mesmo se atualizar a tela
+          </div>
+          {pilha.map((c) => (
+            <FgtsConsultaCard key={c.id} consulta={c} onClose={() => fechar(c.id)} />
+          ))}
+        </div>
+      )}
+
+      {pilha.length === 0 && (
+        <div className="text-sm text-muted-foreground text-center py-10">
+          Digite um CPF acima e clique em <b>Consultar</b>.
+          <div className="text-xs mt-1">Preencha nome + nascimento pra incluir a FINANTO na comparação.</div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -524,9 +524,16 @@ async function handleAction(body, req) {
       }
       const r = await v8Call('/fgts/balance', 'POST', { documentNumber: cpf, provider: fgtsProvider });
       // Resposta esperada: null (processamento async). Busca depois via fgtsBuscarSaldo.
+      // Extrai a mensagem REAL de erro pra a tela distinguir credencial x autorizacao.
+      const erroMsg = r.ok ? null : (
+        r.data?.message || r.data?.error || r.data?.mensagem ||
+        (Array.isArray(r.data?.errors) ? r.data.errors.map(e => e.message || e).join('; ') : null) ||
+        r.data?.raw || `HTTP ${r.status}`
+      );
       return j({
         success: r.ok, httpStatus: r.status, cpf, provider: fgtsProvider,
         mensagem: r.ok ? 'Consulta iniciada — aguarde e busque o resultado' : 'Falha ao iniciar consulta',
+        erro: erroMsg,
         _raw: r.data
       }, 200, req);
     }

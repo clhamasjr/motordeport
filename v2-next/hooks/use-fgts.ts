@@ -98,10 +98,10 @@ export function useV8FgtsIniciarConsulta() {
     mutationFn: async (params: { cpf: string; provider: V8FgtsProvider }) => {
       const c = params.cpf.replace(/\D/g, '');
       if (c.length !== 11) throw new Error('CPF inválido — precisa ter 11 dígitos');
-      const r = await api<{ success: boolean; mensagem?: string; error?: string }>(
+      const r = await api<{ success: boolean; mensagem?: string; erro?: string; error?: string }>(
         V8, { action: 'fgtsConsultarSaldo', cpf: c, provider: params.provider },
       );
-      if (!r.success) throw new Error(r.error || 'Falha ao iniciar consulta de saldo V8');
+      if (!r.success) throw new Error(r.erro || r.error || r.mensagem || 'Falha ao iniciar consulta de saldo V8');
       return r;
     },
     onError: (err: Error) => toast.error(err.message),
