@@ -21,11 +21,15 @@ import { EnviarOportunidadesButton } from './enviar-oportunidades';
 // Cliente com margem livre faz empréstimo novo 108m — coef PRICE = 0.02153
 const COEF_EMP_185 = 0.02153;
 
+// Rótulo de exibição do banco destino (chave do motor → nome amigável).
+const BANCO_LABEL: Record<string, string> = { BRB_INCONTA: 'BRB INCONTA' };
+const bl = (k: string) => BANCO_LABEL[k] ?? k;
+
 // Diagnóstico do motivo de bloqueio pra contratos que ninguém aceita.
 // Pega o "menos pior" — explica em 1 frase por que cada banco rejeitou.
 function diagnosticarBloqueio(parcela: number, saldo: number, taxaOrig: number, codOrigem: string): string {
   const motivos: string[] = [];
-  for (const banco of ['QUALI', 'C6', 'BRB', 'ICRED']) {
+  for (const banco of ['QUALI', 'C6', 'BRB', 'BRB_INCONTA', 'ICRED']) {
     const r = BD[banco];
     if (!r) continue;
     if (r.block && r.block.includes(codOrigem)) {
@@ -699,7 +703,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                       Port + Refin contrato <span className="font-mono">{c.contrato || '?'}</span> ({c.bancoOrigem}{' '}
                       {c.taxaOrig > 0 && <span className="text-muted-foreground">@ {c.taxaOrig.toFixed(2)}%</span>})
                       <span className="text-cyan-400 ml-1">
-                        → {r.banco} @ {r.taxa.toFixed(2)}% / 108m
+                        → {bl(r.banco)} @ {r.taxa.toFixed(2)}% / 108m
                       </span>
                     </div>
                     <div className="text-muted-foreground">
@@ -776,7 +780,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                     >
                       <div className="flex items-center justify-between">
                         <Badge variant={i === 0 ? 'success' : 'outline'} className="text-[9px] font-mono">
-                          {b.banco}
+                          {bl(b.banco)}
                         </Badge>
                         <span className="text-[9px] font-mono text-muted-foreground">{b.taxa.toFixed(2)}%</span>
                       </div>
@@ -839,7 +843,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                           <span className="font-mono">{c.contrato || '—'}</span>
                           <span className="text-muted-foreground"> · {c.bancoOrigem}</span>
                           {c.taxaOrig > 0 && <span className="text-yellow-400 ml-1">@ {c.taxaOrig.toFixed(2)}%</span>}
-                          <span className="text-cyan-400 ml-1">→ {r.banco} @ {r.taxa.toFixed(2)}% / 108m</span>
+                          <span className="text-cyan-400 ml-1">→ {bl(r.banco)} @ {r.taxa.toFixed(2)}% / 108m</span>
                         </div>
                         <div className="text-[10px] text-muted-foreground mt-0.5">
                           Saldo {formatBRL(c.saldo)} · parcela {formatBRL(c.parcela)} mantida ·
@@ -940,7 +944,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                           {c.portRefin108 ? (
                             <div className="flex flex-col gap-0.5">
                               <Badge variant="success" className="text-[10px] font-mono w-fit">
-                                {c.portRefin108.banco} · {c.portRefin108.taxa.toFixed(2)}%
+                                {bl(c.portRefin108.banco)} · {c.portRefin108.taxa.toFixed(2)}%
                               </Badge>
                               <span className="text-[9px] text-muted-foreground font-mono">
                                 108m · de {c.taxaOrig.toFixed(2)}% → {c.portRefin108.taxa.toFixed(2)}%

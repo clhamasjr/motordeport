@@ -129,6 +129,21 @@ export const BD: Record<string, BancoRegra> = {
     pgMinMap: { '336': 12, '626': 12 },
     invRules: { minAge: 60 },
   },
+  // ── BRB INCONTA — banco destino de PORT INSS (regras oficiais 07/05/2026) ──
+  // Prazo 108m · Taxa 1,85% (saldo mín R$ 3.000) e 1,79% (saldo mín R$ 4.000).
+  // Port até 72 anos, a partir de 12 parcelas pagas, aceita QUALQUER taxa origem.
+  // Limite por CPF (≤72 anos): R$ 150.000 → vcMax.
+  // Troco mínimo de 1 parcela já é garantido pelo motor (tMinEff inclui a parcela).
+  // Benefícios 32/92 (invalidez): só clientes ≥ 60 anos → invRules.minAge 60.
+  // NÃO porta: PicPay(380), Bradescard(063), Inbursa(012), PagBank(290),
+  //   C6(336/626), Agibank(121). ⚠ Santinvest: código a confirmar (não incluído ainda).
+  BRB_INCONTA: {
+    sMin: 3000, vcMax: 150000, tMin: 250, pMin: 0, pgMin: 12,
+    faixa: [1.79, 1.85], coefF: null, coefs: COEFS_108,
+    block: ['380', '063', '012', '290', '336', '626', '121'],
+    taxaOrigemMinDefault: 0,
+    invRules: { minAge: 60 },
+  },
   DIGIO: {
     sMin: 4500, tMin: 250, pMin: 0, pgMin: 12, faixa: [1.50, 1.85], coefF: null,
     block: ['237','001','041','925'],
@@ -162,7 +177,7 @@ export const BD: Record<string, BancoRegra> = {
 // ORDEM = bancos ATIVOS no motor. FACTA/DIGIO desativados.
 // C6 reativado (mar/2026) — aceita correspondentes BMG 318 e BRB 070 com pgMin=12.
 // DAYCOVAL reativado (jun/2026) — 11 tabelas oficiais COEFS_DAY, faixa 1.56-1.85.
-export const ORDEM = ['QUALI', 'C6', 'BRB', 'ICRED', 'DAYCOVAL'];
+export const ORDEM = ['QUALI', 'C6', 'BRB', 'BRB_INCONTA', 'ICRED', 'DAYCOVAL'];
 
 export const PICPAY_CODE = '380';
 export const B1P: string[] = ['149','422','739','925','380','033','326','290','041','389','121'];
