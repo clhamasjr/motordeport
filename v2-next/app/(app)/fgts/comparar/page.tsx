@@ -25,6 +25,8 @@ import {
   type V8FgtsProvider,
 } from '@/hooks/use-fgts';
 import { useFinantoFgtsCriarSimulacao, useFinantoFgtsSimulacao } from '@/hooks/use-finanto';
+import { usePrecheckCpf } from '@/hooks/use-clt-fila';
+import { Label } from '@/components/ui/label';
 import {
   PiggyBank, Search, Loader2, Landmark, Zap, AlertCircle, CheckCircle2,
   ArrowRight, Trophy, Copy, X,
@@ -396,10 +398,16 @@ function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClo
 export default function FgtsCompararPage() {
   const [cpf, setCpf] = useState('');
   const [nome, setNome] = useState('');
-  const [nascimento, setNascimento] = useState('');
+  const [nascimento, setNascimento] = useState(''); // YYYY-MM-DD (input date)
   const [telefone, setTelefone] = useState('');
   const [pilha, setPilha] = useState<ConsultaFgts[]>([]);
   const [hidratada, setHidratada] = useState(false);
+
+  // Quando a nossa base não traz nome/nascimento, abre o bloco obrigatório.
+  const [exigirDados, setExigirDados] = useState(false);
+  const [faltam, setFaltam] = useState<string[]>([]);
+
+  const precheck = usePrecheckCpf();
 
   useEffect(() => { setPilha(lerPilha()); setHidratada(true); }, []);
   useEffect(() => {
@@ -410,20 +418,59 @@ export default function FgtsCompararPage() {
   const cpfDigits = cpf.replace(/\D/g, '');
   const cpfValido = cpfDigits.length === 11;
 
-  const consultar = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!cpfValido) { toast.error('CPF inválido'); return; }
+  function abrirConsulta(dados: { nome: string; nascimento: string; telefone: string }) {
     const nova: ConsultaFgts = {
       id: `${cpfDigits}-${Date.now()}`,
-      cpf: cpfDigits, nome, nascimento, telefone,
+      cpf: cpfDigits, nome: dados.nome, nascimento: dados.nascimento, telefone: dados.telefone,
       quando: new Date().toISOString(),
     };
     setPilha((prev) => [nova, ...prev].slice(0, 30));
     setCpf(''); setNome(''); setNascimento(''); setTelefone('');
+    setExigirDados(false); setFaltam([]);
     toast.success('Consultando nos 3 bancos…');
-  };
+  }
+
+  async function consultar(e: React.FormEvent) {
+    e.preventDefault();
+    if (!cpfValido) { toast.error('CPF inválido'); return; }
+
+    // Se o bloco obrigatório já está aberto, valida o que o operador digitou.
+    if (exigirDados) {
+      const faltando: string[] = [];
+      if (!nome.trim()) faltando.push('nome');
+      if (!nascimento) faltando.push('data de nascimento');
+      if (faltando.length) { toast.error(`Preencha: ${faltando.join(', ')}`); return; }
+      abrirConsulta({ nome: nome.trim(), nascimento, telefone });
+      return;
+    }
+
+    // 1ª etapa: procura na NOSSA base (mesmo precheck do CLT — Nova Vida TI por CPF)
+    const r = await precheck.mutateAsync(cpfDigits).catch(() => null);
+    if (!r) { toast.error('Erro ao buscar o CPF na base — tente de novo'); return; }
+
+    const nomeBase = r.dados.nome || '';
+    const nascBase = r.dados.dataNascimento || '';
+    const telBase = r.dados.telefone || '';
+    if (nomeBase) setNome(nomeBase);
+    if (nascBase) setNascimento(nascBase);
+    if (telBase) setTelefone(telBase);
+
+    // Precisa de nome + nascimento (CPF já temos). Telefone é bônus.
+    if (r.temNome && r.temDataNascimento) {
+      abrirConsulta({ nome: nomeBase, nascimento: nascBase, telefone: telBase });
+    } else {
+      const f: string[] = [];
+      if (!r.temNome) f.push('nome');
+      if (!r.temDataNascimento) f.push('data de nascimento');
+      setFaltam(f);
+      setExigirDados(true);
+      toast.warning('Nossa base não trouxe todos os dados — complete abaixo pra continuar');
+    }
+  }
 
   const fechar = (id: string) => setPilha((prev) => prev.filter((c) => c.id !== id));
+  const isPending = precheck.isPending;
+  const precisa = (campo: string) => exigirDados && faltam.includes(campo);
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-4">
@@ -432,7 +479,8 @@ export default function FgtsCompararPage() {
           <PiggyBank className="size-6 text-cyan-400" /> FGTS — Consulta comparativa
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Digite o CPF e os 3 bancos consultam em paralelo. Cada linha atualiza sozinha conforme termina.
+          Digite o CPF — a gente busca nome e nascimento na nossa base. Os 3 bancos consultam em paralelo,
+          cada linha atualiza sozinha.
         </p>
       </div>
 
@@ -445,20 +493,48 @@ export default function FgtsCompararPage() {
                 placeholder="CPF (só números)"
                 maxLength={14}
                 value={cpfDigits.length === 11 ? formatCpf(cpf) : cpf}
-                onChange={(e) => setCpf(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                onChange={(e) => {
+                  setCpf(e.target.value.replace(/\D/g, '').slice(0, 11));
+                  if (exigirDados) { setExigirDados(false); setFaltam([]); }
+                }}
                 inputMode="numeric"
                 autoFocus
+                disabled={isPending}
                 className="h-11 text-base font-mono"
               />
-              <Button type="submit" disabled={!cpfValido} className="h-11 px-6">
-                <Search className="w-4 h-4" /> Consultar
+              <Button type="submit" disabled={!cpfValido || isPending} className="h-11 px-6">
+                {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                {exigirDados ? 'Continuar' : 'Consultar'}
               </Button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <Input placeholder="Nome (p/ FINANTO)" value={nome} onChange={(e) => setNome(e.target.value)} className="h-10" />
-              <Input placeholder="Nascimento DD/MM/AAAA (p/ FINANTO)" value={nascimento} onChange={(e) => setNascimento(e.target.value)} className="h-10" />
-              <Input placeholder="Telefone (DDD+número)" value={telefone} onChange={(e) => setTelefone(e.target.value)} inputMode="numeric" className="h-10" />
-            </div>
+
+            {/* Bloco obrigatório — só aparece quando a base não trouxe tudo */}
+            {exigirDados && (
+              <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
+                <div className="flex items-center gap-2 text-xs text-amber-500 font-medium">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  Não achamos tudo na nossa base — complete pra continuar
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">
+                      Nome completo {precisa('nome') && <span className="text-amber-500">*</span>}
+                    </Label>
+                    <Input placeholder="Nome completo" value={nome} onChange={(e) => setNome(e.target.value)} className="h-10" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">
+                      Data de nascimento {precisa('data de nascimento') && <span className="text-amber-500">*</span>}
+                    </Label>
+                    <Input type="date" value={nascimento} onChange={(e) => setNascimento(e.target.value)} className="h-10" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Telefone (opcional)</Label>
+                    <Input placeholder="DDD + número" value={telefone} onChange={(e) => setTelefone(e.target.value)} inputMode="numeric" className="h-10" />
+                  </div>
+                </div>
+              </div>
+            )}
           </form>
         </CardContent>
       </Card>
