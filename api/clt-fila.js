@@ -907,7 +907,7 @@ async function processarUnno(id, cpf, auth, secret) {
       action: 'verificarStatus',
       termUuid: termUuidExistente,
       cpf,
-    }, auth, secret, 20000);
+    }, auth, secret, 15000);
 
     const u = r.data || {};
 
@@ -982,7 +982,8 @@ async function processarUnno(id, cpf, auth, secret) {
   }
 
   // ── Primeira execucao: precisa dados completos pra criar termo ─
-  const cli = await aguardarCliente(id, 8000);
+  // Orcamento de tempo: 6s aqui + 15s callApi + ~2s DB < 25s do gateway edge.
+  const cli = await aguardarCliente(id, 6000);
   if (!cli || !cli.nome || !cli.dataNascimento) {
     await patchBanco(id, 'unno', {
       status: 'falha',
@@ -1010,7 +1011,7 @@ async function processarUnno(id, cpf, auth, secret) {
     email: cli.emails?.[0] || null,
     sexo: cli.sexo || 'M',
     provedor: 'qitech',
-  }, auth, secret, 25000);
+  }, auth, secret, 15000);
 
   const u = r.data || {};
   if (!r.ok || !u.sucesso) {

@@ -136,7 +136,11 @@ async function autorizarTermo(termUuid) {
 // ─── Helper: polling de proposta criada apos autorizacao ───────
 // Apos auto-autorizar, Unno cria proposta em background (~3-10s).
 // Esse polling aguarda a proposta aparecer na listagem por CPF.
-async function aguardarPropostaCriada(cpf, maxMs = 22000, intervalMs = 1500) {
+// maxMs curto (9s): a resposta TEM que sair antes do corte de ~25s do gateway
+// edge (chain: clt-fila espera cliente + este endpoint). Se a proposta nao
+// aparecer a tempo, retorna AUTORIZADO_EM_ANALISE e o auto-re-trigger do
+// status continua o acompanhamento — nunca responder 504.
+async function aguardarPropostaCriada(cpf, maxMs = 9000, intervalMs = 1500) {
   const cpfLimpo = onlyDigits(cpf);
   const inicio = Date.now();
   while (Date.now() - inicio < maxMs) {
