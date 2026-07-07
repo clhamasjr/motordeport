@@ -139,6 +139,19 @@ const j = (data, status = 200, req = null) => jsonResp(data, status, req);
 // Fluxo: Login -> worker-data (margem/workerId) -> comission-table -> simulation
 // ══════════════════════════════════════════════════════════════════
 const NEMESYS_BASE = (process.env.FINTECH_PORTAL_URL || 'https://fintechdocorban.nossafintech.com.br').replace(/\/$/, '');
+
+// Cabeçalhos de navegador (Chrome) — o WAF Azure do portal exige a "cara" de
+// browser (sec-ch-ua / sec-fetch-*) senão barra com 403 mesmo com IP ok.
+const SEC_HEADERS = {
+  'sec-ch-ua': '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-origin',
+  'priority': 'u=1, i',
+};
+
 let _nemToken = { token: null, exp: 0 };
 
 // Fetch pro portal que, se houver proxy do escritório configurado
@@ -189,6 +202,7 @@ async function nemesysLogin(force = false) {
         'Origin': NEMESYS_BASE,
         'Referer': NEMESYS_BASE + '/session/login',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+        ...SEC_HEADERS,
         ...(appToken ? { 'Cookie': `app_token=${appToken}` } : {}),
       },
       body: { Login: login, Password: password, UrlFront: NEMESYS_BASE, OrigemFront: 1 },
@@ -218,6 +232,7 @@ async function nem(path, method = 'GET', body = null, _retry = true) {
         'Origin': NEMESYS_BASE,
         'Referer': NEMESYS_BASE + '/home/overview',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+        ...SEC_HEADERS,
         ...(appToken ? { 'Cookie': `app_token=${appToken}` } : {}),
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
