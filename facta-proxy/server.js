@@ -34,6 +34,16 @@ const SECRET = process.env.FACTA_PROXY_SECRET || '';
 const FACTA_BASE = process.env.FACTA_BASE_URL || 'https://webservice-homol.facta.com.br';
 const PORT = process.env.PORT || 3456;
 
+// Bases permitidas pro relay (o cliente pode pedir outra base via body.baseUrl).
+// Serve pra rotear tanto FACTA quanto o portal Fintech do Corban (nemesys),
+// que bloqueia IP de data-center do Vercel — daqui sai com IP residencial.
+const ALLOWED_BASES = [
+  'https://webservice.facta.com.br',
+  'https://webservice-homol.facta.com.br',
+  'https://fintechdocorban.nossafintech.com.br',
+  FACTA_BASE,
+];
+
 if (!SECRET) {
   console.error('❌ FACTA_PROXY_SECRET nao configurado. Abortando.');
   process.exit(1);
@@ -62,13 +72,22 @@ app.post('/relay', async (req, res) => {
     return res.status(401).json({ error: 'unauthorized' });
   }
 
-  const { method = 'GET', path = '', headers = {}, body = null, contentType = null } = req.body || {};
+  const { method = 'GET', path = '', headers = {}, body = null, contentType = null, baseUrl = null } = req.body || {};
 
   if (!path || !path.startsWith('/')) {
     return res.status(400).json({ error: 'path invalido' });
   }
 
-  const targetUrl = FACTA_BASE + path;
+  // Base do alvo: default FACTA; se o cliente pedir outra, só aceita se estiver
+  // na allowlist (evita virar proxy aberto).
+  let base = FACTA_BASE;
+  if (baseUrl) {
+    const b = String(baseUrl).replace(/\/$/, '');
+    if (ALLOWED_BASES.some((a) => b === a.replace(/\/$/, ''))) base = b;
+    else return res.status(400).json({ error: 'baseUrl nao permitida' });
+  }
+
+  const targetUrl = base + path;
   const fwdHeaders = { ...headers };
   if (contentType) fwdHeaders['Content-Type'] = contentType;
   // Headers de navegador padrao pra bypass Cloudflare bot detection

@@ -141,6 +141,33 @@ const j = (data, status = 200, req = null) => jsonResp(data, status, req);
 const NEMESYS_BASE = (process.env.FINTECH_PORTAL_URL || 'https://fintechdocorban.nossafintech.com.br').replace(/\/$/, '');
 let _nemToken = { token: null, exp: 0 };
 
+// Fetch pro portal que, se houver proxy do escritório configurado
+// (FINTECH_PROXY_URL/SECRET — ou reaproveita FACTA_PROXY_URL/SECRET), roteia
+// por lá (IP residencial) pra furar o 403 do WAF Azure em IP de data-center.
+// Sem proxy, faz fetch direto (comportamento normal). Retorna {status, text}.
+async function nemFetch(fullUrl, { method = 'GET', headers = {}, body = null } = {}) {
+  const proxyUrl = process.env.FINTECH_PROXY_URL || process.env.FACTA_PROXY_URL;
+  const proxySecret = process.env.FINTECH_PROXY_SECRET || process.env.FACTA_PROXY_SECRET;
+  if (proxyUrl && proxySecret) {
+    const u = new URL(fullUrl);
+    const r = await fetch(proxyUrl.replace(/\/$/, '') + '/relay', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-proxy-key': proxySecret },
+      body: JSON.stringify({
+        method,
+        path: u.pathname + u.search,
+        baseUrl: u.origin,
+        headers,
+        contentType: headers['Content-Type'] || null,
+        body: body || null,
+      }),
+    });
+    return { status: r.status, ok: r.ok, text: await r.text() };
+  }
+  const r = await fetch(fullUrl, { method, headers, body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined });
+  return { status: r.status, ok: r.ok, text: await r.text() };
+}
+
 async function nemesysLogin(force = false) {
   // Usa credenciais dedicadas do portal; se não houver, reaproveita as da API
   // de parceiro (FINTECH_LOGIN_PRD/PASSWORD_PRD) — funciona se forem as mesmas.
@@ -153,7 +180,7 @@ async function nemesysLogin(force = false) {
     // O portal pode barrar request "pelado" com 403 (WAF). Mandamos com cara de
     // navegador. O cookie app_token (opcional) vem de env, nunca hardcode.
     const appToken = process.env.FINTECH_PORTAL_APP_TOKEN || '';
-    const r = await fetch(NEMESYS_BASE + '/api/Api/V1/User/Login?saveLog=false', {
+    const r = await nemFetch(NEMESYS_BASE + '/api/Api/V1/User/Login?saveLog=false', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -164,9 +191,9 @@ async function nemesysLogin(force = false) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
         ...(appToken ? { 'Cookie': `app_token=${appToken}` } : {}),
       },
-      body: JSON.stringify({ Login: login, Password: password, UrlFront: NEMESYS_BASE, OrigemFront: 1 }),
+      body: { Login: login, Password: password, UrlFront: NEMESYS_BASE, OrigemFront: 1 },
     });
-    const text = await r.text();
+    const text = r.text;
     let d; try { d = JSON.parse(text); } catch { d = {}; }
     const tok = d.access_token || String(d.token_bearer || '').replace(/^Bearer\s+/i, '') || null;
     if (!r.ok || !tok) return { token: null, status: r.status, error: d.message || d.mensagem || `login portal HTTP ${r.status}` };
@@ -182,7 +209,7 @@ async function nem(path, method = 'GET', body = null, _retry = true) {
   if (!auth.token) return { ok: false, status: 0, data: { error: auth.error } };
   try {
     const appToken = process.env.FINTECH_PORTAL_APP_TOKEN || '';
-    const r = await fetch(NEMESYS_BASE + path, {
+    const r = await nemFetch(NEMESYS_BASE + path, {
       method,
       headers: {
         'Authorization': 'Bearer ' + auth.token,
@@ -194,11 +221,11 @@ async function nem(path, method = 'GET', body = null, _retry = true) {
         ...(appToken ? { 'Cookie': `app_token=${appToken}` } : {}),
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: body || null,
     });
     if (r.status === 401 && _retry) { await nemesysLogin(true); return nem(path, method, body, false); }
-    const text = await r.text();
-    let d; try { d = JSON.parse(text); } catch { d = { raw: text.slice(0, 800) }; }
+    const text = r.text;
+    let d; try { d = JSON.parse(text); } catch { d = { raw: (text || '').slice(0, 800) }; }
     return { ok: r.ok, status: r.status, data: d };
   } catch (e) { return { ok: false, status: 0, data: { error: e.message } }; }
 }
