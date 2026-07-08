@@ -295,6 +295,33 @@ export default async function handler(req) {
       return j(d, 200, req);
     }
 
+    // IP de saida do proxy do escritorio (o que a FACTA "ve"). Compara com
+    // o IP autorizado no painel FACTA — se mudou, e por isso que da challenge.
+    if (action === 'proxyIp') {
+      const cfg = getConfig();
+      const out = { proxyUrl: cfg.PROXY_URL };
+      try {
+        const h = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' };
+        if (cfg.CF_ACCESS_CLIENT_ID && cfg.CF_ACCESS_CLIENT_SECRET) {
+          h['CF-Access-Client-Id'] = cfg.CF_ACCESS_CLIENT_ID;
+          h['CF-Access-Client-Secret'] = cfg.CF_ACCESS_CLIENT_SECRET;
+        }
+        const r = await fetch(cfg.PROXY_URL + '/ip', { headers: h });
+        out.status = r.status;
+        out.body = (await r.text()).substring(0, 300);
+      } catch (e) { out.error = e.message; }
+      // Tambem faz o gera-token cru pra ver headers do Cloudflare (cf-ray etc.)
+      try {
+        const tr = await factaFetch('/gera-token', { headers: { 'Authorization': cfg.AUTH } });
+        out.tokenStatus = tr.status;
+        out.tokenCfRay = tr.headers.get('cf-ray');
+        out.tokenCfMitigated = tr.headers.get('cf-mitigated');
+        out.tokenServer = tr.headers.get('server');
+        out.tokenBody = (await tr.text()).substring(0, 250);
+      } catch (e) { out.tokenError = e.message; }
+      return j(out, 200, req);
+    }
+
     if (action === 'simular') {
       const cpf = (body.cpf || '').replace(/\D/g, '');
       if (!cpf) return jsonError('CPF obrigatorio', 400, req);
