@@ -4,6 +4,13 @@
 // vindas do Vercel. Autenticado via header X-Proxy-Key.
 // ═══════════════════════════════════════════════════════════════
 
+// FORÇA IPv4 em TODAS as conexoes de saida. O PC do escritorio e dual-stack
+// (IPv4 + IPv6); sem isso o Node conecta na FACTA pelo IPv6, que NAO esta na
+// allowlist da FACTA (so o IPv4 201.43.84.12 esta) -> Cloudflare bloqueia.
+require('dns').setDefaultResultOrder('ipv4first');
+// Desliga o "Happy Eyeballs" (corrida IPv4 x IPv6) pra nunca escolher IPv6.
+try { const net = require('net'); if (net.setDefaultAutoSelectFamily) net.setDefaultAutoSelectFamily(false); } catch (e) {}
+
 // Carrega .env (sem dependencia externa)
 const fs = require('fs');
 const path = require('path');
@@ -56,13 +63,15 @@ app.get('/health', (req, res) => {
 
 // Testa egress (mostra IP publico de saida — para validar com a FACTA)
 app.get('/ip', async (req, res) => {
-  try {
-    const r = await fetch('https://api.ipify.org?format=json');
-    const d = await r.json();
-    res.json({ outboundIp: d.ip, base: FACTA_BASE });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  const out = { base: FACTA_BASE };
+  // ipify padrao (so IPv4) — deve dar o IPv4 do escritorio
+  try { const r = await fetch('https://api.ipify.org?format=json'); out.outboundIpv4 = (await r.json()).ip; }
+  catch (e) { out.ipv4Error = e.message; }
+  // ipify dual-stack — mostra qual familia REALMENTE usamos pra hosts com IPv6
+  // (igual FACTA). Depois do fix IPv4, tem que dar o MESMO IPv4 (nao um IPv6).
+  try { const r = await fetch('https://api64.ipify.org?format=json'); out.dualStackSeenAs = (await r.json()).ip; }
+  catch (e) { out.dualStackError = e.message; }
+  res.json(out);
 });
 
 // Relay principal — so aceita paths que comecam com "/" e vao pra FACTA
