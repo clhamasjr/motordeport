@@ -517,6 +517,63 @@ async function cancelarSimulacao(proposalUuid) {
   };
 }
 
+// ─── FLUXO REAL (máquina de passos) — o que o painel usa de verdade ──
+// START_DRAFT → TERMS_AND_CONDITIONS → GET_BALANCE (margem). Só precisa
+// cpf/telefone/email; nome/nascimento/gênero VÊM do GET_BALANCE.
+// POST /proposal/api/v1/process/CONSIGNADO_CLT/{PROVIDER}/steps/{STEP}[/{uuid}]
+async function simularStep({ cpf, telefone, email, provider }) {
+  const cpfLimpo = onlyDigits(cpf);
+  if (cpfLimpo.length !== 11) return { sucesso: false, error: 'CPF invalido (11 digitos)' };
+  const prov = (provider || 'CELCOIN').toUpperCase();
+  const base = `/proposal/api/v1/process/CONSIGNADO_CLT/${prov}/steps`;
+  const passos = {};
+
+  // 1) START_DRAFT — cria a proposta
+  const draft = await unnoCall(`${base}/START_DRAFT`, 'POST', {
+    cpf: cpfLimpo,
+    phone: onlyDigits(telefone || ''),
+    email: (email && email.includes('@')) ? email : `${cpfLimpo}@lead.lhamascred.com.br`,
+  });
+  const proposalUuid = draft.data?.proposal_uuid;
+  passos.START_DRAFT = { http: draft.status, status: draft.data?.status };
+  if (!draft.ok || !proposalUuid) {
+    return { sucesso: false, etapa: 'START_DRAFT', error: draft.data?.message || `HTTP ${draft.status}`, passos, _raw: draft.data };
+  }
+
+  // 2) TERMS_AND_CONDITIONS — autoriza o termo (vira AGREED)
+  const termo = await unnoCall(`${base}/TERMS_AND_CONDITIONS/${proposalUuid}`, 'POST', {});
+  passos.TERMS = { http: termo.status, termStatus: termo.data?.response?.status };
+
+  // 3) GET_BALANCE — a margem
+  const bal = await unnoCall(`${base}/GET_BALANCE/${proposalUuid}`, 'POST', {});
+  passos.GET_BALANCE = { http: bal.status };
+  const link0 = bal.data?.response?.links?.[0];
+  const prod0 = link0?.products?.[0];
+  const meta = link0?.meta_data || {};
+  if (!bal.ok || !link0) {
+    return { sucesso: false, etapa: 'GET_BALANCE', proposalUuid, error: bal.data?.message || `HTTP ${bal.status}`, passos, _raw: bal.data };
+  }
+  const margem = Number(prod0?.available_balance) || 0;
+
+  return {
+    sucesso: true,
+    etapa: 'MARGEM_OK',
+    proposalUuid,
+    margem,
+    balanceCheckId: prod0?.balance_check_id || null,
+    elegivel: margem > 0,
+    empregador: link0?.employer?.name || null,
+    empregadorDoc: link0?.employer?.document || null,
+    baseMargem: Number(meta.base_margin_value) || 0,
+    renda: Number(meta.total_earnings) || 0,
+    dataNascimento: meta.birth_date || null,
+    genero: meta.gender?.description || null,
+    nomeMae: meta.mother_name || null,
+    linkPainel: `https://app.unnotech.com.br/loans/clt/${proposalUuid}`,
+    passos,
+  };
+}
+
 // ══════════════════════════════════════════════════════════════
 // HANDLER
 // ══════════════════════════════════════════════════════════════
@@ -590,6 +647,17 @@ export default async function handler(req) {
     if (action === 'listarTabelas') {
       const r = await unnoCall('/proposal/api/v1/tables/clt', 'GET');
       return jsonResp({ success: r.ok, ...r.data }, r.status, req);
+    }
+
+    // Fluxo REAL de passos (START_DRAFT → TERMS → GET_BALANCE = margem)
+    if (action === 'simularStep') {
+      const out = await simularStep({
+        cpf: body.cpf,
+        telefone: body.telefone || body.phone,
+        email: body.email,
+        provider: body.provedor || body.provider, // CELCOIN (default) | CREDSPOT | V8 | QITECH
+      });
+      return jsonResp(out, 200, req);
     }
 
     // ─── DEBUG TEMP: mostra dado cru do Unno pra entender por que a proposta
