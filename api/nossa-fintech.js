@@ -750,6 +750,13 @@ export default async function handler(req) {
         employer_document: employerDoc,
       };
 
+      // PREP1: para na margem (auth+enrollment+margem = poucas chamadas).
+      // O resto (rebates+simular+digitar) vai em chamadas separadas pelas
+      // actions individuais — evita 504 no gateway.
+      if (modo === 'prep1') {
+        return jsonResp({ success: true, modo, marginKey, employerDoc, cliente: dadosCliente, passos }, 200, req);
+      }
+
       // 5) Rebates → cod_tabela (escolhe a tabela cuja faixa cobre o valor)
       const rb = add('list-rebates', await listarRebates(marginKey));
       const tabelas = Array.isArray(rb.data?.data) ? rb.data.data : (Array.isArray(rb.data) ? rb.data : []);
