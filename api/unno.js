@@ -582,32 +582,37 @@ async function simularStep({ cpf, telefone, email, provider }) {
   // 5) VALIDATE_CREDIT_RULES_VALORA
   const valora = await unnoCall(`${base}/VALIDATE_CREDIT_RULES_VALORA/${proposalUuid}`, 'POST', {});
   passos.VALORA = { http: valora.status, status: valora.data?.status };
-  // 6) VALIDATE_CREDIT_RULES_GUARDIAN — polla até sair de "processing"
-  let guardian = null, gstatus = null, pre = {};
-  for (let i = 0; i < 6; i++) {
+  // 6) VALIDATE_CREDIT_RULES_GUARDIAN — polla até o PASSO fechar (COMPLETED).
+  // NÃO parar no pre_filter "approved": o veredito final vem depois, no
+  // credit_analysis_response / response.status.
+  let guardian = null, gstatus = null;
+  for (let i = 0; i < 8; i++) {
     guardian = await unnoCall(`${base}/VALIDATE_CREDIT_RULES_GUARDIAN/${proposalUuid}`, 'POST', {});
     gstatus = guardian.data?.status;
-    pre = guardian.data?.payload?.guardian?.pre_filter_response || {};
-    if (gstatus === 'COMPLETED' || gstatus === 'FAILED' || (pre.status && pre.status !== 'processing')) break;
+    if (gstatus === 'COMPLETED' || gstatus === 'FAILED') break;
     await new Promise((r) => setTimeout(r, 1500));
   }
-  passos.GUARDIAN = { http: guardian?.status, status: gstatus, pre: pre.status };
   const currentStep = guardian?.data?.current_step_code;
+  const gResp = guardian?.data?.response || {};
+  const gGuard = guardian?.data?.payload?.guardian || {};
+  const credit = gGuard.credit_analysis_response || {};
+  // veredito FINAL (response.status é o autoritativo; cai pra credit/pre)
+  const finalStatus = String(gResp.status || credit.status || gGuard.pre_filter_response?.status || '').toLowerCase();
+  const motivo = gResp.reason_rejected?.message || credit.reason_rejected?.message || '';
+  passos.GUARDIAN = { http: guardian?.status, status: gstatus, verdict: finalStatus };
 
-  // Veredito
-  if (pre.status === 'rejected') {
-    const motivo = pre.reason_rejected?.message || 'Reprovado na análise de crédito';
-    const ehErroInfra = /not found|404|erro ao consultar|workflow|internal|timeout/i.test(motivo);
+  if (finalStatus === 'approved') {
+    return { sucesso: true, etapa: 'APROVADO_ANALISE', elegivel: true, aprovado: true, currentStep, ...info };
+  }
+  if (finalStatus === 'rejected') {
+    // Erro de infra da Unno (Guardian caiu) ≠ reprovação de crédito real.
+    const ehErroInfra = /guardian|integra|análise de crédito do fundo|analise de credito do fundo|not found|404|timeout|internal|erro na/i.test(motivo);
     return {
       sucesso: true,
       etapa: ehErroInfra ? 'ERRO_ANALISE' : 'REPROVADO',
       elegivel: true, aprovado: false, motivoReprovacao: motivo, ...info,
     };
   }
-  if (gstatus === 'COMPLETED' && pre.status && pre.status !== 'rejected') {
-    return { sucesso: true, etapa: 'APROVADO_ANALISE', elegivel: true, aprovado: true, currentStep, ...info };
-  }
-  // Guardian ainda processando / status indefinido
   return { sucesso: true, etapa: 'EM_ANALISE', elegivel: true, aprovado: false, currentStep, ...info };
 }
 
