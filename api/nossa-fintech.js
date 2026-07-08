@@ -709,8 +709,8 @@ export default async function handler(req) {
 
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-      // 1) Bancarizadora
-      add('banking-institutions', await nfCall('/clt-loan/v1/banking-institutions', 'GET'));
+      // (banking-institutions omitido de propósito — já sabemos QITECH;
+      //  economiza uma ida à API pra caber no timeout do gateway)
 
       // 2) Autorização — trata 404 "não encontrada" como NÃO autorizado.
       let ca = add('check-authorization', await checkAutorizacao(cpf, sType));
