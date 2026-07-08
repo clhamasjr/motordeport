@@ -897,7 +897,10 @@ async function processarUnno(id, cpf, auth, secret) {
   // cada re-tentativa criava termo duplicado no painel da Unno (lixo).
   const { data: rowAtu } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
   const estadoUnno = rowAtu?.bancos?.unno || {};
-  const termUuidExistente = estadoUnno.termUuid;
+  // Fluxo antigo (termo+authorize) desativado — SEMPRE usa a máquina de passos
+  // (simularStep). Deixa null pra não cair no branch legado abaixo.
+  const termUuidExistente = null;
+  void estadoUnno;
 
   await patchBanco(id, 'unno', { status: 'processando' });
 
@@ -981,37 +984,26 @@ async function processarUnno(id, cpf, auth, secret) {
     return;
   }
 
-  // ── Primeira execucao: precisa dados completos pra criar termo ─
-  // Orcamento de tempo: 6s aqui + 15s callApi + ~2s DB < 25s do gateway edge.
+  // ── Fluxo REAL por passos (START_DRAFT → TERMS → GET_BALANCE=margem) ──
+  // Só precisa telefone; nome/nascimento/gênero vêm do próprio GET_BALANCE.
   const cli = await aguardarCliente(id, 6000);
-  if (!cli || !cli.nome || !cli.dataNascimento) {
+  const telefone = cli?.telefones?.[0]?.completo || null;
+  if (!telefone) {
     await patchBanco(id, 'unno', {
       status: 'falha',
-      mensagem: 'Faltam nome ou data de nascimento — Unno exige pra criar termo',
-      retryable: true,
-    });
-    return;
-  }
-  if (!cli.telefones?.[0]?.completo) {
-    await patchBanco(id, 'unno', {
-      status: 'falha',
-      mensagem: 'Falta telefone do cliente — Unno exige pra criar termo. Use "Completar Dados".',
+      mensagem: 'Falta telefone do cliente — Unno exige pra iniciar. Use "Completar Dados".',
       retryable: true,
     });
     return;
   }
 
-  // Cria termo NOVO + auto-autz + polling inicial
   const r = await callApi('/api/unno', {
-    action: 'simulacaoCompleta',
+    action: 'simularStep',
     cpf,
-    nome: cli.nome,
-    dataNascimento: cli.dataNascimento,
-    telefone: cli.telefones[0].completo,
-    email: cli.emails?.[0] || null,
-    sexo: cli.sexo || 'M',
-    provedor: 'qitech',
-  }, auth, secret, 15000);
+    telefone,
+    email: cli?.emails?.[0] || null,
+    provedor: 'CELCOIN',
+  }, auth, secret, 25000);
 
   const u = r.data || {};
   if (!r.ok || !u.sucesso) {
@@ -1024,82 +1016,37 @@ async function processarUnno(id, cpf, auth, secret) {
     return;
   }
 
-  // APROVADO OU disponível (proposta com margem — em análise no painel)
-  if (u.etapa === 'APROVADO' || u.etapa === 'DISPONIVEL') {
+  // MARGEM_OK — proposta criada e margem obtida no GET_BALANCE.
+  const linkPainel = u.linkPainel || null;
+  const dadosUnno = {
+    margemDisponivel: u.margem || 0,
+    margemBase: u.baseMargem || 0,
+    renda: u.renda || 0,
+    empregador: u.empregador || null,
+    empregadorDoc: u.empregadorDoc || null,
+    proposalUuid: u.proposalUuid || null,
+    balanceCheckId: u.balanceCheckId || null,
+    linkPainel,
+  };
+
+  if (u.elegivel && u.margem > 0) {
     await patchBanco(id, 'unno', {
       status: 'ok',
       disponivel: true,
-      mensagem: u.mensagem,
-      portalUrl: u.linkPainel || null,
-      dados: {
-        margemDisponivel: u.margem?.disponivel || 0,
-        margemBase: u.margem?.base || 0,
-        proposalUuid: u.proposalUuid,
-        termUuid: u.termUuid,
-        bancoProvedor: u.bancoProvedor,
-        linkPainel: u.linkPainel,
-        statusProposta: u.statusProposta || null,
-      },
+      mensagem: `Margem disponível R$ ${Number(u.margem).toFixed(2)}` + (u.empregador ? ` — ${u.empregador}` : ''),
+      portalUrl: linkPainel,
+      dados: dadosUnno,
     });
-    return;
-  }
-
-  // RECUSADO
-  if (u.etapa === 'RECUSADO') {
+  } else {
+    // Sem margem = resultado válido (não é erro).
     await patchBanco(id, 'unno', {
-      status: 'falha',
+      status: 'ok',
       disponivel: false,
-      mensagem: u.mensagem,
-      retryable: false, // motor recusou — refazer nao adianta
-      dados: {
-        proposalUuid: u.proposalUuid,
-        termUuid: u.termUuid,
-        bancoProvedor: u.bancoProvedor,
-        linkPainel: u.linkPainel,
-        motivoRecusa: u.motivoRecusa,
-      },
+      mensagem: 'Sem margem disponível' + (u.empregador ? ` — ${u.empregador}` : ''),
+      portalUrl: linkPainel,
+      dados: dadosUnno,
     });
-    return;
   }
-
-  // EM_ANALISE / AUTORIZADO_EM_ANALISE — polling estourou, mas tem termUuid.
-  // Action='status' faz auto-re-trigger automaticamente — operador nao
-  // precisa fazer nada, sistema continua sozinho.
-  if (u.etapa === 'EM_ANALISE' || u.etapa === 'AUTORIZADO_EM_ANALISE') {
-    await patchBanco(id, 'unno', {
-      status: 'manual_aguardando',
-      disponivel: false,
-      manual: false, // operador NAO precisa fazer nada
-      portalUrl: u.linkPainel || 'https://app.unnotech.com.br/loans/clt/simulations',
-      mensagem: '⏳ Unno analisando — aguarde...',
-      retryable: false, // auto-re-trigger no status
-      termUuid: u.termUuid,
-      dados: {
-        proposalUuid: u.proposalUuid,
-        bancoProvedor: u.bancoProvedor,
-        linkPainel: u.linkPainel,
-      },
-    });
-    return;
-  }
-
-  if (u.etapa === 'CANCELADO') {
-    await patchBanco(id, 'unno', {
-      status: 'falha',
-      mensagem: u.mensagem,
-      retryable: false,
-      dados: { proposalUuid: u.proposalUuid, termUuid: u.termUuid },
-    });
-    return;
-  }
-
-  // Caso impossivel — log defensivo
-  await patchBanco(id, 'unno', {
-    status: 'falha',
-    mensagem: `Etapa inesperada: ${u.etapa}`,
-    retryable: true,
-    _raw_response: u,
-  });
 }
 
 // ─── A NOSSA FINTECH (Spixii) — multi-bancarizadora QITECH + UY3 ──
