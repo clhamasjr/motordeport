@@ -692,6 +692,12 @@ export default async function handler(req) {
       const r = await getOperationDetails(body.debtKey || body.debt_key);
       return jsonResp({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
     }
+    if (action === 'listarOperacoes') {
+      const cfg = getConfig();
+      const qs = `?service_type=${encodeURIComponent(cfg.SERVICE_TYPE)}`;
+      const r = await nfCall('/clt-loan/v1/get-operations' + qs, 'GET');
+      return jsonResp({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
+    }
 
     // ─── CERTIFICAÇÃO HOMOLOG (o que a Spixii pediu p/ liberar produção) ──
     // Roda o fluxo INTEIRO via API e loga cada passo. modo:'cancelar' faz
