@@ -228,6 +228,49 @@ async function cancelarProposta(debtKey) {
   });
 }
 
+// ─── ACTION: simularEmprestimo (simulate-loan) ────────────────
+// Doc: POST /clt-loan/v1/simulate-loan {margin_key, simulation_type
+// (Payment|Liquid), employer_document, requested_amount, cod_tabela,
+// service_type} → schedule[] + simulation_key.
+async function simularEmprestimo({ marginKey, employerDocument, codTabela, requestedAmount, installmentValue, simulationType, serviceType }) {
+  const cfg = getConfig();
+  const body = {
+    margin_key: marginKey,
+    employer_document: onlyDigits(employerDocument || ''),
+    cod_tabela: codTabela,
+    simulation_type: simulationType || (installmentValue ? 'Payment' : 'Liquid'),
+    service_type: serviceType || cfg.SERVICE_TYPE,
+  };
+  if (installmentValue) body.installment_value = installmentValue;
+  if (requestedAmount) body.requested_amount = requestedAmount;
+  return await nfCall('/clt-loan/v1/simulate-loan', 'POST', body);
+}
+
+// ─── ACTION: submeterProposta (submit-proposal = digitação) ───
+// Doc: POST /clt-loan/v1/submit-proposal {simulation_key, service_type,
+// client{...}}. Em homolog o cliente é JOÃO SILVA — dados podem ser dummy.
+async function submeterProposta({ simulationKey, cpf, client, serviceType }) {
+  const cfg = getConfig();
+  const c = client || {};
+  return await nfCall('/clt-loan/v1/submit-proposal', 'POST', {
+    simulation_key: simulationKey,
+    service_type: serviceType || cfg.SERVICE_TYPE,
+    client: {
+      document_number: onlyDigits(cpf || ''),
+      bank_account: c.bank_account || { pix_key: onlyDigits(cpf || ''), pix_key_type: 'cpf' },
+      address: c.address || { zip_code: '18010000', street: 'Rua Teste', number: '100', complement: '', district: 'Centro', city: 'Sorocaba', state: 'SP' },
+      id_document: c.id_document || { type: 'RG', number: '000000000', issuer: 'SSP', issuer_state: 'SP' },
+      ...c,
+    },
+  });
+}
+
+// ─── ACTION: detalhes da operação (acompanhar até Desembolsado) ─
+async function getOperationDetails(debtKey) {
+  const cfg = getConfig();
+  return await nfCall(`/clt-loan/v1/get-operation-details/${debtKey}?service_type=${encodeURIComponent(cfg.SERVICE_TYPE)}`, 'GET');
+}
+
 // ─── ACTION PRINCIPAL: consultarAprovacao ─────────────────────
 // Fluxo end-to-end pro motor de consulta CLT:
 //   1. check-authorization → status do consentimento
@@ -606,8 +649,96 @@ export default async function handler(req) {
       return jsonResp({ success: r.ok, ...r.data }, 200, req);
     }
 
+    // Passos individuais (pra iterar a certificação)
+    if (action === 'simular') {
+      const r = await simularEmprestimo({
+        marginKey: body.marginKey || body.margin_key,
+        employerDocument: body.employerDocument || body.employer_document,
+        codTabela: body.codTabela || body.cod_tabela,
+        requestedAmount: body.requestedAmount || body.requested_amount || body.valor,
+        installmentValue: body.installmentValue || body.installment_value,
+        simulationType: body.simulationType,
+      });
+      return jsonResp({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
+    }
+    if (action === 'digitar' || action === 'submeter') {
+      const r = await submeterProposta({
+        simulationKey: body.simulationKey || body.simulation_key,
+        cpf: body.cpf, client: body.client,
+      });
+      return jsonResp({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
+    }
+    if (action === 'statusOperacao') {
+      const r = await getOperationDetails(body.debtKey || body.debt_key);
+      return jsonResp({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
+    }
+
+    // ─── CERTIFICAÇÃO HOMOLOG (o que a Spixii pediu p/ liberar produção) ──
+    // Roda o fluxo INTEIRO via API e loga cada passo. modo:'cancelar' faz
+    // criar→cancelar; modo:'desembolsar' (default) segue até o fim.
+    if (action === 'certificar') {
+      const cfg = getConfig();
+      const sType = cfg.SERVICE_TYPE;
+      const cpf = onlyDigits(body.cpf || '');
+      const nome = body.nome || 'JOAO SILVA';
+      const telefone = onlyDigits(body.telefone || '11999999999');
+      const valor = parseFloat(body.valor || 300) || 300;
+      const modo = body.modo || 'desembolsar';
+      const passos = [];
+      const add = (p, r, extra) => { passos.push({ passo: p, http: r?.status, ok: r?.ok, ...(extra || {}), _raw: r?.data }); return r; };
+
+      // 1) Bancarizadora
+      add('banking-institutions', await nfCall('/clt-loan/v1/banking-institutions', 'GET'));
+      // 2) Autorização (homolog: auto-autz)
+      let ca = add('check-authorization', await checkAutorizacao(cpf, sType));
+      let status = ca.data?.data?.status;
+      let link = ca.data?.data?.authorization_link;
+      if (status === 'NOT_AUTHORIZED') {
+        const rq = add('request-authorization', await requestAutorizacao({ cpf, nome, telefone, serviceType: sType }));
+        link = rq.data?.data?.authorization_link || link;
+        status = rq.data?.data?.status || 'PENDING';
+      }
+      if (status === 'PENDING') {
+        const uuid = extrairUuidLink(link);
+        if (uuid) add('authorize', await autorizarConsulta(uuid));
+        const rc = add('check-authorization#2', await checkAutorizacao(cpf, sType));
+        status = rc.data?.data?.status || status;
+      }
+      // 3) Enrollment → vínculo
+      const enr = add('check-employee-enrollment', await checkEnrollment(cpf, sType));
+      const v = (Array.isArray(enr.data?.data) ? enr.data.data[0] : null) || {};
+      // 4) Margem
+      const mg = add('get-margin', await getMargem({ cpf, employerDocument: v.employer_cnpj, registration: v.work_registration, serviceType: sType }));
+      const m = mg.data?.data || {};
+      const marginKey = m.margin_key;
+      const employerDoc = m.employer?.document || v.employer_cnpj;
+      // 5) Rebates → cod_tabela
+      const rb = add('list-rebates', await listarRebates(marginKey));
+      const tabelas = Array.isArray(rb.data?.data) ? rb.data.data : (Array.isArray(rb.data) ? rb.data : []);
+      const tab = tabelas[0] || {};
+      const codTabela = tab.cod_tabela || tab.rebate_code || tab.code || tab.id;
+      // 6) Simular
+      const sim = add('simulate-loan', await simularEmprestimo({ marginKey, employerDocument: employerDoc, codTabela, requestedAmount: valor, serviceType: sType }));
+      const simKey = sim.data?.data?.simulation_key || sim.data?.simulation_key || sim.data?.data?.key;
+      // 7) Submeter (digitar)
+      const sub = add('submit-proposal', await submeterProposta({ simulationKey: simKey, cpf, client: body.client, serviceType: sType }));
+      const debtKey = sub.data?.data?.debt_key || sub.data?.debt_key || sub.data?.data?.num_contrato;
+      // 8) Cancelar OU acompanhar até desembolsado
+      if (modo === 'cancelar') {
+        if (debtKey) add('cancel-proposal', await cancelarProposta(debtKey));
+      } else if (debtKey) {
+        for (let i = 0; i < 4; i++) {
+          const op = add(`get-operation-details#${i + 1}`, await getOperationDetails(debtKey));
+          const st = String(op.data?.data?.status || op.data?.status || '').toLowerCase();
+          if (/desembol|disburs|paid|integrat|finaliz/.test(st) || /reject|cancel|erro/.test(st)) break;
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
+      return jsonResp({ success: true, modo, marginKey, employerDoc, codTabela, simKey, debtKey, passos }, 200, req);
+    }
+
     return jsonError(
-      'Action invalida. Validas: test, consultarAprovacao, enviarSms, cancelarProposta, listarRebates',
+      'Action invalida. Validas: test, consultarAprovacao, enviarSms, cancelarProposta, listarRebates, simular, digitar, statusOperacao, certificar',
       400, req
     );
   } catch (e) {
