@@ -314,9 +314,10 @@ export default async function handler(req) {
       try {
         const tr = await factaFetch('/gera-token', { headers: { 'Authorization': cfg.AUTH } });
         out.tokenStatus = tr.status;
-        out.tokenCfRay = tr.headers.get('cf-ray');
-        out.tokenCfMitigated = tr.headers.get('cf-mitigated');
-        out.tokenServer = tr.headers.get('server');
+        // headers repassados pelo proxy (x-upstream-*) = os do Cloudflare da FACTA
+        out.upstreamCfRay = tr.headers.get('x-upstream-cf-ray') || null;
+        out.upstreamCfMitigated = tr.headers.get('x-upstream-cf-mitigated') || null;
+        out.upstreamServer = tr.headers.get('x-upstream-server') || null;
         out.tokenBody = (await tr.text()).substring(0, 250);
       } catch (e) { out.tokenError = e.message; }
       return j(out, 200, req);

@@ -90,12 +90,20 @@ app.post('/relay', async (req, res) => {
   const targetUrl = base + path;
   const fwdHeaders = { ...headers };
   if (contentType) fwdHeaders['Content-Type'] = contentType;
-  // Headers de navegador padrao pra bypass Cloudflare bot detection
+  // Headers COMPLETOS de navegador Chrome pra passar bot-management do Cloudflare
   if (!fwdHeaders['User-Agent'] && !fwdHeaders['user-agent']) {
     fwdHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   }
   if (!fwdHeaders['Accept']) fwdHeaders['Accept'] = 'application/json, text/plain, */*';
   if (!fwdHeaders['Accept-Language']) fwdHeaders['Accept-Language'] = 'pt-BR,pt;q=0.9,en;q=0.8';
+  if (!fwdHeaders['Accept-Encoding']) fwdHeaders['Accept-Encoding'] = 'gzip, deflate, br';
+  // Client-hints (o principal sinal "sou Chrome de verdade" que o CF checa)
+  if (!fwdHeaders['sec-ch-ua']) fwdHeaders['sec-ch-ua'] = '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"';
+  if (!fwdHeaders['sec-ch-ua-mobile']) fwdHeaders['sec-ch-ua-mobile'] = '?0';
+  if (!fwdHeaders['sec-ch-ua-platform']) fwdHeaders['sec-ch-ua-platform'] = '"Windows"';
+  if (!fwdHeaders['sec-fetch-dest']) fwdHeaders['sec-fetch-dest'] = 'empty';
+  if (!fwdHeaders['sec-fetch-mode']) fwdHeaders['sec-fetch-mode'] = 'cors';
+  if (!fwdHeaders['sec-fetch-site']) fwdHeaders['sec-fetch-site'] = 'same-origin';
   // Nao repassa hop-by-hop
   delete fwdHeaders.Host;
   delete fwdHeaders.host;
@@ -115,6 +123,10 @@ app.post('/relay', async (req, res) => {
     res.status(r.status);
     const ct = r.headers.get('content-type');
     if (ct) res.set('Content-Type', ct);
+    // Repassa headers de diagnostico do Cloudflare da FACTA (pra sabermos o tipo de bloqueio)
+    res.set('x-upstream-cf-ray', r.headers.get('cf-ray') || '');
+    res.set('x-upstream-cf-mitigated', r.headers.get('cf-mitigated') || '');
+    res.set('x-upstream-server', r.headers.get('server') || '');
     res.send(text);
   } catch (e) {
     console.error(`[${new Date().toISOString()}] ${method} ${path} FAIL:`, e.message);
