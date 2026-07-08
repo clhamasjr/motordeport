@@ -267,8 +267,8 @@ function extrairMargemProposta(p) {
 }
 
 async function verificarStatus({ termUuid, cpf }) {
-  // 1) Status do termo
-  const term = await unnoCall(`/auth/api/v1/terms/latest/${termUuid}`, 'GET');
+  // 1) Status do termo (endpoint correto é /terms/{uuid} — /latest/{uuid} da 404)
+  const term = await unnoCall(`/auth/api/v1/terms/${termUuid}`, 'GET');
   if (!term.ok) {
     return {
       etapa: 'ERRO',
