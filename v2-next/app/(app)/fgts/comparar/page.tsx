@@ -22,6 +22,7 @@ import { formatBRL, formatCpf, formatDateBR } from '@/lib/utils';
 import {
   useFintechFgtsSaldo, useFactaFgtsSaldo,
   useV8FgtsIniciarConsulta, useV8FgtsSaldo, useV8FgtsTabelas, useV8FgtsSimular,
+  useNovoSaqueFgtsIniciar, useNovoSaqueFgtsContrato,
   type V8FgtsProvider,
 } from '@/hooks/use-fgts';
 import { useFinantoFgtsCriarSimulacao, useFinantoFgtsSimulacao } from '@/hooks/use-finanto';
@@ -54,7 +55,7 @@ function lerPilha(): ConsultaFgts[] {
 }
 
 // ── Resultado que cada linha reporta pro card (pra achar o melhor) ──
-type Fonte = 'fintech' | 'v8' | 'finanto' | 'facta';
+type Fonte = 'fintech' | 'v8' | 'finanto' | 'facta' | 'novosaque';
 interface Resultado {
   fonte: Fonte;
   label: string;
@@ -346,6 +347,60 @@ function LinhaFacta({ cpf, onResult }: { cpf: string; onResult: (r: Resultado) =
 }
 
 // ════════════════════════════════════════════════════════════════════
+// LINHA NOVOSAQUE — inicia simulação + polling do contrato → líquido
+// ════════════════════════════════════════════════════════════════════
+function LinhaNovoSaque({ cpf, onResult }: { cpf: string; onResult: (r: Resultado) => void }) {
+  const iniciar = useNovoSaqueFgtsIniciar();
+  const [tid, setTid] = useState<string | null>(null);
+  const contrato = useNovoSaqueFgtsContrato(tid);
+  const disparado = useRef(false);
+  const [erroIniciar, setErroIniciar] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (disparado.current || !cpf) return;
+    disparado.current = true;
+    iniciar.mutateAsync(cpf)
+      .then((r) => setTid(r.transactionId))
+      .catch((e: Error) => setErroIniciar(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cpf]);
+
+  const liquido = contrato.data?.simulacao?.liquido ?? null;
+  const ofertaPronta = !!contrato.data?.ofertaPronta && (liquido ?? 0) > 0;
+  const falhou = !!erroIniciar || !!contrato.data?.falhou;
+
+  useEffect(() => {
+    if (falhou) onResult({ fonte: 'novosaque', label: 'NovoSaque', liquido: null, tipoValor: null, status: 'indisponivel' });
+    else if (ofertaPronta) onResult({ fonte: 'novosaque', label: 'NovoSaque', liquido, tipoValor: 'líquido', status: 'ok' });
+    else onResult({ fonte: 'novosaque', label: 'NovoSaque', liquido: null, tipoValor: null, status: 'processando' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [falhou, ofertaPronta, liquido]);
+
+  const processando = !falhou && !ofertaPronta;
+
+  return (
+    <Linha
+      icon={<PiggyBank className="size-4 text-cyan-400 shrink-0" />}
+      nome="NovoSaque"
+      sub="Sandbox"
+    >
+      {processando ? (
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" /> consultando…</span>
+      ) : falhou ? (
+        <span className="text-xs text-red-400 flex items-center gap-1 max-w-[220px] truncate" title={erroIniciar || contrato.data?.summaryStatus || ''}>
+          <AlertCircle className="size-3.5 shrink-0" /> indisponível
+        </span>
+      ) : (
+        <div className="text-right">
+          <div className="text-sm font-bold text-primary">{formatBRL(liquido || 0)}</div>
+          <div className="text-[9px] text-muted-foreground uppercase">líquido</div>
+        </div>
+      )}
+    </Linha>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
 // CARD DE CONSULTA (um por CPF) — cabeçalho + linhas + rodapé
 // ════════════════════════════════════════════════════════════════════
 function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClose: () => void }) {
@@ -363,7 +418,7 @@ function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClo
   }, [resultados]);
 
   const processando = Object.values(resultados).some((r) => r?.status === 'processando')
-    || Object.keys(resultados).length < 4;
+    || Object.keys(resultados).length < 5;
 
   const telDigits = consulta.telefone.replace(/\D/g, '');
 
@@ -418,6 +473,7 @@ function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClo
         <div>
           <LinhaFintech cpf={consulta.cpf} onResult={onResult} />
           <LinhaFacta cpf={consulta.cpf} onResult={onResult} />
+          <LinhaNovoSaque cpf={consulta.cpf} onResult={onResult} />
           <LinhaV8 cpf={consulta.cpf} onResult={onResult} />
           <LinhaFinanto cpf={consulta.cpf} nome={consulta.nome} nascimento={consulta.nascimento} onResult={onResult} />
         </div>

@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 const FINTECH = '/api/fintechdocorban';
 const V8 = '/api/v8';
 const FACTA = '/api/facta';
+const NOVOSAQUE = '/api/novosaque';
 
 // ══════════════════════════════════════════════════════════════════
 // FINTECH DO CORBAN
@@ -92,6 +93,58 @@ export function useFactaFgtsSaldo() {
       return await api<FactaFgtsSaldo>(FACTA, { action: 'fgtsSaldo', cpf: c });
     },
     onError: (err: Error) => toast.error(err.message || 'Erro na consulta FACTA'),
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// NOVOSAQUE
+// ══════════════════════════════════════════════════════════════════
+
+/** Inicia a simulação FGTS na NovoSaque → retorna transactionId (async). */
+export function useNovoSaqueFgtsIniciar() {
+  return useMutation({
+    mutationFn: async (cpf: string) => {
+      const c = cpf.replace(/\D/g, '');
+      if (c.length !== 11) throw new Error('CPF inválido — precisa ter 11 dígitos');
+      const r = await api<{ success: boolean; transactionId: string | null; erro?: string }>(
+        NOVOSAQUE, { action: 'fgtsSimular', cpf: c },
+      );
+      if (!r.success || !r.transactionId) throw new Error(r.erro || 'Falha ao iniciar simulação NovoSaque');
+      return r;
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}
+
+export interface NovoSaqueContrato {
+  success: boolean;
+  transactionId?: string;
+  stage?: string | null;
+  summaryStatus?: string | null;
+  ofertaPronta?: boolean;
+  falhou?: boolean;
+  contractLink?: string | null;
+  simulacao?: {
+    simulationId?: string | null;
+    liquido?: number | null;
+    parcelas?: number | null;
+    taxaMensal?: number | null;
+  } | null;
+}
+
+/** Busca o contrato/status NovoSaque. Faz polling até a oferta ficar pronta. */
+export function useNovoSaqueFgtsContrato(transactionId?: string | null) {
+  return useQuery({
+    queryKey: ['novosaque', 'contrato', transactionId],
+    queryFn: async () => {
+      return await api<NovoSaqueContrato>(NOVOSAQUE, { action: 'fgtsContrato', transactionId });
+    },
+    enabled: !!transactionId,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      if (d?.ofertaPronta || d?.falhou) return false;
+      return 6_000;
+    },
   });
 }
 
