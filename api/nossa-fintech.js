@@ -261,7 +261,7 @@ async function submeterProposta({ simulationKey, cpf, dados, telefone, serviceTy
     profession: d.profession || d.profissao || 'Analista',
     nationality: d.nationality || 'Brasileira',
     marital_status: d.marital_status || 'single',
-    gender: d.gender || (d.sexo === 'F' ? 'female' : 'male'),
+    gender: d.gender || (d.sexo === 'F' ? 'FEMALE' : 'MALE'),
     email: d.email || `${onlyDigits(cpf || '')}@lead.lhamascred.com.br`,
     country_code: d.country_code || '55',
     area_code: (tel.length >= 10 ? tel.slice(0, 2) : '11'),
@@ -272,6 +272,7 @@ async function submeterProposta({ simulationKey, cpf, dados, telefone, serviceTy
     neighborhood: d.neighborhood || 'Centro',
     city: d.city || 'Sorocaba',
     state: d.state || 'SP',
+    bank_account: d.bank_account || { pix_key: onlyDigits(cpf || ''), pix_key_type: 'CPF' },
     ...(d.clientExtra || {}),
   };
   return await nfCall('/clt-loan/v1/submit-proposal', 'POST', {
