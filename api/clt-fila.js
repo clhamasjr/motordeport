@@ -1016,8 +1016,10 @@ async function processarUnno(id, cpf, auth, secret) {
     return;
   }
 
-  // MARGEM_OK — proposta criada e margem obtida no GET_BALANCE.
+  // Veredito REAL: margem + resultado da análise de crédito (não basta margem).
   const linkPainel = u.linkPainel || null;
+  const margemFmt = `R$ ${Number(u.margem || 0).toFixed(2)}`;
+  const emp = u.empregador ? ` — ${u.empregador}` : '';
   const dadosUnno = {
     margemDisponivel: u.margem || 0,
     margemBase: u.baseMargem || 0,
@@ -1026,25 +1028,43 @@ async function processarUnno(id, cpf, auth, secret) {
     empregadorDoc: u.empregadorDoc || null,
     proposalUuid: u.proposalUuid || null,
     balanceCheckId: u.balanceCheckId || null,
+    motivoReprovacao: u.motivoReprovacao || null,
     linkPainel,
   };
 
-  if (u.elegivel && u.margem > 0) {
+  if (u.etapa === 'SEM_MARGEM') {
     await patchBanco(id, 'unno', {
-      status: 'ok',
-      disponivel: true,
-      mensagem: `Margem disponível R$ ${Number(u.margem).toFixed(2)}` + (u.empregador ? ` — ${u.empregador}` : ''),
-      portalUrl: linkPainel,
-      dados: dadosUnno,
+      status: 'ok', disponivel: false,
+      mensagem: 'Sem margem disponível' + emp,
+      portalUrl: linkPainel, dados: dadosUnno,
+    });
+  } else if (u.etapa === 'APROVADO_ANALISE') {
+    await patchBanco(id, 'unno', {
+      status: 'ok', disponivel: true,
+      mensagem: `Aprovado na análise — margem ${margemFmt}` + emp,
+      portalUrl: linkPainel, dados: dadosUnno,
+    });
+  } else if (u.etapa === 'REPROVADO') {
+    await patchBanco(id, 'unno', {
+      status: 'falha', disponivel: false,
+      mensagem: `Reprovado na análise: ${u.motivoReprovacao || 'sem detalhe'}`,
+      retryable: false, // reprovação real — refazer não muda
+      portalUrl: linkPainel, dados: dadosUnno,
+    });
+  } else if (u.etapa === 'ERRO_ANALISE') {
+    await patchBanco(id, 'unno', {
+      status: 'falha', disponivel: false,
+      mensagem: `Margem ${margemFmt}, mas análise indisponível (erro Unno) — re-tentar`,
+      retryable: true, // erro de infra deles — re-tentar pode passar
+      portalUrl: linkPainel, dados: dadosUnno,
     });
   } else {
-    // Sem margem = resultado válido (não é erro).
+    // EM_ANALISE — Guardian ainda processando
     await patchBanco(id, 'unno', {
-      status: 'ok',
-      disponivel: false,
-      mensagem: 'Sem margem disponível' + (u.empregador ? ` — ${u.empregador}` : ''),
-      portalUrl: linkPainel,
-      dados: dadosUnno,
+      status: 'manual_aguardando', disponivel: false, manual: false,
+      mensagem: `Margem ${margemFmt} — análise em andamento...`,
+      retryable: true,
+      portalUrl: linkPainel, dados: dadosUnno,
     });
   }
 }

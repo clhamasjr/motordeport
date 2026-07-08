@@ -554,14 +554,11 @@ async function simularStep({ cpf, telefone, email, provider }) {
     return { sucesso: false, etapa: 'GET_BALANCE', proposalUuid, error: bal.data?.message || `HTTP ${bal.status}`, passos, _raw: bal.data };
   }
   const margem = Number(prod0?.available_balance) || 0;
-
-  return {
-    sucesso: true,
-    etapa: 'MARGEM_OK',
+  const balanceCheckId = prod0?.balance_check_id || null;
+  const info = {
     proposalUuid,
     margem,
-    balanceCheckId: prod0?.balance_check_id || null,
-    elegivel: margem > 0,
+    balanceCheckId,
     empregador: link0?.employer?.name || null,
     empregadorDoc: link0?.employer?.document || null,
     baseMargem: Number(meta.base_margin_value) || 0,
@@ -572,6 +569,46 @@ async function simularStep({ cpf, telefone, email, provider }) {
     linkPainel: `https://app.unnotech.com.br/loans/clt/${proposalUuid}`,
     passos,
   };
+
+  // Sem margem: nem roda análise
+  if (margem <= 0 || !balanceCheckId) {
+    return { sucesso: true, etapa: 'SEM_MARGEM', elegivel: false, aprovado: false, ...info };
+  }
+
+  // ── Continua a análise de crédito (é o que REALMENTE aprova/reprova) ──
+  // 4) SELECT_PRODUCT
+  const sel = await unnoCall(`${base}/SELECT_PRODUCT/${proposalUuid}`, 'POST', { balance_check_id: balanceCheckId });
+  passos.SELECT_PRODUCT = { http: sel.status, status: sel.data?.status };
+  // 5) VALIDATE_CREDIT_RULES_VALORA
+  const valora = await unnoCall(`${base}/VALIDATE_CREDIT_RULES_VALORA/${proposalUuid}`, 'POST', {});
+  passos.VALORA = { http: valora.status, status: valora.data?.status };
+  // 6) VALIDATE_CREDIT_RULES_GUARDIAN — polla até sair de "processing"
+  let guardian = null, gstatus = null, pre = {};
+  for (let i = 0; i < 6; i++) {
+    guardian = await unnoCall(`${base}/VALIDATE_CREDIT_RULES_GUARDIAN/${proposalUuid}`, 'POST', {});
+    gstatus = guardian.data?.status;
+    pre = guardian.data?.payload?.guardian?.pre_filter_response || {};
+    if (gstatus === 'COMPLETED' || gstatus === 'FAILED' || (pre.status && pre.status !== 'processing')) break;
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  passos.GUARDIAN = { http: guardian?.status, status: gstatus, pre: pre.status };
+  const currentStep = guardian?.data?.current_step_code;
+
+  // Veredito
+  if (pre.status === 'rejected') {
+    const motivo = pre.reason_rejected?.message || 'Reprovado na análise de crédito';
+    const ehErroInfra = /not found|404|erro ao consultar|workflow|internal|timeout/i.test(motivo);
+    return {
+      sucesso: true,
+      etapa: ehErroInfra ? 'ERRO_ANALISE' : 'REPROVADO',
+      elegivel: true, aprovado: false, motivoReprovacao: motivo, ...info,
+    };
+  }
+  if (gstatus === 'COMPLETED' && pre.status && pre.status !== 'rejected') {
+    return { sucesso: true, etapa: 'APROVADO_ANALISE', elegivel: true, aprovado: true, currentStep, ...info };
+  }
+  // Guardian ainda processando / status indefinido
+  return { sucesso: true, etapa: 'EM_ANALISE', elegivel: true, aprovado: false, currentStep, ...info };
 }
 
 // ══════════════════════════════════════════════════════════════
