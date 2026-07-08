@@ -681,7 +681,7 @@ export default async function handler(req) {
     if (action === 'digitar' || action === 'submeter') {
       const r = await submeterProposta({
         simulationKey: body.simulationKey || body.simulation_key,
-        cpf: body.cpf, client: body.client,
+        cpf: body.cpf, dados: body.dados, telefone: body.telefone,
       });
       return jsonResp({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
     }
@@ -759,6 +759,12 @@ export default async function handler(req) {
         simKey = sim.data?.data?.simulation_key || sim.data?.simulation_key || sim.data?.data?.key;
       } else {
         add('simulate-loan', { ok: false, status: 0, data: { skipped: 'sem margin_key (etapa anterior falhou)' } });
+      }
+
+      // PREP: para aqui e devolve o necessário p/ digitar em chamada
+      // separada (evita 504 — submit real é lento e não cabe na mesma request).
+      if (modo === 'prep') {
+        return jsonResp({ success: true, modo, marginKey, employerDoc, codTabela, simKey, cliente: dadosCliente, passos }, 200, req);
       }
 
       // 7) Submeter (digitar)
