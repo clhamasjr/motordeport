@@ -249,10 +249,11 @@ async function simularEmprestimo({ marginKey, employerDocument, codTabela, reque
 // ─── ACTION: submeterProposta (submit-proposal = digitação) ───
 // Doc: POST /clt-loan/v1/submit-proposal {simulation_key, service_type,
 // client{...}}. Em homolog o cliente é JOÃO SILVA — dados podem ser dummy.
-async function submeterProposta({ simulationKey, cpf, dados, telefone, serviceType }) {
+async function submeterProposta({ simulationKey, cpf, dados, telefone, employerDocument, serviceType }) {
   const cfg = getConfig();
   const d = dados || {};
   const tel = onlyDigits(telefone || d.telefone || '11999999999');
+  const empDoc = onlyDigits(employerDocument || d.employer_document || d.employerDoc || '');
   const client = {
     document_number: onlyDigits(cpf || ''),
     person_name: d.person_name || d.nome || 'JOAO SILVA',
@@ -278,6 +279,7 @@ async function submeterProposta({ simulationKey, cpf, dados, telefone, serviceTy
   return await nfCall('/clt-loan/v1/submit-proposal', 'POST', {
     simulation_key: simulationKey,
     service_type: serviceType || cfg.SERVICE_TYPE,
+    employer_document: empDoc,
     client,
   });
 }
@@ -682,6 +684,7 @@ export default async function handler(req) {
       const r = await submeterProposta({
         simulationKey: body.simulationKey || body.simulation_key,
         cpf: body.cpf, dados: body.dados, telefone: body.telefone,
+        employerDocument: body.employerDocument || body.employer_document,
       });
       return jsonResp({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
     }
@@ -744,6 +747,7 @@ export default async function handler(req) {
         dataNascimento: m.birth_date,
         sexo: m.gender?.code === 2 || m.gender?.code === '2' ? 'F' : 'M',
         telefone,
+        employer_document: employerDoc,
       };
 
       // 5) Rebates → cod_tabela (escolhe a tabela cuja faixa cobre o valor)
