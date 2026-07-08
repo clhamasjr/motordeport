@@ -249,19 +249,35 @@ async function simularEmprestimo({ marginKey, employerDocument, codTabela, reque
 // ─── ACTION: submeterProposta (submit-proposal = digitação) ───
 // Doc: POST /clt-loan/v1/submit-proposal {simulation_key, service_type,
 // client{...}}. Em homolog o cliente é JOÃO SILVA — dados podem ser dummy.
-async function submeterProposta({ simulationKey, cpf, client, serviceType }) {
+async function submeterProposta({ simulationKey, cpf, dados, telefone, serviceType }) {
   const cfg = getConfig();
-  const c = client || {};
+  const d = dados || {};
+  const tel = onlyDigits(telefone || d.telefone || '11999999999');
+  const client = {
+    document_number: onlyDigits(cpf || ''),
+    person_name: d.person_name || d.nome || 'JOAO SILVA',
+    mother_name: d.mother_name || d.nomeMae || 'MARIA SILVA',
+    birth_date: d.birth_date || d.dataNascimento || '1990-01-01',
+    profession: d.profession || d.profissao || 'Analista',
+    nationality: d.nationality || 'Brasileira',
+    marital_status: d.marital_status || 'single',
+    gender: d.gender || (d.sexo === 'F' ? 'female' : 'male'),
+    email: d.email || `${onlyDigits(cpf || '')}@lead.lhamascred.com.br`,
+    country_code: d.country_code || '55',
+    area_code: (tel.length >= 10 ? tel.slice(0, 2) : '11'),
+    phone_number: (tel.length >= 10 ? tel.slice(2) : tel),
+    postal_code: d.postal_code || '18010000',
+    street: d.street || 'Rua Teste',
+    number: d.number || '100',
+    neighborhood: d.neighborhood || 'Centro',
+    city: d.city || 'Sorocaba',
+    state: d.state || 'SP',
+    ...(d.clientExtra || {}),
+  };
   return await nfCall('/clt-loan/v1/submit-proposal', 'POST', {
     simulation_key: simulationKey,
     service_type: serviceType || cfg.SERVICE_TYPE,
-    client: {
-      document_number: onlyDigits(cpf || ''),
-      bank_account: c.bank_account || { pix_key: onlyDigits(cpf || ''), pix_key_type: 'cpf' },
-      address: c.address || { zip_code: '18010000', street: 'Rua Teste', number: '100', complement: '', district: 'Centro', city: 'Sorocaba', state: 'SP' },
-      id_document: c.id_document || { type: 'RG', number: '000000000', issuer: 'SSP', issuer_state: 'SP' },
-      ...c,
-    },
+    client,
   });
 }
 
@@ -687,42 +703,71 @@ export default async function handler(req) {
       const passos = [];
       const add = (p, r, extra) => { passos.push({ passo: p, http: r?.status, ok: r?.ok, ...(extra || {}), _raw: r?.data }); return r; };
 
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
       // 1) Bancarizadora
       add('banking-institutions', await nfCall('/clt-loan/v1/banking-institutions', 'GET'));
-      // 2) Autorização (homolog: auto-autz)
+
+      // 2) Autorização — trata 404 "não encontrada" como NÃO autorizado.
       let ca = add('check-authorization', await checkAutorizacao(cpf, sType));
-      let status = ca.data?.data?.status;
+      let status = ca.data?.data?.status || (ca.status === 404 ? 'NOT_AUTHORIZED' : null);
       let link = ca.data?.data?.authorization_link;
-      if (status === 'NOT_AUTHORIZED') {
+      if (status !== 'AUTHORIZED') {
         const rq = add('request-authorization', await requestAutorizacao({ cpf, nome, telefone, serviceType: sType }));
         link = rq.data?.data?.authorization_link || link;
-        status = rq.data?.data?.status || 'PENDING';
-      }
-      if (status === 'PENDING') {
         const uuid = extrairUuidLink(link);
         if (uuid) add('authorize', await autorizarConsulta(uuid));
-        const rc = add('check-authorization#2', await checkAutorizacao(cpf, sType));
-        status = rc.data?.data?.status || status;
+        // re-checa até virar AUTHORIZED (homolog costuma confirmar na hora)
+        for (let i = 0; i < 3; i++) {
+          const rc = add(`check-authorization#${i + 2}`, await checkAutorizacao(cpf, sType));
+          status = rc.data?.data?.status || status;
+          if (status === 'AUTHORIZED') break;
+          await sleep(1500);
+        }
       }
-      // 3) Enrollment → vínculo
+
+      // 3) Enrollment → vínculo (matrícula + CNPJ empregador)
       const enr = add('check-employee-enrollment', await checkEnrollment(cpf, sType));
-      const v = (Array.isArray(enr.data?.data) ? enr.data.data[0] : null) || {};
+      const vincs = Array.isArray(enr.data?.data) ? enr.data.data : [];
+      const v = vincs.find((x) => x && (x.eligible !== false)) || vincs[0] || {};
+
       // 4) Margem
       const mg = add('get-margin', await getMargem({ cpf, employerDocument: v.employer_cnpj, registration: v.work_registration, serviceType: sType }));
       const m = mg.data?.data || {};
       const marginKey = m.margin_key;
       const employerDoc = m.employer?.document || v.employer_cnpj;
-      // 5) Rebates → cod_tabela
+      // dados do cliente vindos da margem (homolog: JOÃO SILVA) p/ o submit
+      const dadosCliente = {
+        nome: m.person_name || m.name || nome,
+        nomeMae: m.mother_name,
+        dataNascimento: m.birth_date,
+        sexo: m.gender?.code === 2 || m.gender?.code === '2' ? 'F' : 'M',
+        telefone,
+      };
+
+      // 5) Rebates → cod_tabela (escolhe a tabela cuja faixa cobre o valor)
       const rb = add('list-rebates', await listarRebates(marginKey));
       const tabelas = Array.isArray(rb.data?.data) ? rb.data.data : (Array.isArray(rb.data) ? rb.data : []);
-      const tab = tabelas[0] || {};
+      const tab = tabelas.find((t) => valor >= parseFloat(t.start || 0) && valor <= parseFloat(t.end || 1e9)) || tabelas[0] || {};
       const codTabela = tab.cod_tabela || tab.rebate_code || tab.code || tab.id;
-      // 6) Simular
-      const sim = add('simulate-loan', await simularEmprestimo({ marginKey, employerDocument: employerDoc, codTabela, requestedAmount: valor, serviceType: sType }));
-      const simKey = sim.data?.data?.simulation_key || sim.data?.simulation_key || sim.data?.data?.key;
+
+      // 6) Simular (só se temos margin_key — senão a API 400 e não adianta)
+      let simKey = null;
+      if (marginKey) {
+        const sim = add('simulate-loan', await simularEmprestimo({ marginKey, employerDocument: employerDoc, codTabela, requestedAmount: valor, serviceType: sType }));
+        simKey = sim.data?.data?.simulation_key || sim.data?.simulation_key || sim.data?.data?.key;
+      } else {
+        add('simulate-loan', { ok: false, status: 0, data: { skipped: 'sem margin_key (etapa anterior falhou)' } });
+      }
+
       // 7) Submeter (digitar)
-      const sub = add('submit-proposal', await submeterProposta({ simulationKey: simKey, cpf, client: body.client, serviceType: sType }));
-      const debtKey = sub.data?.data?.debt_key || sub.data?.debt_key || sub.data?.data?.num_contrato;
+      let debtKey = null;
+      if (simKey) {
+        const sub = add('submit-proposal', await submeterProposta({ simulationKey: simKey, cpf, dados: dadosCliente, telefone, serviceType: sType }));
+        debtKey = sub.data?.data?.debt_key || sub.data?.debt_key || sub.data?.data?.num_contrato;
+      } else {
+        add('submit-proposal', { ok: false, status: 0, data: { skipped: 'sem simulation_key' } });
+      }
       // 8) Cancelar OU acompanhar até desembolsado
       if (modo === 'cancelar') {
         if (debtKey) add('cancel-proposal', await cancelarProposta(debtKey));
@@ -731,7 +776,7 @@ export default async function handler(req) {
           const op = add(`get-operation-details#${i + 1}`, await getOperationDetails(debtKey));
           const st = String(op.data?.data?.status || op.data?.status || '').toLowerCase();
           if (/desembol|disburs|paid|integrat|finaliz/.test(st) || /reject|cancel|erro/.test(st)) break;
-          await new Promise((r) => setTimeout(r, 2000));
+          await sleep(2000);
         }
       }
       return jsonResp({ success: true, modo, marginKey, employerDoc, codTabela, simKey, debtKey, passos }, 200, req);
