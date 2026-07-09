@@ -67,6 +67,7 @@ const TODOS_BANCOS_CLT = [
   'nossa_fintech',       // A NOSSA FINTECH via QITECH
   'nossa_fintech_uy3',   // A NOSSA FINTECH via UY3
   'facta_clt',           // FACTA Crédito do Trabalhador
+  'facta_clt_offline',   // FACTA Base Offline (histórico, sem SMS — pré-filtro de lote)
 ];
 
 // ── MODO STANDBY ───────────────────────────────────────────────
@@ -1298,6 +1299,101 @@ async function processarFacta(id, cpf, auth, secret) {
   });
 }
 
+// FACTA BASE OFFLINE — consulta o historico da FACTA (cltoff) SEM autorizacao
+// do cliente. Usado como PRE-FILTRO de lote: separa com_margem / sem_margem /
+// sem_historico ANTES de gastar SMS. `bucket` no jsonb permite contagem via
+// PostgREST no endpoint de lote (api/facta-offline-lote.js).
+async function processarFactaOffline(id, cpf, auth, secret) {
+  const manut = await _bancoEmManutencao('facta_clt_offline');
+  if (manut) { await _marcarEmManutencao(id, 'facta_clt_offline', manut); return; }
+
+  // tentativas de rate-limit (a FACTA exige 3s entre chamadas)
+  const { data: rowAtual } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+  const tentAtuais = rowAtual?.bancos?.facta_clt_offline?.tentativasRate || 0;
+
+  await patchBanco(id, 'facta_clt_offline', { status: 'processando' });
+
+  const r = await callApi('/api/facta', { action: 'cltConsultarOffline', cpf }, auth, secret, 15000);
+  const u = r.data || {};
+
+  if (!r.ok && !u.etapa) {
+    await patchBanco(id, 'facta_clt_offline', {
+      status: 'falha', bucket: 'erro', retryable: true,
+      mensagem: u.error || u.message || `Erro FACTA offline (HTTP ${r.status})`,
+    });
+    return;
+  }
+
+  if (u.etapa === 'RATE_LIMIT') {
+    // volta pra 'pending' — o worker serial re-pega. Cap de 5 pra nao ciclar eterno.
+    if (tentAtuais < 5) {
+      await patchBanco(id, 'facta_clt_offline', {
+        status: 'pending', bucket: 'aguardando', tentativasRate: tentAtuais + 1,
+        mensagem: '⏱ Rate limit FACTA (3s) — re-tentando',
+      });
+    } else {
+      await patchBanco(id, 'facta_clt_offline', {
+        status: 'falha', bucket: 'erro', retryable: true,
+        mensagem: 'Rate limit FACTA persistente (5 tentativas)',
+      });
+    }
+    return;
+  }
+
+  if (u.etapa === 'APROVADO') {
+    const dc = u.dadosCliente || {};
+    const novoCliente = {};
+    if (dc.nome) novoCliente.nome = dc.nome;
+    if (dc.dataNascimento) novoCliente.dataNascimento = dc.dataNascimento;
+    if (dc.sexo) novoCliente.sexo = dc.sexo;
+    if (dc.nomeMae) novoCliente.nomeMae = dc.nomeMae;
+    if (Object.keys(novoCliente).length > 0) await mesclarCliente(id, novoCliente);
+
+    await patchBanco(id, 'facta_clt_offline', {
+      status: 'ok', disponivel: true, bucket: 'com_margem',
+      mensagem: u.mensagem,
+      dados: {
+        margemDisponivel: u.margem?.disponivel || 0,
+        margemBase: u.margem?.base || 0,
+        empregador: u.vinculo?.empregador,
+        empregadorCnpj: u.vinculo?.cnpj,
+        matricula: u.vinculo?.matricula,
+        fonte: 'offline',
+        atualizadoNaFacta: u.frescor?.updated_at || null,
+      },
+    });
+    if (u.vinculo?.cnpj) {
+      _registrarAprovacao(u.vinculo.cnpj, u.vinculo.empregador, 'facta_clt_offline', null, null, null);
+    }
+    return;
+  }
+
+  if (u.etapa === 'SEM_HISTORICO') {
+    // CPF nunca consultado na FACTA — nao e erro; so a consulta online resolve
+    await patchBanco(id, 'facta_clt_offline', {
+      status: 'pulado', disponivel: false, bucket: 'sem_historico',
+      mensagem: u.mensagem,
+    });
+    return;
+  }
+
+  if (u.etapa === 'SEM_MARGEM') {
+    await patchBanco(id, 'facta_clt_offline', {
+      status: 'falha', disponivel: false, bucket: 'sem_margem', retryable: false,
+      mensagem: u.mensagem,
+    });
+    return;
+  }
+
+  // ERRO generico
+  await patchBanco(id, 'facta_clt_offline', {
+    status: 'falha', disponivel: false, bucket: 'erro',
+    retryable: u.retryable !== false,
+    mensagem: u.mensagem || 'FACTA offline nao retornou dados',
+    _raw_response: u,
+  });
+}
+
 async function processarC6(id, cpf, incluirC6, auth, secret) {
   const manut = await _bancoEmManutencao('c6');
   if (manut) { await _marcarEmManutencao(id, 'c6', manut); return; }
@@ -1476,8 +1572,14 @@ export default async function handler(req) {
     // SO esses (multicorban sempre roda — eh enriquecimento).
     // O `inicial` so deve conter os bancos que VAO rodar — caso contrario
     // o status_geral nunca vai pra 'concluido' (banco em pending eterno).
+    // Excecao: lote offline puro (so facta_clt_offline) NAO forca multicorban —
+    // e pre-filtro em massa; enriquecimento por CPF seria peso desnecessario.
+    const soOffline = Array.isArray(body.bancos)
+      && body.bancos.length === 1 && body.bancos[0] === 'facta_clt_offline';
     const filtroSolicitadoBancos = Array.isArray(body.bancos) && body.bancos.length > 0
-      ? [...new Set([...body.bancos, 'multicorban'])].filter(b => TODOS_BANCOS_CLT.includes(b))
+      ? (soOffline
+          ? ['facta_clt_offline']
+          : [...new Set([...body.bancos, 'multicorban'])].filter(b => TODOS_BANCOS_CLT.includes(b)))
       : TODOS_BANCOS_CLT;
 
     const inicial = Object.fromEntries(
@@ -1789,7 +1891,8 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       else if (banco === 'nossa_fintech') await processarNossaFintech(id, row.cpf, 'nossa_fintech', 'QITECH', auth, secret);
       else if (banco === 'nossa_fintech_uy3') await processarNossaFintech(id, row.cpf, 'nossa_fintech_uy3', 'UY3', auth, secret);
       else if (banco === 'facta_clt') await processarFacta(id, row.cpf, auth, secret);
-      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno, nossa_fintech, nossa_fintech_uy3, facta_clt', 400, req);
+      else if (banco === 'facta_clt_offline') await processarFactaOffline(id, row.cpf, auth, secret);
+      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno, nossa_fintech, nossa_fintech_uy3, facta_clt, facta_clt_offline', 400, req);
     } catch (e) {
       await patchBanco(id, banco, { status: 'falha', mensagem: 'Erro: ' + e.message });
       return jsonResp({ success: false, error: e.message }, 200, req);
