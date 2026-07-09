@@ -10,6 +10,12 @@ function getConfig() {
   return {
     BASE: (process.env.FACTA_BASE_URL || 'https://webservice-homol.facta.com.br').trim().replace(/\/+$/, ''),
     AUTH: (process.env.FACTA_AUTH || '').trim(),
+    // ── BASE OFFLINE CLT (host + credencial DEDICADOS, separados do webservice)
+    // Consulta margem/elegibilidade CLT do HISTORICO da FACTA, SEM autorizacao
+    // do cliente (sem SMS). 1 CPF/req, intervalo obrigatorio de 3s. So retorna
+    // CPF que ja passou por consulta na FACTA antes. Manual v3.0 BASE OFFLINE CLT.
+    CLTOFF_BASE: (process.env.FACTA_CLTOFF_BASE_URL || 'https://cltoff.facta.com.br').trim().replace(/\/+$/, ''),
+    CLTOFF_AUTH: (process.env.FACTA_CLTOFF_AUTH || '').trim(), // "Basic base64(usuario:senha)" dedicado do cltoff
     LOGIN_CERT: (process.env.FACTA_LOGIN_CERT || '93596').trim(),
     PROXY_URL: (process.env.FACTA_PROXY_URL || '').trim().replace(/\/+$/, ''),
     PROXY_SECRET: (process.env.FACTA_PROXY_SECRET || '').trim(),
@@ -23,11 +29,13 @@ function getConfig() {
 
 // Helper: chama FACTA direto ou via proxy do escritorio (IP autorizado)
 // Quando FACTA_PROXY_URL e FACTA_PROXY_SECRET estao setados, repassa pelo proxy.
-async function factaFetch(path, { method = 'GET', headers = {}, body = null, contentType = null } = {}) {
+async function factaFetch(path, { method = 'GET', headers = {}, body = null, contentType = null, baseUrl = null } = {}) {
   const cfg = getConfig();
   if (cfg.PROXY_URL && cfg.PROXY_SECRET) {
-    // Rota via proxy do escritorio
+    // Rota via proxy do escritorio. baseUrl opcional (ex: cltoff.facta.com.br
+    // pra base offline) — precisa estar na allowlist do proxy; sem baseUrl usa FACTA_BASE.
     const payload = { method, path, headers, body, contentType };
+    if (baseUrl) payload.baseUrl = baseUrl;
     const fullUrl = cfg.PROXY_URL + '/relay';
     console.log('[factaFetch] via PROXY:', method, path, '->', fullUrl);
     const reqHeaders = {
@@ -53,12 +61,14 @@ async function factaFetch(path, { method = 'GET', headers = {}, body = null, con
   const fwd = { method, headers: { ...headers } };
   if (contentType) fwd.headers['Content-Type'] = contentType;
   if (body !== null && method !== 'GET') fwd.body = typeof body === 'string' ? body : JSON.stringify(body);
-  console.log('[factaFetch] DIRETO:', method, cfg.BASE + path);
-  return fetch(cfg.BASE + path, fwd);
+  const directBase = baseUrl || cfg.BASE;
+  console.log('[factaFetch] DIRETO:', method, directBase + path);
+  return fetch(directBase + path, fwd);
 }
 
 // Token cache
 let _tk = { token: null, exp: 0 };
+let _tkOff = { token: null, exp: 0 }; // token da BASE OFFLINE (host cltoff, vale 1h)
 
 async function getToken() {
   if (_tk.token && Date.now() < _tk.exp) return _tk.token;
@@ -76,6 +86,27 @@ async function getToken() {
     return d.token;
   }
   throw new Error(d.mensagem || 'Erro ao gerar token FACTA');
+}
+
+// Token da BASE OFFLINE — host e credencial DEDICADOS (cltoff.facta.com.br).
+// Basic base64(usuario:senha) -> JWT valido 1h. Cacheia 55min. Roteia pelo
+// mesmo proxy do escritorio (IP autorizado) via baseUrl=CLTOFF_BASE.
+async function getTokenOffline() {
+  if (_tkOff.token && Date.now() < _tkOff.exp) return _tkOff.token;
+  const cfg = getConfig();
+  if (!cfg.CLTOFF_AUTH) throw new Error('FACTA_CLTOFF_AUTH nao configurado (base offline)');
+  const r = await factaFetch('/gera-token', { headers: { 'Authorization': cfg.CLTOFF_AUTH }, baseUrl: cfg.CLTOFF_BASE });
+  const rawText = await r.text();
+  let d;
+  try { d = JSON.parse(rawText); }
+  catch (e) {
+    throw new Error('getTokenOffline: resposta nao-JSON (status=' + r.status + '): ' + rawText.substring(0, 400));
+  }
+  if (d.erro === false && d.token) {
+    _tkOff = { token: d.token, exp: Date.now() + 55 * 60 * 1000 };
+    return d.token;
+  }
+  throw new Error(d.mensagem || 'Erro ao gerar token FACTA offline');
 }
 
 async function fGet(path, params) {
@@ -260,6 +291,78 @@ export default async function handler(req) {
         mensagem: cd.mensagem || `Erro consulta FACTA (HTTP ${cons.status})`,
         _raw: cd,
       }, 200, req);
+    }
+
+    // ─── CLT: CONSULTA BASE OFFLINE (Credito do Trabalhador) ─────
+    // Host dedicado cltoff.facta.com.br, credencial propria, SEM autorizacao
+    // do cliente (le do historico da FACTA). 1 CPF/req, intervalo de 3s.
+    // So retorna CPF que JA foi consultado na FACTA antes; senao "Nenhum dado".
+    // Serve pra RE-HIGIENIZAR carteira em massa sem gastar SMS. Normaliza a
+    // saida no MESMO formato da cltConsultarAprovacao (o motor reaproveita).
+    if (action === 'cltConsultarOffline') {
+      const cpf = String(body.cpf || '').replace(/\D/g, '');
+      if (!cpf || cpf.length !== 11) return jsonError('cpf invalido', 400, req);
+      const cfg = getConfig();
+
+      let token;
+      try { token = await getTokenOffline(); }
+      catch (e) { return j({ etapa: 'ERRO', approved: false, disponivel: false, retryable: true, mensagem: e.message }, 200, req); }
+
+      const r = await factaFetch('/clt/base-offline?cpf=' + cpf, {
+        headers: { 'Authorization': 'Bearer ' + token },
+        baseUrl: cfg.CLTOFF_BASE,
+      });
+      const t = await r.text();
+      let d; try { d = JSON.parse(t); } catch { d = { erro: true, mensagem: t.substring(0, 300) }; }
+      const msg = String(d.mensagem || '').toLowerCase();
+
+      // Rate limit da FACTA (intervalo de 3s) — retryable
+      if (msg.includes('volte em 3') || (msg.includes('indispon') && msg.includes('offline'))) {
+        return j({ etapa: 'RATE_LIMIT', approved: false, disponivel: false, retryable: true, mensagem: d.mensagem || 'Base offline: aguarde 3s' }, 200, req);
+      }
+      // CPF nunca consultado na FACTA — NAO e erro, e "sem historico"
+      if (msg.includes('nenhum dado')) {
+        return j({ etapa: 'SEM_HISTORICO', approved: false, disponivel: false, mensagem: 'Sem histórico na base offline (CPF nunca consultado na FACTA) — só a consulta online resolve.', _raw: d }, 200, req);
+      }
+
+      const arr = Array.isArray(d.dados) ? d.dados : [];
+      if (d.erro === false && arr.length > 0) {
+        const w = arr[0];
+        const margem = parseFloat(w.valorMargemDisponivel || 0) || 0;
+        const elegivel = String(w.elegivel).toUpperCase() === 'SIM' || w.elegivel === true || w.elegivel === '1';
+        return j({
+          etapa: elegivel && margem > 0 ? 'APROVADO' : 'SEM_MARGEM',
+          approved: elegivel && margem > 0,
+          fonte: 'offline',
+          mensagem: elegivel && margem > 0
+            ? `Cliente elegivel (base offline) — margem R$ ${margem.toFixed(2)}${w.updated_at ? ` · atualizado ${w.updated_at}` : ''}`
+            : (elegivel ? 'Elegivel mas sem margem disponivel (base offline)' : (w.motivoInelegibilidade_descricao || 'Cliente nao elegivel (base offline)')),
+          dadosCliente: {
+            nome: w.nome, dataNascimento: w.dataNascimento,
+            sexo: String(w.sexo_descricao).toUpperCase().startsWith('F') ? 'F' : 'M',
+            nomeMae: w.nomeMae, profissao: w.cbo_descricao,
+          },
+          vinculo: {
+            matricula: w.matricula,
+            cnpj: w.numeroInscricaoEmpregador,
+            empregador: w.nomeEmpregador,
+            dataAdmissao: w.dataAdmissao,
+            cnae: w.cnae_descricao,
+          },
+          margem: {
+            disponivel: margem,
+            base: parseFloat(w.valorBaseMargem || 0) || 0,
+            vencimentos: parseFloat(w.valorTotalVencimentos || 0) || 0,
+          },
+          // frescor do dado offline (pode estar defasado — usar p/ priorizacao)
+          frescor: { created_at: w.created_at, updated_at: w.updated_at },
+          alertas: w.possuiAlertas || null,
+          _raw: d,
+        }, 200, req);
+      }
+
+      // Erro generico
+      return j({ etapa: 'ERRO', approved: false, disponivel: false, retryable: true, mensagem: d.mensagem || `Erro base offline (HTTP ${r.status})`, _raw: d }, 200, req);
     }
 
     // Diagnostico: mostra env vars + faz ping direto no proxy

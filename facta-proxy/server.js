@@ -47,6 +47,7 @@ const PORT = process.env.PORT || 3456;
 const ALLOWED_BASES = [
   'https://webservice.facta.com.br',
   'https://webservice-homol.facta.com.br',
+  'https://cltoff.facta.com.br',        // FACTA CLT BASE OFFLINE (host dedicado)
   'https://fintechdocorban.nossafintech.com.br',
   FACTA_BASE,
 ];
