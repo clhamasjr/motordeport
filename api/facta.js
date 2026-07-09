@@ -15,7 +15,10 @@ function getConfig() {
     // do cliente (sem SMS). 1 CPF/req, intervalo obrigatorio de 3s. So retorna
     // CPF que ja passou por consulta na FACTA antes. Manual v3.0 BASE OFFLINE CLT.
     CLTOFF_BASE: (process.env.FACTA_CLTOFF_BASE_URL || 'https://cltoff.facta.com.br').trim().replace(/\/+$/, ''),
-    CLTOFF_AUTH: (process.env.FACTA_CLTOFF_AUTH || '').trim(), // "Basic base64(usuario:senha)" dedicado do cltoff
+    // Credencial do cltoff: usa FACTA_CLTOFF_AUTH se setada; senao tenta a
+    // MESMA credencial do webservice normal (FACTA_AUTH) — as vezes e a mesma.
+    // Se der erro de auth com o fallback, e credencial dedicada (pedir a FACTA).
+    CLTOFF_AUTH: (process.env.FACTA_CLTOFF_AUTH || process.env.FACTA_AUTH || '').trim(),
     LOGIN_CERT: (process.env.FACTA_LOGIN_CERT || '93596').trim(),
     PROXY_URL: (process.env.FACTA_PROXY_URL || '').trim().replace(/\/+$/, ''),
     PROXY_SECRET: (process.env.FACTA_PROXY_SECRET || '').trim(),
