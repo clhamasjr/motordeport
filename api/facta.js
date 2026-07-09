@@ -325,8 +325,8 @@ export default async function handler(req) {
         return j({ etapa: 'SEM_HISTORICO', approved: false, disponivel: false, mensagem: 'Sem histórico na base offline (CPF nunca consultado na FACTA) — só a consulta online resolve.', _raw: d }, 200, req);
       }
 
-      const arr = Array.isArray(d.dados) ? d.dados : [];
-      if (d.erro === false && arr.length > 0) {
+      const arr = Array.isArray(d.dados) ? d.dados : (d.dados && typeof d.dados === 'object' ? [d.dados] : []);
+      if (arr.length > 0) {
         const w = arr[0];
         const margem = parseFloat(w.valorMargemDisponivel || 0) || 0;
         const elegivel = String(w.elegivel).toUpperCase() === 'SIM' || w.elegivel === true || w.elegivel === '1';
