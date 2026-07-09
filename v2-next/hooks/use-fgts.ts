@@ -122,7 +122,9 @@ export interface NovoSaqueContrato {
   stage?: string | null;
   summaryStatus?: string | null;
   ofertaPronta?: boolean;
+  semOferta?: boolean;
   falhou?: boolean;
+  balanceOk?: boolean | null;
   contractLink?: string | null;
   simulacao?: {
     simulationId?: string | null;

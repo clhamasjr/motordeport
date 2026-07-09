@@ -367,16 +367,17 @@ function LinhaNovoSaque({ cpf, onResult }: { cpf: string; onResult: (r: Resultad
 
   const liquido = contrato.data?.simulacao?.liquido ?? null;
   const ofertaPronta = !!contrato.data?.ofertaPronta && (liquido ?? 0) > 0;
-  const falhou = !!erroIniciar || !!contrato.data?.falhou;
+  const semOferta = !!contrato.data?.semOferta && !ofertaPronta;
+  const falhou = !!erroIniciar || (!!contrato.data?.falhou && !semOferta);
 
   useEffect(() => {
-    if (falhou) onResult({ fonte: 'novosaque', label: 'NovoSaque', liquido: null, tipoValor: null, status: 'indisponivel' });
-    else if (ofertaPronta) onResult({ fonte: 'novosaque', label: 'NovoSaque', liquido, tipoValor: 'líquido', status: 'ok' });
+    if (ofertaPronta) onResult({ fonte: 'novosaque', label: 'NovoSaque', liquido, tipoValor: 'líquido', status: 'ok' });
+    else if (falhou || semOferta) onResult({ fonte: 'novosaque', label: 'NovoSaque', liquido: null, tipoValor: null, status: 'indisponivel' });
     else onResult({ fonte: 'novosaque', label: 'NovoSaque', liquido: null, tipoValor: null, status: 'processando' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [falhou, ofertaPronta, liquido]);
+  }, [falhou, semOferta, ofertaPronta, liquido]);
 
-  const processando = !falhou && !ofertaPronta;
+  const processando = !falhou && !semOferta && !ofertaPronta;
 
   return (
     <Linha
@@ -386,15 +387,17 @@ function LinhaNovoSaque({ cpf, onResult }: { cpf: string; onResult: (r: Resultad
     >
       {processando ? (
         <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" /> consultando…</span>
-      ) : falhou ? (
-        <span className="text-xs text-red-400 flex items-center gap-1 max-w-[220px] truncate" title={erroIniciar || contrato.data?.summaryStatus || ''}>
-          <AlertCircle className="size-3.5 shrink-0" /> indisponível
-        </span>
-      ) : (
+      ) : ofertaPronta ? (
         <div className="text-right">
           <div className="text-sm font-bold text-primary">{formatBRL(liquido || 0)}</div>
           <div className="text-[9px] text-muted-foreground uppercase">líquido</div>
         </div>
+      ) : semOferta ? (
+        <span className="text-xs text-yellow-500 flex items-center gap-1"><AlertCircle className="size-3.5" /> sem oferta</span>
+      ) : (
+        <span className="text-xs text-red-400 flex items-center gap-1 max-w-[220px] truncate" title={erroIniciar || contrato.data?.summaryStatus || ''}>
+          <AlertCircle className="size-3.5 shrink-0" /> indisponível
+        </span>
       )}
     </Linha>
   );

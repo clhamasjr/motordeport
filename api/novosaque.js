@@ -127,11 +127,14 @@ export default async function handler(req) {
       const sim = extrairSimulacao(c);
       const stage = c.stage || null;
       const summary = c.summary_status || c.status_description || null;
-      // Oferta pronta = etapa de simulação concluída com líquido calculado
-      const ofertaPronta = (sim && (sim.liquido ?? 0) > 0)
-        || /offer available|oferta/i.test(String(summary || ''));
-      const falhou = /error|falha|reprov|reject|denied|indispon/i.test(String(summary || ''))
-        || (d.success === false);
+      const temLiquido = sim && (sim.liquido ?? 0) > 0;
+      // Oferta pronta = líquido calculado disponível
+      const ofertaPronta = temLiquido || /offer available|oferta dispon/i.test(String(summary || ''));
+      // "Offer unavailable" / sem oferta = TERMINAL (não adianta seguir consultando).
+      // O balance check pode ter passado, mas não há saldo/oferta pra antecipar.
+      const semOferta = !temLiquido && /unavailable|indispon|sem oferta|n[aã]o dispon/i.test(String(summary || ''));
+      const erroDuro = /error|falha|reprov|reject|denied/i.test(String(summary || '')) || d.success === false;
+      const falhou = semOferta || erroDuro;
       return j({
         success: !!d.success && r.ok,
         httpStatus: r.status,
@@ -139,7 +142,9 @@ export default async function handler(req) {
         stage,
         summaryStatus: summary,
         ofertaPronta,
+        semOferta,
         falhou,
+        balanceOk: c.balance_check_result?.success ?? null,
         contractLink: c.contract_link || null,
         contractNumber: c.contract_number || null,
         simulacao: sim,
