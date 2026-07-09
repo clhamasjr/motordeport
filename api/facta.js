@@ -109,7 +109,7 @@ async function getTokenOffline() {
     _tkOff = { token: d.token, exp: Date.now() + 55 * 60 * 1000 };
     return d.token;
   }
-  throw new Error(d.mensagem || 'Erro ao gerar token FACTA offline');
+  throw new Error('gera-token offline (HTTP ' + r.status + '): ' + (d.mensagem || d.error || rawText.substring(0, 200)));
 }
 
 async function fGet(path, params) {
