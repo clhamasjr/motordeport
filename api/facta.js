@@ -318,7 +318,11 @@ export default async function handler(req) {
         out.upstreamCfRay = tr.headers.get('x-upstream-cf-ray') || null;
         out.upstreamCfMitigated = tr.headers.get('x-upstream-cf-mitigated') || null;
         out.upstreamServer = tr.headers.get('x-upstream-server') || null;
-        out.tokenBody = (await tr.text()).substring(0, 250);
+        const tb = await tr.text();
+        // Extrai o IP que a FACTA/Cloudflare enxergou (esta na pagina de bloqueio)
+        const ipm = tb.match(/id="cf-footer-ip"[^>]*>\s*([0-9a-fA-F:.]+)\s*</);
+        out.blockedIpSeenByFacta = ipm ? ipm[1] : null;
+        out.tokenBody = tb.substring(0, 120);
       } catch (e) { out.tokenError = e.message; }
       return j(out, 200, req);
     }
