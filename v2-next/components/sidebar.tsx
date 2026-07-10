@@ -4,190 +4,27 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { AuthUser } from '@/hooks/use-auth';
+import { Home, Zap, Compass, ArrowLeft, ChevronRight } from 'lucide-react';
 import {
-  Home, Search, BookOpen, Target, Trophy, Download,
-  ListChecks, FileText, MessageSquare, Settings, Building2, Landmark,
-  Briefcase, Zap, ChevronRight, Smartphone, Sparkles, Activity, ChevronDown,
-  Compass, GitBranch, PiggyBank,
-} from 'lucide-react';
-import { useEffect, useState } from 'react';
-
-type Section = 'consultar' | 'operar' | 'ia' | 'esteira' | 'config';
-
-const SECTION_LABEL: Record<Section, string> = {
-  consultar: 'Consultar',
-  operar: 'Operar',
-  ia: 'IA & Disparo',
-  esteira: 'Esteira & Propostas',
-  config: 'Config',
-};
-
-interface NavItem {
-  href: string;
-  label: string;
-  icon: React.ElementType;
-  needsRole?: ('admin' | 'gestor' | 'operador')[];
-  section?: Section;
-}
-
-interface NavGroup {
-  k: string;
-  icon: React.ElementType;
-  label: string;
-  items: NavItem[];
-}
-
-// Ordem das sections dentro de cada grupo (consultar -> operar -> ia -> config)
-const NAV: NavGroup[] = [
-  {
-    k: 'inss', icon: Briefcase, label: 'INSS',
-    items: [
-      // ── Consultar ──
-      { href: '/inss/consulta', label: 'Consulta Unitária', icon: Search, section: 'consultar' },
-      { href: '/inss/extrato-pdf', label: 'Ler Extrato PDF', icon: FileText, section: 'consultar' },
-      { href: '/inss/in100', label: 'IN100 (DataPrev)', icon: Trophy, section: 'consultar' },
-      { href: '/inss/fintech-corban', label: 'Fintech do Corban', icon: Landmark, section: 'consultar' },
-      { href: '/inss/enquadramento', label: 'Enquadramento (Manual)', icon: Target, section: 'consultar' },
-      // ── Operar ──
-      { href: '/inss/higienizacao', label: 'Higienização (XLSX)', icon: Sparkles, section: 'operar' },
-      { href: '/inss/rmc-rcc', label: 'RMC/RCC + Saque', icon: BookOpen, section: 'operar' },
-      { href: '/inss/pipeline', label: 'Pipeline', icon: ListChecks, section: 'operar' },
-      // ── IA & Disparo ──
-      { href: '/inss/conversas', label: 'Sofia (Conversas)', icon: MessageSquare, section: 'ia' },
-      { href: '/inss/disparo', label: 'Disparo em massa', icon: MessageSquare, section: 'ia' },
-      // ── Esteira & Propostas (depois de IA & Disparo) ──
-      { href: '/inss/esteira', label: 'Esteira', icon: ListChecks, section: 'esteira' },
-      { href: '/inss/propostas', label: 'Propostas', icon: FileText, section: 'esteira' },
-      { href: '/inss/gestao', label: 'Painel Operacional', icon: Activity, needsRole: ['admin', 'gestor'], section: 'esteira' },
-      // ── Config ──
-      { href: '/inss/sofia-knowledge', label: 'Sofia — Knowledge', icon: BookOpen, needsRole: ['admin'], section: 'config' },
-      { href: '/inss/conexao-whatsapp', label: 'Conectar WhatsApp', icon: Smartphone, section: 'config' },
-      { href: '/inss/motor-test', label: 'Motor — Testes', icon: Zap, needsRole: ['admin'], section: 'config' },
-    ],
-  },
-  {
-    k: 'clt', icon: Building2, label: 'CLT',
-    items: [
-      // ── Consultar ──
-      { href: '/clt/consulta', label: 'Consulta Unitária', icon: Search, section: 'consultar' },
-      { href: '/clt/analise', label: 'Análise de Cliente', icon: Target, section: 'consultar' },
-      { href: '/clt/catalogo', label: 'Catálogo de Bancos', icon: BookOpen, section: 'consultar' },
-      // ── Operar ──
-      { href: '/clt/aptos', label: 'Pipeline CLT', icon: GitBranch, section: 'operar' },
-      { href: '/clt/analise-lote', label: 'Análise em Lote', icon: ListChecks, section: 'operar' },
-      { href: '/clt/empresas-aprovadas', label: 'Empresas Aprovadas', icon: Trophy, section: 'operar' },
-      { href: '/clt/extrair-caged', label: 'Extrair Base CAGED', icon: Download, needsRole: ['gestor', 'admin'], section: 'operar' },
-      // ── IA & Disparo ──
-      { href: '/clt/conversas', label: 'Conversas IA', icon: MessageSquare, section: 'ia' },
-      { href: '/clt/esteira', label: 'Esteira', icon: ListChecks, section: 'ia' },
-      { href: '/clt/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['gestor', 'admin'], section: 'ia' },
-      // ── Config ──
-      { href: '/clt/autorizacoes', label: 'Autorizações LGPD', icon: FileText, section: 'config' },
-      { href: '/clt/painel', label: 'Painel Operacional', icon: Activity, needsRole: ['admin', 'gestor'], section: 'config' },
-    ],
-  },
-  {
-    k: 'fgts', icon: PiggyBank, label: 'FGTS',
-    items: [
-      { href: '/fgts/comparar', label: 'Consulta (3 bancos)', icon: Search, section: 'consultar' },
-      { href: '/fgts/fintech-corban', label: 'Fintech do Corban (QI/J17)', icon: Landmark, section: 'consultar' },
-      { href: '/fgts/v8', label: 'V8 Sistema', icon: Zap, section: 'operar' },
-      { href: '/fgts/simulacao', label: 'FINANTO', icon: PiggyBank, section: 'operar' },
-    ],
-  },
-  {
-    k: 'gov', icon: Landmark, label: 'Governos',
-    items: [
-      { href: '/governos/catalogo', label: 'Catálogo de Convênios', icon: BookOpen },
-      { href: '/governos/holerite', label: 'Análise de Holerite', icon: FileText },
-    ],
-  },
-  {
-    k: 'fed', icon: Landmark, label: 'Federal',
-    items: [
-      { href: '/federal/catalogo', label: 'Catálogo de Convênios', icon: BookOpen },
-      { href: '/federal/analise', label: 'Análise de Contracheque', icon: FileText },
-    ],
-  },
-  {
-    k: 'pref', icon: Building2, label: 'Prefeituras',
-    items: [
-      { href: '/prefeituras/catalogo', label: 'Catálogo', icon: BookOpen },
-      { href: '/prefeituras/holerite', label: 'Análise de Holerite', icon: FileText },
-    ],
-  },
-  {
-    k: 'admin', icon: Settings, label: 'Admin',
-    items: [
-      { href: '/admin/usuarios', label: 'Usuários', icon: Settings, needsRole: ['admin'] },
-      { href: '/admin/parceiros', label: 'Parceiros', icon: Building2, needsRole: ['admin'] },
-      { href: '/admin/manutencao', label: 'Manutenção', icon: Zap, needsRole: ['admin', 'gestor'] },
-    ],
-  },
-];
-
-// Chaves do localStorage pra persistir colapsos entre sessoes
-const LS_GROUPS = 'flowforce_sidebar_groups_v2';
-const LS_SECTIONS = 'flowforce_sidebar_sections_v2';
-
-function loadLS<T extends Record<string, boolean>>(key: string, fallback: T): T {
-  if (typeof window === 'undefined') return fallback;
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? { ...fallback, ...parsed } : fallback;
-  } catch { return fallback; }
-}
+  NAV, SECTION_LABEL, agruparPorSecao, moduloDoPath,
+  type NavItem, type Role,
+} from '@/lib/nav';
 
 /**
- * Conteúdo INTERNO da navegação lateral — logo, nav, versão.
+ * Conteúdo INTERNO da navegação lateral — CONTEXTUAL por módulo.
  *
- * Usado tanto pela `<Sidebar>` (wrapper desktop fixo) quanto pelo
- * `<MobileNav>` (drawer mobile). Mantenha qualquer mudança de menu
- * aqui — os dois wrappers herdam automaticamente.
+ * - Na home (/inicio) ou no /orquestrador: lista os MÓDULOS (atalhos pros hubs).
+ * - Dentro de um módulo (ex: /inss/*): mostra só as telas daquele módulo,
+ *   agrupadas por seção, + um "← Módulos" pra voltar.
+ *
+ * Fonte de navegação: lib/nav.ts (compartilhada com as páginas-hub).
+ * Usado pela `<Sidebar>` (desktop) e pelo `<MobileNav>` (drawer).
  */
 export function SidebarContent({ user }: { user: AuthUser }) {
   const pathname = usePathname();
-
-  // Grupos: por padrao todos abertos. Persiste em localStorage.
-  const [open, setOpen] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(NAV.map((g) => [g.k, true])),
-  );
-
-  // Sections (Consultar/Operar/IA/Config dentro de cada grupo).
-  // Chave: `${groupKey}:${section}` (ex: "clt:consultar"). Default: aberto.
-  const [openSec, setOpenSec] = useState<Record<string, boolean>>({});
-
-  // Hidrata estado do localStorage depois do mount (evita SSR mismatch)
-  useEffect(() => {
-    const groupsDefault = Object.fromEntries(NAV.map((g) => [g.k, true]));
-    setOpen(loadLS(LS_GROUPS, groupsDefault));
-    setOpenSec(loadLS(LS_SECTIONS, {}));
-  }, []);
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try { localStorage.setItem(LS_GROUPS, JSON.stringify(open)); } catch {}
-  }, [open]);
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try { localStorage.setItem(LS_SECTIONS, JSON.stringify(openSec)); } catch {}
-  }, [openSec]);
-
-  const canSee = (item: NavItem) => {
-    if (!item.needsRole) return true;
-    return item.needsRole.includes(user.role);
-  };
-
-  // Section eh "aberta" por padrao quando nao foi mexida ainda (key ausente)
-  const isSectionOpen = (groupKey: string, section: Section) => {
-    const k = `${groupKey}:${section}`;
-    return openSec[k] !== false; // default true
-  };
-  const toggleSection = (groupKey: string, section: Section) => {
-    const k = `${groupKey}:${section}`;
-    setOpenSec((prev) => ({ ...prev, [k]: prev[k] === false ? true : false }));
-  };
+  const modulo = moduloDoPath(pathname);
+  const canSee = (item: NavItem) =>
+    !item.needsRole || item.needsRole.includes(user.role as Role);
 
   return (
     <div className="flex flex-col h-full glass-strong">
@@ -206,169 +43,16 @@ export function SidebarContent({ user }: { user: AuthUser }) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto p-2 space-y-1">
-        <Link
-          href="/inicio"
-          className={cn(
-            'w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs uppercase tracking-wider font-semibold transition-colors',
-            pathname === '/inicio' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-          )}
-        >
-          <span
-            className={cn(
-              'w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 transition-all',
-              pathname === '/inicio'
-                ? 'bg-aurora-subtle ring-1 ring-primary/30 text-foreground shadow-[0_0_14px_-4px_hsl(var(--primary)/.55)]'
-                : 'bg-secondary/40 text-muted-foreground',
-            )}
-          >
-            <Home className="w-4 h-4" />
-          </span>
-          <span className="flex-1 text-left">Início</span>
-        </Link>
-
+        <TopLink href="/inicio" icon={Home} label="Início" active={pathname === '/inicio'} />
         {user.role === 'admin' && (
-          <Link
-            href="/orquestrador"
-            className={cn(
-              'w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs uppercase tracking-wider font-semibold transition-colors',
-              pathname === '/orquestrador' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            <span
-              className={cn(
-                'w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 transition-all',
-                pathname === '/orquestrador'
-                  ? 'bg-aurora-subtle ring-1 ring-primary/30 text-foreground shadow-[0_0_14px_-4px_hsl(var(--primary)/.55)]'
-                  : 'bg-secondary/40 text-muted-foreground',
-              )}
-            >
-              <Compass className="w-4 h-4" />
-            </span>
-            <span className="flex-1 text-left">Orquestrador</span>
-          </Link>
+          <TopLink href="/orquestrador" icon={Compass} label="Orquestrador" active={pathname === '/orquestrador'} />
         )}
 
-        {NAV.map((group) => {
-          const visibleItems = group.items.filter(canSee);
-          if (!visibleItems.length) return null;
-          const Icon = group.icon;
-          const isOpen = open[group.k];
-          return (
-            <div key={group.k} className="pt-3">
-              <button
-                onClick={() => setOpen((o) => ({ ...o, [group.k]: !o[group.k] }))}
-                className={cn(
-                  'w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs uppercase tracking-wider font-semibold transition-colors',
-                  isOpen ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                <span
-                  className={cn(
-                    'w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 transition-all',
-                    isOpen
-                      ? 'bg-aurora-subtle ring-1 ring-primary/30 text-foreground'
-                      : 'bg-secondary/40 text-muted-foreground',
-                  )}
-                >
-                  <Icon className="w-4 h-4" />
-                </span>
-                <span className="flex-1 text-left">{group.label}</span>
-                <ChevronRight className={cn('w-3.5 h-3.5 transition-transform flex-shrink-0', isOpen && 'rotate-90')} />
-              </button>
-              {isOpen && (
-                <div className="mt-1 space-y-0.5">
-                  {(() => {
-                    // Agrupa visibleItems por section (preservando ordem original)
-                    const sections: Array<{ section: Section | null; items: NavItem[] }> = [];
-                    let last: Section | null | undefined = undefined;
-                    for (const item of visibleItems) {
-                      const s = item.section ?? null;
-                      if (s !== last) {
-                        sections.push({ section: s, items: [] });
-                        last = s;
-                      }
-                      sections[sections.length - 1].items.push(item);
-                    }
-                    return sections.map((sec, idx) => {
-                      // Sections sem nome (ex: grupo Admin sem section): sempre aberta
-                      if (!sec.section) {
-                        return (
-                          <div key={idx}>
-                            {sec.items.map((item) => {
-                              const ItemIcon = item.icon;
-                              const active = pathname === item.href;
-                              return (
-                                <Link
-                                  key={item.href}
-                                  href={item.href}
-                                  className={cn(
-                                    'flex items-center gap-3 pl-6 pr-3 py-1.5 rounded-md text-sm transition-all',
-                                    active
-                                      ? 'bg-aurora-subtle text-foreground font-medium ring-1 ring-primary/30 shadow-[0_0_14px_-6px_hsl(var(--primary)/.5)]'
-                                      : 'hover:bg-secondary/50 text-muted-foreground hover:text-foreground',
-                                  )}
-                                >
-                                  <ItemIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                                  <span className="truncate">{item.label}</span>
-                                </Link>
-                              );
-                            })}
-                          </div>
-                        );
-                      }
-                      const secOpen = isSectionOpen(group.k, sec.section);
-                      // Conta itens da section que estao na rota atual — destaca
-                      const algumAtivo = sec.items.some((it) => pathname === it.href);
-                      return (
-                        <div key={idx}>
-                          <button
-                            onClick={() => toggleSection(group.k, sec.section!)}
-                            className={cn(
-                              'w-full flex items-center gap-1 pl-3 pr-2 pt-2 pb-0.5 text-[9px] uppercase tracking-wider font-semibold transition-colors',
-                              algumAtivo
-                                ? 'text-primary/70 hover:text-primary'
-                                : 'text-muted-foreground/60 hover:text-foreground',
-                            )}
-                          >
-                            <ChevronDown
-                              className={cn(
-                                'w-2.5 h-2.5 transition-transform flex-shrink-0',
-                                !secOpen && '-rotate-90',
-                              )}
-                            />
-                            <span className="flex-1 text-left">{SECTION_LABEL[sec.section]}</span>
-                            <span className="text-muted-foreground/40 font-mono">{sec.items.length}</span>
-                          </button>
-                          {secOpen && (
-                            <div className="space-y-0.5">
-                              {sec.items.map((item) => {
-                                const ItemIcon = item.icon;
-                                const active = pathname === item.href;
-                                return (
-                                  <Link
-                                    key={item.href}
-                                    href={item.href}
-                                    className={cn(
-                                      'flex items-center gap-3 pl-6 pr-3 py-1.5 rounded-md text-sm transition-colors',
-                                      active ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-secondary text-muted-foreground hover:text-foreground',
-                                    )}
-                                  >
-                                    <ItemIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                                    <span className="truncate">{item.label}</span>
-                                  </Link>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    });
-                  })()}
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {modulo ? (
+          <ModuloNav modulo={modulo} pathname={pathname} canSee={canSee} />
+        ) : (
+          <ModulosList user={user} />
+        )}
       </nav>
 
       {/* Versão */}
@@ -381,11 +65,139 @@ export function SidebarContent({ user }: { user: AuthUser }) {
   );
 }
 
+// ── Link de topo (Início, Orquestrador) ────────────────────────────
+function TopLink({ href, icon: Icon, label, active }: { href: string; icon: React.ElementType; label: string; active: boolean }) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        'w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs uppercase tracking-wider font-semibold transition-colors',
+        active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      <span
+        className={cn(
+          'w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 transition-all',
+          active
+            ? 'bg-aurora-subtle ring-1 ring-primary/30 text-foreground shadow-[0_0_14px_-4px_hsl(var(--primary)/.55)]'
+            : 'bg-secondary/40 text-muted-foreground',
+        )}
+      >
+        <Icon className="w-4 h-4" />
+      </span>
+      <span className="flex-1 text-left">{label}</span>
+    </Link>
+  );
+}
+
+// ── FORA de módulo: lista de módulos (atalhos pros hubs) ────────────
+function ModulosList({ user }: { user: AuthUser }) {
+  const grupos = NAV.filter((g) => {
+    // só mostra o grupo se o user vê ao menos 1 item dele
+    return g.items.some((it) => !it.needsRole || it.needsRole.includes(user.role as Role));
+  });
+  return (
+    <div className="pt-3">
+      <div className="px-3 pb-1 text-[9px] uppercase tracking-wider font-semibold text-muted-foreground/60">
+        Módulos
+      </div>
+      {grupos.map((g) => {
+        const Icon = g.icon;
+        // Nota: quando pathname === g.base, o SidebarContent renderiza ModuloNav
+        // (não esta lista) — então aqui nunca há item "ativo".
+        return (
+          <Link
+            key={g.k}
+            href={g.base}
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+          >
+            <span className={cn('w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0', g.boxClass)}>
+              <Icon className={cn('w-4 h-4', g.iconClass)} />
+            </span>
+            <span className="flex-1 text-left font-medium">{g.label}</span>
+            <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 flex-shrink-0" />
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── DENTRO de módulo: telas do módulo por seção ─────────────────────
+function ModuloNav({
+  modulo, pathname, canSee,
+}: {
+  modulo: NonNullable<ReturnType<typeof moduloDoPath>>;
+  pathname: string;
+  canSee: (item: NavItem) => boolean;
+}) {
+  const Icon = modulo.icon;
+  const visiveis = modulo.items.filter(canSee);
+  const secoes = agruparPorSecao(visiveis);
+
+  return (
+    <div className="pt-3">
+      {/* Voltar aos módulos */}
+      <Link
+        href="/inicio"
+        className="w-full flex items-center gap-2 px-3 py-1.5 mb-1 rounded-md text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <ArrowLeft className="w-3.5 h-3.5" />
+        Módulos
+      </Link>
+
+      {/* Cabeçalho do módulo atual */}
+      <Link
+        href={modulo.base}
+        className={cn(
+          'w-full flex items-center gap-2.5 px-3 py-2 rounded-md transition-colors',
+          pathname === modulo.base ? 'bg-aurora-subtle ring-1 ring-primary/30' : 'hover:bg-secondary/40',
+        )}
+      >
+        <span className={cn('w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0', modulo.boxClass)}>
+          <Icon className={cn('w-4 h-4', modulo.iconClass)} />
+        </span>
+        <span className="flex-1 text-left font-bold text-sm">{modulo.label}</span>
+      </Link>
+
+      {/* Seções */}
+      <div className="mt-1 space-y-0.5">
+        {secoes.map((sec, idx) => (
+          <div key={idx}>
+            {sec.section && (
+              <div className="px-3 pt-3 pb-0.5 text-[9px] uppercase tracking-wider font-semibold text-muted-foreground/60">
+                {SECTION_LABEL[sec.section]}
+              </div>
+            )}
+            {sec.items.map((item) => {
+              const ItemIcon = item.icon;
+              const active = pathname === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    'flex items-center gap-3 pl-6 pr-3 py-1.5 rounded-md text-sm transition-all',
+                    active
+                      ? 'bg-aurora-subtle text-foreground font-medium ring-1 ring-primary/30 shadow-[0_0_14px_-6px_hsl(var(--primary)/.5)]'
+                      : 'hover:bg-secondary/50 text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  <ItemIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Sidebar desktop — wrapper fixo de 256px (w-64).
- *
- * Escondida em telas < lg (1024px); nesses casos, a `<MobileNav>`
- * (renderizada dentro da `<Topbar>`) exibe o mesmo conteúdo num drawer.
+ * Escondida em telas < lg; nesses casos o `<MobileNav>` exibe o mesmo conteúdo.
  */
 export function Sidebar({ user }: { user: AuthUser }) {
   return (

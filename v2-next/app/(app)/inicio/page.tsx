@@ -10,7 +10,7 @@ import Link from 'next/link';
 // literal no fonte. Cada produto tem cor própria pra leitura rápida.
 const PRODUTOS = [
   {
-    href: '/inss/consulta',
+    href: '/inss',
     label: 'INSS',
     desc: 'Aposentados e pensionistas',
     icon: Briefcase,
@@ -19,7 +19,7 @@ const PRODUTOS = [
     cardClass: 'hover:border-purple-500/50 hover:shadow-purple-500/10',
   },
   {
-    href: '/clt/consulta',
+    href: '/clt',
     label: 'CLT',
     desc: 'Trabalhador de carteira assinada',
     icon: Users,
@@ -28,7 +28,7 @@ const PRODUTOS = [
     cardClass: 'hover:border-emerald-500/50 hover:shadow-emerald-500/10',
   },
   {
-    href: '/fgts/comparar',
+    href: '/fgts',
     label: 'FGTS',
     desc: 'Antecipação saque-aniversário',
     icon: PiggyBank,
@@ -37,7 +37,7 @@ const PRODUTOS = [
     cardClass: 'hover:border-cyan-500/50 hover:shadow-cyan-500/10',
   },
   {
-    href: '/federal/analise',
+    href: '/federal',
     label: 'Federal',
     desc: 'Servidor federal (SIAPE)',
     icon: Landmark,
@@ -46,7 +46,7 @@ const PRODUTOS = [
     cardClass: 'hover:border-blue-500/50 hover:shadow-blue-500/10',
   },
   {
-    href: '/governos/holerite',
+    href: '/governos',
     label: 'Governos',
     desc: 'Servidor estadual',
     icon: Building2,
@@ -55,7 +55,7 @@ const PRODUTOS = [
     cardClass: 'hover:border-yellow-500/50 hover:shadow-yellow-500/10',
   },
   {
-    href: '/prefeituras/holerite',
+    href: '/prefeituras',
     label: 'Prefeituras',
     desc: 'Servidor municipal',
     icon: FileSpreadsheet,
