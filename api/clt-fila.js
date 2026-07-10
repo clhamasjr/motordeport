@@ -1983,9 +1983,10 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     // quando a autorizacao entrar, o card vira AUTORIZADO+oferta sozinho.
     // Re-rodar processarC6 e seguro: nao gera link novo (gerarLink e separado).
     {
+      // Qualquer C6 bloqueado re-checa (cards antigos tem statusAutorizacao
+      // em ingles/NAO_ENCONTRADO — nao da pra filtrar por valor especifico)
       const c6 = row.bancos?.c6;
-      if (c6 && c6.status === 'bloqueado'
-          && ['AGUARDANDO_AUTORIZACAO', 'NAO_AUTORIZADO', ''].includes(c6.statusAutorizacao || '')) {
+      if (c6 && c6.status === 'bloqueado') {
         const idadeMs = c6.atualizado_em
           ? Date.now() - new Date(c6.atualizado_em).getTime()
           : Infinity;

@@ -106,6 +106,19 @@ export default async function handler(req) {
       }
     }
 
+    // A C6 alterna o IDIOMA do status de autorizacao (doc mostra AUTORIZADO;
+    // a API ao vivo ja retornou AUTHORIZED — visto em 09/07/2026, selfie da
+    // Priscila processada mas card preso porque comparavamos so o portugues).
+    // Normaliza pro canonico em portugues antes de qualquer comparacao.
+    const normAutzStatus = (st) => {
+      const s = String(st || '').toUpperCase();
+      if (s === 'AUTORIZADO' || s === 'AUTHORIZED') return 'AUTORIZADO';
+      if (s.includes('AGUARD') || s.includes('WAIT') || s.includes('PENDING') || s.includes('AWAIT')) return 'AGUARDANDO_AUTORIZACAO';
+      if (s.includes('NAO_AUTORIZADO') || s.includes('NOT_AUTHORIZED') || s.includes('UNAUTHORIZED')
+          || s.includes('REFUS') || s.includes('RECUS') || s.includes('EXPIR') || s.includes('DENIED')) return 'NAO_AUTORIZADO';
+      return s;
+    };
+
     // ─── OFERTA: higienização — o CPF tem oferta CLT no C6? ─
     // Endpoint: POST /marketplace/worker-payroll-loan-offers
     // Retorno: valor pré-aprovado + qtd parcelas + valor parcela + seguro
@@ -126,7 +139,7 @@ export default async function handler(req) {
             'application/vnd.c6bank_authorization_status_v1+json',
             { cpf }
           );
-          const st = auth.data?.status || '';
+          const st = normAutzStatus(auth.data?.status);
           if (st !== 'AUTORIZADO') {
             return j({
               success: true,
@@ -261,12 +274,13 @@ export default async function handler(req) {
         'application/vnd.c6bank_authorization_status_v1+json',
         { cpf }
       );
-      const st = r.data?.status || '';
+      const st = normAutzStatus(r.data?.status);
       return j({
         success: r.ok,
         httpStatus: r.status,
         cpf,
         statusAutorizacao: st,
+        statusOriginal: r.data?.status || null,
         observacao: r.data?.observacao || null,
         autorizado: st === 'AUTORIZADO',
         aguardando: st === 'AGUARDANDO_AUTORIZACAO',
