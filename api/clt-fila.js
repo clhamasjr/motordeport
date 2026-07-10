@@ -1976,6 +1976,30 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       }
     }
 
+    // AUTO-RE-CHECK C6 (selfie): cliente em "aguardando selfie" fica bloqueado
+    // e a C6 NAO avisa quando a selfie e processada — sem isso o card so
+    // atualizava com o operador clicando re-tentar. Agora, enquanto o cliente
+    // estiver aberto (polling ativo), re-checamos o status na C6 a cada ~30s;
+    // quando a autorizacao entrar, o card vira AUTORIZADO+oferta sozinho.
+    // Re-rodar processarC6 e seguro: nao gera link novo (gerarLink e separado).
+    {
+      const c6 = row.bancos?.c6;
+      if (c6 && c6.status === 'bloqueado'
+          && ['AGUARDANDO_AUTORIZACAO', 'NAO_AUTORIZADO', ''].includes(c6.statusAutorizacao || '')) {
+        const idadeMs = c6.atualizado_em
+          ? Date.now() - new Date(c6.atualizado_em).getTime()
+          : Infinity;
+        if (idadeMs > 30000) {
+          const baseUrl = APP_URL();
+          fetch(baseUrl + '/api/clt-fila', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
+            body: JSON.stringify({ action: 'processar', id, banco: 'c6', force: true })
+          }).catch(e => console.error('[clt-fila] auto-re-check c6:', e.message));
+        }
+      }
+    }
+
     // ─── AUTO-RETRY: rotina propria de re-tentativa (sem o operador clicar) ──
     // Bancos em 'falha' marcados como `retryable` (timeout / banco lento /
     // glitch transitorio) sao re-disparados SOZINHOS, ate MAX_AUTO_RETRY vezes.
