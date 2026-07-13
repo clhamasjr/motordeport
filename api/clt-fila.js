@@ -2012,6 +2012,29 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       }
     }
 
+    // AUTO-RE-CHECK NOSSA FINTECH (QITECH/UY3): card bloqueado com autorizacao
+    // PENDING re-checa sozinho a cada ~30s (re-roda auto-autz + recheck; NAO
+    // re-envia SMS — request-authorization so dispara em NOT_AUTHORIZED).
+    // Quando a DataPrev confirma, o card vira margem sem o operador clicar.
+    {
+      for (const slugNf of ['nossa_fintech', 'nossa_fintech_uy3']) {
+        const nf = row.bancos?.[slugNf];
+        if (nf && nf.status === 'bloqueado' && nf.statusAutorizacao === 'PENDING') {
+          const idadeMs = nf.atualizado_em
+            ? Date.now() - new Date(nf.atualizado_em).getTime()
+            : Infinity;
+          if (idadeMs > 30000) {
+            const baseUrl = APP_URL();
+            fetch(baseUrl + '/api/clt-fila', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
+              body: JSON.stringify({ action: 'processar', id, banco: slugNf, force: true })
+            }).catch(e => console.error('[clt-fila] auto-re-check ' + slugNf + ':', e.message));
+          }
+        }
+      }
+    }
+
     // ─── AUTO-RETRY: rotina propria de re-tentativa (sem o operador clicar) ──
     // Bancos em 'falha' marcados como `retryable` (timeout / banco lento /
     // glitch transitorio) sao re-disparados SOZINHOS, ate MAX_AUTO_RETRY vezes.

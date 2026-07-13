@@ -372,6 +372,22 @@ async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutori
       };
     }
     const req = await requestAutorizacao({ cpf: cpfLimpo, nome, telefone, serviceType: provider });
+    // ERRO no request NAO pode virar "aguardando DataPrev" eterno. Antes,
+    // qualquer falha (ex: "Provider 'UY3' desabilitado", CPF inelegivel,
+    // telefone recusado) era engolida e o status virava 'PENDING' por
+    // default — card preso pra sempre (caso UY3 09/07/2026: check-auth 404
+    // provou que a autorizacao NUNCA foi criada, mas o card dizia "disparada").
+    const reqOk = req.ok && req.data?.success !== false;
+    if (!reqOk) {
+      return {
+        approved: false,
+        etapa: 'ERRO',
+        status: 'REQUEST_AUTH_FALHOU',
+        error: req.data?.message || req.data?.error || `request-authorization HTTP ${req.status}`,
+        mensagem: `Falha ao disparar autorização ${provider}: ${req.data?.message || `HTTP ${req.status}`}`,
+        _raw: req.data,
+      };
+    }
     link = req.data?.data?.authorization_link || link;
     status = req.data?.data?.status || 'PENDING';
   }
@@ -381,12 +397,17 @@ async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutori
   // Se nao (ou autoAutorizar=false), retorna aguardando cliente.
   if (status === 'PENDING') {
     const uuid = extrairUuidLink(link);
+    let autoAutzInfo = null;
     if (autoAutorizar && uuid) {
-      await autorizarConsulta(uuid);
+      // Captura o resultado da auto-autz (antes era descartado — falha invisivel)
+      const aut = await autorizarConsulta(uuid);
+      autoAutzInfo = { ok: aut.ok, status: aut.status, mensagem: aut.data?.message || null };
       // Re-checa status apos auto-autz
       const recheck = await checkAutorizacao(cpfLimpo, provider);
       status = recheck.data?.data?.status || status;
       link = recheck.data?.data?.authorization_link || link;
+    } else if (autoAutorizar && !uuid) {
+      autoAutzInfo = { ok: false, mensagem: 'authorization_link sem uuid extraível — auto-autz não tentada' };
     }
     if (status !== 'AUTHORIZED') {
       return {
@@ -397,6 +418,7 @@ async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutori
           ? '⏳ Autorização disparada — aguardando confirmação DataPrev'
           : '⏳ Aguardando cliente autorizar pelo SMS',
         linkAutorizacao: link,
+        autoAutz: autoAutzInfo, // diagnostico: o que a auto-autz respondeu
       };
     }
   }
@@ -649,11 +671,15 @@ export default async function handler(req) {
     }
 
     if (action === 'enviarSms') {
-      // Pra operador re-enviar SMS manualmente do card
+      // Pra operador re-enviar SMS manualmente do card.
+      // serviceType OBRIGATORIO repassar: sem ele caia no default QITECH e o
+      // re-envio do card UY3 criava autorizacao da bancarizadora ERRADA
+      // (nunca destravava o card UY3).
       const r = await requestAutorizacao({
         cpf: body.cpf,
         nome: body.nome,
         telefone: body.telefone,
+        serviceType: body.serviceType || body.provider,
       });
       return jsonResp({ success: r.ok, ...r.data }, 200, req);
     }
