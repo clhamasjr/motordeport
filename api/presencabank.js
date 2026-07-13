@@ -375,6 +375,19 @@ export default async function handler(req) {
       if (recusouPorAutz(vincR) && nomeTermo && telTermo) {
         const termo = await gerarEAssinarTermo(cpf, nomeTermo, telTermo);
         if (!termo.ok) {
+          // O PB valida ELEGIBILIDADE ja na geracao do termo (ex: "CPF não
+          // elegível: Porte da empresa não permitido: 01" — empresa pequena
+          // demais). Isso e recusa de NEGOCIO (terminal), nao erro tecnico.
+          const errosTermo = Array.isArray(termo._raw?.errors) ? termo._raw.errors : [];
+          const inelegivel = errosTermo.some((e) => /n[aã]o eleg[ií]vel/i.test(String(e)));
+          if (inelegivel) {
+            return j({
+              success: true, etapa: 'vinculos',
+              temVinculo: false,
+              mensagem: 'PresencaBank: ' + errosTermo.join('; '),
+              _raw: termo._raw,
+            }, 200, req);
+          }
           return j({
             success: false, etapa: 'erro', temVinculo: null,
             httpStatus: termo.httpStatus || 0, retryable: true,
