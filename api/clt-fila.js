@@ -1986,7 +1986,10 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     // Idempotencia em processarUnno garante que NAO cria termo duplicado.
     {
       const unno = row.bancos?.unno;
-      if (unno && unno.status === 'manual_aguardando' && unno.termUuid) {
+      // Cobre AMBOS os fluxos: antigo (termUuid) e novo step-machine (card
+      // "análise em andamento" sem termUuid — Guardian termina depois do
+      // polling de 12s do processarUnno; sem isso o card ficava órfão).
+      if (unno && unno.status === 'manual_aguardando') {
         const idadeMs = unno.atualizado_em
           ? Date.now() - new Date(unno.atualizado_em).getTime()
           : Infinity;
