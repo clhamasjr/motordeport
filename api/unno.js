@@ -543,6 +543,17 @@ async function simularStep({ cpf, telefone, email, provider }) {
   // 2) TERMS_AND_CONDITIONS — autoriza o termo (vira AGREED)
   const termo = await unnoCall(`${base}/TERMS_AND_CONDITIONS/${proposalUuid}`, 'POST', {});
   passos.TERMS = { http: termo.status, termStatus: termo.data?.response?.status };
+  if (!termo.ok) {
+    // 13/07/2026: TERMS passou a voltar 400 (antes aceitava body vazio).
+    // Falha aqui derruba o GET_BALANCE em cascata ("terms not accepted") —
+    // devolve o erro REAL do termo pra diagnosticarmos o que a Unno quer.
+    return {
+      sucesso: false, etapa: 'TERMS', proposalUuid,
+      error: termo.data?.error?.message || termo.data?.message || `HTTP ${termo.status}`,
+      passos, _raw: termo.data,
+      _draftTermo: draft.data?.response?.terms_and_conditions || null,
+    };
+  }
 
   // 3) GET_BALANCE — a margem
   const bal = await unnoCall(`${base}/GET_BALANCE/${proposalUuid}`, 'POST', {});
