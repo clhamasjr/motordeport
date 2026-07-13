@@ -326,7 +326,31 @@ export default async function handler(req) {
 
       // 1) Vinculos
       const vincR = await pbCall('/v3/operacoes/consignado-privado/consultar-vinculos', 'POST', { cpf });
-      const lista = Array.isArray(vincR.data?.id) ? vincR.data.id : [];
+
+      // ERRO UPSTREAM NAO E "SEM VINCULO". Antes, qualquer 401/403/429/5xx ou
+      // HTML caia no mesmo balde de lista vazia e virava falso negativo
+      // silencioso (caso Priscila 09/07/2026). Erro agora vira etapa:'erro'
+      // retryable, com o corpo cru preservado pra auditoria.
+      if (!vincR.ok) {
+        const st = vincR.status;
+        return j({
+          success: false, etapa: 'erro', temVinculo: null,
+          httpStatus: st, retryable: st !== 403,
+          mensagem: st === 403
+            ? 'PresencaBank 403 — termo LGPD nao aceito ou perfil sem permissao (nao e "sem vinculo")'
+            : st === 401
+              ? 'PresencaBank 401 — token/login invalido ou expirado'
+              : st === 429
+                ? 'PresencaBank 429 — rate limit (30 req/min), re-tentar'
+                : `PresencaBank erro HTTP ${st}`,
+          _raw: vincR.data,
+        }, 200, req);
+      }
+
+      // Aceita os formatos ja vistos do PB (id / array puro / vinculos / data)
+      const lista = Array.isArray(vincR.data?.id) ? vincR.data.id
+                  : Array.isArray(vincR.data) ? vincR.data
+                  : (vincR.data?.vinculos || vincR.data?.data || []);
       const elegiveis = lista.filter(v => v.elegivel !== false);
 
       if (!elegiveis.length) {
@@ -334,7 +358,8 @@ export default async function handler(req) {
           success: true, etapa: 'vinculos',
           temVinculo: false,
           mensagem: 'Cliente sem vinculo CLT elegivel no PresencaBank',
-          totalVinculosBrutos: lista.length
+          totalVinculosBrutos: lista.length,
+          _raw: vincR.data, // evidencia do que o PB respondeu (antes era descartada)
         }, 200, req);
       }
 

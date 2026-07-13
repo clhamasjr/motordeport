@@ -345,7 +345,18 @@ async function processarPresencaBank(id, cpf, auth, secret) {
     });
     // Tracking: registra empresa aprovada
     _registrarAprovacao(pb.vinculo?.cnpj, pb.vinculo?.empregador, 'presencabank', null, null, null);
+  } else if (pb.etapa === 'erro' || !r.ok) {
+    // ERRO da API/upstream — NAO e "sem vinculo". Antes caia no else generico
+    // e o operador via "sem vinculo" com o PB quebrado (falso negativo).
+    await patchBanco(id, 'presencabank', {
+      status: 'falha',
+      disponivel: false,
+      retryable: pb.retryable !== false,
+      mensagem: pb.mensagem || pb.error || `Erro PresencaBank (HTTP ${pb.httpStatus || r.status})`,
+      _raw_response: pb._raw || pb,
+    });
   } else {
+    // temVinculo === false GENUINO (PB respondeu 200 com lista vazia)
     await patchBanco(id, 'presencabank', {
       status: 'falha',
       disponivel: false,
