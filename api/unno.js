@@ -540,18 +540,35 @@ async function simularStep({ cpf, telefone, email, provider }) {
     return { sucesso: false, etapa: 'START_DRAFT', error: draft.data?.message || `HTTP ${draft.status}`, passos, _raw: draft.data };
   }
 
-  // 2) TERMS_AND_CONDITIONS — autoriza o termo (vira AGREED)
+  // 2) TERMO VINCULADO — mudanca da Unno (13/07/2026, confirmada por captura
+  // do painel): o passo TERMS nao auto-aceita mais; exige termo JA AGREED.
+  // O termo vinculado se busca por GET /auth/api/v1/terms/latest/{proposalUuid}
+  // (por UUID DA PROPOSTA, nao por CPF). Se PENDING, auto-autorizamos via
+  // PUT /auth/api/v1/terms/authorize/{termUuid} (continua funcionando).
+  const tl = await unnoCall(`/auth/api/v1/terms/latest/${proposalUuid}`, 'GET');
+  const termUuid = tl.data?.uuid || null;
+  let termStatus = tl.data?.status || null;
+  passos.TERMO_LOOKUP = { http: tl.status, termUuid, termStatus };
+
+  if (termUuid && termStatus !== 'AGREED') {
+    const aut = await unnoCall(`/auth/api/v1/terms/authorize/${termUuid}`, 'PUT', {});
+    passos.TERMO_AUTZ = { http: aut.status, ok: aut.status === 204 || aut.ok };
+    const tl2 = await unnoCall(`/auth/api/v1/terms/latest/${proposalUuid}`, 'GET');
+    termStatus = tl2.data?.status || termStatus;
+    passos.TERMO_LOOKUP2 = { termStatus };
+  }
+
+  // 2b) TERMS_AND_CONDITIONS — agora com o termo AGREED, o passo avanca
   const termo = await unnoCall(`${base}/TERMS_AND_CONDITIONS/${proposalUuid}`, 'POST', {});
   passos.TERMS = { http: termo.status, termStatus: termo.data?.response?.status };
   if (!termo.ok) {
-    // 13/07/2026: TERMS passou a voltar 400 (antes aceitava body vazio).
-    // Falha aqui derruba o GET_BALANCE em cascata ("terms not accepted") —
-    // devolve o erro REAL do termo pra diagnosticarmos o que a Unno quer.
     return {
       sucesso: false, etapa: 'TERMS', proposalUuid,
       error: termo.data?.error?.message || termo.data?.message || `HTTP ${termo.status}`,
+      mensagem: termStatus !== 'AGREED'
+        ? `Termo ${termStatus || 'ausente'} — auto-autorizacao nao confirmou (ver passos.TERMO_AUTZ)`
+        : undefined,
       passos, _raw: termo.data,
-      _draftTermo: draft.data?.response?.terms_and_conditions || null,
     };
   }
 
@@ -605,17 +622,28 @@ async function simularStep({ cpf, telefone, email, provider }) {
   }
   const currentStep = guardian?.data?.current_step_code;
   const gResp = guardian?.data?.response || {};
-  const gGuard = guardian?.data?.payload?.guardian || {};
+  const gGuard = guardian?.data?.payload?.guardian || gResp.guardian || {};
   const credit = gGuard.credit_analysis_response || {};
-  // veredito FINAL (response.status é o autoritativo; cai pra credit/pre)
-  const finalStatus = String(gResp.status || credit.status || gGuard.pre_filter_response?.status || '').toLowerCase();
-  const motivo = gResp.reason_rejected?.message || credit.reason_rejected?.message || '';
+  // Formato novo (13/07): vereditos vem em response.byx.application_response
+  // (status denied + cancel_reason) e guardian.pre_filter_response (rejected
+  // + reason_rejected{key}). Le todos, prioridade: response.status > credit >
+  // byx > pre_filter.
+  const byxApp = gResp.byx?.application_response || guardian?.data?.payload?.byx?.application_response || {};
+  const guardPre = gGuard.pre_filter_response || {};
+  const finalStatus = String(
+    gResp.status || credit.status || byxApp.status || guardPre.status || ''
+  ).toLowerCase();
+  const motivo = gResp.reason_rejected?.message || credit.reason_rejected?.message
+    || byxApp.cancel_reason
+    || guardPre.reason_rejected?.message
+    || (guardPre.reason_rejected?.key === 'birth_date' ? 'Idade fora da política do fundo' : guardPre.reason_rejected?.key)
+    || '';
   passos.GUARDIAN = { http: guardian?.status, status: gstatus, verdict: finalStatus };
 
-  if (finalStatus === 'approved') {
+  if (finalStatus === 'approved' || finalStatus === 'accepted') {
     return { sucesso: true, etapa: 'APROVADO_ANALISE', elegivel: true, aprovado: true, currentStep, ...info };
   }
-  if (finalStatus === 'rejected') {
+  if (finalStatus === 'rejected' || finalStatus === 'denied') {
     // Erro de infra da Unno (Guardian caiu) ≠ reprovação de crédito real.
     const ehErroInfra = /guardian|integra|análise de crédito do fundo|analise de credito do fundo|not found|404|timeout|internal|erro na/i.test(motivo);
     return {
