@@ -286,7 +286,22 @@ async function processarPresencaBank(id, cpf, auth, secret) {
   const manut = await _bancoEmManutencao('presencabank');
   if (manut) { await _marcarEmManutencao(id, 'presencabank', manut); return; }
   await patchBanco(id, 'presencabank', { status: 'processando' });
-  const r = await callApi('/api/presencabank', { action: 'oportunidadesPorCPF', cpf }, auth, secret);
+
+  // O PB exige TERMO assinado (precisa nome+telefone) antes de consultar.
+  // Espera o cliente enriquecer (CAGED/clt_clientes pre-populam; multicorban
+  // completa em paralelo) e manda junto — o endpoint gera+assina o termo.
+  const cliPB = await aguardarCliente(id, 6000);
+  let nomePB = cliPB?.nome || null;
+  let telPB = cliPB?.telefones?.[0]?.completo || null;
+  if (!nomePB || !telPB) {
+    const { data: rowPB } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+    nomePB = nomePB || rowPB?.cliente?.nome || null;
+    telPB = telPB || rowPB?.cliente?.telefones?.[0]?.completo || null;
+  }
+
+  const r = await callApi('/api/presencabank', {
+    action: 'oportunidadesPorCPF', cpf, nome: nomePB, telefone: telPB,
+  }, auth, secret);
   const pb = r.data || {};
 
   // Mescla dados de cliente / vinculo na fila

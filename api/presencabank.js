@@ -65,6 +65,44 @@ async function pbCall(path, method, body) {
 
 const j = (data, status = 200, req = null) => jsonResp(data, status, req);
 
+// ── Gera + assina o TERMO PROPRIO (corban assina em representacao) ──
+// O PB EXIGE autorizacao/termo valido antes do consultar-vinculos — sem
+// isso recusa com "é necessario uma autorização válida" (visto 13/07/2026;
+// era a causa dos falso-"sem vinculo" do motor, que pulava o termo).
+// Mesmo fluxo do fluxoCompleto (POST termo-inss -> PUT assina c/ tenant-id).
+async function gerarEAssinarTermo(cpf, nome, telefone) {
+  const cfg = getConfig();
+  const termoR = await pbCall('/consultas/termo-inss', 'POST', {
+    cpf, nome, telefone, produtoId: cfg.PRODUTO_ID,
+  });
+  const termoId = termoR.data?.id || termoR.data?.termoId || termoR.data?.autorizacaoId;
+  if (!termoId) {
+    return { ok: false, httpStatus: termoR.status, erro: 'gerarTermo nao retornou id', _raw: termoR.data };
+  }
+  const token = await getToken();
+  const assinaR = await fetch(cfg.BASE + `/consultas/termo-inss/${encodeURIComponent(termoId)}`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      'Content-Type': 'application/json',
+      'tenant-id': 'superuser',
+    },
+    body: JSON.stringify({
+      userAgent: 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36',
+      OperationalSystem: 'Android',
+      DeviceModel: 'Server',
+      DeviceName: 'LhamasCred Backend',
+      DeviceType: 'Backend',
+      GeoLocation: { Latitude: '-23.5016', Longitude: '-47.4592' }, // Sorocaba
+    }),
+  });
+  if (!assinaR.ok) {
+    const at = await assinaR.text();
+    return { ok: false, httpStatus: assinaR.status, erro: `assinarTermo HTTP ${assinaR.status}`, _raw: at.substring(0, 400) };
+  }
+  return { ok: true, termoId };
+}
+
 // ══════════════════════════════════════════════════════════════════
 // HANDLER
 // ══════════════════════════════════════════════════════════════════
@@ -324,8 +362,28 @@ export default async function handler(req) {
       const cpf = (digits.length >= 9 && digits.length <= 11) ? digits.padStart(11, '0') : '';
       if (!cpf) return jsonError('cpf obrigatorio', 400, req);
 
-      // 1) Vinculos
-      const vincR = await pbCall('/v3/operacoes/consignado-privado/consultar-vinculos', 'POST', { cpf });
+      const nomeTermo = (body.nome || '').trim() || null;
+      const telTermo = (body.telefone || '').replace(/\D/g, '') || null;
+
+      // 1) Vinculos (tentativa direta — pode haver termo ainda valido)
+      let vincR = await pbCall('/v3/operacoes/consignado-privado/consultar-vinculos', 'POST', { cpf });
+
+      // O PB exige TERMO/AUTORIZACAO valida pra consultar ("é necessario uma
+      // autorização válida"). Se recusou por isso e temos nome+telefone,
+      // gera+assina o termo proprio e re-tenta UMA vez.
+      const recusouPorAutz = (r0) => !r0.ok && /autoriza/i.test(JSON.stringify(r0.data || ''));
+      if (recusouPorAutz(vincR) && nomeTermo && telTermo) {
+        const termo = await gerarEAssinarTermo(cpf, nomeTermo, telTermo);
+        if (!termo.ok) {
+          return j({
+            success: false, etapa: 'erro', temVinculo: null,
+            httpStatus: termo.httpStatus || 0, retryable: true,
+            mensagem: `PresencaBank: falha ao gerar/assinar termo — ${termo.erro}`,
+            _raw: termo._raw,
+          }, 200, req);
+        }
+        vincR = await pbCall('/v3/operacoes/consignado-privado/consultar-vinculos', 'POST', { cpf });
+      }
 
       // ERRO UPSTREAM NAO E "SEM VINCULO". Antes, qualquer 401/403/429/5xx ou
       // HTML caia no mesmo balde de lista vazia e virava falso negativo
@@ -333,16 +391,21 @@ export default async function handler(req) {
       // retryable, com o corpo cru preservado pra auditoria.
       if (!vincR.ok) {
         const st = vincR.status;
+        const ehAutz = recusouPorAutz(vincR);
         return j({
           success: false, etapa: 'erro', temVinculo: null,
           httpStatus: st, retryable: st !== 403,
-          mensagem: st === 403
-            ? 'PresencaBank 403 — termo LGPD nao aceito ou perfil sem permissao (nao e "sem vinculo")'
-            : st === 401
-              ? 'PresencaBank 401 — token/login invalido ou expirado'
-              : st === 429
-                ? 'PresencaBank 429 — rate limit (30 req/min), re-tentar'
-                : `PresencaBank erro HTTP ${st}`,
+          mensagem: ehAutz
+            ? (nomeTermo && telTermo
+                ? 'PresencaBank recusou mesmo após assinar termo — verificar permissão de termo próprio no perfil'
+                : 'PresencaBank exige termo de autorização — faltam nome/telefone pra gerar (NÃO é "sem vínculo")')
+            : st === 403
+              ? 'PresencaBank 403 — termo LGPD nao aceito ou perfil sem permissao (nao e "sem vinculo")'
+              : st === 401
+                ? 'PresencaBank 401 — token/login invalido ou expirado'
+                : st === 429
+                  ? 'PresencaBank 429 — rate limit (30 req/min), re-tentar'
+                  : `PresencaBank erro HTTP ${st}`,
           _raw: vincR.data,
         }, 200, req);
       }

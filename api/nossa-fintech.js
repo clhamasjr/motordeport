@@ -25,12 +25,14 @@ export const config = { runtime: 'edge' };
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 
 // ── Config ─────────────────────────────────────────────────────
-// URL de PRODUÇÃO (doc oficial nossa-fintech-doc.spixiiservices.com.br/docs):
-//   https://nossa-fintech-api.spixiiservices.com.br  ← é a produção mesmo.
-// (NÃO é teste — a doc só documenta esse endpoint como produção.)
+// PRODUÇÃO liberada pela Spixii em 13/07/2026 (após certificação):
+//   https://api.anossafintech.com.br  ← PRODUÇÃO (dados reais)
+//   https://nossa-fintech-api.spixiiservices.com.br  ← HOMOLOGAÇÃO (JOÃO SILVA)
+// Credenciais de produção = as MESMAS do portal (CPF + senha + promotora).
+// Pra voltar pra homolog: setar NOSSA_FINTECH_BASE_URL no Vercel.
 function getConfig() {
   return {
-    BASE: (process.env.NOSSA_FINTECH_BASE_URL || 'https://nossa-fintech-api.spixiiservices.com.br').trim(),
+    BASE: (process.env.NOSSA_FINTECH_BASE_URL || 'https://api.anossafintech.com.br').trim(),
     CPF: (process.env.NOSSA_FINTECH_CPF || '').trim(),
     PROMOT_ID: parseInt(process.env.NOSSA_FINTECH_PROMOT_ID || '0', 10),
     PASSWORD: (process.env.NOSSA_FINTECH_PASSWORD || '').trim(),
