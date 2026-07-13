@@ -713,6 +713,29 @@ export default async function handler(req) {
       return jsonResp(out, 200, req);
     }
 
+    // ─── DEBUG: chamada crua na maquina de passos ─────────────
+    // Sem step: roda START_DRAFT e devolve a resposta COMPLETA (pra ver onde
+    // o termo foi parar — 13/07 a Unno parou de devolver terms_and_conditions
+    // no draft e o passo TERMS voltou a dar 400).
+    // Com step+proposalUuid: chama o step com payload arbitrario (iterar sem deploy).
+    // body: { cpf, telefone, provider?, step?, proposalUuid?, payload? }
+    if (action === 'stepRaw') {
+      const prov = (body.provider || 'CELCOIN').toUpperCase();
+      const base = `/proposal/api/v1/process/CONSIGNADO_CLT/${prov}/steps`;
+      if (body.step && body.proposalUuid) {
+        const r = await unnoCall(`${base}/${body.step}/${body.proposalUuid}`, 'POST', body.payload || {});
+        return jsonResp({ success: r.ok, httpStatus: r.status, data: r.data }, 200, req);
+      }
+      const cpf = onlyDigits(body.cpf || '');
+      if (cpf.length !== 11) return jsonError('cpf invalido', 400, req);
+      const draft = await unnoCall(`${base}/START_DRAFT`, 'POST', {
+        cpf,
+        phone: onlyDigits(body.telefone || ''),
+        email: `${cpf}@lead.lhamascred.com.br`,
+      });
+      return jsonResp({ success: draft.ok, httpStatus: draft.status, data: draft.data }, 200, req);
+    }
+
     // ─── DEBUG TEMP: mostra dado cru do Unno pra entender por que a proposta
     // nao aparece / o termo da 404. body: { cpf, termUuid }
     if (action === 'debug') {
