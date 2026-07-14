@@ -68,6 +68,8 @@ const TODOS_BANCOS_CLT = [
   'nossa_fintech_uy3',   // A NOSSA FINTECH via UY3
   'facta_clt',           // FACTA Crédito do Trabalhador
   'facta_clt_offline',   // FACTA Base Offline (histórico, sem SMS — pré-filtro de lote)
+  'soma_celcoin',        // SOMA (api.somabp2.com.br) via CELCOIN
+  'soma_uy3',            // SOMA via UY3
 ];
 
 // ── MODO STANDBY ───────────────────────────────────────────────
@@ -1133,6 +1135,96 @@ async function processarUnno(id, cpf, auth, secret) {
   }
 }
 
+// ─── SOMA (api.somabp2.com.br) — consignado privado via UY3/CELCOIN ──
+// Consulta exige nome+celular (espera o cliente enriquecer). A consulta
+// pode ser assíncrona (webhook muda status depois) — EM_ANALISE fica
+// retryable e o auto-retry/re-tentar re-consulta.
+async function processarSoma(id, cpf, slug, bancarizadora, auth, secret) {
+  const manut = await _bancoEmManutencao(slug);
+  if (manut) { await _marcarEmManutencao(id, slug, manut); return; }
+  await patchBanco(id, slug, { status: 'processando' });
+
+  const cli = await aguardarCliente(id, 6000);
+  const nome = cli?.nome || null;
+  const telefone = cli?.telefones?.[0]?.completo || null;
+  const dataNascimento = cli?.dataNascimento || null;
+
+  const r = await callApi('/api/soma', {
+    action: 'consultarMargem', cpf, nome, telefone, dataNascimento, bancarizadora,
+  }, auth, secret, 20000);
+  const u = r.data || {};
+
+  if (!r.ok && !u.etapa) {
+    await patchBanco(id, slug, {
+      status: 'falha', retryable: true,
+      mensagem: u.error || u.message || `Erro SOMA (HTTP ${r.status})`,
+      _raw_response: u,
+    });
+    return;
+  }
+
+  if (u.etapa === 'APROVADO') {
+    if (u.vinculo?.cnpj || u.vinculo?.empregador) {
+      await dbUpdate('clt_consultas_fila', { id }, {
+        vinculo: {
+          matricula: u.vinculo?.matricula, cnpj: u.vinculo?.cnpj,
+          empregador: u.vinculo?.empregador, dataAdmissao: u.vinculo?.dataAdmissao,
+        },
+      }).catch(() => {});
+    }
+    await patchBanco(id, slug, {
+      status: 'ok', disponivel: true,
+      mensagem: u.mensagem,
+      dados: {
+        margemDisponivel: u.margem?.disponivel || 0,
+        margemBase: u.margem?.bruta || 0,
+        empregador: u.vinculo?.empregador,
+        empregadorCnpj: u.vinculo?.cnpj,
+        matricula: u.vinculo?.matricula,
+        consultaId: u.consultaId, // necessário pra simular/digitar depois
+        bancarizadora,
+      },
+    });
+    if (u.vinculo?.cnpj) _registrarAprovacao(u.vinculo.cnpj, u.vinculo.empregador, slug, null, null, null);
+    return;
+  }
+
+  if (u.etapa === 'AGUARDA_AUTORIZACAO') {
+    await patchBanco(id, slug, {
+      status: 'bloqueado', bloqueado: true, precisaAutorizacao: true,
+      linkAutorizacao: u.linkAssinatura || null,
+      mensagem: u.mensagem, retryable: true,
+      dados: { consultaId: u.consultaId, bancarizadora },
+    });
+    return;
+  }
+
+  if (u.etapa === 'EM_ANALISE') {
+    await patchBanco(id, slug, {
+      status: 'manual_aguardando', disponivel: false, manual: false,
+      mensagem: u.mensagem, retryable: true,
+      dados: { consultaId: u.consultaId, bancarizadora },
+    });
+    return;
+  }
+
+  if (u.etapa === 'AGUARDA_DADOS') {
+    await patchBanco(id, slug, {
+      status: 'falha', disponivel: false, retryable: true,
+      mensagem: u.mensagem,
+    });
+    return;
+  }
+
+  // SEM_MARGEM / ERRO
+  await patchBanco(id, slug, {
+    status: 'falha', disponivel: false,
+    retryable: u.etapa === 'ERRO' && u.retryable !== false,
+    mensagem: u.mensagem || 'SOMA não retornou margem',
+    _raw_response: u,
+  });
+}
+
 // ─── A NOSSA FINTECH (Spixii) — multi-bancarizadora QITECH + UY3 ──
 // Cada bancarizadora vira 1 card: slug 'nossa_fintech' (QITECH) e
 // 'nossa_fintech_uy3' (UY3). Auto-autz modelo Handbank/UY3 (sistema
@@ -1965,7 +2057,9 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       else if (banco === 'nossa_fintech_uy3') await processarNossaFintech(id, row.cpf, 'nossa_fintech_uy3', 'UY3', auth, secret);
       else if (banco === 'facta_clt') await processarFacta(id, row.cpf, auth, secret);
       else if (banco === 'facta_clt_offline') await processarFactaOffline(id, row.cpf, auth, secret);
-      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno, nossa_fintech, nossa_fintech_uy3, facta_clt, facta_clt_offline', 400, req);
+      else if (banco === 'soma_celcoin') await processarSoma(id, row.cpf, 'soma_celcoin', 'CELCOIN', auth, secret);
+      else if (banco === 'soma_uy3') await processarSoma(id, row.cpf, 'soma_uy3', 'UY3', auth, secret);
+      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno, nossa_fintech, nossa_fintech_uy3, facta_clt, facta_clt_offline, soma_celcoin, soma_uy3', 400, req);
     } catch (e) {
       await patchBanco(id, banco, { status: 'falha', mensagem: 'Erro: ' + e.message });
       return jsonResp({ success: false, error: e.message }, 200, req);
