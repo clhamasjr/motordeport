@@ -78,6 +78,42 @@ async function somaCall(path, method = 'GET', body = null) {
   return { ok: r.ok, status: r.status, data: d };
 }
 
+// ── AUTO-AUTORIZAÇÃO (procuração — modelo Handbank/UY3/Nossa Fintech) ──
+// A SOMA não expõe endpoint de autz no swagger público, MAS o botão
+// "Confirmar aceite" da página sistema.somabp2.com.br/privado/aceite-margem
+// dispara POST produtos/privados/consultas/confirmar-aceite {conHashTermo,
+// dispositivoUsuario} — endpoint PÚBLICO (autoriza pelo hash, sem login).
+// O hash é o uuid do conLinkAssinatura. Chamamos server-side (procuração
+// escrita do cliente, igual ChallengeInfo do Handbank).
+function extrairHashLink(link) {
+  const m = String(link || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return m ? m[0] : null;
+}
+
+async function confirmarAceite(hashTermo) {
+  const cfg = getConfig();
+  const body = {
+    conHashTermo: hashTermo,
+    dispositivoUsuario: {
+      plataforma: 'Backend',
+      sistemaOperacional: 'Server',
+      navegador: 'LhamasCred',
+      modeloDispositivo: 'LhamasCred Backend',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      geolocalizacao: { latitude: '-23.5015', longitude: '-47.4526' }, // Sorocaba/SP
+    },
+  };
+  // Endpoint público (não requer nosso Bearer) — chama plano, como o browser do cliente
+  const r = await fetch(cfg.BASE + '/produtos/privados/consultas/confirmar-aceite', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const t = await r.text();
+  let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 400) }; }
+  return { ok: r.ok, status: r.status, data: d };
+}
+
 // ── Normaliza a consulta de margem no formato do motor CLT ─────
 // Campos da SOMA: conId, conStatusId/Nome, conMargemDisponivel, conMargemBruta,
 // conSalarioBruto/Liquido, conLinkAssinatura, conAssinadoEm, conMatricula,
@@ -183,7 +219,33 @@ export default async function handler(req) {
           _raw: r.data,
         }, 200, req);
       }
-      return j(normalizarConsulta(r.data, r.status), 200, req);
+      let norm = normalizarConsulta(r.data, r.status);
+
+      // AUTO-AUTORIZAÇÃO (procuração): se gerou link de aceite e ainda não
+      // assinou, confirma o aceite server-side e RE-CONSULTA pra pegar a
+      // margem — igual Handbank/Nossa Fintech. autoAutorizar default true.
+      const autoAutorizar = body.autoAutorizar !== false;
+      if (autoAutorizar && norm.etapa === 'AGUARDA_AUTORIZACAO' && norm.linkAssinatura) {
+        const hash = extrairHashLink(norm.linkAssinatura);
+        if (hash) {
+          const aut = await confirmarAceite(hash);
+          norm._autoAutz = { ok: aut.ok, status: aut.status, msg: aut.data?.message || null };
+          if (aut.ok) {
+            // Re-consulta (agora autorizado → deve vir a margem)
+            const r2 = await somaCall('/v2/privado/externo/consultas/', 'POST', payload);
+            if (r2.ok) { norm = normalizarConsulta(r2.data, r2.status); norm._reconsultado = true; }
+          }
+        }
+      }
+      return j(norm, 200, req);
+    }
+
+    // ─── AUTORIZAR (confirmar aceite manualmente por hash ou link) ──
+    if (action === 'autorizar') {
+      const hash = extrairHashLink(body.link || body.hashTermo || body.conHashTermo);
+      if (!hash) return jsonError('link ou hashTermo obrigatorio (uuid)', 400, req);
+      const aut = await confirmarAceite(hash);
+      return j({ success: aut.ok, httpStatus: aut.status, ...aut.data }, 200, req);
     }
 
     // ─── SIMULAÇÃO ────────────────────────────────────────────
