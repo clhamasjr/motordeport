@@ -573,6 +573,14 @@ async function consultBeneficio(cookie, csrf, beneficio) {
   return { ok: true, beneficio: nbClean, parsed, raw_code: data.code };
 }
 
+// Falha upstream do Multicorban: NUNCA vazar a mensagem crua deles pro
+// usuario final (ex: "Licença expirou, ligue (65)4042-2961"). Detalhe real
+// vai pro log do servidor (Vercel); o usuario ve so um bloqueio generico.
+function mcIndisponivel(detalhe, req) {
+  console.error('[multicorban] indisponivel:', detalhe);
+  return json({ ok: false, error: 'Consulta indisponivel no momento. Tente novamente mais tarde.' }, 502, req);
+}
+
 export default async function handler(req) {
   if (req.method === 'OPTIONS') return handleOptions(req);
   if (req.method !== 'POST') return jsonError('POST only', 405, req);
@@ -591,12 +599,12 @@ export default async function handler(req) {
       const result = await doLogin(creds.user, creds.pass);
       if (result.ok) { sessionCache = { cookie: result.cookie, csrf: result.csrf, ts: Date.now() }; return json({ ok: true, mensagem: 'Sessao ativa', data: result.data }, 200, req); }
       // 502 (nao 401) — falha no Multicorban NAO deve deslogar o usuario do FlowForce
-      return json({ ok: false, error: 'Multicorban indisponivel: ' + result.error }, 502, req);
+      return mcIndisponivel(result.error, req);
     }
 
     if (action === 'consult_cpf') {
       if (!cpf) return jsonError('CPF obrigatorio', 400, req);
-      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Multicorban indisponivel: ' + session.error }, 502, req);
+      const session = await ensureSession(); if (!session.ok) return mcIndisponivel(session.error, req);
       let result = await consultCPF(session.cookie, session.csrf, cpf);
       if (!result.ok && (result.error || '').includes('session')) {
         sessionCache = { cookie: null, csrf: null, ts: 0 };
@@ -614,7 +622,7 @@ export default async function handler(req) {
     if (action === 'consult_clt') {
       if (!cpf) return jsonError('CPF obrigatorio', 400, req);
       const session = await ensureSession();
-      if (!session.ok) return json({ ok: false, error: 'Multicorban indisponivel: ' + session.error }, 502, req);
+      if (!session.ok) return mcIndisponivel(session.error, req);
       let result = await consultCltFgts(session.cookie, session.csrf, cpf);
       if (!result.ok && (result.error || '').includes('session')) {
         sessionCache = { cookie: null, csrf: null, ts: 0 };
@@ -634,7 +642,7 @@ export default async function handler(req) {
 
     if (action === 'consult_beneficio') {
       if (!beneficio) return jsonError('Beneficio obrigatorio', 400, req);
-      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Multicorban indisponivel: ' + session.error }, 502, req);
+      const session = await ensureSession(); if (!session.ok) return mcIndisponivel(session.error, req);
       let result = await consultBeneficio(session.cookie, session.csrf, beneficio);
       // Retry com novo login se a sessao expirou (resposta nao-JSON = pagina de login do Multicorban)
       if (!result.ok && (result.error || '').includes('session')) {
@@ -651,7 +659,7 @@ export default async function handler(req) {
     // Debug: retorna HTML bruto da secao de contratos pra diagnostico
     if (action === 'debug_saldo') {
       if (!beneficio && !cpf) return jsonError('CPF ou beneficio obrigatorio', 400, req);
-      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Multicorban indisponivel: ' + session.error }, 502, req);
+      const session = await ensureSession(); if (!session.ok) return mcIndisponivel(session.error, req);
       let result;
       if (beneficio) { result = await consultBeneficio(session.cookie, session.csrf, beneficio); }
       else {
@@ -683,7 +691,7 @@ export default async function handler(req) {
 
     if (action === 'raw') {
       const { endpoint, params } = body; if (!endpoint) return jsonError('endpoint obrigatorio', 400, req);
-      const session = await ensureSession(); if (!session.ok) return json({ ok: false, error: 'Multicorban indisponivel: ' + session.error }, 502, req);
+      const session = await ensureSession(); if (!session.ok) return mcIndisponivel(session.error, req);
       const formBody = new URLSearchParams(params || {});
       if (session.csrf) formBody.set('_token', session.csrf);
       const res = await fetch(`${BASE}${endpoint}`, {
