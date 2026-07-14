@@ -91,8 +91,12 @@ function extrairHashLink(link) {
 }
 
 async function confirmarAceite(hashTermo) {
-  const cfg = getConfig();
-  const body = {
+  // Fluxo do portal (2 passos, AMBOS com Bearer do parceiro — rotas
+  // produtos/privados/consultas/* são escopo do parceiro; "Link aceite via
+  // API" habilitado na conta):
+  //   1) validar-hash {conHashTermo}  2) confirmar-aceite {conHashTermo, dispositivoUsuario}
+  const val = await somaCall('/produtos/privados/consultas/validar-hash', 'POST', { conHashTermo: hashTermo });
+  const conf = await somaCall('/produtos/privados/consultas/confirmar-aceite', 'POST', {
     conHashTermo: hashTermo,
     dispositivoUsuario: {
       plataforma: 'Backend',
@@ -102,16 +106,8 @@ async function confirmarAceite(hashTermo) {
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       geolocalizacao: { latitude: '-23.5015', longitude: '-47.4526' }, // Sorocaba/SP
     },
-  };
-  // Endpoint público (não requer nosso Bearer) — chama plano, como o browser do cliente
-  const r = await fetch(cfg.BASE + '/produtos/privados/consultas/confirmar-aceite', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
   });
-  const t = await r.text();
-  let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 400) }; }
-  return { ok: r.ok, status: r.status, data: d };
+  return { ok: conf.ok, status: conf.status, data: conf.data, _validarHash: { status: val.status, ok: val.ok } };
 }
 
 // ── Normaliza a consulta de margem no formato do motor CLT ─────
