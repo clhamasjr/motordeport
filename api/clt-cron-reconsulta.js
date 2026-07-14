@@ -12,12 +12,15 @@
 //    clt_consultas_fila e re-atribui via comoUserId — mantém o isolamento
 //    multi-tenant: cada vendedor continua vendo só as suas).
 //  - SEM SMS em massa: dispara só os bancos que NÃO mandam SMS pro cliente
-//    no fluxo de consulta. Exclui fintech_celcoin e facta_clt (SMS) e
-//    mercantil (fora de operação).
-//  - Processa em LOTES (limit por execução) pra não estourar timeout Edge.
+//    no fluxo de consulta. Exclui facta_clt (SMS), mercantil (fora de
+//    operação), fintech_qi/celcoin (suspensos até confirmar se disparam SMS)
+//    e multicorban (scrape com sessão CSRF frágil — não aguenta massa).
+//  - Processa em LOTES pequenos com espaçamento (rate limits: PresençaBank
+//    30 req/min; FACTA offline 3s — este roda no worker serial próprio).
 //
-// Agendado pra 26/06 07h BRT (10h UTC) — ver vercel.json. Roda em janela
-// de ~2h pra cobrir volume (varias execucoes consomem o cursor).
+// RECORRENTE: toda segunda 07h BRT (10h UTC, '0 10 * * 1' no vercel.json).
+// 1 tick só — o auto-encadeamento drena a base inteira sozinho. No fim da
+// cadeia dispara o RESUMO WhatsApp (oportunidades da rodada) via Evolution.
 // ══════════════════════════════════════════════════════════════════
 
 export const config = { runtime: 'edge' };
@@ -27,24 +30,124 @@ import { dbSelect, dbUpdate, dbQuery } from './_lib/supabase.js';
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
 
-// Teto de segurança de encadeamentos (anti-loop). 1000 passes × 60 = 60k CPFs.
-const MAX_PASS = 1000;
+// Teto de segurança de encadeamentos (anti-loop). 2000 passes × 8 = 16k CPFs.
+const MAX_PASS = 2000;
+
+// Espaço entre disparos de CPFs dentro do pass (protege PresençaBank 30/min
+// e suaviza o burst nas demais bancarizadoras).
+const ESPACO_DISPARO_MS = 1600;
 
 // Bancos que NÃO disparam SMS/WhatsApp pro cliente no fluxo de consulta
-// (auto-autz, autz simples, enriquecimento ou bloqueio passivo).
+// (auto-autz, termo próprio ou bloqueio passivo).
 const BANCOS_RECONSULTA = [
-  'multicorban',        // enriquecimento (nome/telefone)
-  'fintech_qi',         // autz simples (sem SMS)
-  'fintech_celcoin',    // autz simples (sem SMS) — igual o QI
   'v8_qi',              // V8 nova API — consent + auto-autz (sem SMS)
   'v8_celcoin',         // idem
   'handbank',           // auto-autz UY3 ChallengeInfo
   'c6',                 // bloqueado passivo (selfie só com clique)
-  'unno',               // cria termo + auto-autz
-  'nossa_fintech',      // auto-autz geolocation
+  'unno',               // termo vinculado + auto-autz (fluxo novo 13/07)
+  'nossa_fintech',      // auto-autz geolocation (PRODUÇÃO desde 13/07)
   'nossa_fintech_uy3',  // auto-autz geolocation
-  'presencabank',       // enriquecimento + margem
+  'presencabank',       // termo próprio auto-assinado
+  'facta_clt_offline',  // base offline (sem SMS) — processada pelo worker SERIAL
 ];
+
+// ── RESUMO DA RODADA (WhatsApp via Evolution) ─────────────────────
+// Chamado no fim da cadeia com ?resumo=1. Hops 1-2 só esperam ~20s cada
+// (bancos assíncronos assentando) e re-encadeiam; hop 3 computa e envia.
+// Envs: EVOLUTION_URL/EVOLUTION_KEY + RECONSULTA_ALERT_NUMBER (fallback
+// HEALTHCHECK_ALERT_NUMBER) + HEALTHCHECK_INSTANCE.
+async function enviarResumoRodada(req, hop, cutoff) {
+  const baseUrl = APP_URL();
+  const secret = process.env.WEBHOOK_SECRET || '';
+
+  if (hop < 3) {
+    await new Promise((r) => setTimeout(r, 20000)); // deixa os bancos assentarem
+    fetch(baseUrl + `/api/clt-cron-reconsulta?resumo=${hop + 1}&cutoff=${encodeURIComponent(cutoff || '')}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret },
+    }).catch(() => {});
+    return jsonResp({ success: true, resumoHop: hop, mensagem: `Aguardando bancos assentarem (hop ${hop}/3)` }, 200, req);
+  }
+
+  // hop 3: computa as oportunidades da rodada (linhas da reconsulta de hoje)
+  const desde = cutoff || new Date(new Date().setUTCHours(0, 0, 0, 0)).toISOString();
+  let selectCols = 'cpf,cliente,bancos,novo_apto,novo_apto_bancos';
+  let rows = [];
+  for (let page = 0; page < 4; page++) { // até 2000 linhas (paginado)
+    const qs = (cols) =>
+      `iniciado_em=gte.${encodeURIComponent(desde)}&criada_por_nome=like.Reconsulta*`
+      + `&select=${cols}&order=iniciado_em.asc&limit=500&offset=${page * 500}`;
+    let { data } = await dbQuery('clt_consultas_fila', qs(selectCols)).catch(() => ({ data: null }));
+    // Migration ainda nao rodou (colunas novo_apto* inexistentes) → cai pro basico
+    if (!Array.isArray(data) && selectCols.includes('novo_apto')) {
+      selectCols = 'cpf,cliente,bancos';
+      const retry = await dbQuery('clt_consultas_fila', qs(selectCols)).catch(() => ({ data: null }));
+      data = retry.data;
+    }
+    if (!Array.isArray(data) || data.length === 0) break;
+    rows = rows.concat(data);
+    if (data.length < 500) break;
+  }
+
+  // agrega: aptos (margem>0 em algum banco), novos (novo_apto), top 5
+  const porCpf = new Map();
+  for (const r of rows) {
+    let melhorMargem = 0, melhorBanco = null;
+    for (const [slug, st] of Object.entries(r.bancos || {})) {
+      if (slug === 'multicorban') continue;
+      if (st?.status === 'ok' && st?.disponivel === true) {
+        let m = parseFloat(st.dados?.margemDisponivel ?? st.dados?.valorLiquido ?? 0) || 0;
+        if (st.dados?.margemDisponivel != null && m > 20000) m = m / 100;
+        if (m > melhorMargem) { melhorMargem = m; melhorBanco = slug; }
+      }
+    }
+    const atual = porCpf.get(r.cpf);
+    if (!atual || melhorMargem > atual.melhorMargem) {
+      porCpf.set(r.cpf, {
+        nome: r.cliente?.nome || null, melhorMargem, melhorBanco,
+        novo: r.novo_apto === true,
+      });
+    }
+  }
+  const clientes = Array.from(porCpf.values());
+  const aptos = clientes.filter((c) => c.melhorMargem > 0);
+  const novos = aptos.filter((c) => c.novo);
+  const top5 = [...aptos].sort((a, b) => b.melhorMargem - a.melhorMargem).slice(0, 5);
+  const somaMargem = aptos.reduce((s, c) => s + c.melhorMargem, 0);
+
+  const fmt = (v) => 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const linhasTop = top5.map((c, i) =>
+    `${i + 1}. ${(c.nome || 'sem nome').split(' ').slice(0, 2).join(' ')} — ${fmt(c.melhorMargem)} (${c.melhorBanco})`).join('\n');
+  const texto =
+    `🔄 *Reconsulta CLT concluída*\n\n` +
+    `📊 ${porCpf.size} clientes reconsultados\n` +
+    `✅ ${aptos.length} com margem (soma ${fmt(somaMargem)})\n` +
+    (novos.length ? `🆕 ${novos.length} oportunidade(s) NOVA(s)!\n` : '') +
+    (linhasTop ? `\n🏆 *Top 5:*\n${linhasTop}\n` : '') +
+    `\n👉 Pipeline: https://flowforce.tec.br/clt/aptos`;
+
+  // Envia via Evolution (mesmo padrão do healthcheck)
+  const evoUrl = process.env.EVOLUTION_URL, evoKey = process.env.EVOLUTION_KEY;
+  const numero = (process.env.RECONSULTA_ALERT_NUMBER || process.env.HEALTHCHECK_ALERT_NUMBER || '').replace(/\D/g, '');
+  const instancia = process.env.HEALTHCHECK_INSTANCE || 'lhamas-clt';
+  let enviado = false;
+  if (numero && evoUrl && evoKey) {
+    try {
+      const r = await fetch(`${evoUrl}/message/sendText/${instancia}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': evoKey },
+        body: JSON.stringify({ number: numero, text: texto }),
+        signal: AbortSignal.timeout(8000),
+      });
+      enviado = r.ok;
+    } catch { /* segue */ }
+  }
+
+  return jsonResp({
+    success: true, resumoHop: hop, enviado,
+    total: porCpf.size, aptos: aptos.length, novos: novos.length, somaMargem,
+  }, 200, req);
+}
 
 export default async function handler(req) {
   if (req.method === 'OPTIONS') return handleOptions(req);
@@ -66,17 +169,27 @@ export default async function handler(req) {
     return jsonError('Não autorizado (cron)', 401, req);
   }
 
-  // Limite por execução (lote). Default 60 — seguro pro timeout Edge.
+  // Limite por execução (lote). Default 8 — com espaçamento de 1,6s entre
+  // disparos, cada pass leva ~14s (seguro pro timeout Edge de ~25s) e o
+  // throughput fica dentro do rate limit do PresençaBank.
   // Cada execução processa `limit` CPFs e, se ainda sobrou histórico, chama
   // a SI MESMA (auto-encadeamento) pro próximo lote — até esvaziar TODOS.
-  let limit = 60, pass = 1;
+  let limit = 8, pass = 1, resumoHop = 0, cutoffParam = null;
   try {
     const u = new URL(req.url);
-    const l = parseInt(u.searchParams.get('limit') || '60', 10);
+    const l = parseInt(u.searchParams.get('limit') || '8', 10);
     if (l > 0 && l <= 200) limit = l;
     const p = parseInt(u.searchParams.get('pass') || '1', 10);
     if (p > 0) pass = p;
+    resumoHop = parseInt(u.searchParams.get('resumo') || '0', 10) || 0;
+    cutoffParam = u.searchParams.get('cutoff') || null;
   } catch { /* default */ }
+
+  // ── MODO RESUMO (fim da cadeia): espera os bancos assentarem e manda o
+  // resumo das oportunidades da rodada pro WhatsApp (Evolution).
+  if (resumoHop > 0) {
+    return await enviarResumoRodada(req, resumoHop, cutoffParam);
+  }
 
   const baseUrlEarly = APP_URL();
   const secretEarly = process.env.WEBHOOK_SECRET || '';
@@ -135,6 +248,13 @@ export default async function handler(req) {
       }).catch(() => {});
       encadeouStandby = true;
     }
+    // Fim da cadeia (histórico vazio): agenda o resumo WhatsApp da rodada.
+    if (!encadeouStandby && pass > 1) {
+      fetch(baseUrlEarly + `/api/clt-cron-reconsulta?resumo=1&cutoff=${encodeURIComponent(cutoff)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-secret': secretEarly },
+      }).catch(() => {});
+    }
     return jsonResp({
       success: true, pass, standbyDisparadas, disparados: 0,
       concluido: !encadeouStandby,
@@ -178,6 +298,7 @@ export default async function handler(req) {
           cpf,
           origem: 'lote',
           bancos: BANCOS_RECONSULTA,
+          semMulticorban: true, // massa NAO passa no scrape do Multicorban (CSRF frágil)
           // pre-popula dados já conhecidos (evita re-pedir / destrava bancos)
           nome: c.nome || undefined,
           dataNascimento: c.data_nascimento || undefined,
@@ -195,6 +316,10 @@ export default async function handler(req) {
     try {
       await dbUpdate('clt_clientes', { cpf }, { ultima_consulta_at: new Date().toISOString() });
     } catch { /* nao quebra */ }
+
+    // Espaça os disparos — rate limit PresençaBank (30 req/min) e suaviza
+    // o burst nas demais bancarizadoras.
+    await new Promise((r) => setTimeout(r, ESPACO_DISPARO_MS));
   }
 
   // ── AUTO-ENCADEAMENTO ────────────────────────────────────────
@@ -209,6 +334,12 @@ export default async function handler(req) {
       headers: { 'Content-Type': 'application/json', 'x-internal-secret': webhookSecret },
     }).catch(() => {});
     encadeou = true;
+  } else {
+    // Fim da cadeia (lote incompleto = base drenada): agenda o resumo WhatsApp.
+    fetch(baseUrl + `/api/clt-cron-reconsulta?resumo=1&cutoff=${encodeURIComponent(cutoff)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': webhookSecret },
+    }).catch(() => {});
   }
 
   return jsonResp({

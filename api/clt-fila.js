@@ -143,7 +143,44 @@ async function patchBanco(id, banco, payload) {
     patch.status_geral = 'concluido';
     patch.concluido_em = new Date().toISOString();
   }
-  await dbUpdate('clt_consultas_fila', { id }, patch);
+
+  // ── SNAPSHOT DE MARGEM + OPORTUNIDADE NOVA ──────────────────
+  // Guarda o ultimo estado de margem por CPF×banco (clt_margem_snapshot) e,
+  // quando um cliente GANHA margem (nao tinha antes), marca novo_apto na
+  // fila — vira o badge "NOVO" do pipeline e o resumo da reconsulta.
+  // Best-effort: exige a migration supabase_pipeline_oportunidades.sql;
+  // sem ela, falha silenciosa (nao quebra o fluxo do banco).
+  if (merged.status === 'ok' && merged.disponivel === true) {
+    try {
+      let margemNova = parseFloat(merged.dados?.margemDisponivel ?? merged.dados?.valorLiquido ?? 0) || 0;
+      if (merged.dados?.margemDisponivel != null && margemNova > 20000) margemNova = margemNova / 100; // legado em centavos
+      const { data: snap } = await dbSelect('clt_margem_snapshot', {
+        filters: { cpf: row.cpf, banco }, single: true,
+      });
+      const margemAntiga = snap ? (parseFloat(snap.margem) || 0) : null;
+      await dbUpsert('clt_margem_snapshot', {
+        cpf: row.cpf, banco,
+        margem: margemNova, disponivel: margemNova > 0,
+        consultado_em: new Date().toISOString(),
+      }, 'cpf,banco');
+      // GANHOU margem = nunca teve snapshot positivo nesse banco
+      if (margemNova > 0 && (margemAntiga === null || margemAntiga <= 0)) {
+        const nab = { ...(row.novo_apto_bancos || {}) };
+        nab[banco] = margemNova;
+        patch.novo_apto = true;
+        patch.novo_apto_em = new Date().toISOString();
+        patch.novo_apto_bancos = nab;
+      }
+    } catch { /* snapshot é opcional — segue sem */ }
+  }
+
+  const { error: patchErr } = await dbUpdate('clt_consultas_fila', { id }, patch);
+  // Se a migration ainda nao rodou, colunas novo_apto* nao existem — re-tenta
+  // sem elas pra NUNCA perder o resultado do banco.
+  if (patchErr && (patch.novo_apto !== undefined)) {
+    delete patch.novo_apto; delete patch.novo_apto_em; delete patch.novo_apto_bancos;
+    await dbUpdate('clt_consultas_fila', { id }, patch);
+  }
   return { ok: true, todosTerminaram };
 }
 
@@ -1598,14 +1635,14 @@ export default async function handler(req) {
     // SO esses (multicorban sempre roda — eh enriquecimento).
     // O `inicial` so deve conter os bancos que VAO rodar — caso contrario
     // o status_geral nunca vai pra 'concluido' (banco em pending eterno).
-    // Excecao: lote offline puro (so facta_clt_offline) NAO forca multicorban —
-    // e pre-filtro em massa; enriquecimento por CPF seria peso desnecessario.
+    // Excecoes ao multicorban forcado:
+    // - lote offline puro (so facta_clt_offline): pre-filtro em massa
+    // - body.semMulticorban: reconsulta em massa (scrape CSRF nao aguenta volume)
     const soOffline = Array.isArray(body.bancos)
       && body.bancos.length === 1 && body.bancos[0] === 'facta_clt_offline';
+    const semMulticorban = body.semMulticorban === true || soOffline;
     const filtroSolicitadoBancos = Array.isArray(body.bancos) && body.bancos.length > 0
-      ? (soOffline
-          ? ['facta_clt_offline']
-          : [...new Set([...body.bancos, 'multicorban'])].filter(b => TODOS_BANCOS_CLT.includes(b)))
+      ? [...new Set([...body.bancos, ...(semMulticorban ? [] : ['multicorban'])])].filter(b => TODOS_BANCOS_CLT.includes(b))
       : TODOS_BANCOS_CLT;
 
     const inicial = Object.fromEntries(
@@ -1745,12 +1782,22 @@ export default async function handler(req) {
     const bancos = filtroSolicitadoBancos;
     const baseUrl = APP_URL();
     for (const banco of bancos) {
+      // facta_clt_offline NAO dispara em paralelo (FACTA exige 3s entre
+      // chamadas) — fica 'pending' e o worker SERIAL global drena (kick abaixo)
+      if (banco === 'facta_clt_offline') continue;
       // Fire-and-forget mas COM internal-secret (evita 401 de chamadas internas)
       fetch(baseUrl + '/api/clt-fila', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
         body: JSON.stringify({ action: 'processar', id: row.id, banco })
       }).catch(e => console.error('[clt-fila] dispatch ' + banco + ':', e.message));
+    }
+    if (bancos.includes('facta_clt_offline')) {
+      fetch(baseUrl + '/api/facta-offline-lote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
+        body: JSON.stringify({ action: 'processar', global: true })
+      }).catch(e => console.error('[clt-fila] kick offline drainer:', e.message));
     }
 
     return jsonResp({
@@ -2215,6 +2262,11 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
         bancosAptos,
         aguardandoBancos,    // quais bancos travam por autorizacao
         precisaSelfieC6,     // C6 esperando selfie do cliente
+        // OPORTUNIDADE NOVA (reconsulta): cliente GANHOU margem que nao tinha
+        novoApto: c.novo_apto === true && c.pipeline_status !== 'trabalhado' && c.pipeline_status !== 'descartado',
+        novoAptoBancos: c.novo_apto_bancos || null,
+        origemReconsulta: /^Reconsulta Lote · /.test(c.criada_por_nome || ''),
+        pipelineStatus: c.pipeline_status || null, // trabalhado | descartado | null
         vendedor: (c.criada_por_nome || '').replace(/^(Reconsulta|Higienização) Lote · /, ''),
         iniciado_em: c.iniciado_em,
       });
@@ -2223,15 +2275,35 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     const contadores = {};
     for (const c of clientes) contadores[c.categoria] = (contadores[c.categoria] || 0) + 1;
     const somaMargem = clientes.filter(c => c.categoria === 'apto').reduce((s, a) => s + a.melhorMargem, 0);
+    const novos = clientes.filter(c => c.novoApto).length;
     return jsonResp({
       success: true,
       total: clientes.length,
       contadores,        // { apto, sem_margem, aguardando, sem_dados, inapto, standby, processando }
+      novos,             // clientes que GANHARAM margem (badge NOVO)
       somaMargem,        // soma das margens dos aptos
       clientes,          // lista completa categorizada (frontend filtra por aba)
       // compat com tela antiga:
       aptos: clientes.filter(c => c.categoria === 'apto'),
     }, 200, req);
+  }
+
+  // ─── MARCAR TRABALHADO / DESCARTADO (esteira de oportunidades) ──
+  // Operador marca o cliente do pipeline como trabalhado (abordado) ou
+  // descartado — limpa o badge NOVO. Exige migration supabase_pipeline_
+  // oportunidades.sql (colunas pipeline_status/trabalhado_por/trabalhado_em).
+  if (action === 'marcarTrabalhado') {
+    const id = body.id;
+    const status = ['trabalhado', 'descartado'].includes(body.status) ? body.status : 'trabalhado';
+    if (!id) return jsonError('id obrigatório', 400, req);
+    const { error } = await dbUpdate('clt_consultas_fila', { id }, {
+      pipeline_status: status,
+      trabalhado_por: user?.nome || user?.username || 'Sistema',
+      trabalhado_em: new Date().toISOString(),
+      novo_apto: false,
+    });
+    if (error) return jsonError('Erro marcando (migration pipeline rodou?): ' + String(error).substring(0, 200), 500, req);
+    return jsonResp({ success: true, id, status }, 200, req);
   }
 
   // ─── COMPLEMENTAR CLIENTE ─────────────────────────────────

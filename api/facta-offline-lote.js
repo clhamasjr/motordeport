@@ -60,9 +60,10 @@ async function callApi(path, payload, authHeader, internalSecret, timeoutMs = 18
 }
 
 // Conta linhas do lote num filtro PostgREST (Prefer: count=exact, sem baixar dados)
+// marker null = conta GLOBAL (qualquer lote/origem)
 async function contar(marker, extraFilter) {
-  let url = `${SB_URL()}/rest/v1/clt_consultas_fila?select=id&limit=1`
-    + `&criada_por_nome=eq.${encodeURIComponent(marker)}`;
+  let url = `${SB_URL()}/rest/v1/clt_consultas_fila?select=id&limit=1`;
+  if (marker) url += `&criada_por_nome=eq.${encodeURIComponent(marker)}`;
   if (extraFilter) url += `&${extraFilter}`;
   const r = await fetch(url, {
     headers: {
@@ -80,11 +81,12 @@ const fProcessando = `bancos->${BANCO}->>status=eq.processando`;
 const fBucket = (b) => `bancos->${BANCO}->>bucket=eq.${b}`;
 
 // Dispara o worker em background (fire-and-forget, mesmo padrao do criar do clt-fila)
+// marker = string (lote especifico) ou null (drainer GLOBAL: qualquer pendente)
 function kickWorker(marker, secret) {
   fetch(APP_URL() + '/api/facta-offline-lote', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
-    body: JSON.stringify({ action: 'processar', lote: marker }),
+    body: JSON.stringify(marker ? { action: 'processar', lote: marker } : { action: 'processar', global: true }),
   }).catch((e) => console.error('[facta-offline-lote] kick:', e.message));
 }
 
@@ -153,12 +155,18 @@ export default async function handler(req) {
     }
 
     // ─── WORKER SERIAL (auto-encadeado) ───────────────────────
+    // Com `lote`: drena so os CPFs daquele lote. Com `global:true`: drena
+    // QUALQUER card facta_clt_offline pendente (usado pela reconsulta em
+    // massa do clt-cron-reconsulta — o criar deixa o card pending e o
+    // drainer global processa em serie respeitando os 3s da FACTA).
     if (action === 'processar') {
-      const marker = body.lote;
-      if (!marker) return jsonError('lote obrigatorio', 400, req);
+      const marker = body.lote || null;
+      const isGlobal = body.global === true;
+      if (!marker && !isGlobal) return jsonError('lote ou global obrigatorio', 400, req);
 
+      const filtroMarker = marker ? `criada_por_nome=eq.${encodeURIComponent(marker)}&` : '';
       const { data: pend } = await dbQuery('clt_consultas_fila',
-        `criada_por_nome=eq.${encodeURIComponent(marker)}&${fPendentes}`
+        `${filtroMarker}${fPendentes}`
         + `&select=id,cpf&order=iniciado_em.asc&limit=${POR_PASSADA}`);
       const rows = Array.isArray(pend) ? pend : [];
 
@@ -178,9 +186,9 @@ export default async function handler(req) {
       }
 
       const restantes = await contar(marker, fPendentes);
-      if (restantes > 0) kickWorker(marker, secret); // auto-encadeia
+      if (restantes > 0) kickWorker(marker, secret); // auto-encadeia (lote ou global)
 
-      return jsonResp({ success: true, lote: marker, processadosNestaPassada: feitos, restantes }, 200, req);
+      return jsonResp({ success: true, lote: marker, global: isGlobal, processadosNestaPassada: feitos, restantes }, 200, req);
     }
 
     // ─── STATUS (contagem por balde + auto-kick se travou) ────
