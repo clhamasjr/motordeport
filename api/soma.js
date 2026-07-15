@@ -257,13 +257,11 @@ export default async function handler(req) {
       }
       let norm = normalizarConsulta(r.data, r.status);
 
-      // AUTO-AUTORIZAÇÃO (procuração): confirma o aceite server-side + re-consulta.
-      // Os endpoints de aceite usam o token do LOGIN DO PORTAL (getPortalToken) —
-      // não o de integração. DEFAULT LIGADO quando o login do portal está
-      // configurado (SOMA_PORTAL_USUARIO/SENHA); se não, no-op gracioso e cai
-      // no fluxo do link. Passe autoAutorizar:false pra forçar só o link.
-      const cfgP = getConfig();
-      const autoAutorizar = body.autoAutorizar !== false && !!(cfgP.PORTAL_USUARIO && cfgP.PORTAL_SENHA);
+      // AUTO-AUTORIZAÇÃO: DESLIGADA por default. O login do portal tem 2FA →
+      // robô server-side inviável (precisaria do código OTP toda hora). Fluxo
+      // padrão = LINK (o operador/cliente clica e aceita). Só tenta auto se
+      // explicitamente autoAutorizar:true (ex: se um dia rolar usuário API sem 2FA).
+      const autoAutorizar = body.autoAutorizar === true;
       if (autoAutorizar && norm.etapa === 'AGUARDA_AUTORIZACAO' && norm.linkAssinatura) {
         const hash = extrairHashLink(norm.linkAssinatura);
         if (hash) {
