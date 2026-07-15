@@ -288,21 +288,25 @@ export default async function handler(req) {
       }
       if (!link) return jsonError('SOMA não retornou link de assinatura', 502, req);
 
-      const evoUrl = process.env.EVOLUTION_URL, evoKey = process.env.EVOLUTION_KEY;
+      const evoUrl = (process.env.EVOLUTION_URL || '').replace(/\/+$/, ''), evoKey = process.env.EVOLUTION_KEY;
       const instancia = process.env.SOMA_EVOLUTION_INSTANCE || process.env.HEALTHCHECK_INSTANCE || 'lhamas-clt';
       if (!evoUrl || !evoKey) return jsonError('Evolution nao configurada (EVOLUTION_URL/KEY)', 500, req);
+      // Evolution exige DDI: 55 + DDD + numero. Prefixa 55 se veio só DDD+numero.
+      const numeroEvo = (telefone.length === 10 || telefone.length === 11) ? '55' + telefone : telefone;
       const nome1 = (body.nome || '').trim().split(' ')[0] || '';
       const texto = `Olá${nome1 ? ' ' + nome1 : ''}! 👋\n\nPra concluir sua consulta de crédito consignado, precisamos que você autorize o acesso à sua margem. É rápido e seguro:\n\n👉 ${link}\n\nBasta abrir o link, ler e confirmar o aceite. Qualquer dúvida, estamos à disposição!`;
-      let enviado = false, respEvo = null;
+      let enviado = false, evoStatus = null, evoBody = null;
       try {
         const er = await fetch(`${evoUrl}/message/sendText/${instancia}`, {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': evoKey },
-          body: JSON.stringify({ number: telefone, text: texto }),
+          body: JSON.stringify({ number: numeroEvo, text: texto }),
           signal: AbortSignal.timeout(8000),
         });
-        enviado = er.ok; respEvo = er.status;
-      } catch (e) { respEvo = e.message; }
-      return j({ success: enviado, enviado, link, consultaId, telefone, evoStatus: respEvo }, 200, req);
+        evoStatus = er.status;
+        evoBody = (await er.text()).substring(0, 300);
+        enviado = er.ok;
+      } catch (e) { evoStatus = 0; evoBody = e.message; }
+      return j({ success: enviado, enviado, link, consultaId, telefone: numeroEvo, instancia, evoStatus, evoBody }, 200, req);
     }
 
     // ─── REGISTRAR WEBHOOK (aponta a SOMA pro nosso receptor) ──
