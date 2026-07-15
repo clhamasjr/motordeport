@@ -25,6 +25,7 @@ export const config = { runtime: 'edge' };
 // ══════════════════════════════════════════════════════════════════
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
+import { dbSelect, dbUpsert } from './_lib/supabase.js';
 
 function getConfig() {
   return {
@@ -124,20 +125,71 @@ function extrairHashLink(link) {
   return m ? m[0] : null;
 }
 
-async function confirmarAceite(hashTermo) {
-  // Fluxo do portal (2 passos) com o token do LOGIN DO PORTAL (operador) —
-  // as rotas produtos/privados/consultas/* NÃO aceitam o token de integração
-  // (dão "Token não fornecido"). Mesmo padrão do Fintech do Corban.
-  //   1) validar-hash {conHashTermo}  2) confirmar-aceite {conHashTermo, dispositivoUsuario}
-  let tokenPortal;
-  try { tokenPortal = await getPortalToken(); }
-  catch (e) { return { ok: false, status: 401, data: { error: e.message }, _semPortal: true }; }
+// ── SESSÃO DO PORTAL (bootstrapada + auto-renovada) ────────────
+// As rotas de aceite (produtos/privados/consultas/*) exigem 3 headers da
+// SESSÃO LOGADA do operador: Authorization: Bearer <JWT>, token: <sessão>,
+// refresh-token: <hex>. Capturado do portal (15/07). O JWT dura ~15min, MAS
+// a SOMA renova o access-token no HEADER de TODA resposta — então basta
+// bootstrapar 1x (operador loga no navegador, cola os 3 via action
+// setPortalSession) e cada chamada mantém a sessão viva. Guardado na tabela
+// soma_portal_session (migration supabase_soma_portal_session.sql).
+let _sessMem = null; // cache em memória por invocação
+async function getPortalSession() {
+  if (_sessMem) return _sessMem;
+  const { data } = await dbSelect('soma_portal_session', { filters: { id: 1 }, single: true });
+  _sessMem = data || null;
+  return _sessMem;
+}
+async function savePortalSession(patch) {
+  const atual = (await getPortalSession()) || {};
+  const merged = { id: 1, ...atual, ...patch, atualizado_em: new Date().toISOString() };
+  _sessMem = merged;
+  await dbUpsert('soma_portal_session', merged, 'id').catch(() => {});
+  return merged;
+}
 
-  const val = await somaCall('/produtos/privados/consultas/validar-hash', 'POST', { conHashTermo: hashTermo }, tokenPortal);
-  const conf = await somaCall('/produtos/privados/consultas/confirmar-aceite', 'POST', {
+// Chamada às rotas do portal com os 3 headers da sessão + auto-renovação.
+// Captura access-token/refresh-token/token novos que a SOMA devolver no
+// header da resposta e atualiza a sessão (keep-alive).
+async function portalCall(path, method = 'POST', body = null) {
+  const cfg = getConfig();
+  const sess = await getPortalSession();
+  if (!sess || !sess.bearer) {
+    return { ok: false, status: 401, data: { error: 'Sessão do portal SOMA não configurada — rode setPortalSession (login 1x no navegador)' }, _semSessao: true };
+  }
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ' + sess.bearer,
+    'accept': 'application/json, text/plain, */*',
+  };
+  if (sess.token) headers['token'] = sess.token;
+  if (sess.refresh_token) headers['refresh-token'] = sess.refresh_token;
+  const r = await fetch(cfg.BASE + path, {
+    method, headers, ...(body !== null && method !== 'GET' ? { body: JSON.stringify(body) } : {}),
+  });
+  // keep-alive: SOMA renova os tokens nos headers da resposta
+  const novoBearer = r.headers.get('access-token');
+  const novoRefresh = r.headers.get('refresh-token');
+  const novoToken = r.headers.get('token');
+  const upd = {};
+  if (novoBearer && novoBearer !== sess.bearer) upd.bearer = novoBearer;
+  if (novoRefresh && novoRefresh !== sess.refresh_token) upd.refresh_token = novoRefresh;
+  if (novoToken && novoToken !== sess.token) upd.token = novoToken;
+  if (Object.keys(upd).length) await savePortalSession(upd);
+  const t = await r.text();
+  let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 800) }; }
+  return { ok: r.ok, status: r.status, data: d };
+}
+
+async function confirmarAceite(hashTermo) {
+  // 2 passos com a sessão do portal (Bearer + token + refresh-token):
+  //   1) validar-hash {conHashTermo}  2) confirmar-aceite {conHashTermo, dispositivoUsuario}
+  const val = await portalCall('/produtos/privados/consultas/validar-hash', 'POST', { conHashTermo: hashTermo });
+  if (val._semSessao) return { ok: false, status: 401, data: val.data, _semSessao: true };
+  if (!val.ok) return { ok: false, status: val.status, data: val.data, _etapa: 'validar-hash' };
+  const conf = await portalCall('/produtos/privados/consultas/confirmar-aceite', 'POST', {
     conHashTermo: hashTermo,
-    // schema REAL capturado do portal (14/07): agenteUsuario/fusoHorario/
-    // geolocalizacao{ok,lat,lng,precisao,marcaTempo}/idioma/plataforma
+    // schema REAL capturado do portal (15/07)
     dispositivoUsuario: {
       agenteUsuario: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       fusoHorario: 'America/Sao_Paulo',
@@ -293,6 +345,37 @@ export default async function handler(req) {
       if (!hash) return jsonError('link ou hashTermo obrigatorio (uuid)', 400, req);
       const aut = await confirmarAceite(hash);
       return j({ success: aut.ok, httpStatus: aut.status, ...aut.data }, 200, req);
+    }
+
+    // ─── BOOTSTRAP DA SESSÃO DO PORTAL (login 1x no navegador) ──
+    // Operador loga no portal, copia os 3 tokens (do "Copiar como fetch") e
+    // manda aqui UMA vez. A partir daí o robô mantém vivo sozinho (renova a
+    // cada resposta). body: { bearer, token, refreshToken }
+    if (action === 'setPortalSession') {
+      const bearer = String(body.bearer || body.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      const token = String(body.token || '').trim();
+      const refreshToken = String(body.refreshToken || body['refresh-token'] || '').trim();
+      if (!bearer) return jsonError('bearer obrigatorio (o JWT do Authorization, sem "Bearer ")', 400, req);
+      await savePortalSession({ bearer, token: token || null, refresh_token: refreshToken || null });
+      return j({ success: true, mensagem: 'Sessão do portal SOMA salva — robô de aceite ativo', temToken: !!token, temRefresh: !!refreshToken }, 200, req);
+    }
+
+    // ─── STATUS DA SESSÃO (sem expor os tokens) ────────────────
+    if (action === 'statusPortalSession') {
+      const s = await getPortalSession();
+      if (!s || !s.bearer) return j({ success: true, configurada: false, mensagem: 'Sessão não configurada — rode setPortalSession' }, 200, req);
+      // testa a sessão num endpoint leve (validar-hash com hash fake → se a
+      // sessão vale, volta erro de negócio; se morreu, volta 401)
+      const teste = await portalCall('/produtos/privados/consultas/validar-hash', 'POST', { conHashTermo: '00000000-0000-0000-0000-000000000000' });
+      const viva = teste.status !== 401;
+      return j({
+        success: true, configurada: true, viva,
+        atualizado_em: s.atualizado_em,
+        bearerPreview: (s.bearer || '').substring(0, 10) + '...',
+        temToken: !!s.token, temRefresh: !!s.refresh_token,
+        testeStatus: teste.status,
+        mensagem: viva ? 'Sessão viva ✅' : 'Sessão expirada — re-bootstrap (login de novo)',
+      }, 200, req);
     }
 
     // ─── SIMULAÇÃO ────────────────────────────────────────────
