@@ -205,7 +205,29 @@ async function portalCall(path, method = 'POST', body = null) {
   return { ok: r.ok, status: r.status, data: d };
 }
 
-async function confirmarAceite(hashTermo) {
+// Monta o dispositivoUsuario igual ao portal real (schema capturado 15/07),
+// com geolocalização REALISTA (Sorocaba/SP, precisão ~160m + leve jitter —
+// precisão de 20m cheirava a robô). Aceita override {lat,lng,precisao}.
+function montarDispositivo(geo) {
+  const jitter = () => (Math.random() - 0.5) * 0.0025;
+  const g = geo || {};
+  return {
+    agenteUsuario: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+    fusoHorario: 'America/Sao_Paulo',
+    geolocalizacao: {
+      ok: true,
+      lat: typeof g.lat === 'number' ? g.lat : -23.52813 + jitter(),
+      lng: typeof g.lng === 'number' ? g.lng : -47.47399 + jitter(),
+      precisao: typeof g.precisao === 'number' ? g.precisao : 130 + Math.floor(Math.random() * 90),
+      marcaTempo: Date.now(),
+    },
+    idioma: 'pt-BR',
+    modeloDispositivo: null,
+    plataforma: 'Windows',
+  };
+}
+
+async function confirmarAceite(hashTermo, geo = null) {
   // 2 passos com a sessão do portal (Bearer + token + refresh-token):
   //   1) validar-hash {conHashTermo}  2) confirmar-aceite {conHashTermo, dispositivoUsuario}
   const val = await portalCall('/produtos/privados/consultas/validar-hash', 'POST', { conHashTermo: hashTermo });
@@ -213,15 +235,7 @@ async function confirmarAceite(hashTermo) {
   if (!val.ok) return { ok: false, status: val.status, data: val.data, _etapa: 'validar-hash' };
   const conf = await portalCall('/produtos/privados/consultas/confirmar-aceite', 'POST', {
     conHashTermo: hashTermo,
-    // schema REAL capturado do portal (15/07)
-    dispositivoUsuario: {
-      agenteUsuario: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      fusoHorario: 'America/Sao_Paulo',
-      geolocalizacao: { ok: true, lat: -23.5015, lng: -47.4526, precisao: 20, marcaTempo: Date.now() },
-      idioma: 'pt-BR',
-      modeloDispositivo: null,
-      plataforma: 'Windows',
-    },
+    dispositivoUsuario: montarDispositivo(geo), // schema REAL do portal (15/07)
   });
   return { ok: conf.ok, status: conf.status, data: conf.data, _validarHash: { status: val.status, ok: val.ok } };
 }
@@ -374,7 +388,8 @@ export default async function handler(req) {
     if (action === 'autorizar') {
       const hash = extrairHashLink(body.link || body.hashTermo || body.conHashTermo);
       if (!hash) return jsonError('link ou hashTermo obrigatorio (uuid)', 400, req);
-      const aut = await confirmarAceite(hash);
+      const geo = (body.lat || body.lng || body.precisao) ? { lat: body.lat, lng: body.lng, precisao: body.precisao } : null;
+      const aut = await confirmarAceite(hash, geo);
       return j({ success: aut.ok, httpStatus: aut.status, ...aut.data }, 200, req);
     }
 
