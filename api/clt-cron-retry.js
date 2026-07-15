@@ -2,15 +2,17 @@
 // api/clt-cron-retry.js
 // ROTINA AUTOMÁTICA DE RE-TENTATIVA da carteira (sem operador clicar).
 //
-// Varre as consultas recentes (últimas 6h) e, pra cada uma que tenha banco
-// em 'falha' RE-TENTÁVEL (timeout / banco lento) com tentativas < 2, chama a
-// action 'status' do clt-fila — que JÁ contém a lógica de auto-retry (re-dispara
-// o banco e incrementa o contador). Assim a higienização em massa se cura
-// sozinha, igual a consulta aberta na tela.
+// Varre as consultas recentes (últimas 6h) e cutuca a action 'status' do
+// clt-fila pra cada uma com TRABALHO PENDENTE — que JÁ contém: (a) auto-retry
+// de bancos em 'falha' re-tentável (re-dispara + incrementa até MAX_AUTO_RETRY);
+// (b) re-check de bancos assíncronos ainda 'processando' (V8/C6/Unno aguardando
+// confirmação do DataPrev); (c) timeout absoluto (conclui de vez após ~25min).
+// Assim a higienização em massa se cura sozinha, MESMO com a aba fechada
+// (antes o re-check só rodava com a consulta aberta na tela).
 //
-// Roda a cada 15min (vercel.json). É barato: só "cutuca" filas com falha
-// pendente; filas já resolvidas (ou com tentativas esgotadas) são ignoradas,
-// e nada além de 6h é tocado (depois disso, considera-se estabilizado).
+// Roda a cada 5min (vercel.json). É barato: só cutuca filas com pendência;
+// filas concluídas (ou com tentativas esgotadas) são ignoradas, e nada além
+// de 6h é tocado (depois disso, considera-se estabilizado).
 // ══════════════════════════════════════════════════════════════════
 
 export const config = { runtime: 'edge' };
@@ -19,12 +21,18 @@ import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/
 import { dbQuery } from './_lib/supabase.js';
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
-const MAX_AUTO_RETRY = 2;
+const MAX_AUTO_RETRY = 5; // alinhado com api/clt-fila.js
 
-function temRetryPendente(bancos) {
-  return Object.values(bancos || {}).some(
-    (b) => b && b.status === 'falha' && b.retryable === true && (b.tentativas || 0) < MAX_AUTO_RETRY
-  );
+function temTrabalhoPendente(bancos) {
+  return Object.values(bancos || {}).some((b) => {
+    if (!b) return false;
+    // Banco assíncrono ainda rodando (V8/C6/Unno aguardando confirmação):
+    // cutuca o status pra ele re-checar em background (sem a aba aberta).
+    if (b.status === 'processando' || b.status === 'pending') return true;
+    // Falha transitória (timeout/banco lento) com re-tentativas restantes.
+    if (b.status === 'falha' && b.retryable === true && (b.tentativas || 0) < MAX_AUTO_RETRY) return true;
+    return false;
+  });
 }
 
 export default async function handler(req) {
@@ -62,7 +70,7 @@ export default async function handler(req) {
   const baseUrl = APP_URL();
   let filasCutucadas = 0;
   for (const f of filas) {
-    if (!temRetryPendente(f.bancos)) continue;
+    if (!temTrabalhoPendente(f.bancos)) continue;
     // "Cutuca" o status — ele dispara o auto-retry interno (re-dispara o banco
     // que falhou e incrementa tentativas). Fire-and-forget.
     fetch(baseUrl + '/api/clt-fila', {

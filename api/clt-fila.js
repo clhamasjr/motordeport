@@ -72,6 +72,13 @@ const TODOS_BANCOS_CLT = [
   'soma_uy3',            // SOMA via UY3
 ];
 
+// Re-tentativa automática (timeout / banco lento): a tela E o cron clt-cron-retry
+// re-disparam bancos em 'falha' retryable até este teto, SEM o operador clicar.
+const MAX_AUTO_RETRY = 5;
+// Teto absoluto por consulta: passado esse tempo do início, desiste de vez
+// (marca pendentes como falha FINAL) — evita fila "processando" eterna.
+const TIMEOUT_ABSOLUTO_MS = 25 * 60 * 1000;
+
 // ── MODO STANDBY ───────────────────────────────────────────────
 // Ate esta data, consultas de operador NAO disparam os bancos —
 // ficam em status_geral='standby' e sao disparadas em massa no dia
@@ -137,9 +144,14 @@ async function patchBanco(id, banco, payload) {
   // Considera SO os bancos presentes em `bancos` (foram disparados nessa
   // consulta — pode ter filtro de bancos especificos via body.bancos).
   const STATUS_TERMINAIS = ['ok','falha','bloqueado','pulado','em_manutencao','manual_aguardando'];
+  // Um banco em 'falha' que ainda vai re-tentar sozinho (retryable + tentativas
+  // abaixo do teto) NÃO é terminal — senão a consulta fecha "concluída" enquanto
+  // ainda está se resolvendo, e o operador acha que precisa clicar manualmente.
+  const ehTerminal = (b) => b && STATUS_TERMINAIS.includes(b.status) &&
+    !(b.status === 'falha' && b.retryable === true && (b.tentativas || 0) < MAX_AUTO_RETRY);
   const bancosPresentes = TODOS_BANCOS_CLT.filter(b => bancos[b]);
   const todosTerminaram = bancosPresentes.length > 0 &&
-    bancosPresentes.every(b => STATUS_TERMINAIS.includes(bancos[b].status));
+    bancosPresentes.every(b => ehTerminal(bancos[b]));
   const patch = { bancos };
   if (todosTerminaram && row.status_geral !== 'concluido') {
     patch.status_geral = 'concluido';
@@ -2260,7 +2272,6 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     // um banco volta pra 'processando', o status_geral volta a 'processando' e
     // o polling do frontend continua ate resolver (ou esgotar as tentativas).
     {
-      const MAX_AUTO_RETRY = 2;
       const baseUrl = APP_URL();
       let mexeu = false;
       for (const [slug, b] of Object.entries(row.bancos || {})) {
@@ -2296,15 +2307,24 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     // mercantil, handbank e joinbank (esses ficavam "processando" eternos).
     if (row.status_geral === 'processando' && row.iniciado_em) {
       const idadeMs = Date.now() - new Date(row.iniciado_em).getTime();
-      if (idadeMs > 10 * 60 * 1000) {
+      if (idadeMs > TIMEOUT_ABSOLUTO_MS) {
+        const mins = Math.round(TIMEOUT_ABSOLUTO_MS / 60000);
         const bancosNovos = { ...(row.bancos || {}) };
         for (const k of TODOS_BANCOS_CLT) {
-          if (bancosNovos[k] && ['pending', 'processando'].includes(bancosNovos[k].status)) {
+          const b = bancosNovos[k];
+          if (!b) continue;
+          // Desiste de vez: pendentes/processando E falhas ainda re-tentáveis
+          // viram falha FINAL (retryable:false) — a consulta conclui de verdade
+          // e o cron para de re-tentar.
+          const aindaPendente = ['pending', 'processando'].includes(b.status) ||
+            (b.status === 'falha' && b.retryable === true);
+          if (aindaPendente) {
             bancosNovos[k] = {
-              ...bancosNovos[k],
+              ...b,
               status: 'falha',
-              mensagem: bancosNovos[k].mensagem || '⏱ Timeout 10min — banco não confirmou',
-              atualizado_em: new Date().toISOString()
+              retryable: false,
+              mensagem: (b.status === 'falha' && b.mensagem && !/aguard/i.test(b.mensagem)) ? b.mensagem : `⏱ Timeout ${mins}min — banco não confirmou`,
+              atualizado_em: new Date().toISOString(),
             };
           }
         }

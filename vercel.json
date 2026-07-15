@@ -28,7 +28,7 @@
     },
     {
       "path": "/api/clt-cron-retry",
-      "schedule": "*/15 * * * *"
+      "schedule": "*/5 * * * *"
     }
   ]
 }
