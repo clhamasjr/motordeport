@@ -1151,7 +1151,11 @@ async function processarSoma(id, cpf, slug, bancarizadora, auth, secret) {
 
   const r = await callApi('/api/soma', {
     action: 'consultarMargem', cpf, nome, telefone, dataNascimento, bancarizadora,
-  }, auth, secret, 20000);
+    // 🤖 Auto-aceite: se a sessão do portal estiver colada (setPortalSession),
+    // o robô confirma o aceite e re-consulta sozinho → volta APROVADO com margem.
+    // Sem sessão, o confirmarAceite falha gracioso e cai no fallback (envia link).
+    autoAutorizar: true,
+  }, auth, secret, 30000);
   const u = r.data || {};
 
   if (!r.ok && !u.etapa) {
@@ -1174,7 +1178,7 @@ async function processarSoma(id, cpf, slug, bancarizadora, auth, secret) {
     }
     await patchBanco(id, slug, {
       status: 'ok', disponivel: true,
-      mensagem: u.mensagem,
+      mensagem: (u._autoAutz?.ok || u._reconsultado) ? (u.mensagem + ' — aceite automático 🤖') : u.mensagem,
       dados: {
         margemDisponivel: u.margem?.disponivel || 0,
         margemBase: u.margem?.bruta || 0,
