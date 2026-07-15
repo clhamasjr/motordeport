@@ -38,6 +38,7 @@ function getConfig() {
     // 'access-token' da resposta. Login: POST auth/login {usuario:CPF, senha}.
     PORTAL_USUARIO: (process.env.SOMA_PORTAL_USUARIO || '').trim(),
     PORTAL_SENHA: (process.env.SOMA_PORTAL_SENHA || '').trim(),
+    PORTAL_SLUG: (process.env.SOMA_PORTAL_SLUG || 'default').trim(),
   };
 }
 
@@ -87,30 +88,37 @@ async function somaCall(path, method = 'GET', body = null, tokenOverride = null)
   return { ok: r.ok, status: r.status, data: d };
 }
 
-// ── Token do PORTAL (login de operador) — pro fluxo de aceite ──
-// POST auth/login {usuario, senha} → token vem no HEADER 'access-token'
-// (a SOMA renova o token em todo response header; aqui logamos quando expira).
-let _portalTk = { token: null, exp: 0 };
-async function getPortalToken(force = false) {
-  if (!force && _portalTk.token && Date.now() < _portalTk.exp) return _portalTk.token;
+// ── LOGIN DO PORTAL (auto) — receita capturada 15/07 ──────────
+// POST auth/login {usuario, senha, slug:'default'} + header 'token' (id de
+// sessão). Retorna access-token/refresh-token/token nos HEADERS. Salva tudo
+// na sessão (soma_portal_session) — o robô loga sozinho e se auto-cura.
+function genSessionToken() {
+  const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let s = ''; for (let i = 0; i < 25; i++) s += c[Math.floor(Math.random() * c.length)];
+  return s;
+}
+async function loginPortalESalvar() {
   const cfg = getConfig();
   if (!cfg.PORTAL_USUARIO || !cfg.PORTAL_SENHA) {
-    throw new Error('SOMA_PORTAL_USUARIO/SOMA_PORTAL_SENHA nao configurados (login do portal p/ aceite)');
+    throw new Error('SOMA_PORTAL_USUARIO/SOMA_PORTAL_SENHA nao configurados (login do portal)');
   }
+  const sess = await getPortalSession();
+  const tokenHdr = (sess && sess.token) || genSessionToken();
   const r = await fetch(cfg.BASE + '/auth/login', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ usuario: cfg.PORTAL_USUARIO.replace(/\D/g, ''), senha: cfg.PORTAL_SENHA }),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'accept': 'application/json, text/plain, */*', 'token': tokenHdr },
+    body: JSON.stringify({ usuario: cfg.PORTAL_USUARIO, senha: cfg.PORTAL_SENHA, slug: cfg.PORTAL_SLUG }),
   });
-  const tok = r.headers.get('access-token');
   const t = await r.text();
   let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 300) }; }
   if (!r.ok) throw new Error(`login portal SOMA (HTTP ${r.status}): ${d.message || d.error || d.raw || ''}`);
-  if (!tok) {
-    // sem access-token no header — provavelmente exige 2FA ou seleção de parceiro
-    throw new Error(`login portal sem access-token — 2FA/parceiro? resposta: ${JSON.stringify(d).substring(0, 200)}`);
-  }
-  _portalTk = { token: tok, exp: Date.now() + 20 * 60 * 1000 }; // conservador 20min
-  return tok;
+  // access-token pode vir no HEADER (padrão SOMA) ou no corpo
+  const bearer = r.headers.get('access-token') || d.accessToken || d.access_token || d.token || d.data?.accessToken;
+  const refresh = r.headers.get('refresh-token') || d.refreshToken || d.refresh_token || null;
+  const tk = r.headers.get('token') || tokenHdr;
+  if (!bearer) throw new Error(`login sem access-token — 2FA? resp: ${JSON.stringify(d).substring(0, 200)}`);
+  await savePortalSession({ bearer, token: tk, refresh_token: refresh });
+  return bearer;
 }
 
 // ── AUTO-AUTORIZAÇÃO (procuração — modelo Handbank/UY3/Nossa Fintech) ──
@@ -151,11 +159,17 @@ async function savePortalSession(patch) {
 // Chamada às rotas do portal com os 3 headers da sessão + auto-renovação.
 // Captura access-token/refresh-token/token novos que a SOMA devolver no
 // header da resposta e atualiza a sessão (keep-alive).
-async function portalCall(path, method = 'POST', body = null) {
+async function portalCall(path, method = 'POST', body = null, _jaRelogou = false) {
   const cfg = getConfig();
-  const sess = await getPortalSession();
+  let sess = await getPortalSession();
+  // Sem sessão salva → tenta login automático (se tiver usuário/senha no env)
   if (!sess || !sess.bearer) {
-    return { ok: false, status: 401, data: { error: 'Sessão do portal SOMA não configurada — rode setPortalSession (login 1x no navegador)' }, _semSessao: true };
+    if (cfg.PORTAL_USUARIO && cfg.PORTAL_SENHA) {
+      try { await loginPortalESalvar(); sess = await getPortalSession(); }
+      catch (e) { return { ok: false, status: 401, data: { error: 'Login portal falhou: ' + e.message }, _semSessao: true }; }
+    } else {
+      return { ok: false, status: 401, data: { error: 'Sessão SOMA não configurada — rode setPortalSession OU seta SOMA_PORTAL_USUARIO/SENHA' }, _semSessao: true };
+    }
   }
   const headers = {
     'Content-Type': 'application/json',
@@ -167,6 +181,12 @@ async function portalCall(path, method = 'POST', body = null) {
   const r = await fetch(cfg.BASE + path, {
     method, headers, ...(body !== null && method !== 'GET' ? { body: JSON.stringify(body) } : {}),
   });
+
+  // Sessão morreu (401) → re-loga uma vez com usuário/senha e repete
+  if (r.status === 401 && !_jaRelogou && cfg.PORTAL_USUARIO && cfg.PORTAL_SENHA) {
+    try { await loginPortalESalvar(); return await portalCall(path, method, body, true); } catch { /* cai pro retorno 401 */ }
+  }
+
   // keep-alive: SOMA renova os tokens nos headers da resposta
   const novoBearer = r.headers.get('access-token');
   const novoRefresh = r.headers.get('refresh-token');
@@ -332,8 +352,8 @@ export default async function handler(req) {
     // ─── TESTAR LOGIN DO PORTAL (operador) ───────────────────
     if (action === 'testPortal') {
       try {
-        const tk = await getPortalToken(true);
-        return j({ success: true, loginPortal: 'ok', tokenPreview: tk.substring(0, 14) + '...' }, 200, req);
+        const tk = await loginPortalESalvar();
+        return j({ success: true, loginPortal: 'ok', mensagem: 'Login do portal OK — sessão salva', tokenPreview: tk.substring(0, 14) + '...' }, 200, req);
       } catch (e) {
         return j({ success: false, loginPortal: 'falhou', mensagem: e.message }, 200, req);
       }
