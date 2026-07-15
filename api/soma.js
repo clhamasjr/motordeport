@@ -98,13 +98,15 @@ async function confirmarAceite(hashTermo) {
   const val = await somaCall('/produtos/privados/consultas/validar-hash', 'POST', { conHashTermo: hashTermo });
   const conf = await somaCall('/produtos/privados/consultas/confirmar-aceite', 'POST', {
     conHashTermo: hashTermo,
+    // schema REAL capturado do portal (14/07): agenteUsuario/fusoHorario/
+    // geolocalizacao{ok,lat,lng,precisao,marcaTempo}/idioma/plataforma
     dispositivoUsuario: {
-      plataforma: 'Backend',
-      sistemaOperacional: 'Server',
-      navegador: 'LhamasCred',
-      modeloDispositivo: 'LhamasCred Backend',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      geolocalizacao: { latitude: '-23.5015', longitude: '-47.4526' }, // Sorocaba/SP
+      agenteUsuario: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      fusoHorario: 'America/Sao_Paulo',
+      geolocalizacao: { ok: true, lat: -23.5015, lng: -47.4526, precisao: 20, marcaTempo: Date.now() },
+      idioma: 'pt-BR',
+      modeloDispositivo: null,
+      plataforma: 'Windows',
     },
   });
   return { ok: conf.ok, status: conf.status, data: conf.data, _validarHash: { status: val.status, ok: val.ok } };
