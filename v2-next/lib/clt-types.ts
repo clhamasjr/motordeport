@@ -32,6 +32,10 @@ export interface BancoState {
   bloqueado?: boolean;
   precisaAutorizacao?: boolean;
   requiresLiveness?: boolean;
+  // SOMA (e afins): cliente tem margem MAS não é elegível (empregador sem
+  // convênio, restrição, CBO...). Card mostra a margem + badge "Não elegível";
+  // NÃO conta como apto (disponivel fica false).
+  naoElegivel?: boolean;
   // Handbank/UY3: cliente já tem contrato ativo — bloqueado por impedimento
   // (não por falta de autorização). UI mostra "Já contratado" em vez de
   // "Aguarda autorização".

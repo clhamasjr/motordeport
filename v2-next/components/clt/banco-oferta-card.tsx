@@ -74,6 +74,9 @@ function StatusPill({ state }: { state: BancoState }) {
       </Badge>
     );
   }
+  if (state.naoElegivel) {
+    return <Badge variant="destructive">Não elegível</Badge>;
+  }
   if (state.status === 'ok' && state.disponivel) {
     return (
       <Badge variant="success" className="gap-1">
@@ -315,6 +318,24 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
       {/* Mensagem principal */}
       {isC6Bloqueado || isMercantilBloqueado ? null : isManutencao ? (
         <div className="text-xs text-muted-foreground">{mensagem || '🔧 Em manutenção'}</div>
+      ) : state.naoElegivel ? (
+        <div className="space-y-1.5">
+          <div className="text-xs font-semibold text-destructive">⛔ Cliente NÃO elegível</div>
+          {margem > 0 && (
+            <div className="text-sm">
+              <span className="text-muted-foreground">Margem (não operável):</span>{' '}
+              <b>{formatBRL(margem)}</b>
+            </div>
+          )}
+          {empregador && (
+            <div className="text-xs text-muted-foreground">
+              <b>Empregador:</b> {empregador.substring(0, 40)}
+            </div>
+          )}
+          {mensagem && (
+            <div className="text-[11px] text-muted-foreground/80">{mensagem}</div>
+          )}
+        </div>
       ) : disponivel ? (
         <div className="space-y-1.5">
           {/* Valor liberado quando tem simulação detalhada */}
