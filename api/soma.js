@@ -31,6 +31,12 @@ function getConfig() {
     BASE: (process.env.SOMA_BASE_URL || 'https://api.somabp2.com.br').trim().replace(/\/+$/, ''),
     CLIENT_ID: (process.env.SOMA_CLIENT_ID || '').trim(),
     CLIENT_SECRET: (process.env.SOMA_CLIENT_SECRET || '').trim(),
+    // Login DO PORTAL (operador) — pra confirmar o aceite (rotas internas
+    // produtos/privados/consultas/* usam o token do portal, não o de integração).
+    // Mesmo padrão do Fintech do Corban (login → token). Token vem no HEADER
+    // 'access-token' da resposta. Login: POST auth/login {usuario:CPF, senha}.
+    PORTAL_USUARIO: (process.env.SOMA_PORTAL_USUARIO || '').trim(),
+    PORTAL_SENHA: (process.env.SOMA_PORTAL_SENHA || '').trim(),
   };
 }
 
@@ -64,8 +70,10 @@ async function getToken() {
   return d.accessToken;
 }
 
-async function somaCall(path, method = 'GET', body = null) {
-  const token = await getToken();
+// somaCall — usa o token de INTEGRAÇÃO (OAuth) por padrão. tokenOverride
+// permite passar o token do PORTAL (pro fluxo de aceite).
+async function somaCall(path, method = 'GET', body = null, tokenOverride = null) {
+  const token = tokenOverride || await getToken();
   const cfg = getConfig();
   const opts = {
     method,
@@ -76,6 +84,32 @@ async function somaCall(path, method = 'GET', body = null) {
   const t = await r.text();
   let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 2000) }; }
   return { ok: r.ok, status: r.status, data: d };
+}
+
+// ── Token do PORTAL (login de operador) — pro fluxo de aceite ──
+// POST auth/login {usuario, senha} → token vem no HEADER 'access-token'
+// (a SOMA renova o token em todo response header; aqui logamos quando expira).
+let _portalTk = { token: null, exp: 0 };
+async function getPortalToken(force = false) {
+  if (!force && _portalTk.token && Date.now() < _portalTk.exp) return _portalTk.token;
+  const cfg = getConfig();
+  if (!cfg.PORTAL_USUARIO || !cfg.PORTAL_SENHA) {
+    throw new Error('SOMA_PORTAL_USUARIO/SOMA_PORTAL_SENHA nao configurados (login do portal p/ aceite)');
+  }
+  const r = await fetch(cfg.BASE + '/auth/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ usuario: cfg.PORTAL_USUARIO.replace(/\D/g, ''), senha: cfg.PORTAL_SENHA }),
+  });
+  const tok = r.headers.get('access-token');
+  const t = await r.text();
+  let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 300) }; }
+  if (!r.ok) throw new Error(`login portal SOMA (HTTP ${r.status}): ${d.message || d.error || d.raw || ''}`);
+  if (!tok) {
+    // sem access-token no header — provavelmente exige 2FA ou seleção de parceiro
+    throw new Error(`login portal sem access-token — 2FA/parceiro? resposta: ${JSON.stringify(d).substring(0, 200)}`);
+  }
+  _portalTk = { token: tok, exp: Date.now() + 20 * 60 * 1000 }; // conservador 20min
+  return tok;
 }
 
 // ── AUTO-AUTORIZAÇÃO (procuração — modelo Handbank/UY3/Nossa Fintech) ──
@@ -91,11 +125,15 @@ function extrairHashLink(link) {
 }
 
 async function confirmarAceite(hashTermo) {
-  // Fluxo do portal (2 passos, AMBOS com Bearer do parceiro — rotas
-  // produtos/privados/consultas/* são escopo do parceiro; "Link aceite via
-  // API" habilitado na conta):
+  // Fluxo do portal (2 passos) com o token do LOGIN DO PORTAL (operador) —
+  // as rotas produtos/privados/consultas/* NÃO aceitam o token de integração
+  // (dão "Token não fornecido"). Mesmo padrão do Fintech do Corban.
   //   1) validar-hash {conHashTermo}  2) confirmar-aceite {conHashTermo, dispositivoUsuario}
-  const val = await somaCall('/produtos/privados/consultas/validar-hash', 'POST', { conHashTermo: hashTermo });
+  let tokenPortal;
+  try { tokenPortal = await getPortalToken(); }
+  catch (e) { return { ok: false, status: 401, data: { error: e.message }, _semPortal: true }; }
+
+  const val = await somaCall('/produtos/privados/consultas/validar-hash', 'POST', { conHashTermo: hashTermo }, tokenPortal);
   const conf = await somaCall('/produtos/privados/consultas/confirmar-aceite', 'POST', {
     conHashTermo: hashTermo,
     // schema REAL capturado do portal (14/07): agenteUsuario/fusoHorario/
@@ -220,13 +258,12 @@ export default async function handler(req) {
       let norm = normalizarConsulta(r.data, r.status);
 
       // AUTO-AUTORIZAÇÃO (procuração): confirma o aceite server-side + re-consulta.
-      // DEFAULT DESLIGADO (14/07/2026): os endpoints de aceite da SOMA
-      // (produtos/privados/consultas/{validar-hash,confirmar-aceite}) são do
-      // PORTAL LOGADO — rejeitam o token de integração externa com "Token não
-      // fornecido". Precisa a SOMA habilitar "aceite via API" (flag
-      // parLinkAceiteViaApi) pra conta; quando habilitarem, é só passar
-      // autoAutorizar:true (ou virar o default). Enquanto isso: link pro cliente.
-      const autoAutorizar = body.autoAutorizar === true;
+      // Os endpoints de aceite usam o token do LOGIN DO PORTAL (getPortalToken) —
+      // não o de integração. DEFAULT LIGADO quando o login do portal está
+      // configurado (SOMA_PORTAL_USUARIO/SENHA); se não, no-op gracioso e cai
+      // no fluxo do link. Passe autoAutorizar:false pra forçar só o link.
+      const cfgP = getConfig();
+      const autoAutorizar = body.autoAutorizar !== false && !!(cfgP.PORTAL_USUARIO && cfgP.PORTAL_SENHA);
       if (autoAutorizar && norm.etapa === 'AGUARDA_AUTORIZACAO' && norm.linkAssinatura) {
         const hash = extrairHashLink(norm.linkAssinatura);
         if (hash) {
@@ -240,6 +277,16 @@ export default async function handler(req) {
         }
       }
       return j(norm, 200, req);
+    }
+
+    // ─── TESTAR LOGIN DO PORTAL (operador) ───────────────────
+    if (action === 'testPortal') {
+      try {
+        const tk = await getPortalToken(true);
+        return j({ success: true, loginPortal: 'ok', tokenPreview: tk.substring(0, 14) + '...' }, 200, req);
+      } catch (e) {
+        return j({ success: false, loginPortal: 'falhou', mensagem: e.message }, 200, req);
+      }
     }
 
     // ─── AUTORIZAR (confirmar aceite manualmente por hash ou link) ──
@@ -374,7 +421,7 @@ export default async function handler(req) {
       return j({ success: r.ok, httpStatus: r.status, data: r.data }, 200, req);
     }
 
-    return jsonError('Action invalida. Validas: test, consultarMargem, autorizar, enviarLinkAceite, registrarWebhook, simular, salvarCliente, cadastrarProposta, consultarProposta, cancelarProposta, rawCall', 400, req);
+    return jsonError('Action invalida. Validas: test, testPortal, consultarMargem, autorizar, enviarLinkAceite, registrarWebhook, simular, salvarCliente, cadastrarProposta, consultarProposta, cancelarProposta, rawCall', 400, req);
   } catch (e) {
     return jsonError('Erro SOMA: ' + e.message, 500, req);
   }
