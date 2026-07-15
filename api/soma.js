@@ -273,6 +273,19 @@ function normalizarConsulta(c, httpStatus) {
     _raw: c,
   };
 
+  // NÃO ELEGÍVEL: a SOMA pode devolver MARGEM mas o cliente não ser elegível
+  // (empregador sem convênio, restrição, CBO, etc.). NÃO pode virar APROVADO —
+  // mostra a margem MAS com status NÃO ELEGÍVEL (não operável). Detecção robusta
+  // no conStatusNome + motivosMapeados + conMensagem ("não elegível"/"inelegível").
+  const textoElig = `${c?.conStatusNome || ''} ${motivos || ''} ${c?.conMensagem || ''}`;
+  const naoElegivel = /(?:n[aã]o[\s-]*|in)eleg[ií]ve?l/i.test(textoElig);
+  if (naoElegivel) {
+    return {
+      ...base, etapa: 'NAO_ELEGIVEL', approved: false, naoElegivel: true,
+      mensagem: `NÃO ELEGÍVEL${margem > 0 ? ` · margem R$ ${margem.toFixed(2)} (não operável)` : ''}${motivos ? ' · ' + motivos : (c?.conMensagem ? ' · ' + c.conMensagem : '')}`,
+    };
+  }
+
   if (margem > 0) {
     return { ...base, etapa: 'APROVADO', approved: true, mensagem: `Cliente elegível — margem R$ ${margem.toFixed(2)}` };
   }

@@ -1193,6 +1193,34 @@ async function processarSoma(id, cpf, slug, bancarizadora, auth, secret) {
     return;
   }
 
+  if (u.etapa === 'NAO_ELEGIVEL') {
+    // Cliente tem margem MAS não é elegível (empregador sem convênio, restrição...).
+    // Mostra a margem no card, porém disponivel:false + naoElegivel:true → NÃO conta
+    // como apto/novo_apto (que exigem disponivel===true) e o card marca "Não elegível".
+    if (u.vinculo?.cnpj || u.vinculo?.empregador) {
+      await dbUpdate('clt_consultas_fila', { id }, {
+        vinculo: {
+          matricula: u.vinculo?.matricula, cnpj: u.vinculo?.cnpj,
+          empregador: u.vinculo?.empregador, dataAdmissao: u.vinculo?.dataAdmissao,
+        },
+      }).catch(() => {});
+    }
+    await patchBanco(id, slug, {
+      status: 'ok', disponivel: false, naoElegivel: true,
+      mensagem: u.mensagem,
+      dados: {
+        margemDisponivel: u.margem?.disponivel || 0,
+        margemBase: u.margem?.bruta || 0,
+        empregador: u.vinculo?.empregador,
+        empregadorCnpj: u.vinculo?.cnpj,
+        matricula: u.vinculo?.matricula,
+        consultaId: u.consultaId,
+        bancarizadora,
+      },
+    });
+    return;
+  }
+
   if (u.etapa === 'AGUARDA_AUTORIZACAO') {
     // Auto-envia o link de aceite pro cliente (WhatsApp) — INTERIM até a SOMA
     // habilitar aceite-via-API. NÃO envia em reconsulta em massa (origem lote)
