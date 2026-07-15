@@ -112,6 +112,11 @@ async function loginPortalESalvar() {
   const t = await r.text();
   let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 300) }; }
   if (!r.ok) throw new Error(`login portal SOMA (HTTP ${r.status}): ${d.message || d.error || d.raw || ''}`);
+  // MFA/2FA: a SOMA responde 200 com {tipo:'MFA_REQUERIDO'} → login não termina
+  // server-side (precisa de código). Não dá pra automatizar — use setPortalSession.
+  if (d && (d.tipo === 'MFA_REQUERIDO' || d.mfaToken)) {
+    throw new Error('SOMA exige 2FA (MFA_REQUERIDO) — login automático impossível. Cole a sessão via setPortalSession.');
+  }
   // access-token pode vir no HEADER (padrão SOMA) ou no corpo
   const bearer = r.headers.get('access-token') || d.accessToken || d.access_token || d.token || d.data?.accessToken;
   const refresh = r.headers.get('refresh-token') || d.refreshToken || d.refresh_token || null;
@@ -159,17 +164,16 @@ async function savePortalSession(patch) {
 // Chamada às rotas do portal com os 3 headers da sessão + auto-renovação.
 // Captura access-token/refresh-token/token novos que a SOMA devolver no
 // header da resposta e atualiza a sessão (keep-alive).
-async function portalCall(path, method = 'POST', body = null, _jaRelogou = false) {
+async function portalCall(path, method = 'POST', body = null) {
   const cfg = getConfig();
-  let sess = await getPortalSession();
-  // Sem sessão salva → tenta login automático (se tiver usuário/senha no env)
+  const sess = await getPortalSession();
+  // Sem sessão salva → NÃO tenta logar sozinho. O login da SOMA exige MFA (2FA)
+  // + um header 'token' emitido pelo site — impossível de fazer server-side
+  // (dá 403 "Token inválido" e ainda arrisca bloquear a conta por tentativa).
+  // A sessão tem que ser BOOTSTRAPADA 1x pelo operador (login normal no
+  // navegador → grampo captura os 3 headers → setPortalSession). Ver README.
   if (!sess || !sess.bearer) {
-    if (cfg.PORTAL_USUARIO && cfg.PORTAL_SENHA) {
-      try { await loginPortalESalvar(); sess = await getPortalSession(); }
-      catch (e) { return { ok: false, status: 401, data: { error: 'Login portal falhou: ' + e.message }, _semSessao: true }; }
-    } else {
-      return { ok: false, status: 401, data: { error: 'Sessão SOMA não configurada — rode setPortalSession OU seta SOMA_PORTAL_USUARIO/SENHA' }, _semSessao: true };
-    }
+    return { ok: false, status: 401, _semSessao: true, data: { error: 'Sessão SOMA não configurada. A SOMA exige 2FA no login — o robô não loga sozinho. Faça login no portal e rode o snippet de captura (setPortalSession) 1x.' } };
   }
   const headers = {
     'Content-Type': 'application/json',
@@ -182,9 +186,9 @@ async function portalCall(path, method = 'POST', body = null, _jaRelogou = false
     method, headers, ...(body !== null && method !== 'GET' ? { body: JSON.stringify(body) } : {}),
   });
 
-  // Sessão morreu (401) → re-loga uma vez com usuário/senha e repete
-  if (r.status === 401 && !_jaRelogou && cfg.PORTAL_USUARIO && cfg.PORTAL_SENHA) {
-    try { await loginPortalESalvar(); return await portalCall(path, method, body, true); } catch { /* cai pro retorno 401 */ }
+  // 401 = sessão morreu. Não re-loga (MFA). Sinaliza pra recolar a sessão.
+  if (r.status === 401) {
+    return { ok: false, status: 401, _semSessao: true, data: { error: 'Sessão SOMA expirada — recole a sessão (login no navegador + snippet setPortalSession).' } };
   }
 
   // keep-alive: SOMA renova os tokens nos headers da resposta
@@ -349,14 +353,21 @@ export default async function handler(req) {
       return j(norm, 200, req);
     }
 
-    // ─── TESTAR LOGIN DO PORTAL (operador) ───────────────────
+    // ─── TESTAR A SESSÃO DO PORTAL (colada via setPortalSession) ──
+    // A SOMA exige 2FA no login → o robô NÃO loga sozinho. Este teste só
+    // confere se a sessão colada ainda está viva (não faz login).
     if (action === 'testPortal') {
-      try {
-        const tk = await loginPortalESalvar();
-        return j({ success: true, loginPortal: 'ok', mensagem: 'Login do portal OK — sessão salva', tokenPreview: tk.substring(0, 14) + '...' }, 200, req);
-      } catch (e) {
-        return j({ success: false, loginPortal: 'falhou', mensagem: e.message }, 200, req);
+      const s = await getPortalSession();
+      if (!s || !s.bearer) {
+        return j({ success: false, loginPortal: 'sem-sessao', mensagem: 'Sessão não colada. A SOMA tem 2FA — faça login no navegador e rode o snippet de captura (setPortalSession) 1x.' }, 200, req);
       }
+      const teste = await portalCall('/produtos/privados/consultas/validar-hash', 'POST', { conHashTermo: '00000000-0000-0000-0000-000000000000' });
+      const viva = teste.status !== 401 && !teste._semSessao;
+      return j({
+        success: viva, loginPortal: viva ? 'ok' : 'expirada',
+        mensagem: viva ? 'Sessão colada está VIVA ✅ — robô de aceite ativo' : 'Sessão expirada — recole (login + snippet).',
+        atualizado_em: s.atualizado_em, testeStatus: teste.status,
+      }, 200, req);
     }
 
     // ─── AUTORIZAR (confirmar aceite manualmente por hash ou link) ──
