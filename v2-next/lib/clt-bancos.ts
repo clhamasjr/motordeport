@@ -11,8 +11,9 @@ import type { BancoSlug } from '@/lib/clt-types';
  * via BANCO_LABEL completo, mas seletores/filtros novos NÃO incluem.
  */
 export const BANCOS_OCULTOS: BancoSlug[] = [
-  'v8_qi',       // V8 saiu da operação — substituído por Fintech do Corban (QI Tech)
-  'v8_celcoin',  // idem — substituído por Fintech do Corban (Celcoin)
+  // v8_qi / v8_celcoin REATIVADOS (nova API v8sistema, commit 5ef1a9e) — estão
+  // em BANCOS_VISIVEIS. Ficaram por engano aqui também, o que os escondia da
+  // esteira e das empresas-aprovadas (que filtram por OCULTOS). Removidos.
   'joinbank',    // QualiBanking — fora da operação atual
   'mercantil',   // tirado de produção (jun/2026)
 ];
