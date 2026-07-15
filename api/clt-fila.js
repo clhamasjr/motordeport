@@ -1207,6 +1207,10 @@ async function processarSoma(id, cpf, slug, bancarizadora, auth, secret) {
     }
     await patchBanco(id, slug, {
       status: 'ok', disponivel: false, naoElegivel: true,
+      // limpa flags de estado ANTERIOR (merge do patchBanco) — senão o badge
+      // velho "Aguarda autorização" gruda e o card fica travado.
+      precisaAutorizacao: false, bloqueado: false, requiresLiveness: false,
+      linkAutorizacao: null, statusAutorizacao: null, retryable: false,
       mensagem: u.mensagem,
       dados: {
         margemDisponivel: u.margem?.disponivel || 0,
@@ -1270,6 +1274,10 @@ async function processarSoma(id, cpf, slug, bancarizadora, auth, secret) {
   // SEM_MARGEM / ERRO
   await patchBanco(id, slug, {
     status: 'falha', disponivel: false,
+    // limpa flags de estado ANTERIOR (merge do patchBanco) — senão gruda o
+    // badge velho "Aguarda autorização" mesmo sem margem.
+    precisaAutorizacao: false, bloqueado: false, requiresLiveness: false,
+    linkAutorizacao: null, statusAutorizacao: null,
     retryable: u.etapa === 'ERRO' && u.retryable !== false,
     mensagem: u.mensagem || 'SOMA não retornou margem',
     _raw_response: u,

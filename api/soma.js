@@ -248,7 +248,7 @@ function normalizarConsulta(c, httpStatus) {
   const margem = parseFloat(c?.conMargemDisponivel ?? 0) || 0;
   const statusNome = String(c?.conStatusNome || '').toLowerCase();
   const motivos = Array.isArray(c?.motivosMapeados)
-    ? c.motivosMapeados.map((m) => (typeof m === 'string' ? m : m?.mensagem || m?.motivo || JSON.stringify(m))).join('; ')
+    ? c.motivosMapeados.map((m) => (typeof m === 'string' ? m : (m?.mtcNome || m?.mensagem || m?.motivo || m?.nome || JSON.stringify(m)))).join('; ')
     : null;
 
   const base = {
