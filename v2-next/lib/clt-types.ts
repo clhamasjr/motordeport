@@ -21,7 +21,8 @@ export type BancoSlug =
   | 'joinbank' | 'mercantil' | 'handbank' | 'c6'
   | 'fintech_qi' | 'fintech_celcoin'
   | 'unno' | 'nossa_fintech' | 'nossa_fintech_uy3'
-  | 'facta_clt';
+  | 'facta_clt'
+  | 'soma_celcoin' | 'soma_uy3';
 
 export interface BancoState {
   status: StatusBanco;

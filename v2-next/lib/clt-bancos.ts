@@ -36,6 +36,8 @@ export const BANCO_LABEL: Record<BancoSlug, string> = {
   nossa_fintech: 'A NOSSA FINTECH (QITECH)',
   nossa_fintech_uy3: 'A NOSSA FINTECH (UY3)',
   facta_clt: 'FACTA (Crédito do Trabalhador)',
+  soma_celcoin: 'SOMA (Celcoin)',
+  soma_uy3: 'SOMA (UY3)',
 };
 
 /**
@@ -53,6 +55,8 @@ export const BANCOS_VISIVEIS: BancoSlug[] = [
   'nossa_fintech',
   'nossa_fintech_uy3',
   'facta_clt',
+  'soma_celcoin',
+  'soma_uy3',
   'presencabank',
 ];
 

@@ -25,6 +25,8 @@ const BANCO_LABEL: Record<BancoSlug, string> = {
   nossa_fintech: 'A NOSSA FINTECH (QITECH)',
   nossa_fintech_uy3: 'A NOSSA FINTECH (UY3)',
   facta_clt: 'FACTA (Crédito do Trabalhador)',
+  soma_celcoin: 'SOMA (Celcoin)',
+  soma_uy3: 'SOMA (UY3)',
 };
 
 const BANCO_COR: Record<BancoSlug, string> = {
@@ -42,6 +44,8 @@ const BANCO_COR: Record<BancoSlug, string> = {
   nossa_fintech: 'border-l-orange-500', // A NOSSA FINTECH (QITECH)
   nossa_fintech_uy3: 'border-l-amber-600', // A NOSSA FINTECH (UY3)
   facta_clt: 'border-l-blue-700', // FACTA
+  soma_celcoin: 'border-l-teal-600', // SOMA (Celcoin)
+  soma_uy3: 'border-l-teal-500', // SOMA (UY3)
 };
 
 interface Props {
