@@ -217,10 +217,14 @@ export default async function handler(req) {
       }
       let norm = normalizarConsulta(r.data, r.status);
 
-      // AUTO-AUTORIZAÇÃO (procuração): se gerou link de aceite e ainda não
-      // assinou, confirma o aceite server-side e RE-CONSULTA pra pegar a
-      // margem — igual Handbank/Nossa Fintech. autoAutorizar default true.
-      const autoAutorizar = body.autoAutorizar !== false;
+      // AUTO-AUTORIZAÇÃO (procuração): confirma o aceite server-side + re-consulta.
+      // DEFAULT DESLIGADO (14/07/2026): os endpoints de aceite da SOMA
+      // (produtos/privados/consultas/{validar-hash,confirmar-aceite}) são do
+      // PORTAL LOGADO — rejeitam o token de integração externa com "Token não
+      // fornecido". Precisa a SOMA habilitar "aceite via API" (flag
+      // parLinkAceiteViaApi) pra conta; quando habilitarem, é só passar
+      // autoAutorizar:true (ou virar o default). Enquanto isso: link pro cliente.
+      const autoAutorizar = body.autoAutorizar === true;
       if (autoAutorizar && norm.etapa === 'AGUARDA_AUTORIZACAO' && norm.linkAssinatura) {
         const hash = extrairHashLink(norm.linkAssinatura);
         if (hash) {
