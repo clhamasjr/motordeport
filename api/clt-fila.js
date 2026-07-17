@@ -70,6 +70,7 @@ const TODOS_BANCOS_CLT = [
   'facta_clt_offline',   // FACTA Base Offline (histórico, sem SMS — pré-filtro de lote)
   'soma_celcoin',        // SOMA (api.somabp2.com.br) via CELCOIN
   'soma_uy3',            // SOMA via UY3
+  'happy_clt',           // HAPPY (byx capital / Vhagar) — Consignado Privado CLT
 ];
 
 // Re-tentativa automática (timeout / banco lento): a tela E o cron clt-cron-retry
@@ -1296,6 +1297,79 @@ async function processarSoma(id, cpf, slug, bancarizadora, auth, secret) {
   });
 }
 
+// ─── HAPPY (byx capital / Vhagar) — Consignado Privado CLT ──────
+// Consulta DataPrev via /api/happy. APROVADO→ok+margem; link de autorização
+// DataPrev→bloqueado (operador manda pro cliente); em análise→manual_aguardando.
+async function processarHappy(id, cpf, auth, secret) {
+  const slug = 'happy_clt';
+  const manut = await _bancoEmManutencao(slug);
+  if (manut) { await _marcarEmManutencao(id, slug, manut); return; }
+  await patchBanco(id, slug, { status: 'processando' });
+
+  const cli = await aguardarCliente(id, 6000);
+  const nome = cli?.nome || null;
+  const telefone = cli?.telefones?.[0]?.completo || null;
+
+  const r = await callApi('/api/happy', { action: 'consultarMargem', cpf, nome, telefone }, auth, secret, 30000);
+  const u = r.data || {};
+
+  if (!r.ok && !u.etapa) {
+    await patchBanco(id, slug, { status: 'falha', retryable: true, mensagem: u.error || u.message || `Erro HAPPY (HTTP ${r.status})`, _raw_response: u });
+    return;
+  }
+
+  if (u.etapa === 'APROVADO') {
+    await patchBanco(id, slug, {
+      status: 'ok', disponivel: true,
+      precisaAutorizacao: false, bloqueado: false, linkAutorizacao: null,
+      mensagem: u.mensagem,
+      dados: {
+        margemDisponivel: u.margem?.disponivel || 0,
+        margemBase: u.margem?.valorMax || 0,
+        valorMax: u.margem?.valorMax || 0,
+        idCliente: u.idCliente,
+        idSimulacao: u.idSimulacao,
+      },
+    });
+    return;
+  }
+
+  if (u.etapa === 'AGUARDA_AUTORIZACAO') {
+    await patchBanco(id, slug, {
+      status: 'bloqueado', bloqueado: true, precisaAutorizacao: true,
+      linkAutorizacao: u.linkAutorizacao || null,
+      mensagem: u.mensagem, retryable: true,
+      dados: { idCliente: u.idCliente, idSimulacao: u.idSimulacao },
+    });
+    return;
+  }
+
+  if (u.etapa === 'EM_ANALISE') {
+    await patchBanco(id, slug, {
+      status: 'manual_aguardando', disponivel: false,
+      precisaAutorizacao: false, bloqueado: false, linkAutorizacao: null,
+      mensagem: u.mensagem, retryable: true,
+      dados: { idCliente: u.idCliente, idSimulacao: u.idSimulacao },
+    });
+    return;
+  }
+
+  if (u.etapa === 'AGUARDA_DADOS') {
+    await patchBanco(id, slug, { status: 'falha', disponivel: false, retryable: true, mensagem: u.mensagem });
+    return;
+  }
+
+  // SEM_MARGEM / ERRO
+  await patchBanco(id, slug, {
+    status: 'falha', disponivel: false,
+    precisaAutorizacao: false, bloqueado: false, requiresLiveness: false,
+    linkAutorizacao: null, statusAutorizacao: null,
+    retryable: u.etapa === 'ERRO' && u.retryable !== false,
+    mensagem: u.mensagem || 'HAPPY não retornou crédito',
+    _raw_response: u,
+  });
+}
+
 // ─── A NOSSA FINTECH (Spixii) — multi-bancarizadora QITECH + UY3 ──
 // Cada bancarizadora vira 1 card: slug 'nossa_fintech' (QITECH) e
 // 'nossa_fintech_uy3' (UY3). Auto-autz modelo Handbank/UY3 (sistema
@@ -2130,7 +2204,8 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       else if (banco === 'facta_clt_offline') await processarFactaOffline(id, row.cpf, auth, secret);
       else if (banco === 'soma_celcoin') await processarSoma(id, row.cpf, 'soma_celcoin', 'CELCOIN', auth, secret);
       else if (banco === 'soma_uy3') await processarSoma(id, row.cpf, 'soma_uy3', 'UY3', auth, secret);
-      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno, nossa_fintech, nossa_fintech_uy3, facta_clt, facta_clt_offline, soma_celcoin, soma_uy3', 400, req);
+      else if (banco === 'happy_clt') await processarHappy(id, row.cpf, auth, secret);
+      else return jsonError('Banco inválido. Válidos: presencabank, multicorban, v8_qi, v8_celcoin, joinbank, mercantil, handbank, c6, fintech_qi, fintech_celcoin, unno, nossa_fintech, nossa_fintech_uy3, facta_clt, facta_clt_offline, soma_celcoin, soma_uy3, happy_clt', 400, req);
     } catch (e) {
       await patchBanco(id, banco, { status: 'falha', mensagem: 'Erro: ' + e.message });
       return jsonResp({ success: false, error: e.message }, 200, req);

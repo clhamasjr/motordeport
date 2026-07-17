@@ -39,6 +39,7 @@ export const BANCO_LABEL: Record<BancoSlug, string> = {
   facta_clt: 'FACTA (Crédito do Trabalhador)',
   soma_celcoin: 'SOMA (Celcoin)',
   soma_uy3: 'SOMA (UY3)',
+  happy_clt: 'HAPPY (byx)',
 };
 
 /**
@@ -58,6 +59,7 @@ export const BANCOS_VISIVEIS: BancoSlug[] = [
   'facta_clt',
   'soma_celcoin',
   'soma_uy3',
+  'happy_clt',
   'presencabank',
 ];
 

@@ -27,6 +27,7 @@ const BANCO_LABEL: Record<BancoSlug, string> = {
   facta_clt: 'FACTA (Crédito do Trabalhador)',
   soma_celcoin: 'SOMA (Celcoin)',
   soma_uy3: 'SOMA (UY3)',
+  happy_clt: 'HAPPY (byx)',
 };
 
 const BANCO_COR: Record<BancoSlug, string> = {
@@ -46,6 +47,7 @@ const BANCO_COR: Record<BancoSlug, string> = {
   facta_clt: 'border-l-blue-700', // FACTA
   soma_celcoin: 'border-l-teal-600', // SOMA (Celcoin)
   soma_uy3: 'border-l-teal-500', // SOMA (UY3)
+  happy_clt: 'border-l-pink-500', // HAPPY (byx)
 };
 
 interface Props {
