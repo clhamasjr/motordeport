@@ -2507,8 +2507,13 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
         cpf: c.cpf,
         nome: c.cliente?.nome || c.nome_manual || '(sem nome)',
         telefone: c.cliente?.telefones?.[0]?.completo || null,
-        empregador: c.vinculo?.empregador || null,
-        empregadorCnpj: c.vinculo?.cnpj || null,
+        // Empregador/CNPJ: SÓ o vínculo ATUAL (retornado por banco). Se o único
+        // vínculo que temos veio do CAGED 2024 (fonte='caged_2024'), NÃO mostra —
+        // é dado de 2024, empregador provavelmente desatualizado.
+        empregador: (c.vinculo?.fonte === 'caged_2024') ? null : (c.vinculo?.empregador || null),
+        empregadorCnpj: (c.vinculo?.fonte === 'caged_2024') ? null : (c.vinculo?.cnpj || null),
+        vinculoDesatualizado: c.vinculo?.fonte === 'caged_2024', // só tinha CAGED, sem vínculo atual
+        dataConsulta: c.iniciado_em,   // data da consulta (fica sempre visível no raio-X)
         categoria,
         melhorBanco,
         melhorMargem,
