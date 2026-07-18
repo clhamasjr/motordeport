@@ -10,6 +10,7 @@ import {
   Search, BookOpen, Target, Trophy, Download,
   ListChecks, FileText, MessageSquare, Settings, Building2, Landmark,
   Briefcase, Zap, Smartphone, Sparkles, Activity, GitBranch, PiggyBank,
+  DatabaseZap,
 } from 'lucide-react';
 
 export type Section = 'consultar' | 'operar' | 'ia' | 'esteira' | 'config';
@@ -81,6 +82,7 @@ export const NAV: NavGroup[] = [
       { href: '/clt/analise-lote', label: 'Análise em Lote', icon: ListChecks, section: 'operar' },
       { href: '/clt/empresas-aprovadas', label: 'Empresas Aprovadas', icon: Trophy, section: 'operar' },
       { href: '/clt/extrair-caged', label: 'Extrair Base CAGED', icon: Download, needsRole: ['gestor', 'admin'], section: 'operar' },
+      { href: '/clt/facta-offline', label: 'FACTA Higienização Offline', icon: DatabaseZap, needsRole: ['gestor', 'admin'], section: 'operar' },
       { href: '/clt/conversas', label: 'Conversas IA', icon: MessageSquare, section: 'ia' },
       { href: '/clt/esteira', label: 'Esteira', icon: ListChecks, section: 'ia' },
       { href: '/clt/conexao-whatsapp', label: 'Conexão WhatsApp', icon: Smartphone, needsRole: ['gestor', 'admin'], section: 'ia' },
