@@ -29,6 +29,10 @@
     {
       "path": "/api/clt-cron-retry",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/soma-heartbeat",
+      "schedule": "*/10 * * * *"
     }
   ]
 }
