@@ -2435,9 +2435,22 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       const bancosAptos = [];
       const aguardandoBancos = []; // slugs dos bancos que travam por autorizacao
       let temOk = false, temAguardando = false, temFalha = false, temPending = false;
+      // Baldes novos do raio-X: 🟡 com margem mas NÃO elegível / 🔴 CNPJ inválido
+      let temMargemInapto = false, margemInapto = 0; const bancosMargemInapto = [];
+      let temCnpjInvalido = false; const motivosInapto = [];
       for (const [slug, st] of Object.entries(c.bancos || {})) {
         if (slug === 'multicorban') continue;
         const s = st?.status;
+        // 🟡 Com margem mas NÃO elegível (ex: SOMA "tempo mínimo de vínculo").
+        // Tem margem calculada mas o banco recusou — não conta como apto.
+        if (st?.naoElegivel === true) {
+          temMargemInapto = true;
+          let mi = parseFloat(st.dados?.margemDisponivel ?? 0) || 0;
+          if (mi > 20000) mi = mi / 100;
+          if (mi > margemInapto) margemInapto = mi;
+          bancosMargemInapto.push({ banco: slug, margem: mi });
+          continue;
+        }
         if (s === 'ok' && st?.disponivel === true) {
           temOk = true;
           let m = parseFloat(st.dados?.margemDisponivel ?? st.dados?.valorLiquido ?? 0) || 0;
@@ -2456,6 +2469,12 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
           aguardandoBancos.push(slug);
         } else if (s === 'falha') {
           temFalha = true;
+          // 🔴 CNPJ / empregador / vínculo inválido (problema de cadastro)
+          const msg = String(st.mensagem || '');
+          if (/(cnpj|empregador|v[ií]nculo|raz[aã]o social).{0,40}(inv[aá]lid|inexist|n[aã]o (foi )?(encontrad|localizad|conveni))/i.test(msg)) {
+            temCnpjInvalido = true;
+            motivosInapto.push({ banco: slug, motivo: msg.substring(0, 120) });
+          }
         } else if (s === 'pending' || s === 'processando') {
           temPending = true;
         }
@@ -2469,16 +2488,18 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       // C6 precisa de selfie/liveness do cliente — destacamos pra acao.
       const precisaSelfieC6 = aguardandoBancos.includes('c6');
 
-      // Categoria (prioridade): apto > standby > processando > sem_margem
-      // (elegivel s/ margem) > aguardando (precisa autz, com dados) >
-      // sem_dados (aguardando mas sem nome/telefone) > inapto
+      // Categoria (prioridade): apto > com_margem_inapto > standby > processando
+      // > sem_margem (elegivel s/ margem) > aguardando (precisa autz) >
+      // sem_dados (aguardando mas sem contato) > cnpj_invalido > inapto
       let categoria;
-      if (melhorMargem > 0) categoria = 'apto';
+      if (melhorMargem > 0) categoria = 'apto';                          // 🟢
+      else if (temMargemInapto) categoria = 'com_margem_inapto';         // 🟡
       else if (c.status_geral === 'standby') categoria = 'standby';
       else if (c.status_geral === 'processando' && temPending && !temOk && !temFalha) categoria = 'processando';
-      else if (temOk) categoria = 'sem_margem';
-      else if (temAguardando) categoria = semDados ? 'sem_dados' : 'aguardando';
-      else categoria = 'inapto';
+      else if (temOk) categoria = 'sem_margem';                          // ⚪
+      else if (temAguardando) categoria = semDados ? 'sem_dados' : 'aguardando'; // 🟠
+      else if (temCnpjInvalido) categoria = 'cnpj_invalido';            // 🔴
+      else categoria = 'inapto';                                        // ⚫
 
       bancosAptos.sort((a, b) => b.margem - a.margem);
       porCpf.set(c.cpf, {
@@ -2493,6 +2514,9 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
         melhorMargem,
         totalBancosAptos: nAptos,
         bancosAptos,
+        margemInapto,          // 🟡 margem que existe mas NÃO é operável (não elegível)
+        bancosMargemInapto,    // quais bancos têm margem mas recusaram
+        motivosInapto,         // 🔴 motivos de CNPJ/vínculo inválido
         aguardandoBancos,    // quais bancos travam por autorizacao
         precisaSelfieC6,     // C6 esperando selfie do cliente
         // OPORTUNIDADE NOVA (reconsulta): cliente GANHOU margem que nao tinha

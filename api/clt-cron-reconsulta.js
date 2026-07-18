@@ -49,6 +49,9 @@ const BANCOS_RECONSULTA = [
   'nossa_fintech_uy3',  // auto-autz geolocation
   'presencabank',       // termo próprio auto-assinado
   'facta_clt_offline',  // base offline (sem SMS) — processada pelo worker SERIAL
+  'soma_celcoin',       // SOMA — WhatsApp cortado, aceite via robô/sessão (sem SMS)
+  'soma_uy3',           // idem
+  'happy_clt',          // HAPPY (byx) — DataPrev auto, sem SMS ao cliente
 ];
 
 // ── RESUMO DA RODADA (WhatsApp via Evolution) ─────────────────────
