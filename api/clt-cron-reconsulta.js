@@ -174,7 +174,7 @@ export default async function handler(req) {
   // throughput fica dentro do rate limit do PresençaBank.
   // Cada execução processa `limit` CPFs e, se ainda sobrou histórico, chama
   // a SI MESMA (auto-encadeamento) pro próximo lote — até esvaziar TODOS.
-  let limit = 8, pass = 1, resumoHop = 0, cutoffParam = null;
+  let limit = 8, pass = 1, resumoHop = 0, cutoffParam = null, bancosOverride = null;
   try {
     const u = new URL(req.url);
     const l = parseInt(u.searchParams.get('limit') || '8', 10);
@@ -183,7 +183,19 @@ export default async function handler(req) {
     if (p > 0) pass = p;
     resumoHop = parseInt(u.searchParams.get('resumo') || '0', 10) || 0;
     cutoffParam = u.searchParams.get('cutoff') || null;
+    // ?bancos=v8_qi,v8_celcoin → reconsulta a base SÓ nesses bancos (varredura
+    // pontual de um banco que voltou). Sem o param, roda BANCOS_RECONSULTA
+    // (rodada semanal completa — comportamento inalterado). O 'criar' filtra
+    // downstream por TODOS_BANCOS_CLT, então aqui basta sanitizar o formato.
+    const bp = (u.searchParams.get('bancos') || '').trim();
+    if (bp) {
+      const arr = bp.split(',').map((s) => s.trim()).filter((s) => /^[a-z0-9_]+$/.test(s));
+      if (arr.length) bancosOverride = arr;
+    }
   } catch { /* default */ }
+  // Lista de bancos desta rodada + querystring pra propagar no auto-encadeamento
+  const bancosDaRodada = bancosOverride || BANCOS_RECONSULTA;
+  const bancosQS = bancosOverride ? `&bancos=${encodeURIComponent(bancosOverride.join(','))}` : '';
 
   // ── MODO RESUMO (fim da cadeia): espera os bancos assentarem e manda o
   // resumo das oportunidades da rodada pro WhatsApp (Evolution).
@@ -206,7 +218,7 @@ export default async function handler(req) {
   // Consultas feitas pelos operadores antes de 26/06 ficaram paradas
   // (status_geral='standby'). Agora dispara os bancos de cada uma.
   let standbyDisparadas = 0, standbyCheio = false;
-  try {
+  if (!bancosOverride) try {
     const { data: standbyFilas } = await dbSelect('clt_consultas_fila', {
       filters: { status_geral: 'standby' }, order: 'iniciado_em.asc', limit,
     });
@@ -242,7 +254,7 @@ export default async function handler(req) {
     // pra drenar o resto das filas paradas antes de encerrar.
     let encadeouStandby = false;
     if (standbyCheio && pass < MAX_PASS) {
-      fetch(baseUrlEarly + `/api/clt-cron-reconsulta?limit=${limit}&pass=${pass + 1}`, {
+      fetch(baseUrlEarly + `/api/clt-cron-reconsulta?limit=${limit}&pass=${pass + 1}${bancosQS}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-secret': secretEarly },
       }).catch(() => {});
@@ -297,7 +309,7 @@ export default async function handler(req) {
           action: 'criar',
           cpf,
           origem: 'lote',
-          bancos: BANCOS_RECONSULTA,
+          bancos: bancosDaRodada,
           semMulticorban: true, // massa NAO passa no scrape do Multicorban (CSRF frágil)
           // pre-popula dados já conhecidos (evita re-pedir / destrava bancos)
           nome: c.nome || undefined,
@@ -329,7 +341,7 @@ export default async function handler(req) {
   // Se veio incompleto, esvaziou → para (a cadeia termina sozinha).
   let encadeou = false;
   if ((clientes.length >= limit || standbyCheio) && pass < MAX_PASS) {
-    fetch(baseUrl + `/api/clt-cron-reconsulta?limit=${limit}&pass=${pass + 1}`, {
+    fetch(baseUrl + `/api/clt-cron-reconsulta?limit=${limit}&pass=${pass + 1}${bancosQS}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-secret': webhookSecret },
     }).catch(() => {});
