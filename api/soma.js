@@ -453,50 +453,8 @@ export default async function handler(req) {
       return j({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
     }
 
-    // ─── ENVIAR LINK DE ACEITE PRO CLIENTE (WhatsApp/Evolution) ──
-    // Interim enquanto a SOMA não habilita aceite-via-API pro parceiro.
-    // body: { cpf, nome, telefone, link?, bancarizadora? } — se não vier
-    // link, faz a consulta pra gerar. Envia o conLinkAssinatura pro cliente.
-    if (action === 'enviarLinkAceite') {
-      const telefone = onlyDigits(body.telefone || body.celular);
-      if (telefone.length < 10) return jsonError('telefone do cliente obrigatorio', 400, req);
-      let link = body.link || null, consultaId = body.consultaId || null;
-      if (!link) {
-        const cpf = onlyDigits(body.cpf);
-        const nome = (body.nome || '').trim();
-        if (cpf.length !== 11 || !nome) return jsonError('cpf+nome (ou link) obrigatorios', 400, req);
-        const r = await somaCall('/v2/privado/externo/consultas/', 'POST', {
-          bancarizadora: (body.bancarizadora || 'CELCOIN').toUpperCase(), cpf, nome, celular: telefone,
-          ...(body.dataNascimento ? { dataNascimento: body.dataNascimento } : {}),
-        });
-        link = r.data?.conLinkAssinatura || null;
-        consultaId = r.data?.conId || null;
-        if (r.data?.conMargemDisponivel > 0) {
-          return j({ success: true, jaAutorizado: true, mensagem: 'Cliente já autorizado — margem disponível', margem: r.data.conMargemDisponivel, consultaId }, 200, req);
-        }
-      }
-      if (!link) return jsonError('SOMA não retornou link de assinatura', 502, req);
-
-      const evoUrl = (process.env.EVOLUTION_URL || '').replace(/\/+$/, ''), evoKey = process.env.EVOLUTION_KEY;
-      const instancia = process.env.SOMA_EVOLUTION_INSTANCE || process.env.HEALTHCHECK_INSTANCE || 'lhamas-clt';
-      if (!evoUrl || !evoKey) return jsonError('Evolution nao configurada (EVOLUTION_URL/KEY)', 500, req);
-      // Evolution exige DDI: 55 + DDD + numero. Prefixa 55 se veio só DDD+numero.
-      const numeroEvo = (telefone.length === 10 || telefone.length === 11) ? '55' + telefone : telefone;
-      const nome1 = (body.nome || '').trim().split(' ')[0] || '';
-      const texto = `Olá${nome1 ? ' ' + nome1 : ''}! 👋\n\nPra concluir sua consulta de crédito consignado, precisamos que você autorize o acesso à sua margem. É rápido e seguro:\n\n👉 ${link}\n\nBasta abrir o link, ler e confirmar o aceite. Qualquer dúvida, estamos à disposição!`;
-      let enviado = false, evoStatus = null, evoBody = null;
-      try {
-        const er = await fetch(`${evoUrl}/message/sendText/${instancia}`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': evoKey },
-          body: JSON.stringify({ number: numeroEvo, text: texto }),
-          signal: AbortSignal.timeout(8000),
-        });
-        evoStatus = er.status;
-        evoBody = (await er.text()).substring(0, 300);
-        enviado = er.ok;
-      } catch (e) { evoStatus = 0; evoBody = e.message; }
-      return j({ success: enviado, enviado, link, consultaId, telefone: numeroEvo, instancia, evoStatus, evoBody }, 200, req);
-    }
+    // (WhatsApp da SOMA REMOVIDO a pedido — não há mais action enviarLinkAceite.
+    //  Aceite é dado pelo robô via sessão do portal; sem envio ao cliente.)
 
     // ─── REGISTRAR WEBHOOK (aponta a SOMA pro nosso receptor) ──
     if (action === 'registrarWebhook') {
@@ -561,7 +519,7 @@ export default async function handler(req) {
       return j({ success: r.ok, httpStatus: r.status, data: r.data }, 200, req);
     }
 
-    return jsonError('Action invalida. Validas: test, testPortal, consultarMargem, autorizar, enviarLinkAceite, registrarWebhook, simular, salvarCliente, cadastrarProposta, consultarProposta, cancelarProposta, rawCall', 400, req);
+    return jsonError('Action invalida. Validas: test, testPortal, consultarMargem, autorizar, registrarWebhook, simular, salvarCliente, cadastrarProposta, consultarProposta, cancelarProposta, rawCall', 400, req);
   } catch (e) {
     return jsonError('Erro SOMA: ' + e.message, 500, req);
   }

@@ -1239,28 +1239,13 @@ async function processarSoma(id, cpf, slug, bancarizadora, auth, secret) {
   }
 
   if (u.etapa === 'AGUARDA_AUTORIZACAO') {
-    // Auto-envia o link de aceite pro cliente (WhatsApp) — INTERIM até a SOMA
-    // habilitar aceite-via-API. NÃO envia em reconsulta em massa (origem lote)
-    // pra não disparar WhatsApp pra base inteira; dedup por linkEnviado.
-    let linkEnviado = false;
-    try {
-      const { data: rowNow } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
-      const ehLote = /^(Reconsulta|Higienização) Lote · /.test(rowNow?.criada_por_nome || '');
-      const jaEnviou = rowNow?.bancos?.[slug]?.linkEnviado === true;
-      const tel = rowNow?.cliente?.telefones?.[0]?.completo;
-      if (!ehLote && !jaEnviou && u.linkAssinatura && tel) {
-        const env = await callApi('/api/soma', {
-          action: 'enviarLinkAceite', telefone: tel, nome: rowNow?.cliente?.nome, link: u.linkAssinatura,
-        }, auth, secret, 12000).catch(() => ({ ok: false }));
-        linkEnviado = !!env.data?.enviado;
-      }
-    } catch { /* nao quebra o card por causa do envio */ }
-
+    // SEM envio de WhatsApp (removido a pedido). O robô dá o aceite sozinho
+    // quando a sessão do portal está colada; se não estiver, o card fica
+    // bloqueado com o link e o operador trata manualmente.
     await patchBanco(id, slug, {
       status: 'bloqueado', bloqueado: true, precisaAutorizacao: true,
       linkAutorizacao: u.linkAssinatura || null,
-      linkEnviado,
-      mensagem: linkEnviado ? u.mensagem + ' (link enviado ao cliente por WhatsApp)' : u.mensagem,
+      mensagem: u.mensagem,
       retryable: true,
       dados: { consultaId: u.consultaId, bancarizadora },
     });
