@@ -150,11 +150,25 @@ export const BD: Record<string, BancoRegra> = {
     pgMinMap: { '070': 12 },
     invRules: { minAge: 60 },
   },
+  // ── DAYCOVAL — regras de portabilidade (comunicado jul/2026) ──
+  // Porta TODOS os bancos (autorregulação), exceto C6 (336/626), Safra (422)
+  // e Alfa (025). Troco mín 2% ou R$100 (o maior). Bancos de rede: mín 6
+  // pagas (pgMin global). Acordos por origem no pgMinMap (0 = sem mínimo).
+  // Remuneração agência/corban (360 dias) não afeta viabilidade — só comissão.
   DAYCOVAL: {
     sMin: 500, tMin: 100, tMinPct: 0.02, pMin: 20, pgMin: 6, faixa: [1.56, 1.85], coefF: null,
     coefs: COEFS_DAY,
-    block: ['336','422','025','243','925'],
-    pgMinMap: { '121': 15, '012': 13, '935': 24, '623': 12, '070': 12 },
+    block: ['336','626','422','025'],
+    pgMinMap: {
+      '149': 24, '935': 24, // FACTA / FACTA CFI: 24 pagas
+      '121': 15,            // Agibank: 15
+      '012': 13,            // Inbursa: 13
+      '623': 12,            // PAN: 12
+      '341': 12,            // Itaú: 12 (acordo — prevalece sobre rede 6)
+      '643': 0,             // PINE: sem mínimo
+      '070': 0, '925': 0,   // BRB / BRB Cred: sem mínimo
+      '329': 0,             // QI Sociedade de Crédito: sem mínimo
+    },
     invRules: { minAge: 60 },
   },
   ICRED: {
@@ -336,7 +350,13 @@ export function bankAccepts(
   }
   if (r.pMin && p < r.pMin) return false;
   if (r.sMin && s < r.sMin) return false;
-  const pgR = i1 ? 1 : (r.pgMinMap && r.pgMinMap[cd] ? r.pgMinMap[cd] : r.pgMin);
+  // Pagas mínimas: acordo específico do destino (pgMinMap) PREVALECE sobre a
+  // lista B1P (origens que liberam com 1 paga). Sem isso, acordos tipo
+  // "Daycoval só porta FACTA com 24 pagas" eram ignorados pra origens em B1P.
+  // `!== undefined` permite 0 explícito no map (= sem mínimo, ex: BRB no Daycoval).
+  const pgR = (r.pgMinMap && r.pgMinMap[cd] !== undefined)
+    ? r.pgMinMap[cd]
+    : (i1 ? 1 : r.pgMin);
   if (pgR && pg < pgR) return false;
   // Taxa mínima da origem que o destino aceita:
   //   1. Se há regra específica por origem (taxaOrigemMin[cd]), usa essa
