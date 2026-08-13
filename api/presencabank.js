@@ -433,7 +433,10 @@ export default async function handler(req) {
         return j({
           success: true, etapa: 'vinculos',
           temVinculo: false,
-          mensagem: 'Cliente sem vinculo CLT elegivel no PresencaBank',
+          aprovado: false, situacao: 'NAO_ELEGIVEL',
+          mensagem: lista.length > 0
+            ? `❌ NÃO aprovado — tem ${lista.length} vínculo(s) mas nenhum elegível no PresençaBank`
+            : 'Cliente sem vínculo CLT no PresençaBank',
           totalVinculosBrutos: lista.length,
           _raw: vincR.data, // evidencia do que o PB respondeu (antes era descartada)
         }, 200, req);
@@ -455,9 +458,16 @@ export default async function handler(req) {
       const margemDisp = parseFloat(m.valorMargemDisponivel ?? m.margemDisponivel ?? m.valorMargem ?? m.margem ?? 0) || 0;
       const margemBase = parseFloat(m.valorMargemBase ?? m.margemBase ?? m.valorBase ?? 0) || 0;
 
+      // APROVADO (liberado) = tem vínculo elegível E margem disponível > 0 →
+      // dá pra digitar. Elegível mas margem 0 = SEM_MARGEM (não aprovado agora).
+      const aprovado = margemDisp > 0;
+      const situacao = aprovado ? 'APROVADO' : 'SEM_MARGEM';
+
       return j({
         success: true, etapa: 'completo',
         temVinculo: true,
+        aprovado,          // ✅ true = liberado pra operar (elegível + margem)
+        situacao,          // 'APROVADO' | 'SEM_MARGEM'
         cpf,
         vinculo: {
           matricula,
@@ -476,6 +486,9 @@ export default async function handler(req) {
           sexo: m.sexo || null
         },
         outrosVinculos: elegiveis.length - 1,
+        mensagem: aprovado
+          ? `✅ APROVADO — margem R$ ${margemDisp.toFixed(2)} (liberado pra digitar)`
+          : `❌ NÃO aprovado — elegível mas sem margem livre (base R$ ${margemBase.toFixed(2)})`,
         observacao: 'Pra simular tabela exata de credito, ainda eh necessario nome e telefone do cliente.',
         _raw: { vinculos: vincR.data, margem: m }
       }, 200, req);

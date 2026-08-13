@@ -391,17 +391,17 @@ async function processarPresencaBank(id, cpf, auth, secret) {
       return;
     }
 
-    let msgPB;
-    if (margemDisp > 0) {
-      msgPB = `Cliente elegível — margem R$ ${margemDisp.toFixed(2)}`;
-    } else if (margemBase > 0) {
-      msgPB = `Margem base R$ ${margemBase.toFixed(2)} — sem margem livre`;
-    } else {
-      msgPB = 'Cliente elegível mas sem margem disponível';
-    }
+    // Mensagem clara de APROVADO/não (pb.mensagem já vem com "✅ APROVADO..." ou
+    // "❌ NÃO aprovado..."); fallback constrói localmente.
+    const msgPB = pb.mensagem || (margemDisp > 0
+      ? `✅ APROVADO — margem R$ ${margemDisp.toFixed(2)}`
+      : margemBase > 0
+        ? `Margem base R$ ${margemBase.toFixed(2)} — sem margem livre`
+        : 'Elegível mas sem margem disponível');
     await patchBanco(id, 'presencabank', {
       status: 'ok',
-      disponivel: true,
+      disponivel: true,                    // elegível (classificação: apto se margem>0, senão sem_margem)
+      aprovado: margemDisp > 0,            // ✅ true = APROVADO (elegível + margem, dá pra digitar)
       mensagem: msgPB,
       dados: {
         margemDisponivel: margemDisp,
