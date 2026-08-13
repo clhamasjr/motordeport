@@ -458,39 +458,72 @@ export default async function handler(req) {
       const margemDisp = parseFloat(m.valorMargemDisponivel ?? m.margemDisponivel ?? m.valorMargem ?? m.margem ?? 0) || 0;
       const margemBase = parseFloat(m.valorMargemBase ?? m.margemBase ?? m.valorBase ?? 0) || 0;
 
-      // APROVADO (liberado) = tem vínculo elegível E margem disponível > 0 →
-      // dá pra digitar. Elegível mas margem 0 = SEM_MARGEM (não aprovado agora).
-      const aprovado = margemDisp > 0;
-      const situacao = aprovado ? 'APROVADO' : 'SEM_MARGEM';
+      // Base comum do retorno
+      const baseOut = {
+        success: true, etapa: 'completo', temVinculo: true, cpf,
+        vinculo: {
+          matricula, cnpj,
+          empregador: v.empregador || v.nomeEmpregador || v.razaoSocial || null,
+          dataAdmissao: m.dataAdmissao || null,
+        },
+        margem: { disponivel: margemDisp, base: margemBase, totalDevido: m.valorTotalDevido || m.totalDevido || 0 },
+        dadosCliente: { dataNascimento: m.dataNascimento || null, nomeMae: m.nomeMae || null, sexo: m.sexo || null },
+        outrosVinculos: elegiveis.length - 1,
+      };
+
+      // Sem margem livre → nem simula
+      if (margemDisp <= 0) {
+        return j({ ...baseOut, aprovado: false, situacao: 'SEM_MARGEM',
+          mensagem: `❌ NÃO aprovado — elegível mas sem margem livre (base R$ ${margemBase.toFixed(2)})`,
+          _raw: { vinculos: vincR.data, margem: m } }, 200, req);
+      }
+      // Sem nome/telefone → não dá pra SIMULAR (a aprovação real vem da simulação)
+      if (!nomeTermo || !telTermo || telTermo.length < 10) {
+        return j({ ...baseOut, aprovado: null, situacao: 'MARGEM_SEM_SIMULACAO',
+          mensagem: `Tem margem R$ ${margemDisp.toFixed(2)}, mas falta nome+telefone pra SIMULAR e confirmar a aprovação no banco.`,
+          _raw: { vinculos: vincR.data, margem: m } }, 200, req);
+      }
+
+      // ── SIMULAÇÃO: é ela que APROVA de verdade. Volta tabela = aprovado;
+      // margem mas SEM tabela = banco REPROVOU (política/restrição). ──────
+      const simR = await pbCall('/v5/operacoes/simulacao/disponiveis', 'POST', {
+        tomador: {
+          telefone: { ddd: telTermo.substring(0, 2), numero: telTermo.substring(2) },
+          cpf, nome: nomeTermo,
+          dataNascimento: m.dataNascimento || body.dataNascimento || '1980-01-01',
+          nomeMae: m.nomeMae || '', email: body.email || '', sexo: m.sexo || null,
+          vinculoEmpregaticio: { cnpjEmpregador: cnpj, registroEmpregaticio: matricula },
+          dadosBancarios: { codigoBanco: null, agencia: null, conta: null, digitoConta: null, formaCredito: null },
+          endereco: { cep: '', rua: '', numero: '', complemento: '', cidade: '', estado: '', bairro: '' },
+        },
+        proposta: { valorSolicitado: 0, quantidadeParcelas: 0, produtoId: getConfig().PRODUTO_ID, valorParcela: margemDisp },
+        documentos: [],
+      });
+      const tabelasRaw = Array.isArray(simR.data) ? simR.data : (simR.data?.tabelas || simR.data?.data || []);
+      const tabelas = tabelasRaw.map((t) => ({
+        tabelaId: t.tabelaId || t.id, nome: t.nome || t.descricao,
+        quantidadeParcelas: t.quantidadeParcelas, valorParcela: t.valorParcela,
+        valorSolicitado: t.valorSolicitado || t.valorPrincipal,
+        valorLiquido: t.valorLiquido || t.valorCliente,
+        taxa: t.taxa || t.taxaMensal, cet: t.cet || t.custoTotalEfetivoMensal,
+      }));
+      const melhorTabela = tabelas.slice().sort((a, b) => (b.valorLiquido || 0) - (a.valorLiquido || 0))[0] || null;
+      const aprovado = tabelas.length > 0;
+      const motivoReprova = aprovado ? null
+        : (simR.data?.mensagem || simR.data?.message
+           || (Array.isArray(simR.data?.erros) ? simR.data.erros.join('; ') : null)
+           || 'Banco não ofereceu tabela de crédito na simulação (reprovado por política/restrição)');
 
       return j({
-        success: true, etapa: 'completo',
-        temVinculo: true,
-        aprovado,          // ✅ true = liberado pra operar (elegível + margem)
-        situacao,          // 'APROVADO' | 'SEM_MARGEM'
-        cpf,
-        vinculo: {
-          matricula,
-          cnpj,
-          empregador: v.empregador || v.nomeEmpregador || v.razaoSocial || null,
-          dataAdmissao: m.dataAdmissao || null
-        },
-        margem: {
-          disponivel: margemDisp,
-          base: margemBase,
-          totalDevido: m.valorTotalDevido || m.totalDevido || 0
-        },
-        dadosCliente: {
-          dataNascimento: m.dataNascimento || null,
-          nomeMae: m.nomeMae || null,
-          sexo: m.sexo || null
-        },
-        outrosVinculos: elegiveis.length - 1,
+        ...baseOut,
+        aprovado,                                          // ✅ APROVAÇÃO REAL = simulação retornou tabela
+        situacao: aprovado ? 'APROVADO' : 'REPROVADO_SIMULACAO',
+        tabelas, melhorTabela,
         mensagem: aprovado
-          ? `✅ APROVADO — margem R$ ${margemDisp.toFixed(2)} (liberado pra digitar)`
-          : `❌ NÃO aprovado — elegível mas sem margem livre (base R$ ${margemBase.toFixed(2)})`,
-        observacao: 'Pra simular tabela exata de credito, ainda eh necessario nome e telefone do cliente.',
-        _raw: { vinculos: vincR.data, margem: m }
+          ? `✅ APROVADO na simulação — margem R$ ${margemDisp.toFixed(2)} · ${tabelas.length} tabela(s)${melhorTabela?.valorLiquido ? ` · até R$ ${Number(melhorTabela.valorLiquido).toFixed(2)} líquido` : ''}`
+          : `❌ REPROVADO na simulação — tem margem R$ ${margemDisp.toFixed(2)} mas o banco NÃO ofereceu crédito${motivoReprova ? ` (${String(motivoReprova).substring(0, 120)})` : ''}`,
+        motivoReprova,
+        _raw: { vinculos: vincR.data, margem: m, simulacao: simR.data },
       }, 200, req);
     }
 

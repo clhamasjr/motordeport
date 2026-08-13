@@ -391,23 +391,43 @@ async function processarPresencaBank(id, cpf, auth, secret) {
       return;
     }
 
-    // Mensagem clara de APROVADO/não (pb.mensagem já vem com "✅ APROVADO..." ou
-    // "❌ NÃO aprovado..."); fallback constrói localmente.
+    // APROVAÇÃO REAL vem da SIMULAÇÃO (pb.aprovado): true=banco ofereceu tabela;
+    // false=tem margem mas o banco REPROVOU; null=não deu pra simular (faltou dados).
+    if (pb.aprovado === false) {
+      // Tem margem MAS reprovado na simulação → balde "com margem, não apto" (🟡).
+      // NÃO conta como apto (disponivel:false); o raio-X mostra em com_margem_inapto.
+      await patchBanco(id, 'presencabank', {
+        status: 'ok', disponivel: false, naoElegivel: true, aprovado: false,
+        precisaAutorizacao: false, bloqueado: false, linkAutorizacao: null,
+        mensagem: pb.mensagem || `❌ REPROVADO na simulação — margem R$ ${margemDisp.toFixed(2)}, banco não ofereceu crédito`,
+        dados: {
+          margemDisponivel: margemDisp, margemBase,
+          empregador: pb.vinculo?.empregador, empregadorCnpj: pb.vinculo?.cnpj,
+          motivoReprova: pb.motivoReprova || null,
+        },
+      });
+      _registrarAprovacao(pb.vinculo?.cnpj, pb.vinculo?.empregador, 'presencabank', null, null, null);
+      return;
+    }
+
+    // aprovado===true (banco ofereceu tabela) OU null (não simulou, mas tem margem).
     const msgPB = pb.mensagem || (margemDisp > 0
       ? `✅ APROVADO — margem R$ ${margemDisp.toFixed(2)}`
-      : margemBase > 0
-        ? `Margem base R$ ${margemBase.toFixed(2)} — sem margem livre`
-        : 'Elegível mas sem margem disponível');
+      : margemBase > 0 ? `Margem base R$ ${margemBase.toFixed(2)} — sem margem livre` : 'Elegível mas sem margem disponível');
     await patchBanco(id, 'presencabank', {
       status: 'ok',
-      disponivel: true,                    // elegível (classificação: apto se margem>0, senão sem_margem)
-      aprovado: margemDisp > 0,            // ✅ true = APROVADO (elegível + margem, dá pra digitar)
+      disponivel: true,                    // apto se margem>0 (raio-X). aprovado reflete a simulação.
+      aprovado: pb.aprovado === true,      // ✅ true só quando a simulação ofereceu tabela
       mensagem: msgPB,
       dados: {
         margemDisponivel: margemDisp,
         margemBase: margemBase,
         empregador: pb.vinculo?.empregador,
-        empregadorCnpj: pb.vinculo?.cnpj
+        empregadorCnpj: pb.vinculo?.cnpj,
+        // melhor tabela da simulação (o card mostra Valor/parcelas quando tem)
+        valorLiquido: pb.melhorTabela?.valorLiquido || undefined,
+        parcelas: pb.melhorTabela?.quantidadeParcelas || undefined,
+        valorParcela: pb.melhorTabela?.valorParcela || undefined,
       }
     });
     // Tracking: registra empresa aprovada
