@@ -1108,7 +1108,9 @@ async function processarUnno(id, cpf, auth, secret) {
   if (!r.ok || !u.sucesso) {
     await patchBanco(id, 'unno', {
       status: 'falha',
-      mensagem: u.error || `Erro Unno (HTTP ${r.status})`,
+      mensagem: r.status === 429
+        ? '⏳ Limite de requisições da Unno (HTTP 429) — NÃO é recusa de crédito; re-tenta sozinho em alguns minutos'
+        : (u.error || `Erro Unno (HTTP ${r.status})`),
       retryable: true,
       _raw_response: u,
     });
