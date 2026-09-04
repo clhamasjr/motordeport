@@ -223,9 +223,9 @@ export function ElegiveisTable() {
       <Card className="border-green-500/30 bg-green-500/5">
         <CardContent className="p-3 flex items-center gap-3 flex-wrap">
           <div className="flex-1 min-w-0">
-            <div className="text-xs font-bold text-green-400 uppercase tracking-wider">🎯 Elegibilidade — Nova regra</div>
+            <div className="text-xs font-bold text-green-400 uppercase tracking-wider">🎯 Elegibilidade — regra vigente (35% emp + 5% + 5% = 45%)</div>
             <div className="text-[11px] text-muted-foreground mt-0.5">
-              Dentro de 40% (nova regra) = elegível. Excedente só elegível se 1 port resolver. Acima sem solução = excluído.
+              Emp ≤ 35% e total ≤ 45% = elegível. Excedente só elegível se 1 port resolver. Acima sem solução = excluído.
             </div>
           </div>
           <div className="flex gap-1.5">
@@ -407,7 +407,7 @@ function ElegivelRowRender({ row: r, checked, onToggle }: { row: ElegivelRow; ch
     : r.compStatus === 'fora_regra_inviavel' ? 'text-red-400 bg-red-500/15 border-red-500/40'
     : 'text-muted-foreground bg-muted/20 border-border';
   const compTxt =
-    r.compStatus === 'dentro_regra' ? '✅ ≤ 40%'
+    r.compStatus === 'dentro_regra' ? '✅ enquadra'
     : r.compStatus === 'fora_regra_resolvivel' ? (r.resolveExc ? '🔄 ESTE resolve' : '🔄 outro resolve')
     : r.compStatus === 'fora_regra_inviavel' ? '❌ sem solução'
     : 'sem dados';

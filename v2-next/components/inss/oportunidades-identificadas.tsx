@@ -104,7 +104,8 @@ interface AnaliseNovaRegra {
   // Cliente tem algum cartão (RMC ou RCC)?
   temAlgumCartao: boolean;
 
-  // Tetos NOVA regra (40% total) — ignorado quando isLoas=true
+  // Tetos regra vigente pós-MP 1355 (35% emp + 5% RMC + 5% RCC = 45%).
+  // teto40Total é nome LEGADO — contém o teto GLOBAL (45%). Ignorado se isLoas.
   teto40Total: number;
   tetoEmpComCartao: number;
   tetoEmpReal: number;
@@ -156,17 +157,14 @@ function calcularTudo(
     }
   }
 
-  // ── Análise da nova regra INSS (vigente) ──
+  // ── Análise da regra VIGENTE (pós-queda da MP 1355, 02/09/2026) ──
   //
-  // REGRA (CORRETA):
-  //   - Cliente COM PELO MENOS 1 cartão averbado (RMC OU RCC):
-  //     teto emp = 35% (cliente já está no esquema 35% emp + 5% cartão)
-  //   - Cliente SEM CARTÃO NENHUM:
-  //     teto emp = 40% INTEIRO pra empréstimo (pode usar 5% do cartão como emp)
-  //
-  // Em ambos: teto TOTAL = 40% da base de cálculo.
-  // Detecção: SÓ pela margem livre (fonte de verdade). Cartões antigos no array
-  // parsed.cartoes podem ser histórico — ignorados.
+  // REGRA: emp ≤ 35% + RMC ≤ 5% + RCC ≤ 5% = teto global 45%.
+  // O teto de "40% sem cartão" da MP 1355 MORREU junto com a MP — teto de
+  // emp é 35% SEMPRE, com ou sem cartão. RMC/RCC seguem suspensos pra
+  // CONTRATAR (INSS), mas as reservas de 5% + 5% voltam a existir.
+  // Detecção de cartão: SÓ pela margem livre (fonte de verdade). Cartões
+  // antigos no array parsed.cartoes podem ser histórico — ignorados.
   const benef = parseBR(ben.base_calculo) || parseBR(ben.valor) || 0;
   const sumEmp = parseBR(mrg.parcelas);
   const tetoCartao = benef * 0.05;
@@ -182,12 +180,15 @@ function calcularTudo(
   // Tem PELO MENOS 1 cartão averbado? (RMC OU RCC)
   const temAlgumCartao = temRmc || temRcc;
 
-  const teto40Total = benef * 0.40;
-  // Teto emp: 35% se tem QUALQUER cartão; 40% se NÃO tem nenhum
-  const tetoEmpReal = temAlgumCartao ? benef * 0.35 : benef * 0.40;
+  const teto40Total = benef * 0.45; // teto GLOBAL 45% (nome legado da época da MP)
+  // Teto emp: 35% SEMPRE (o 40% "sem cartão" caiu com a MP 1355)
+  const tetoEmpReal = benef * 0.35;
   const tetoEmpComCartao = benef * 0.35; // legacy
-  const enquadraNovaRegra = total <= teto40Total + 0.01 && sumEmp <= tetoEmpReal + 0.01;
-  const excedente = Math.max(0, total - teto40Total);
+  const enquadraNovaRegra = total <= teto40Total + 0.01 && sumEmp <= tetoEmpReal + 0.01
+    && sumRmc <= tetoCartao + 0.01 && sumRcc <= tetoCartao + 0.01;
+  // Excedente a cobrir reduzindo parcela de emp: estouro do global OU do emp
+  // (caso da virada: quem usou os 40% da MP fica negativo nos 35%).
+  const excedente = Math.max(0, total - teto40Total, sumEmp - tetoEmpReal);
   const margemLivreNova = Math.max(0, tetoEmpReal - sumEmp);
 
   // ── Roda motor pra cada contrato ──
@@ -337,14 +338,17 @@ function calcularTudo(
     });
   }
 
-  // Soluções de cartão
+  // Soluções de cartão — na regra vigente (35+5+5) cancelar cartão SÓ resolve
+  // estouro do teto GLOBAL (45%). Estouro do bucket de EMP (sumEmp > 35%) não
+  // sai cancelando cartão — o cartão tem reserva própria, não devolve margem emp.
+  const excedenteEmpBucket = Math.max(0, sumEmp - tetoEmpReal);
   const cartoesQueResolvem: SolucaoCartao[] = [];
-  if (sumRmc > 0) cartoesQueResolvem.push({ tipo: 'RMC', valor: sumRmc, resolve: sumRmc >= excedente - 0.01 });
-  if (sumRcc > 0) cartoesQueResolvem.push({ tipo: 'RCC', valor: sumRcc, resolve: sumRcc >= excedente - 0.01 });
+  if (sumRmc > 0) cartoesQueResolvem.push({ tipo: 'RMC', valor: sumRmc, resolve: excedenteEmpBucket <= 0.01 && sumRmc >= excedente - 0.01 });
+  if (sumRcc > 0) cartoesQueResolvem.push({ tipo: 'RCC', valor: sumRcc, resolve: excedenteEmpBucket <= 0.01 && sumRcc >= excedente - 0.01 });
 
   // ── Campos LOAS/BPC ───────────────────────────────────────────────
   // Regra NOVA: 35% emp puro (sem teto separado de cartão). Cartão averbado
-  // é flag — não consome margem própria de 5%. Espelho do "40% só emp" do INSS regular.
+  // é flag — não consome margem própria de 5%.
   const numCartoesLoas = (temRmc ? 1 : 0) + (temRcc ? 1 : 0);
   const tetoEmpLoas = benef * 0.35;
   const margemLivreEmpLoas = benef > 0 ? Math.max(0, tetoEmpLoas - sumEmp) : 0;
@@ -415,7 +419,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
   const idadeNum = parsed.beneficiario?.idade ? parseInt(String(parsed.beneficiario.idade), 10) : null;
   const especieNum = pEN(parsed.beneficio?.especie || '');
 
-  // Empréstimo Novo — usa teto diferente pra LOAS (35%) vs normal (35%/40%)
+  // Empréstimo Novo — teto emp 35% (LOAS e regular, regra vigente pós-MP 1355)
   const margemLivreParaEmpNovo = isLoas ? margemLivreEmpLoas : (enquadraNovaRegra ? margemLivreNova : 0);
   const empNovoVlr185 = margemLivreParaEmpNovo > 0 ? margemLivreParaEmpNovo / COEF_EMP_185 : 0;
 
@@ -590,22 +594,20 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
             <Sparkles className="size-5 text-cyan-400" />
-            <h3 className="font-bold text-base">Enquadramento na NOVA regra do INSS (40%)</h3>
+            <h3 className="font-bold text-base">Enquadramento INSS (35% emp + 5% RMC + 5% RCC = 45%)</h3>
             <Badge
               variant={temAlgumCartao ? 'muted' : 'info'}
               className="text-[10px]"
-              title={temAlgumCartao
-                ? 'Cliente tem cartão (RMC ou RCC) — teto emp = 35% + 5% cartão'
-                : 'Cliente SEM cartão — pode usar os 40% inteiros pra empréstimo'}
+              title="Teto de empréstimo é 35% SEMPRE (o 40% sem cartão caiu junto com a MP 1355). Reservas de cartão: 5% RMC + 5% RCC."
             >
-              {temAlgumCartao ? '📇 com cartão: 35% emp + 5% cartão' : '💸 sem cartão: 40% só emp'}
+              {temAlgumCartao ? '📇 com cartão averbado' : '💸 sem cartão'} · emp ≤ 35%
             </Badge>
           </div>
           <Badge
             variant={inviavel ? 'destructive' : !enquadraNovaRegra ? 'warning' : 'success'}
             className="text-xs"
           >
-            {compPct.toFixed(1)}% / 40%
+            {compPct.toFixed(1)}% / 45%
           </Badge>
         </div>
 
@@ -615,16 +617,16 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
             <div className="flex items-start gap-2">
               <CheckCircle2 className="size-5 text-green-400 shrink-0 mt-0.5" />
               <div>
-                <div className="font-bold text-green-400">✅ Cliente ENQUADRADO na nova regra</div>
+                <div className="font-bold text-green-400">✅ Cliente ENQUADRADO na regra vigente</div>
                 <div className="text-xs text-foreground mt-1">
                   Comprometimento total <strong className="font-mono">{formatBRL(total)}</strong> de{' '}
-                  <strong className="font-mono">{formatBRL(teto40Total)}</strong> (40%).
+                  <strong className="font-mono">{formatBRL(teto40Total)}</strong> (45%).
                   {margemLivreNova > 0 ? (
                     <>
                       {' '}Sobra <strong className="font-mono text-green-400">{formatBRL(margemLivreNova)}</strong> de
                       margem livre pra EMPRÉSTIMO{' '}
                       <span className="text-muted-foreground">
-                        (teto emp {temAlgumCartao ? '35%' : '40%'} ={' '}
+                        (teto emp 35% ={' '}
                         <span className="font-mono">{formatBRL(tetoEmpReal)}</span>)
                       </span>.
                     </>
@@ -643,7 +645,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                 <div className="font-bold text-red-400">❌ INVIÁVEL — sem operação isolada que enquadre</div>
                 <div className="text-xs text-foreground mt-1">
                   Cliente extrapola em <strong className="font-mono text-red-400">{formatBRL(excedente)}</strong>{' '}
-                  na nova regra. Nenhum contrato sozinho reduz parcela suficiente
+                  na regra vigente. Nenhum contrato sozinho reduz parcela suficiente
                   ({contratos.length > 0 && `melhor reduz ${formatBRL(Math.max(0, ...contratos.map((c) => c.portRefin108?.refin_reducao || 0)))}`}),
                   e {cartoesQueResolvem.length === 0 ? 'cliente não tem cartão pra cancelar' : 'cancelar cartão sozinho também não cobre'}.
                   <div className="mt-1 text-red-400 font-semibold">→ Não tem o que fazer com 1 operação só. Precisaria combinar várias.</div>
@@ -684,7 +686,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                   <div className="font-semibold text-cyan-400">Cancelar cartão {c.tipo}</div>
                   <div className="text-muted-foreground">
                     Libera <strong className="font-mono text-foreground">{formatBRL(c.valor)}</strong>{' '}
-                    (≥ excedente <strong className="font-mono">{formatBRL(excedente)}</strong>) — cliente passa a usar emp ≤ 40%.
+                    (≥ excedente <strong className="font-mono">{formatBRL(excedente)}</strong>) — libera a reserva de 5% do cartão.
                   </div>
                 </div>
                 <Badge variant="success" className="text-[10px]">RESOLVE</Badge>
@@ -733,13 +735,11 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                   <Badge variant="info" className="text-[9px]">teto 35% LOAS</Badge>
                 ) : (
                   <Badge
-                    variant={temAlgumCartao ? 'muted' : 'info'}
+                    variant="info"
                     className="text-[9px]"
-                    title={temAlgumCartao
-                      ? 'Cliente já tem cartão — margem emp limitada a 35%'
-                      : 'Cliente sem cartão — pode usar 40% inteiro em empréstimo'}
+                    title="Teto de empréstimo: 35% do benefício (regra vigente pós-MP 1355)"
                   >
-                    {temAlgumCartao ? 'teto 35% (com cartão)' : 'teto 40% (sem cartão)'}
+                    teto 35% emp
                   </Badge>
                 )}
               </div>

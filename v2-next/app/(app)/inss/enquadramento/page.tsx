@@ -287,12 +287,13 @@ export default function EnquadramentoManualPage() {
         </Card>
       )}
 
-      {/* Resultado dos 2 cenários */}
+      {/* Cenário da regra VIGENTE (pós-queda da MP 1355, 02/09/2026):
+          35% emp + 5% RMC + 5% RCC = 45%. O card da "nova regra 40%" foi
+          removido — a MP caiu antes de valer. */}
       {beneficio > 0 && contratos.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {/* Cenário ATUAL (hoje) — 35% emp + 5%+5% cartão = 45% total */}
+        <div className="grid grid-cols-1 gap-3">
           <CenarioCard
-            titulo="Regra ATUAL (hoje)"
+            titulo="Regra vigente"
             sub="35% emp + 5% RMC + 5% RCC = teto 45%"
             sumEmp={sumEmp}
             sumRmc={sumRmc}
@@ -303,13 +304,6 @@ export default function EnquadramentoManualPage() {
             tetoTotal={teto45}
             beneficio={beneficio}
             enq={enq}
-          />
-          {/* Cenário NOVA REGRA (futura) — 40% TOTAL, cartão opcional dentro disso */}
-          <CenarioCardNova
-            beneficio={beneficio}
-            sumEmp={sumEmp}
-            sumRmc={sumRmc}
-            sumRcc={sumRcc}
           />
         </div>
       )}
@@ -399,106 +393,6 @@ function CenarioCard({
   );
 }
 
-// ──────────────────────────────────────────────────────────────────
-// NOVA REGRA INSS (futura): teto TOTAL = 40% do benefício, sempre.
-// Duas composições possíveis:
-//   A) sem cartão: emp ≤ 40%
-//   B) com cartão: emp ≤ 35% + cartão ≤ 5% = 40%
-// Se cliente está em 45% (regra antiga), ele PERDE espaço quando entrar a nova.
-// ──────────────────────────────────────────────────────────────────
-function CenarioCardNova({
-  beneficio, sumEmp, sumRmc, sumRcc,
-}: { beneficio: number; sumEmp: number; sumRmc: number; sumRcc: number }) {
-  const sumCartao = sumRmc + sumRcc;
-  const sumTotal = sumEmp + sumCartao;
-  const teto40 = beneficio * 0.40;
-  const tetoEmpComCartao = beneficio * 0.35;
-  const tetoCartao = beneficio * 0.05;
-  const compPct = beneficio > 0 ? (sumTotal / beneficio) * 100 : 0;
-  const temCartao = sumCartao > 0;
-
-  // Verifica composição
-  const okSemCartao = !temCartao && sumEmp <= teto40;
-  const okComCartao = temCartao && sumEmp <= tetoEmpComCartao && sumCartao <= tetoCartao && sumTotal <= teto40;
-  const ok = okSemCartao || okComCartao;
-
-  // Excedente da nova regra
-  const excedente = Math.max(0, sumTotal - teto40);
-  const cor = ok ? 'border-green-500/40 bg-green-500/5' : 'border-red-500/40 bg-red-500/5';
-
-  return (
-    <Card className={cor}>
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between mb-3">
-          <div>
-            <div className="font-bold flex items-center gap-2">
-              {ok ? <CheckCircle2 className="size-5 text-green-400" /> : <AlertTriangle className="size-5 text-red-400" />}
-              Nova regra (futura)
-            </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">
-              Teto TOTAL 40% — escolha composição:
-            </div>
-            <div className="text-[10px] mt-1 space-y-0.5">
-              <div className={!temCartao ? 'text-green-400 font-semibold' : 'text-muted-foreground'}>
-                • <strong>Sem cartão</strong>: empréstimo até 40%
-              </div>
-              <div className={temCartao ? 'text-green-400 font-semibold' : 'text-muted-foreground'}>
-                • <strong>Com cartão</strong>: 35% emp + 5% cartão = 40%
-              </div>
-            </div>
-          </div>
-          <div className="text-right">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Comp.</div>
-            <div className={`text-2xl font-mono font-bold ${ok ? 'text-green-400' : 'text-red-400'}`}>
-              {compPct.toFixed(1)}%
-            </div>
-            <div className="text-[10px] text-muted-foreground">
-              de 40% (=
-              <strong className="font-mono ml-1">{formatBRL(teto40)}</strong>)
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-2 text-xs">
-          {temCartao ? (
-            <>
-              <LinhaTeto label="Empréstimo (com cartão: 35%)" usado={sumEmp} teto={tetoEmpComCartao} cor="text-red-400" />
-              <LinhaTeto label="Cartão (RMC+RCC: 5%)" usado={sumCartao} teto={tetoCartao} cor="text-purple-400" />
-            </>
-          ) : (
-            <LinhaTeto label="Empréstimo (sem cartão: 40%)" usado={sumEmp} teto={teto40} cor="text-red-400" />
-          )}
-          <div className="border-t border-border pt-2">
-            <LinhaTeto label="TOTAL" usado={sumTotal} teto={teto40} cor="text-foreground" bold />
-          </div>
-        </div>
-
-        {temCartao && sumRmc > 0 && sumRcc > 0 && (
-          <div className="mt-3 rounded-md bg-yellow-500/10 border border-yellow-500/30 p-2 text-xs">
-            <strong className="text-yellow-400">⚠ ATENÇÃO:</strong> cliente tem RMC E RCC — a nova regra só
-            permite <strong>1 cartão (RMC OU RCC)</strong>. Vai precisar escolher qual manter.
-          </div>
-        )}
-
-        {excedente > 0 && (
-          <div className="mt-3 rounded-md bg-red-500/10 border border-red-500/30 p-2 text-xs">
-            <strong className="text-red-400">⚠ Sem margem nova:</strong> cliente já estourou o teto da regra
-            futura em <strong className="font-mono">{formatBRL(excedente)}</strong>. Pra fazer operação
-            nova, vai precisar refinanciar/portar pra reduzir parcela.
-          </div>
-        )}
-
-        {ok && (
-          <div className="mt-3 rounded-md bg-green-500/10 border border-green-500/30 p-2 text-xs">
-            <strong className="text-green-400">✅ Tem espaço:</strong> sobra{' '}
-            <strong className="font-mono">{formatBRL(teto40 - sumTotal)}</strong> de margem livre dentro da
-            nova regra.
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
 
 function LinhaTeto({ label, usado, teto, cor, bold }: { label: string; usado: number; teto: number; cor: string; bold?: boolean }) {
   const pct = teto > 0 ? (usado / teto) * 100 : 0;

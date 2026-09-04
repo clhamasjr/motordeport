@@ -761,11 +761,17 @@ export function calcEnquadramentoPlus(
   beneficio: number, sumEmp: number, sumRmc: number, sumRcc: number,
   contratos: ContratoReducao[] = [],
 ): EnquadramentoFull {
+  // Regra VIGENTE (pós-queda da MP 1355, a partir de 02/09/2026):
+  // emp ≤ 35% + RMC ≤ 5% + RCC ≤ 5% = teto global 45%. O teto de 40% "sem
+  // cartão" da MP morreu junto com ela.
   const tetoEmp35 = beneficio * 0.35;
   const tetoCartao = beneficio * 0.05;
-  const tetoGlobal = beneficio * 0.45; // regra HOJE
+  const tetoGlobal = beneficio * 0.45;
   const sumTotal = sumEmp + sumRmc + sumRcc;
-  const excedente = Math.max(0, sumTotal - tetoGlobal);
+  // Excedente a cobrir com redução de parcela de EMP: estouro do teto global
+  // OU do teto de emp (caso típico da virada: quem contratou até 40% na MP
+  // fica negativo nos 35% — "quem excedeu 35% em empréstimos ficará negativo").
+  const excedente = Math.max(0, sumTotal - tetoGlobal, sumEmp - tetoEmp35);
   const margemLivreEmp = Math.max(0, tetoEmp35 - sumEmp);
 
   const cartoes: { tipo: string; valor: number }[] = [];
@@ -816,7 +822,11 @@ export function calcEnquadramentoPlus(
     };
   }
 
-  const cartaoSuf = cartoes.find((c) => c.valor >= excedente - 0.01);
+  // Cancelar cartão só resolve estouro do teto GLOBAL — não devolve margem de
+  // emp (bucket próprio de 5%). Se sumEmp > 35%, cartão não é solução.
+  const cartaoSuf = sumEmp <= tetoEmp35 + 0.01
+    ? cartoes.find((c) => c.valor >= excedente - 0.01)
+    : undefined;
   if (cartaoSuf) {
     return {
       status: 'VIA_CANCELA_CARTAO',

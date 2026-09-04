@@ -133,11 +133,9 @@ export interface CompPorCpf {
   compStatus: CompStatusBase;
   excedente: number;
   benef: number;
-  teto40: number;       // teto NOVA regra (40% do benefício) — total
-  teto45: number;       // legacy — teto regra ATUAL (45%), mantido pra compat
-  /** Teto de empréstimo REAL pra esse cliente:
-   *  - 35% se tem ALGUM cartão (RMC ou RCC)
-   *  - 40% se NÃO tem cartão nenhum */
+  teto40: number;       // LEGADO da MP 1355 (caiu em set/2026) — hoje contém o teto global 45%
+  teto45: number;       // teto GLOBAL vigente (35% emp + 5% RMC + 5% RCC)
+  /** Teto de empréstimo: 35% do benefício SEMPRE (regra vigente pós-MP 1355). */
   tetoEmpReal: number;
   /** Cliente tem RMC ou RCC? */
   temAlgumCartao: boolean;
@@ -350,8 +348,8 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     }
 
     // ── LOAS/BPC (espécies 87/88) — só contrato novo, sem portabilidade ──
-    // Regra NOVA: 35% empréstimo puro (sem teto separado de cartão), análogo ao
-    // INSS regular sem cartão = 40% só emp. Cartão averbado é flag, não tem 5% próprio.
+    // 35% empréstimo puro (sem teto separado de cartão). Cartão averbado é
+    // flag, não tem 5% próprio.
     if (isLoas) {
       let sumEmpLoas = 0;
       for (const lb of lbs) { const par = gv(row, lb.cp); if (par > 0) sumEmpLoas += par; }
@@ -475,10 +473,10 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     const sumEmp = sumEmpByCpf[cpf] || 0;
     const vRmc = x?.vRmc || 0;
     const vRcc = x?.vRcc || 0;
-    // Regra: PELO MENOS 1 cartão averbado (RMC OU RCC) → 35% emp + 5% cartão
-    // Senão (sem cartão nenhum), 40% inteiro pra emp
+    // Regra VIGENTE (pós-queda da MP 1355, 02/09/2026): emp ≤ 35% SEMPRE
+    // + 5% RMC + 5% RCC = teto global 45%. O "40% sem cartão" caiu com a MP.
     const temAlgumCartao = !!(x?.temRmc || x?.temRcc);
-    const benef = x?.valorBeneficio || (sumEmp > 0 ? sumEmp / (temAlgumCartao ? 0.35 : 0.40) : 0);
+    const benef = x?.valorBeneficio || (sumEmp > 0 ? sumEmp / 0.35 : 0);
     if (!benef) {
       compByCpf[cpf] = {
         compPct: 0, compStatus: 'sem_dados', excedente: 0, benef: 0,
@@ -489,14 +487,14 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     }
     const total = sumEmp + vRmc + vRcc;
     const pct = (total / benef) * 100;
-    const teto40 = benef * 0.40;  // NOVA regra (vigente) — total
-    const teto45 = benef * 0.45;  // legacy (compat)
-    // Teto EMP REAL: 35% se tem cartão, 40% se não tem
-    const tetoEmpReal = temAlgumCartao ? benef * 0.35 : benef * 0.40;
-    // Excedente: total > 40% do benef (regra global). Se sumEmp > tetoEmpReal,
-    // também é excedente (sem cartão e sumEmp > 40% — impossível, mas defensivo).
-    const excedente = Math.max(0, total - teto40);
-    const enquadra = total <= teto40 + 0.01 && sumEmp <= tetoEmpReal + 0.01;
+    const teto45 = benef * 0.45;  // teto GLOBAL (35 emp + 5 RMC + 5 RCC)
+    const teto40 = teto45;        // campo LEGADO da época da MP — agora = global 45%
+    // Teto EMP: 35% SEMPRE (regra vigente)
+    const tetoEmpReal = benef * 0.35;
+    // Excedente a cobrir reduzindo parcela de emp: estouro do global OU do emp
+    // (virada da MP: quem usou os 40% fica negativo nos 35%).
+    const excedente = Math.max(0, total - teto45, sumEmp - tetoEmpReal);
+    const enquadra = total <= teto45 + 0.01 && sumEmp <= tetoEmpReal + 0.01;
     compByCpf[cpf] = {
       compPct: pct,
       compStatus: enquadra ? 'dentro_regra' : 'sem_dados', // refinado abaixo
@@ -509,7 +507,7 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
   // Marca cada reg com compStatus/elegRealOk/reducaoEstim/parcelaNovaEstim
   //
   // Estratégia de escolha de tabela (mesma da consulta unitária):
-  //   - Cliente ENQUADRADO (≤40% pela nova regra): prioriza tabelaAlta (1.85%
+  //   - Cliente ENQUADRADO (regra vigente 35+5+5=45%): prioriza tabelaAlta (1.85%
   //     = mais comissão pro correspondente) SE troco_alta >= R$250.
   //     Senão, fallback tabelaBaixa pra garantir troco aceitável.
   //   - Cliente NÃO ENQUADRADO: usa tabelaBaixa (max redução pra enquadrar).

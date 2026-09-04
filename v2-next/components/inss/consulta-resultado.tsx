@@ -140,7 +140,7 @@ export function ConsultaResultado({ cpf, view, onClose, onReConsult, onSwitchBen
           <Kpi label="RCC livre" value={formatBRL(parseBR(mrg.rcc))} cor="text-pink-400" />
         </div>
 
-        {/* ✨ Análise NOVA regra INSS (40%) — único card de enquadramento */}
+        {/* ✨ Análise de enquadramento INSS (35% emp + 5% + 5% = 45%) */}
         <OportunidadesIdentificadas parsed={parsed} cpf={cpf} />
 
         {/* 💳 Saque Complementar */}
