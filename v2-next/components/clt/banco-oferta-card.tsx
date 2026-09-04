@@ -233,7 +233,9 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
   return (
     <Card
       className={cn(
-        'border-l-4 p-3 space-y-2',
+        // min-h uniforme: card não encolhe/cresce muito ao resolver → menos
+        // "pulo"/reflow no grid durante o polling.
+        'border-l-4 p-3 space-y-2 min-h-[7.5rem]',
         cor,
         isManutencao && 'opacity-65',
       )}
