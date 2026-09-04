@@ -343,17 +343,19 @@ async function processarPresencaBank(id, cpf, auth, secret) {
   // Espera o cliente enriquecer (CAGED/clt_clientes pre-populam; multicorban
   // completa em paralelo) e manda junto — o endpoint gera+assina o termo.
   const cliPB = await aguardarCliente(id, 6000);
-  let nomePB = cliPB?.nome || null;
-  let telPB = cliPB?.telefones?.[0]?.completo || null;
-  if (!nomePB || !telPB) {
-    const { data: rowPB } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
-    nomePB = nomePB || rowPB?.cliente?.nome || null;
-    telPB = telPB || rowPB?.cliente?.telefones?.[0]?.completo || null;
-  }
+  const { data: rowPB } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+  const nomePB = cliPB?.nome || rowPB?.cliente?.nome || null;
+  const telPB = cliPB?.telefones?.[0]?.completo || rowPB?.cliente?.telefones?.[0]?.completo || null;
+
+  // Em MASSA (lote) NÃO simula: a simulação é +1 chamada por CPF e estoura o
+  // rate limit do PB (30/min) → timeout em cadeia. Na massa só pega a margem
+  // (rápido); a SIMULAÇÃO/aprovação real roda na consulta INDIVIDUAL do operador.
+  const ehLote = /^(Reconsulta|Higienização) Lote · /.test(rowPB?.criada_por_nome || '');
 
   const r = await callApi('/api/presencabank', {
     action: 'oportunidadesPorCPF', cpf, nome: nomePB, telefone: telPB,
-  }, auth, secret);
+    simular: !ehLote,
+  }, auth, secret, ehLote ? 18000 : 30000);   // individual: 30s p/ as 4 chamadas + simulação
   const pb = r.data || {};
 
   // Mescla dados de cliente / vinculo na fila

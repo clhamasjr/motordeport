@@ -483,6 +483,13 @@ export default async function handler(req) {
           mensagem: `Tem margem R$ ${margemDisp.toFixed(2)}, mas falta nome+telefone pra SIMULAR e confirmar a aprovação no banco.`,
           _raw: { vinculos: vincR.data, margem: m } }, 200, req);
       }
+      // Massa (simular:false) → NÃO simula (evita +1 chamada/CPF que estoura o
+      // rate limit 30/min do PB). Só a margem; aprovação real na consulta individual.
+      if (body.simular === false) {
+        return j({ ...baseOut, aprovado: null, situacao: 'MARGEM_NAO_SIMULADA',
+          mensagem: `Margem R$ ${margemDisp.toFixed(2)} (aprovação real na consulta individual)`,
+          _raw: { vinculos: vincR.data, margem: m } }, 200, req);
+      }
 
       // ── SIMULAÇÃO: é ela que APROVA de verdade. Volta tabela = aprovado;
       // margem mas SEM tabela = banco REPROVOU (política/restrição). ──────
