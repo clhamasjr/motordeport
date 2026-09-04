@@ -105,20 +105,27 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
   const cliente = { ...(fila.cliente || {}), cpf: fila.cliente?.cpf || fila.cpf };
   const vinculo = fila.vinculo;
 
-  // Separa bancos em manutenção do resto
+  // Só renderiza bancos que ESTÃO nesta consulta (fila.bancos). Banco ausente
+  // (inativo no catálogo, ou consulta filtrada/varredura de 1 banco) NÃO pode
+  // aparecer como "consultando" eternamente — antes caía num fallback `pending`
+  // que nunca atualizava. Banco inativo agora nasce em_manutencao no backend.
   const ofertas = BANCOS_ORDEM
-    .filter((slug) => slug !== 'multicorban') // multicorban é enriquecimento, não banco
-    .map((slug) => ({ slug, state: fila.bancos[slug] || { status: 'pending' as const } }));
+    .filter((slug) => slug !== 'multicorban' && !!fila.bancos[slug]) // multicorban é enriquecimento
+    .map((slug) => ({ slug, state: fila.bancos[slug]! }));
   const parados = ofertas.filter((o) => o.state.emManutencao || o.state.status === 'em_manutencao');
   const operando = ofertas.filter((o) => !o.state.emManutencao && o.state.status !== 'em_manutencao');
 
-  // Ordena operando: disponivel > processando > resto
-  const prioridade = (s: typeof ofertas[number]) => {
-    if (s.state.disponivel && s.state.status === 'ok') return 0;
-    if (s.state.status === 'processando' || s.state.status === 'pending') return 1;
-    return 2;
-  };
-  operando.sort((a, b) => prioridade(a) - prioridade(b));
+  // Ordem ESTÁVEL durante o processamento (ordem fixa do catálogo) — evita os
+  // cards "flutuarem"/pularem a cada poll conforme cada banco resolve. Só
+  // reordena (aptos no topo) DEPOIS de concluído, quando o polling já parou.
+  if (concluido) {
+    const prioridade = (s: typeof ofertas[number]) => {
+      if (s.state.disponivel && s.state.status === 'ok') return 0;
+      if (s.state.status === 'processando' || s.state.status === 'pending') return 1;
+      return 2;
+    };
+    operando.sort((a, b) => prioridade(a) - prioridade(b));
+  }
 
   const totalDisponivel = ofertas.filter((o) => o.state.disponivel && o.state.status === 'ok').length;
 

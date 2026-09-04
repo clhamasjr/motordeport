@@ -1889,8 +1889,20 @@ export default async function handler(req) {
       ? [...new Set([...body.bancos, ...(semMulticorban ? [] : ['multicorban'])])].filter(b => TODOS_BANCOS_CLT.includes(b))
       : TODOS_BANCOS_CLT;
 
+    // Bancos INATIVOS no catálogo (clt_bancos.ativo=false) já NASCEM em_manutencao —
+    // não ficam "pending/consultando" nem são disparados. (Antes: entravam como
+    // pending e só o processarX marcava manutenção → o card mostrava "consultando"
+    // no meio-tempo, ou pra sempre se o disparo falhasse.)
+    const catalogoClt = await _getBancosCatalogoClt();
     const inicial = Object.fromEntries(
-      filtroSolicitadoBancos.map(b => [b, { status: 'pending' }])
+      filtroSolicitadoBancos.map((b) => {
+        const cat = catalogoClt.get(b);
+        if (cat && cat.ativo === false) {
+          const mt = String(cat.observacoes || '').match(/^(🔧[^—.]*)/);
+          return [b, { status: 'em_manutencao', emManutencao: true, disponivel: false, mensagem: mt ? mt[1].trim() : '🔧 Em manutenção — voltará em breve' }];
+        }
+        return [b, { status: 'pending' }];
+      })
     );
 
     // PRE-POPULA cliente com o que ja sabemos desse CPF (clt_clientes acumulado).
@@ -2023,7 +2035,9 @@ export default async function handler(req) {
     // Bancos que serao disparados — ja calculado em filtroSolicitadoBancos
     // logo apos `inicial`. Usa a mesma variavel pra garantir consistencia:
     // bancos disparados == chaves do inicial == bancos que patchBanco checa.
-    const bancos = filtroSolicitadoBancos;
+    // Pula os que já nasceram em_manutencao (inativos no catálogo) — não gasta
+    // chamada neles. Continuam no `inicial` (terminal), então a consulta conclui.
+    const bancos = filtroSolicitadoBancos.filter((b) => inicial[b]?.status !== 'em_manutencao');
     const baseUrl = APP_URL();
     for (const banco of bancos) {
       // facta_clt_offline NAO dispara em paralelo (FACTA exige 3s entre
