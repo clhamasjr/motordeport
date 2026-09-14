@@ -10,8 +10,8 @@ import {
   type BancoSimul,
 } from '@/lib/inss-motor';
 import {
-  calcPortRefin108,
-  type PortRefin108Result,
+  calcPortRefin108, calcViaBrbInconta,
+  type PortRefin108Result, type ContratoReducao,
 } from '@/lib/inss-motor';
 
 const TROCO_MIN_ENQUADRADO = 250;
@@ -67,6 +67,8 @@ export interface ElegivelRow {
   compStatus?: CompStatusBase;
   resolveExc?: boolean;
   elegRealOk?: boolean;
+  /** Este contrato faz parte do combo BRB INCONTA (até 3 contratos) que enquadra o CPF. */
+  viaInconta?: boolean;
   reducaoEstim?: number;        // redução parcela (refin 108m no destino real)
   parcelaNovaEstim?: number;
   // ── PORT + REFIN 108m no destino real ──
@@ -143,6 +145,9 @@ export interface CompPorCpf {
   vRmc: number;
   vRcc: number;
   total: number;
+  /** Presente quando NENHUM contrato sozinho resolve, mas o BRB INCONTA
+   *  enquadra portando até 3 contratos (regra 07/05/2026). */
+  viaInconta?: { n: number; reducaoTotal: number; contratos: string[] };
 }
 
 export interface BaseProcessada {
@@ -641,10 +646,37 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
 
   // Promove compStatus do CPF baseado nos contratos (algum resolve?)
   for (const cpf of Object.keys(compByCpf)) {
-    if (compByCpf[cpf].excedente > 0) {
-      const algumResolve = analise.some((a) => a.cpf === cpf && a.resolveExc);
-      compByCpf[cpf].compStatus = algumResolve ? 'fora_regra_resolvivel' : 'fora_regra_inviavel';
+    const c = compByCpf[cpf];
+    if (c.excedente <= 0) continue;
+    const regsCpf = analise.filter((a) => a.cpf === cpf);
+    let algumResolve = regsCpf.some((a) => a.resolveExc);
+
+    // Nenhum contrato sozinho cobre o excedente → BRB INCONTA porta ATÉ 3
+    // contratos (os de maior redução, só os que o INCONTA aceita como
+    // destino). Mesma lógica de calcEnquadramentoPlus/VIA_PORT_MULTI da
+    // consulta unitária — antes o lote marcava esses CPFs como inviáveis.
+    if (!algumResolve) {
+      const aceitos = regsCpf.filter((a) =>
+        a.ok && a.par > 0 && a.sal > 0 && (a.destinos || []).some((d) => d.banco === 'BRB_INCONTA'));
+      const ctrs: ContratoReducao[] = aceitos.map((a) => ({ par: a.par, sal: a.sal, con: a.con, cod: a.cod }));
+      const via = calcViaBrbInconta(c.excedente, ctrs);
+      if (via.enquadra) {
+        algumResolve = true;
+        const usados = new Set(via.contratos.map((v) => v.contrato));
+        c.viaInconta = {
+          n: via.contratos.length,
+          reducaoTotal: Math.round(via.reducaoTotal * 100) / 100,
+          contratos: via.contratos.map((v) => v.contrato || '?'),
+        };
+        for (const a of aceitos) {
+          if (usados.has(a.con)) { a.viaInconta = true; a.resolveExc = true; a.elegRealOk = true; }
+        }
+      }
     }
+
+    c.compStatus = algumResolve ? 'fora_regra_resolvivel' : 'fora_regra_inviavel';
+    // Propaga pro contrato: sem isso o rótulo "outro resolve" nunca aparecia.
+    for (const a of regsCpf) a.compStatus = c.compStatus;
   }
 
   // Sintéticos pra clientes "dentro_regra" sem nenhum contrato portável

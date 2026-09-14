@@ -181,7 +181,7 @@ export function ElegiveisTable() {
     const header = [
       'CPF', 'Nome', 'Benefício', 'Contrato', 'Banco origem', 'Parcela', 'Nova parcela estim.', 'Saldo', 'Prazo', 'Pagas',
       'Idade', 'Taxa origem', 'Banco destino', 'Tabela', 'Vlr Contrato', 'Troco 96m', 'Troco 108m', 'Taxa nova',
-      'Comp. %', 'Status enquadramento', 'Resolve sozinho', 'Redução estim.',
+      'Comp. %', 'Status enquadramento', 'Resolve sozinho', 'Combo INCONTA', 'Redução estim.',
       'Banco pagador', 'Banco de rede', 'Tel 1', 'Tel 2', 'Tel 3',
     ];
     const rows = filtered.map((r) => [
@@ -191,7 +191,7 @@ export function ElegiveisTable() {
       r.portRefin108?.tabelaUsada || '',
       r.vc, r.troco, r.portRefin108?.port_troco || '',
       r.portRefin108?.taxa ?? r.taxa,
-      r.compPct || '', r.compStatus || '', r.resolveExc ? 'SIM' : '', r.reducaoEstim || '',
+      r.compPct || '', r.compStatus || '', r.resolveExc ? 'SIM' : '', r.viaInconta ? 'SIM' : '', r.reducaoEstim || '',
       r.bancoPagador || '', r.bancoRede ? (r.bancoRedeConhecido ? 'REDE' : 'concentrado') : '',
       r.t1 || '', r.t2 || '', r.t3 || '',
     ]);
@@ -408,7 +408,8 @@ function ElegivelRowRender({ row: r, checked, onToggle }: { row: ElegivelRow; ch
     : 'text-muted-foreground bg-muted/20 border-border';
   const compTxt =
     r.compStatus === 'dentro_regra' ? '✅ enquadra'
-    : r.compStatus === 'fora_regra_resolvivel' ? (r.resolveExc ? '🔄 ESTE resolve' : '🔄 outro resolve')
+    : r.compStatus === 'fora_regra_resolvivel'
+      ? (r.viaInconta ? '🏦 INCONTA combo' : r.resolveExc ? '🔄 ESTE resolve' : '🔄 outro resolve')
     : r.compStatus === 'fora_regra_inviavel' ? '❌ sem solução'
     : 'sem dados';
   // Quando enquadrado, mostra TROCO da port 108m (port_troco). Senão mostra redução.
