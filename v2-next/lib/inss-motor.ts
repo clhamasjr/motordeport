@@ -39,12 +39,22 @@ export const COEFS_DAY: CoefEntry[] = [
 // REGRAS DE BANCO DESTINO (BD)
 // ──────────────────────────────────────────────────────────────────
 
+// Fintech do Corban — refin 108m nas taxas que ela opera (1,65/1,70/1,75/1,80/1,85).
+export const COEFS_FINTECH: CoefEntry[] = COEFS_108.filter((c) => [1.85, 1.80, 1.75, 1.70, 1.65].includes(c.t));
+
 export interface VcMaxByAge { ageMax: number; vcMax: number }
 export interface InvRules { minAge?: number; dibAgeRange?: [number, number]; dibMinYears?: number }
 
 export interface BancoRegra {
   sMin: number;
   vcMax?: number;
+  /** Valor mínimo da operação (VC). Ex: Fintech do Corban R$ 5.000. */
+  vcMin?: number;
+  /** Idade máxima do cliente pra esse destino (motor simula 108x). Sobrescreve IDADE_MAX quando menor. */
+  idadeMax?: number;
+  /** Troco mínimo como % de (parcelas ACRESCENTADAS × parcela), onde acrescentadas = 108 − restantes.
+   *  Regra Fintech do Corban (10/09/2026): 5%, mín R$ 100 (tMin). */
+  tMinPctAcresc?: number;
   tMin: number;
   tMinPct?: number;
   pMin: number;
@@ -133,6 +143,23 @@ export const BD: Record<string, BancoRegra> = {
     taxaOrigemMinDefault: 0,
     invRules: { minAge: 60 },
   },
+  // ── FINTECH DO CORBAN — Port + Refin INSS (roteiro 03/09 + atualização 10/09/2026) ──
+  // Saldo mín R$1k; operação R$5k–R$125k; prazo 108x (motor) → idade máx 71a;
+  // refin 1,65–1,85%; porta com 1 paga (Agibank/Facta/PAN/Facta CFI: 12);
+  // troco mín 5% de (parcelas acrescentadas × parcela), mín R$100;
+  // não porta Inbursa/Paraná/Pine/QI/Bari/Bari SA/C6/Ficsa C6/NBC;
+  // não atende espécies 32/92 (87/88 LOAS já saem no motor). Margem negativa OK.
+  // Fora do motor: taxa de entrada da port 0,60%, espécie 21 (fim do benefício),
+  // 60+ em AP/PB/RR/TO (fluxo CCB+selfie), analfabetos, prazos 84x/96x.
+  FINTECH_CORBAN: {
+    sMin: 1000, vcMin: 5000, vcMax: 125000, idadeMax: 71,
+    tMin: 100, tMinPctAcresc: 0.05, pMin: 0, pgMin: 1,
+    faixa: [1.65, 1.85], coefF: null, coefs: COEFS_FINTECH,
+    block: ['012', '254', '643', '329', '330', '914', '336', '626', '753'],
+    pgMinMap: { '121': 12, '149': 12, '623': 12, '935': 12 },
+    espBlock: [32, 92],
+    taxaOrigemMinDefault: 0,
+  },
   DIGIO: {
     sMin: 4500, tMin: 250, pMin: 0, pgMin: 12, faixa: [1.50, 1.85], coefF: null,
     block: ['237','001','041','925'],
@@ -163,7 +190,8 @@ export const BD: Record<string, BancoRegra> = {
   ICRED: {
     sMin: 3000, vcMax: 100000, tMin: 100, pMin: 0, pgMin: 0, faixa: [1.50, 1.85], coefF: null,
     block: ['329','643','935'],
-    pgMinMap: { '623': 1, '336': 1 },
+    // PAN (623): aceita com 1 paga. C6 (336/626): só com 12+ pagas (dono, 14/09/2026).
+    pgMinMap: { '623': 1, '336': 12, '626': 12 },
     // ICRED aceita port com taxa origem >= 1,10%
     taxaOrigemMinDefault: 1.10,
     vcMaxByAge: [
@@ -183,7 +211,7 @@ export const BD: Record<string, BancoRegra> = {
 // ORDEM = PRIORIDADE COMERCIAL do dono (set/2026): o destino escolhido é o
 // PRIMEIRO desta lista que aceita o contrato — não o de maior troco.
 // BRB e BRB INCONTA são o mesmo banco (uma entrada só: BRB).
-export const ORDEM = ['QUALI', 'ICRED', 'C6', 'BRB', 'DAYCOVAL'];
+export const ORDEM = ['QUALI', 'ICRED', 'C6', 'FINTECH_CORBAN', 'DAYCOVAL', 'BRB']; // BRB por último (dono, 14/09)
 
 export const PICPAY_CODE = '380';
 export const B1P: string[] = ['149','422','739','925','380','033','326','290','041','389','121'];
@@ -374,6 +402,7 @@ export function bankAccepts(
   }
   if (age !== null) {
     if (age > IDADE_MAX) return false;
+    if (r.idadeMax && age > r.idadeMax) return false;
     if (inv && r.invRules) {
       const iv = r.invRules;
       if (iv.minAge && age < iv.minAge) return false;
@@ -390,6 +419,7 @@ function tMinFloor(b: string): number {
 
 function vcExceedsLimit(r: BancoRegra, vc: number, age: number | null): boolean {
   if (r.vcMax && vc > r.vcMax) return true;
+  if (r.vcMin && vc < r.vcMin) return true;
   if (r.vcMaxByAge && Array.isArray(r.vcMaxByAge) && age != null) {
     for (const tier of r.vcMaxByAge) {
       if (age <= tier.ageMax) return vc > tier.vcMax;
@@ -400,8 +430,14 @@ function vcExceedsLimit(r: BancoRegra, vc: number, age: number | null): boolean 
 
 export interface BancoSimul { banco: string; troco: number; vc: number; taxa: number; i1?: boolean; priority?: boolean }
 
-export function tryBank(b: string, r: BancoRegra, p: number, s: number, age: number | null): BancoSimul | null {
-  const tMinBanco = r.tMinPct ? Math.max(r.tMin || 0, s * r.tMinPct) : (r.tMin || 0);
+export function tryBank(b: string, r: BancoRegra, p: number, s: number, age: number | null, rest = 0): BancoSimul | null {
+  let tMinBanco = r.tMinPct ? Math.max(r.tMin || 0, s * r.tMinPct) : (r.tMin || 0);
+  if (r.tMinPctAcresc) {
+    // Fintech do Corban: % sobre (parcelas acrescentadas × parcela). Se não
+    // sabemos as restantes (rest=0), assume 108 acrescentadas (conservador).
+    const acresc = Math.max(0, 108 - (rest || 0));
+    tMinBanco = Math.max(tMinBanco, p * acresc * r.tMinPctAcresc);
+  }
   const tMinEff = Math.max(tMinBanco, p, tMinFloor(b));
   if (r.coefF) {
     const vc = p / r.coefF, tr = vc - s;
@@ -439,7 +475,7 @@ export function testar(
   for (const b of ORDEM) {
     const r = BD[b];
     if (!bankAccepts(b, r, cd, con, p, s, pg, i1, inv, age, bY, espN, taxaOrig)) continue;
-    const res = tryBank(b, r, p, s, age);
+    const res = tryBank(b, r, p, s, age, rest);
     if (res) { res.i1 = i1; return res; }
   }
   return null;
@@ -448,7 +484,7 @@ export function testar(
 /** Retorna TODAS as opções viáveis (vendedor escolhe). */
 export function testarTodos(
   p: number, s: number, pg: number, cd: string, inv: boolean, age: number | null, bY: number | null,
-  _rest: number, espN: number, con: string, taxaOrig: number,
+  rest: number, espN: number, con: string, taxaOrig: number,
 ): BancoSimul[] {
   const out: BancoSimul[] = [];
   const i1 = B1P.includes(cd);
@@ -469,7 +505,7 @@ export function testarTodos(
     if (b === 'C6' && c6Priority) continue;
     const r = BD[b];
     if (!bankAccepts(b, r, cd, con, p, s, pg, i1, inv, age, bY, espN, taxaOrig)) continue;
-    const res = tryBank(b, r, p, s, age);
+    const res = tryBank(b, r, p, s, age, rest);
     if (res) { res.i1 = i1; out.push(res); }
   }
   return out;
@@ -836,8 +872,8 @@ export function calcEnquadramentoPlus(
     const nomes = viaBrbInconta.contratos.map((c) => c.contrato || c.banco || '?').join(' + ');
     return {
       status: 'VIA_PORT_MULTI',
-      detalhe: `Excede ${fmt(excedente)}. BRB INCONTA enquadra portando ${nCtr} contrato${nCtr > 1 ? 's' : ''} (${nomes}) — reduz ${fmt(viaBrbInconta.reducaoTotal)} no total.`,
-      acao: `BRB INCONTA — portar ${nCtr} contrato${nCtr > 1 ? 's' : ''}`,
+      detalhe: `Excede ${fmt(excedente)}. BRB enquadra portando ${nCtr} contrato${nCtr > 1 ? 's' : ''} (${nomes}) — reduz ${fmt(viaBrbInconta.reducaoTotal)} no total.`,
+      acao: `BRB — portar ${nCtr} contrato${nCtr > 1 ? 's' : ''}`,
       excedente, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
       livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,
       reducaoTotal, reducaoDetalhes, viaBrbInconta,
@@ -850,7 +886,7 @@ export function calcEnquadramentoPlus(
   const falta = excedente - melhorIsolada;
   return {
     status: 'INVIAVEL',
-    detalhe: `Excede ${fmt(excedente)}. Melhor isolada absorve ${fmt(melhorIsolada)} — falta ${fmt(falta)}. Nem o BRB INCONTA (3 contratos) resolve — precisa múltiplas operações.`,
+    detalhe: `Excede ${fmt(excedente)}. Melhor isolada absorve ${fmt(melhorIsolada)} — falta ${fmt(falta)}. Nem o BRB (3 contratos) resolve — precisa múltiplas operações.`,
     acao: 'múltiplas operações',
     excedente, sumTotal, tetoEmp35, tetoGlobal, tetoCartao,
     livreEmpAtual: margemLivreEmp, livreNovo: tetoGlobal - sumTotal,

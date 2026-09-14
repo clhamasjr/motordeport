@@ -556,8 +556,11 @@ export interface AnaliseExtrato {
   sumEmp: number;
   sumRmc: number;
   sumRcc: number;
+  /** Nome LEGADO (época da MP 1355) — contém o teto GLOBAL 45% (35% emp + 5% RMC + 5% RCC). */
   teto40: number;
+  tetoEmp35: number;
   excedenteNovaRegra: number;
+  /** Nome LEGADO — comprometimento % sobre a base (compara com 45%). */
   compPctSobre40: number;
   enquadraNovaRegra: boolean;
   contratosQueResolvem: { contrato: string; reducaoEstim: number; novaParc: number; bancoNome: string }[];
@@ -575,11 +578,18 @@ export function analisarEnquadramento(ext: InssExtratoResultado): AnaliseExtrato
   const sumEmp = ext.contratos.reduce((s, c) => s + (c.valorParcela || 0), 0);
   const sumRmc = ext.cartoes.filter((c) => c.tipo === 'RMC').reduce((s, c) => s + (c.valorReservado || 0), 0);
   const sumRcc = ext.cartoes.filter((c) => c.tipo === 'RCC').reduce((s, c) => s + (c.valorReservado || 0), 0);
-  const teto40 = baseCalculo * 0.40;
+  // Regra VIGENTE (pós-queda da MP 1355): emp ≤ 35% + RMC ≤ 5% + RCC ≤ 5% = 45%.
+  const teto40 = baseCalculo * 0.45; // nome legado — teto GLOBAL
+  const tetoEmp35 = baseCalculo * 0.35;
+  const tetoCartao = baseCalculo * 0.05;
   const total = totalComprometido || (sumEmp + sumRmc + sumRcc);
-  const excedente = Math.max(0, total - teto40);
+  // Excedente a cobrir reduzindo parcela de emp: estouro do global OU do emp.
+  const excedente = Math.max(0, total - teto40, sumEmp - tetoEmp35);
   const compPct = baseCalculo > 0 ? (total / baseCalculo) * 100 : 0;
-  const enquadra = total <= teto40 + 0.01 && baseCalculo > 0;
+  const enquadra = baseCalculo > 0 && total <= teto40 + 0.01 && sumEmp <= tetoEmp35 + 0.01
+    && sumRmc <= tetoCartao + 0.01 && sumRcc <= tetoCartao + 0.01;
+  // Cancelar cartão só resolve estouro do GLOBAL — não devolve margem de emp.
+  const cartaoPodeResolver = sumEmp <= tetoEmp35 + 0.01;
 
   const coef = coefPrice108_150();
   const contratosQueResolvem: AnaliseExtrato['contratosQueResolvem'] = [];
@@ -603,12 +613,12 @@ export function analisarEnquadramento(ext: InssExtratoResultado): AnaliseExtrato
     valorReservado: c.valorReservado,
     saldoDevedor: c.saldoDevedorAtual || 0,
     podeCancelarSemPagar: c.podeCancelar,
-    resolve: c.valorReservado >= excedente - 0.01,
+    resolve: cartaoPodeResolver && c.valorReservado >= excedente - 0.01,
   }));
 
   return {
     baseCalculo, totalComprometido: total, sumEmp, sumRmc, sumRcc,
-    teto40, excedenteNovaRegra: excedente, compPctSobre40: Math.round(compPct * 10) / 10,
+    teto40, tetoEmp35, excedenteNovaRegra: excedente, compPctSobre40: Math.round(compPct * 10) / 10,
     enquadraNovaRegra: enquadra,
     contratosQueResolvem, cartoesQueResolvem,
   };

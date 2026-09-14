@@ -654,7 +654,7 @@ const _BD = {
     taxaOrigemMinDefault: 0 },
   ICRED: { sMin: 3000, tMin: 100, faixa: [1.50, 1.85], coefF: null,
     block: ['329','643','935'],
-    pgMinMap: { '623': 1, '336': 1 },
+    pgMinMap: { '623': 1, '336': 12, '626': 12 }, // C6 so com 12+ pagas
     taxaOrigemMinDefault: 1.10 },
 };
 // PRIORIDADE COMERCIAL (dono, set/2026): primeiro que aceita ganha.

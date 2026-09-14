@@ -357,7 +357,7 @@ function CenarioCard({
           <div className="mt-3 pt-3 border-t border-border">
             <div className="text-[10px] uppercase tracking-wider font-bold mb-1.5">
               {enq.status === 'VIA_PORT_REDUCAO' ? '🔄 Resolução com port'
-                : enq.status === 'VIA_PORT_MULTI' ? '🏦 BRB INCONTA — enquadra portando contratos'
+                : enq.status === 'VIA_PORT_MULTI' ? '🏦 BRB — enquadra portando contratos'
                 : '⚠ Análise'}
             </div>
             <div className="text-xs text-muted-foreground">{enq.detalhe}</div>
@@ -372,7 +372,7 @@ function CenarioCard({
             {enq.viaBrbInconta?.enquadra && enq.status !== 'VIA_PORT_REDUCAO' && (
               <div className="mt-1.5 rounded-md bg-cyan-500/10 border border-cyan-500/30 p-2 text-xs space-y-1">
                 <div className="text-cyan-300">
-                  <strong>BRB INCONTA</strong> porta {enq.viaBrbInconta.contratos.length} contrato
+                  <strong>BRB</strong> porta {enq.viaBrbInconta.contratos.length} contrato
                   {enq.viaBrbInconta.contratos.length > 1 ? 's' : ''} (tabela 1,85% / 108m) → reduz{' '}
                   <strong className="font-mono">{formatBRL(enq.viaBrbInconta.reducaoTotal)}</strong> no total:
                 </div>

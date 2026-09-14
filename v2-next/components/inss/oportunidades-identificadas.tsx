@@ -22,7 +22,7 @@ import { EnviarOportunidadesButton } from './enviar-oportunidades';
 const COEF_EMP_185 = 0.02153;
 
 // Rótulo de exibição do banco destino (chave do motor → nome amigável).
-const BANCO_LABEL: Record<string, string> = {};
+const BANCO_LABEL: Record<string, string> = { FINTECH_CORBAN: 'Fintech do Corban' };
 const bl = (k: string) => BANCO_LABEL[k] ?? k;
 
 // Diagnóstico do motivo de bloqueio pra contratos que ninguém aceita.
@@ -750,7 +750,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
             {margemLivreParaEmpNovo >= 25 && empNovoVlr185 >= 500 && (idadeNum === null || idadeNum <= 72) ? (
               <div className="rounded-md border border-cyan-500/60 bg-cyan-500/10 p-3">
                 <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
-                  <Badge variant="success" className="text-[10px] font-mono">BRB INCONTA</Badge>
+                  <Badge variant="success" className="text-[10px] font-mono">BRB</Badge>
                   <span className="text-[10px] font-mono text-muted-foreground">108m · 1,85%</span>
                 </div>
                 <div className="flex items-end justify-between flex-wrap gap-x-6 gap-y-2">
@@ -803,7 +803,7 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
                   ))}
                 </div>
                 <div className="text-[9px] text-muted-foreground mt-1.5 italic">
-                  💡 BRB INCONTA é a primeira opção operacional. Os bancos acima são alternativas.
+                  💡 BRB é a primeira opção operacional pra contrato novo. Os bancos acima são alternativas.
                 </div>
               </div>
             )}

@@ -54,8 +54,8 @@ export default function ExtratoPdfPage() {
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
           Suba o &quot;Histórico de Empréstimo Consignado&quot; do INSS (PDF de meu.inss.gov.br) e o sistema lê
-          todo o extrato, identifica contratos + cartões + saldos devedores e analisa o enquadramento na
-          NOVA regra de 40%.
+          todo o extrato, identifica contratos + cartões + saldos devedores e analisa o enquadramento
+          (35% emp + 5% RMC + 5% RCC = 45%).
         </p>
       </div>
 
@@ -182,7 +182,7 @@ export default function ExtratoPdfPage() {
           </Card>
           )}
 
-          {/* Análise enquadramento NOVA regra */}
+          {/* Análise de enquadramento (35+5+5 = 45%) */}
           {ext.tipo === 'historico_consignado' && analise && <AnaliseCard analise={analise} ext={ext} />}
 
           {/* Tabelas de detalhes */}
@@ -209,20 +209,20 @@ function AnaliseCard({ analise, ext }: { analise: AnaliseExtrato; ext: InssExtra
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
             <Sparkles className="size-5 text-cyan-400" />
-            <h3 className="font-bold text-base">Enquadramento na NOVA regra do INSS (40%)</h3>
+            <h3 className="font-bold text-base">Enquadramento INSS (35% emp + 5% RMC + 5% RCC = 45%)</h3>
           </div>
           <Badge
             variant={inviavel ? 'destructive' : !analise.enquadraNovaRegra ? 'warning' : 'success'}
             className="text-xs"
           >
-            {analise.compPctSobre40}% / 40%
+            {analise.compPctSobre40}% / 45%
           </Badge>
         </div>
 
         {analise.enquadraNovaRegra ? (
-          <Banner cor="green" icon={<CheckCircle2 className="size-5 text-green-400" />} titulo="✅ Cliente ENQUADRADO na nova regra">
+          <Banner cor="green" icon={<CheckCircle2 className="size-5 text-green-400" />} titulo="✅ Cliente ENQUADRADO na regra vigente">
             Comprometimento <strong className="font-mono">{formatBRL(analise.totalComprometido)}</strong> dentro
-            do teto de 40% (<strong className="font-mono">{formatBRL(analise.teto40)}</strong>).
+            do teto global de 45% (<strong className="font-mono">{formatBRL(analise.teto40)}</strong>; emp ≤ 35% = {formatBRL(analise.tetoEmp35)}).
             {analise.totalComprometido < analise.teto40 && (
               <> Sobra <strong className="font-mono text-green-400">{formatBRL(analise.teto40 - analise.totalComprometido)}</strong> de margem livre.</>
             )}

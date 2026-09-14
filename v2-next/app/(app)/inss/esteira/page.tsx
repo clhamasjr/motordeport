@@ -17,6 +17,7 @@ const BANCO_LABEL: Record<string, string> = {
   JOINBANK: 'JoinBank',
   BRB: 'BRB',
   ICRED: 'ICRED',
+  FINTECH_CORBAN: 'Fintech do Corban',
   C6: 'C6',
   DIGIO: 'Digio',
   DAYCOVAL: 'Daycoval',

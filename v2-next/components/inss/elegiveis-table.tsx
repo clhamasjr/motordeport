@@ -12,8 +12,6 @@ import { ORDEM } from '@/lib/inss-motor';
 import { useInssBaseStore } from '@/hooks/use-inss-base-store';
 import { Search, Download, ShoppingCart, X } from 'lucide-react';
 
-type ElegRealMode = 'nova' | 'todos';
-
 interface Filtros {
   banco: string;
   taxa: string;          // valor mínimo
@@ -35,7 +33,6 @@ interface Filtros {
   invalidez: string;
   enquadramento: string;
   bancoRede: string;     // '' | 'rede' (recebe+todos contratos em banco de rede) | 'concentrado' (todos no mesmo banco)
-  elegReal: ElegRealMode;
   busca: string;
 }
 
@@ -43,7 +40,7 @@ const INITIAL: Filtros = {
   banco: '', taxa: '', trocoMin: '', trocoMax: '', vcMin: '', vcMax: '',
   parMin: '', parMax: '', salMin: '', salMax: '', pagasMin: '', pagasMax: '',
   idadeMin: '', idadeMax: '', margemPctMin: '', margemPctMax: '',
-  cartao: '', invalidez: '', enquadramento: '', bancoRede: '', elegReal: 'nova', busca: '',
+  cartao: '', invalidez: '', enquadramento: '', bancoRede: '', busca: '',
 };
 
 const pN = (v: string) => parseFloat(v.replace(',', '.')) || 0;
@@ -73,8 +70,9 @@ export function ElegiveisTable() {
     if (!base) return [] as ElegivelRow[];
     let arr = base.elegiveis;
 
-    // Nova regra de elegibilidade
-    if (f.elegReal === 'nova') arr = arr.filter((r) => r.elegRealOk === true);
+    // Sem filtro de "nova regra": tudo que encaixa em algum banco aparece;
+    // o enquadramento (compStatus) fica como informação/filtro opcional e a
+    // gente direciona o cliente pelo banco que aceita.
 
     if (f.banco) arr = arr.filter((r) => r.dest === f.banco);
     if (f.taxa) {
@@ -181,7 +179,7 @@ export function ElegiveisTable() {
     const header = [
       'CPF', 'Nome', 'Benefício', 'Contrato', 'Banco origem', 'Parcela', 'Nova parcela estim.', 'Saldo', 'Prazo', 'Pagas',
       'Idade', 'Taxa origem', 'Banco destino', 'Tabela', 'Vlr Contrato', 'Troco 96m', 'Troco 108m', 'Taxa nova',
-      'Comp. %', 'Status enquadramento', 'Resolve sozinho', 'Combo INCONTA', 'Redução estim.',
+      'Comp. %', 'Status enquadramento', 'Resolve sozinho', 'Combo BRB', 'Redução estim.',
       'Banco pagador', 'Banco de rede', 'Tel 1', 'Tel 2', 'Tel 3',
     ];
     const rows = filtered.map((r) => [
@@ -218,34 +216,6 @@ export function ElegiveisTable() {
         <KpiCard label="Troco total" value={formatBRL(kpis.trocoTotal)} isText cor="text-green-400" />
         <KpiCard label="VC total" value={formatBRL(kpis.vcTotal)} isText cor="text-cyan-400" />
       </div>
-
-      {/* Toggle "Nova regra" */}
-      <Card className="border-green-500/30 bg-green-500/5">
-        <CardContent className="p-3 flex items-center gap-3 flex-wrap">
-          <div className="flex-1 min-w-0">
-            <div className="text-xs font-bold text-green-400 uppercase tracking-wider">🎯 Elegibilidade — regra vigente (35% emp + 5% + 5% = 45%)</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">
-              Emp ≤ 35% e total ≤ 45% = elegível. Excedente só elegível se 1 port resolver. Acima sem solução = excluído.
-            </div>
-          </div>
-          <div className="flex gap-1.5">
-            <Button
-              size="sm"
-              variant={f.elegReal === 'nova' ? 'default' : 'outline'}
-              onClick={() => update('elegReal', 'nova')}
-            >
-              🎯 Nova regra
-            </Button>
-            <Button
-              size="sm"
-              variant={f.elegReal === 'todos' ? 'default' : 'outline'}
-              onClick={() => update('elegReal', 'todos')}
-            >
-              📋 Todos
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
 
       {/* Busca + Ações principais */}
       <Card>
@@ -409,7 +379,7 @@ function ElegivelRowRender({ row: r, checked, onToggle }: { row: ElegivelRow; ch
   const compTxt =
     r.compStatus === 'dentro_regra' ? '✅ enquadra'
     : r.compStatus === 'fora_regra_resolvivel'
-      ? (r.viaInconta ? '🏦 INCONTA combo' : r.resolveExc ? '🔄 ESTE resolve' : '🔄 outro resolve')
+      ? (r.viaInconta ? '🏦 BRB combo' : r.resolveExc ? '🔄 ESTE resolve' : '🔄 outro resolve')
     : r.compStatus === 'fora_regra_inviavel' ? '❌ sem solução'
     : 'sem dados';
   // Quando enquadrado, mostra TROCO da port 108m (port_troco). Senão mostra redução.
