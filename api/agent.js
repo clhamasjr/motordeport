@@ -646,22 +646,26 @@ const _BD = {
     // PARANA(254): 13 pagas. PAN(623): 37 pagas. Demais CIP: sem restricao
     pgMinMap: { '329': 12, '149': 12, '935': 12, '643': 12, '254': 13, '623': 37 },
     taxaOrigemMinDefault: 1.35 },
-  BRB: { sMin: 3000, tMin: 250, faixa: null, coefF: 0.02299,
-    block: ['070','623','935','149','012','071','925','380','079'],
+  // BRB (= BRB INCONTA, regras oficiais 07/05/2026): 108m, 1,79-1,85%, 12+ pagas,
+  // limite CPF 150k, qualquer taxa origem. Nao porta PicPay/Bradescard/Inbursa/
+  // PagBank/C6/Agibank + auto-port BRB.
+  BRB: { sMin: 3000, vcMax: 150000, tMin: 250, pgMin: 12, faixa: [1.79, 1.85], coefF: null,
+    block: ['070','925','380','063','012','290','336','626','121'],
     taxaOrigemMinDefault: 0 },
   ICRED: { sMin: 3000, tMin: 100, faixa: [1.50, 1.85], coefF: null,
     block: ['329','643','935'],
     pgMinMap: { '623': 1, '336': 1 },
     taxaOrigemMinDefault: 1.10 },
 };
-const _ORDEM = ['QUALI', 'C6', 'BRB', 'ICRED'];
+// PRIORIDADE COMERCIAL (dono, set/2026): primeiro que aceita ganha.
+const _ORDEM = ['QUALI', 'ICRED', 'C6', 'BRB'];
 const _TROCO_MIN = 250;
 const _TROCO_MIN_ENQUADRADO = 250;
 
 function _bankAccepts(r, cd, p, s, pg, taxaOrig) {
   if (r.block && r.block.includes(cd)) return false;
   if (r.sMin && s < r.sMin) return false;
-  const pgR = (r.pgMinMap && r.pgMinMap[cd]) || 0;
+  const pgR = (r.pgMinMap && r.pgMinMap[cd] !== undefined) ? r.pgMinMap[cd] : (r.pgMin || 0);
   if (pgR && pg < pgR) return false;
   if (cd && cd !== '000') {
     let minTx;
@@ -684,10 +688,12 @@ function _tryBank(b, r, p, s) {
   if (r.coefF) {
     const vc = p / r.coefF, tr = vc - s;
     if (tr < tMinEff) return null;
+    if (r.vcMax && vc > r.vcMax) return null;
     const tx = _COEFS.find((x) => x.c === r.coefF);
     return { banco: b, troco: tr, vc, taxa: tx ? tx.t : 0 };
   }
   const res = _bestR(p, s, tMinEff, r.faixa);
+  if (res && r.vcMax && res.vc > r.vcMax) return null;
   if (res) return { banco: b, troco: res.tr, vc: res.vc, taxa: res.t };
   return null;
 }
@@ -699,8 +705,7 @@ function _testarTodos(p, s, pg, cd, taxaOrig) {
     const res = _tryBank(b, r, p, s);
     if (res) out.push(res);
   }
-  out.sort((a, b) => (b.troco || 0) - (a.troco || 0));
-  return out;
+  return out; // ja em _ORDEM (prioridade comercial)
 }
 function _calcCenario(par, sal, taxa) {
   const coef = _coefFor(taxa, 108);
@@ -746,23 +751,25 @@ function extractOportunidades(parsed) {
   const benef = _parseBR(ben.base_calculo) || _parseBR(ben.valor) || 0;
   const sumEmp = _parseBR(mrg.parcelas);
 
-  // Cliente tem PELO MENOS 1 cartao averbado (RMC OU RCC)?
-  // - SIM: ja esta no esquema 35% emp + 5% cartao = 40% total
-  // - NAO (sem cartao nenhum): teto emp = 40% inteiro
-  // Detecta APENAS pela margem livre (fonte de verdade) — ignora parsed.cartoes
-  // (que pode trazer cartoes antigos do historico).
-  const temRmc = mrg.rmc != null && mrgRmc < (benef * 0.05) - 0.01;
-  const temRcc = mrg.rcc != null && mrgRcc < (benef * 0.05) - 0.01;
+  // Regra VIGENTE (pos-queda da MP 1355, 02/09/2026): emp <= 35% SEMPRE
+  // + 5% RMC + 5% RCC = teto global 45%. O "40% sem cartao" caiu com a MP.
+  // Cartao detectado APENAS pela margem livre (fonte de verdade) — ignora
+  // parsed.cartoes (que pode trazer cartoes antigos do historico).
+  const tetoCartao = benef * 0.05;
+  const temRmc = mrg.rmc != null && mrgRmc < tetoCartao - 0.01;
+  const temRcc = mrg.rcc != null && mrgRcc < tetoCartao - 0.01;
   const temAlgumCartao = temRmc || temRcc;
-  const tetoEmpReal = temAlgumCartao ? benef * 0.35 : benef * 0.40;
-  const teto40Total = benef * 0.40;
+  const tetoEmpReal = benef * 0.35;
+  const teto40Total = benef * 0.45; // nome legado — teto GLOBAL 45%
 
   // Soma cartoes utilizados
-  const sumRmc = temRmc ? Math.max(0, (benef * 0.05) - mrgRmc) : 0;
-  const sumRcc = temRcc ? Math.max(0, (benef * 0.05) - mrgRcc) : 0;
+  const sumRmc = temRmc ? Math.max(0, tetoCartao - mrgRmc) : 0;
+  const sumRcc = temRcc ? Math.max(0, tetoCartao - mrgRcc) : 0;
   const total = sumEmp + sumRmc + sumRcc;
-  const enquadrado = total <= teto40Total + 0.01 && sumEmp <= tetoEmpReal + 0.01;
-  const excedente = Math.max(0, total - teto40Total);
+  const enquadrado = total <= teto40Total + 0.01 && sumEmp <= tetoEmpReal + 0.01
+    && sumRmc <= tetoCartao + 0.01 && sumRcc <= tetoCartao + 0.01;
+  // Excedente: estouro do global OU do emp (virada da MP: quem usou 40% fica negativo nos 35%)
+  const excedente = Math.max(0, total - teto40Total, sumEmp - tetoEmpReal);
   const margemLivreEmp = Math.max(0, tetoEmpReal - sumEmp);
 
   const oport = [];
@@ -819,7 +826,7 @@ function extractOportunidades(parsed) {
         }
       }
       const score = enquadrado ? troco : reducao;
-      if (!melhor || score > melhor.score) {
+      if (!melhor) { // primeiro destino em _ORDEM que gera cenario valido
         melhor = { banco: d.banco, taxa, novaParc, reducao, troco, score };
       }
     }

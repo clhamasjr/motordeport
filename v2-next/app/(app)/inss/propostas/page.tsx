@@ -15,7 +15,6 @@ const BANCO_LABEL: Record<string, string> = {
   QUALI: 'QualiBanking',
   JOINBANK: 'JoinBank',
   BRB: 'BRB',
-  BRB_INCONTA: 'BRB INCONTA',
   ICRED: 'ICRED',
   C6: 'C6',
   MERCANTIL: 'Mercantil',

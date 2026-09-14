@@ -359,8 +359,9 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
       let sumEmpLoas = 0;
       for (const lb of lbs) { const par = gv(row, lb.cp); if (par > 0) sumEmpLoas += par; }
       const numCartoes = (realRmc ? 1 : 0) + (realRcc ? 1 : 0);
-      const benefLoas = valorBeneficio || (sumEmpLoas > 0 ? sumEmpLoas / 0.35 : 0);
-      const tetoEmpLoas = benefLoas * 0.35;
+      // LOAS/BPC: teto de empréstimo é 30% (não 35%).
+      const benefLoas = valorBeneficio || (sumEmpLoas > 0 ? sumEmpLoas / 0.30 : 0);
+      const tetoEmpLoas = benefLoas * 0.30;
       const margemLivreEmp = benefLoas > 0 ? Math.max(0, tetoEmpLoas - sumEmpLoas) : 0;
       const margemLivreCart = 0; // sem teto separado de cartão em LOAS
       const pctEmp = benefLoas > 0 ? Math.round(sumEmpLoas / benefLoas * 1000) / 10 : 0;
@@ -407,8 +408,8 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
       if (!con && par === 0 && sal === 0) continue;
       const i1 = B1P.includes(cod);
       const todosDest: BancoSimul[] = testarTodos(par, sal, pag, cod, isInv, idade, bY, rest, eN, con, txOrig);
-      // Ordena destinos por TROCO desc (melhor troco primeiro)
-      todosDest.sort((a, b) => (b.troco || 0) - (a.troco || 0));
+      // Ordena pela PRIORIDADE COMERCIAL (ORDEM) — primeiro que aceita ganha
+      todosDest.sort((a, b) => ORDEM.indexOf(a.banco) - ORDEM.indexOf(b.banco));
       const res = todosDest.length ? todosDest[0] : null;
       const reg: ElegivelRow = {
         nome, cpf, ben, esp, con, cod,
@@ -517,8 +518,8 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
   //     Senão, fallback tabelaBaixa pra garantir troco aceitável.
   //   - Cliente NÃO ENQUADRADO: usa tabelaBaixa (max redução pra enquadrar).
   //
-  // Roda calcPortRefin108 contra TODOS os destinos elegíveis (testarTodos já
-  // filtrou por banco) e escolhe o melhor pelo critério (troco ou redução).
+  // Roda calcPortRefin108 nos destinos (já em ORDEM de prioridade comercial)
+  // e fica com o PRIMEIRO que gera cenário válido — não o de maior troco.
   for (const reg of analise) {
     const c = compByCpf[reg.cpf];
     if (!c) {
@@ -593,7 +594,9 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
         const candScore = enquadrado ? trocoEf : reducaoEf;
         const melhorScore = melhor ? (enquadrado ? melhor.troco : melhor.reducao) : -Infinity;
 
-        if (!melhor || candScore > melhorScore) {
+        // Prioridade comercial: destinos já vêm em ORDEM, o primeiro válido fica.
+        void candScore; void melhorScore;
+        if (!melhor) {
           melhor = {
             pr108: {
               ...r,
@@ -657,7 +660,7 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     // consulta unitária — antes o lote marcava esses CPFs como inviáveis.
     if (!algumResolve) {
       const aceitos = regsCpf.filter((a) =>
-        a.ok && a.par > 0 && a.sal > 0 && (a.destinos || []).some((d) => d.banco === 'BRB_INCONTA'));
+        a.ok && a.par > 0 && a.sal > 0 && (a.destinos || []).some((d) => d.banco === 'BRB'));
       const ctrs: ContratoReducao[] = aceitos.map((a) => ({ par: a.par, sal: a.sal, con: a.con, cod: a.cod }));
       const via = calcViaBrbInconta(c.excedente, ctrs);
       if (via.enquadra) {
