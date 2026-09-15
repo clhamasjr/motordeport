@@ -71,6 +71,10 @@ export interface ElegivelRow {
   viaInconta?: boolean;
   /** Quando NENHUM banco aceita este contrato: motivo resumido (export "todos + motivo"). */
   motivoSemDestino?: string;
+  /** Margem livre de empréstimo do CPF (R$/mês): coluna "Margem" da planilha se houver, senão 35% − parcelas. */
+  margemLivre?: number;
+  /** Empréstimo novo estimado com essa margem (108x a 1,85%, coef 0.02153). */
+  empNovoEstim?: number;
   reducaoEstim?: number;        // redução parcela (refin 108m no destino real)
   parcelaNovaEstim?: number;
   // ── PORT + REFIN 108m no destino real ──
@@ -526,6 +530,14 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
   // e fica com o PRIMEIRO que gera cenário válido — não o de maior troco.
   for (const reg of analise) {
     const c = compByCpf[reg.cpf];
+    // Margem livre pra EMPRÉSTIMO NOVO: planilha ("Margem") é a fonte oficial;
+    // sem ela, usa a regra (35% da base − parcelas). Fica em TODA linha do CPF,
+    // pra o cliente "só margem, sem port" não sumir da análise/export.
+    const mlPlan = rmcByCpf[reg.cpf]?.mrgCart || 0;
+    const mlRegra = c && c.benef > 0 ? Math.max(0, c.tetoEmpReal - c.sumEmp) : 0;
+    const ml = mlPlan > 0 ? mlPlan : mlRegra;
+    reg.margemLivre = Math.round(ml * 100) / 100;
+    reg.empNovoEstim = Math.round((ml / COEF185) * 100) / 100;
     if (!c) {
       reg.compPct = 0; reg.compStatus = 'sem_dados'; reg.resolveExc = false;
       reg.elegRealOk = false; reg.reducaoEstim = 0; reg.parcelaNovaEstim = 0;
@@ -800,6 +812,10 @@ export function descreverMotivo(reg: ElegivelRow, comp?: CompPorCpf): string {
     } else if (st === 'fora_regra_inviavel') {
       partes.push(`Fora da regra: excede ${fmtR(comp.excedente)} (${onde}) — nenhum contrato reduz o suficiente e o combo BRB (até 3) não cobre`);
     }
+  }
+  if (reg._semContrato) partes.push('Sem contrato portável — oportunidade só de margem');
+  if (reg.margemLivre && reg.margemLivre > 0) {
+    partes.push(`Margem livre ${fmtR(reg.margemLivre)}/mês → empréstimo novo até ${fmtR(reg.empNovoEstim || 0)} (108x 1,85%)`);
   }
   if (!reg.ok && !reg._semContrato) {
     partes.push(`Nenhum banco aceita este contrato: ${reg.motivoSemDestino || 'motivo não identificado'}`);

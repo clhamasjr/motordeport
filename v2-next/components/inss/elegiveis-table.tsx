@@ -200,16 +200,18 @@ export function ElegiveisTable() {
       'CPF', 'Nome', 'Benefício', 'Contrato', 'Banco origem', 'Parcela', 'Nova parcela estim.', 'Saldo', 'Prazo', 'Pagas',
       'Idade', 'Taxa origem', 'Banco destino', 'Tabela', 'Vlr Contrato', 'Troco 96m', 'Troco 108m', 'Taxa nova',
       'Comp. %', 'Status enquadramento', 'Resolve sozinho', 'Combo BRB', 'Redução estim.',
+      'Margem livre (mês)', 'Emp. novo estim. (108x 1,85%)',
       'Banco pagador', 'Banco de rede', 'Tel 1', 'Tel 2', 'Tel 3', 'Motivo / Observação',
     ];
     const rows = lista.map((r) => [
-      txt(r.cpf), r.nome, txt(r.ben), txt(r.con), txt(r.cod), r.par, r.parcelaNovaEstim || '', r.sal, r.prazo, r.pag,
+      formatCpf(r.cpf), r.nome, txt(r.ben), txt(r.con), txt(r.cod), r.par, r.parcelaNovaEstim || '', r.sal, r.prazo, r.pag,
       String(r.idade), r.taxaOrig || '',
       r.portRefin108?.banco || r.dest,
       r.portRefin108?.tabelaUsada || '',
       r.vc, r.troco, r.portRefin108?.port_troco || '',
       r.portRefin108?.taxa ?? r.taxa,
       r.compPct || '', r.compStatus || '', r.resolveExc ? 'SIM' : '', r.viaInconta ? 'SIM' : '', r.reducaoEstim || '',
+      r.margemLivre || '', r.empNovoEstim || '',
       r.bancoPagador || '', r.bancoRede ? (r.bancoRedeConhecido ? 'REDE' : 'concentrado') : '',
       txt(r.t1), txt(r.t2), txt(r.t3),
       descreverMotivo(r, base.compByCpf[r.cpf]),
@@ -464,7 +466,10 @@ function ElegivelRowRender({ row: r, checked, onToggle }: { row: ElegivelRow; ch
       </td>
       <td className="p-2">
         {r._semContrato ? (
-          <span className="text-[10px] text-green-400 font-semibold">💰 emp. novo</span>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-green-400 font-semibold">💰 emp. novo {r.empNovoEstim ? formatBRL(r.empNovoEstim) : ''}</span>
+            {r.margemLivre ? <span className="text-[9px] text-muted-foreground">margem {formatBRL(r.margemLivre)}/mês</span> : null}
+          </div>
         ) : destinoUsado && destinoUsado !== '-' ? (
           <div className="flex flex-col gap-0.5">
             <Badge variant="outline" className="text-[10px] font-mono w-fit">{destinoUsado}</Badge>
