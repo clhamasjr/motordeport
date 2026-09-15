@@ -6,7 +6,7 @@
 import {
   ESP_AUX, ESP_INV, ESP_LOAS, B1P,
   pV, pP, pC, pEN, cAge, cBY,
-  testarTodos, ORDEM,
+  testarTodos, ORDEM, BD, IDADE_MAX,
   type BancoSimul,
 } from '@/lib/inss-motor';
 import {
@@ -67,8 +67,10 @@ export interface ElegivelRow {
   compStatus?: CompStatusBase;
   resolveExc?: boolean;
   elegRealOk?: boolean;
-  /** Este contrato faz parte do combo BRB INCONTA (até 3 contratos) que enquadra o CPF. */
+  /** Este contrato faz parte do combo BRB (até 3 contratos) que enquadra o CPF. */
   viaInconta?: boolean;
+  /** Quando NENHUM banco aceita este contrato: motivo resumido (export "todos + motivo"). */
+  motivoSemDestino?: string;
   reducaoEstim?: number;        // redução parcela (refin 108m no destino real)
   parcelaNovaEstim?: number;
   // ── PORT + REFIN 108m no destino real ──
@@ -411,6 +413,7 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
       // Ordena pela PRIORIDADE COMERCIAL (ORDEM) — primeiro que aceita ganha
       todosDest.sort((a, b) => ORDEM.indexOf(a.banco) - ORDEM.indexOf(b.banco));
       const res = todosDest.length ? todosDest[0] : null;
+      const motivoSemDest = res ? undefined : motivoSemDestino(par, sal, pag, cod, idade, isInv, eN, txOrig, i1);
       const reg: ElegivelRow = {
         nome, cpf, ben, esp, con, cod,
         par: Math.round(par * 100) / 100,
@@ -423,6 +426,7 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
         vc: res ? Math.round(res.vc * 100) / 100 : 0,
         taxa: res ? res.taxa : '-',
         ok: !!res,
+        motivoSemDestino: motivoSemDest,
         destinos: todosDest.map((d) => ({
           banco: d.banco,
           troco: Math.round(d.troco * 100) / 100,
@@ -723,4 +727,82 @@ export async function parseFileToBase(file: File): Promise<BaseProcessada | null
   const firstSheet = wb.Sheets[wb.SheetNames[0]];
   const data = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1, defval: '' });
   return processBase(data, file.name);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// MOTIVOS — pro export "todos + motivo" da higienização em lote
+// ──────────────────────────────────────────────────────────────────
+
+/** Por que NENHUM banco da ORDEM aceita este contrato — resumo em 1 linha. */
+export function motivoSemDestino(
+  par: number, sal: number, pag: number, cod: string, idade: number | null,
+  isInv: boolean, eN: number, txOrig: number, i1: boolean,
+): string {
+  if (eN && ESP_LOAS.includes(eN)) return 'LOAS/BPC (87/88) não porta';
+  if (idade !== null && idade > IDADE_MAX) return `Idade ${idade} acima do teto de ${IDADE_MAX} anos`;
+  if (!sal) return 'Sem saldo devedor na planilha';
+  if (!par) return 'Sem valor de parcela na planilha';
+  const motivos: string[] = [];
+  for (const b of ORDEM) {
+    const r = BD[b];
+    if (!r) continue;
+    if (r.block.includes(cod)) { motivos.push(`${b}: origem ${cod} bloqueada`); continue; }
+    if (r.espBlock && eN && r.espBlock.includes(eN)) { motivos.push(`${b}: espécie ${eN} não atendida`); continue; }
+    if (isInv && r.blockInv) { motivos.push(`${b}: não porta invalidez`); continue; }
+    if (isInv && r.invRules?.minAge && idade !== null && idade < r.invRules.minAge) { motivos.push(`${b}: invalidez só a partir de ${r.invRules.minAge} anos`); continue; }
+    if (r.idadeMax && idade !== null && idade > r.idadeMax) { motivos.push(`${b}: idade acima de ${r.idadeMax}`); continue; }
+    if (r.pMin && par < r.pMin) { motivos.push(`${b}: parcela abaixo de R$ ${r.pMin}`); continue; }
+    if (r.sMin && sal < r.sMin) { motivos.push(`${b}: saldo abaixo de R$ ${r.sMin}`); continue; }
+    const pgR = (r.pgMinMap && r.pgMinMap[cod] !== undefined) ? r.pgMinMap[cod] : (i1 ? 1 : r.pgMin);
+    if (pgR && pag < pgR) { motivos.push(`${b}: ${pag} pagas (mínimo ${pgR})`); continue; }
+    let minTx: number | undefined;
+    if (r.taxaOrigemMin && r.taxaOrigemMin[cod] !== undefined) minTx = r.taxaOrigemMin[cod];
+    else if (r.taxaOrigemMinDefault !== undefined) minTx = r.taxaOrigemMinDefault;
+    if (minTx && txOrig > 0 && txOrig < minTx) { motivos.push(`${b}: taxa origem ${txOrig.toFixed(2)}% abaixo de ${minTx}%`); continue; }
+    motivos.push(`${b}: troco/valor fora do mínimo`);
+  }
+  const todos = (k: string) => motivos.length > 0 && motivos.every((m) => m.includes(k));
+  if (todos('bloqueada')) return `Origem ${cod} bloqueada em todos os bancos`;
+  if (todos('saldo abaixo')) {
+    const min = Math.min(...ORDEM.map((b) => BD[b]?.sMin || Infinity));
+    return `Saldo R$ ${sal.toFixed(2)} abaixo do mínimo (menor mínimo: R$ ${min})`;
+  }
+  if (todos('pagas')) return `${pag} parcelas pagas — abaixo do mínimo em todos os bancos`;
+  if (todos('troco/valor')) return 'Troco abaixo do mínimo em todos os destinos';
+  return motivos.slice(0, 3).join(' · ');
+}
+
+const fmtR = (v: number) => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** Observação em 1 linha: situação de enquadramento + aceitação bancária do contrato. */
+export function descreverMotivo(reg: ElegivelRow, comp?: CompPorCpf): string {
+  const partes: string[] = [];
+  const st = reg.compStatus || comp?.compStatus || 'sem_dados';
+  if (st === 'sem_dados' || !comp || !comp.benef) {
+    partes.push('Enquadramento não calculado (sem valor do benefício na planilha)');
+  } else {
+    const excEmp = Math.max(0, comp.sumEmp - comp.tetoEmpReal);
+    const excGlob = Math.max(0, comp.total - comp.teto45);
+    const onde = excEmp > 0.01
+      ? `empréstimo ${fmtR(comp.sumEmp)} > teto 35% ${fmtR(comp.tetoEmpReal)}`
+      : excGlob > 0.01 ? `total ${fmtR(comp.total)} > teto 45% ${fmtR(comp.teto45)}` : '';
+    if (st === 'dentro_regra') {
+      partes.push(`Enquadra (comprometimento ${comp.compPct.toFixed(1)}%)`);
+    } else if (st === 'fora_regra_resolvivel') {
+      const sol = reg.viaInconta
+        ? `combo BRB (${comp.viaInconta?.n ?? '?'} contratos) resolve`
+        : reg.resolveExc
+          ? 'este contrato resolve com port+refin'
+          : comp.viaInconta
+            ? `combo BRB (${comp.viaInconta.n} contratos) em outros contratos do CPF`
+            : 'outro contrato do CPF resolve';
+      partes.push(`Fora da regra: excede ${fmtR(comp.excedente)} (${onde}) — ${sol}`);
+    } else if (st === 'fora_regra_inviavel') {
+      partes.push(`Fora da regra: excede ${fmtR(comp.excedente)} (${onde}) — nenhum contrato reduz o suficiente e o combo BRB (até 3) não cobre`);
+    }
+  }
+  if (!reg.ok && !reg._semContrato) {
+    partes.push(`Nenhum banco aceita este contrato: ${reg.motivoSemDestino || 'motivo não identificado'}`);
+  }
+  return partes.join(' | ');
 }

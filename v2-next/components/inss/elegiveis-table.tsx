@@ -1,13 +1,13 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { formatCpf, formatBRL } from '@/lib/utils';
-import { ElegivelRow } from '@/lib/inss-base-parser';
+import { ElegivelRow, descreverMotivo } from '@/lib/inss-base-parser';
 import { ORDEM } from '@/lib/inss-motor';
 import { useInssBaseStore } from '@/hooks/use-inss-base-store';
 import { Search, Download, ShoppingCart, X } from 'lucide-react';
@@ -66,9 +66,9 @@ export function ElegiveisTable() {
     return m;
   }, [base]);
 
-  const filtered = useMemo(() => {
-    if (!base) return [] as ElegivelRow[];
-    let arr = base.elegiveis;
+  // Mesmo pipeline de filtros pra lista (elegíveis) e pro export "todos" (analise).
+  const aplicarFiltros = useCallback((src: ElegivelRow[]) => {
+    let arr = src;
 
     // Sem filtro de "nova regra": tudo que encaixa em algum banco aparece;
     // o enquadramento (compStatus) fica como informação/filtro opcional e a
@@ -136,6 +136,12 @@ export function ElegiveisTable() {
       });
     }
 
+    return arr;
+  }, [f, rmcByCpf]);
+
+  const filtered = useMemo(() => {
+    if (!base) return [] as ElegivelRow[];
+    const arr = aplicarFiltros(base.elegiveis);
     // Ordena: enquadrados POR TROCO desc primeiro, não-enquadrados por REDUÇÃO desc
     const sorted = [...arr].sort((a, b) => {
       const aEnq = a.compStatus === 'dentro_regra';
@@ -149,7 +155,11 @@ export function ElegiveisTable() {
       return bScore - aScore;
     });
     return sorted;
-  }, [base, f, rmcByCpf]);
+  }, [base, aplicarFiltros]);
+
+  // Contagens pros dois exports
+  const nEnquadrados = useMemo(() => filtered.filter((r) => r.elegRealOk === true).length, [filtered]);
+  const nTodos = useMemo(() => (base ? aplicarFiltros(base.analise).length : 0), [base, aplicarFiltros]);
 
   const items = filtered.slice(pg * PER_PAGE, (pg + 1) * PER_PAGE);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
@@ -174,15 +184,21 @@ export function ElegiveisTable() {
   }, [filtered, cpfsFiltroNum, contratosFiltro]);
 
   // Export CSV
-  const exportCSV = () => {
-    if (!filtered.length) return;
+  const exportCSV = (modo: 'enquadrados' | 'todos') => {
+    if (!base) return;
+    // enquadrados = só quem enquadra ou resolve com port+refin;
+    // todos = TODOS os contratos do filtro (inclusive sem banco que aceite), com coluna de motivo.
+    const lista = modo === 'enquadrados'
+      ? filtered.filter((r) => r.elegRealOk === true)
+      : aplicarFiltros(base.analise);
+    if (!lista.length) return;
     const header = [
       'CPF', 'Nome', 'Benefício', 'Contrato', 'Banco origem', 'Parcela', 'Nova parcela estim.', 'Saldo', 'Prazo', 'Pagas',
       'Idade', 'Taxa origem', 'Banco destino', 'Tabela', 'Vlr Contrato', 'Troco 96m', 'Troco 108m', 'Taxa nova',
       'Comp. %', 'Status enquadramento', 'Resolve sozinho', 'Combo BRB', 'Redução estim.',
-      'Banco pagador', 'Banco de rede', 'Tel 1', 'Tel 2', 'Tel 3',
+      'Banco pagador', 'Banco de rede', 'Tel 1', 'Tel 2', 'Tel 3', 'Motivo / Observação',
     ];
-    const rows = filtered.map((r) => [
+    const rows = lista.map((r) => [
       r.cpf, r.nome, r.ben || '', r.con || '', r.cod, r.par, r.parcelaNovaEstim || '', r.sal, r.prazo, r.pag,
       String(r.idade), r.taxaOrig || '',
       r.portRefin108?.banco || r.dest,
@@ -192,6 +208,7 @@ export function ElegiveisTable() {
       r.compPct || '', r.compStatus || '', r.resolveExc ? 'SIM' : '', r.viaInconta ? 'SIM' : '', r.reducaoEstim || '',
       r.bancoPagador || '', r.bancoRede ? (r.bancoRedeConhecido ? 'REDE' : 'concentrado') : '',
       r.t1 || '', r.t2 || '', r.t3 || '',
+      descreverMotivo(r, base.compByCpf[r.cpf]),
     ]);
     const csv = [header, ...rows]
       .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(';'))
@@ -200,7 +217,7 @@ export function ElegiveisTable() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `inss-elegiveis-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `inss-${modo === 'enquadrados' ? 'enquadrados' : 'todos-com-motivo'}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -240,9 +257,15 @@ export function ElegiveisTable() {
             <ShoppingCart className="size-4" />
             {selectedCpfs.size > 0 ? `Limpar (${selectedCpfs.size})` : `Selecionar ${cpfsFiltroNum}`}
           </Button>
-          <Button variant="outline" size="sm" onClick={exportCSV} disabled={!filtered.length}>
+          <Button variant="outline" size="sm" onClick={() => exportCSV('enquadrados')} disabled={!nEnquadrados}
+            title="Só clientes que enquadram ou resolvem com port+refin">
             <Download className="size-4" />
-            Exportar CSV ({filtered.length})
+            Exportar enquadrados ({nEnquadrados})
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => exportCSV('todos')} disabled={!nTodos}
+            title="Todos os contratos do filtro, inclusive sem banco que aceite, com a coluna Motivo / Observação">
+            <Download className="size-4" />
+            Exportar todos + motivo ({nTodos})
           </Button>
         </CardContent>
       </Card>
