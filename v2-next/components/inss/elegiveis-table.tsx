@@ -158,7 +158,8 @@ export function ElegiveisTable() {
   }, [base, aplicarFiltros]);
 
   // Contagens pros dois exports
-  const nEnquadrados = useMemo(() => filtered.filter((r) => r.elegRealOk === true).length, [filtered]);
+  // "Enquadrados" = SÓ quem já está dentro da regra (dono, 14/09). Resolvíveis vão no "todos + motivo".
+  const nEnquadrados = useMemo(() => filtered.filter((r) => r.compStatus === 'dentro_regra').length, [filtered]);
   const nTodos = useMemo(() => (base ? aplicarFiltros(base.analise).length : 0), [base, aplicarFiltros]);
 
   const items = filtered.slice(pg * PER_PAGE, (pg + 1) * PER_PAGE);
@@ -186,12 +187,15 @@ export function ElegiveisTable() {
   // Export CSV
   const exportCSV = (modo: 'enquadrados' | 'todos') => {
     if (!base) return;
-    // enquadrados = só quem enquadra ou resolve com port+refin;
+    // enquadrados = só quem JÁ está dentro da regra (35% emp / 45% total);
     // todos = TODOS os contratos do filtro (inclusive sem banco que aceite), com coluna de motivo.
     const lista = modo === 'enquadrados'
-      ? filtered.filter((r) => r.elegRealOk === true)
+      ? filtered.filter((r) => r.compStatus === 'dentro_regra')
       : aplicarFiltros(base.analise);
     if (!lista.length) return;
+    // Excel transforma CPF/NB/contrato/telefone em numero (6,47E+08, perde zero a
+    // esquerda). Forca texto via formula ="..." — abre certo no Excel/LibreOffice/Sheets.
+    const txt = (v: unknown) => (v == null || v === '' ? '' : `="${String(v)}"`);
     const header = [
       'CPF', 'Nome', 'Benefício', 'Contrato', 'Banco origem', 'Parcela', 'Nova parcela estim.', 'Saldo', 'Prazo', 'Pagas',
       'Idade', 'Taxa origem', 'Banco destino', 'Tabela', 'Vlr Contrato', 'Troco 96m', 'Troco 108m', 'Taxa nova',
@@ -199,7 +203,7 @@ export function ElegiveisTable() {
       'Banco pagador', 'Banco de rede', 'Tel 1', 'Tel 2', 'Tel 3', 'Motivo / Observação',
     ];
     const rows = lista.map((r) => [
-      r.cpf, r.nome, r.ben || '', r.con || '', r.cod, r.par, r.parcelaNovaEstim || '', r.sal, r.prazo, r.pag,
+      txt(r.cpf), r.nome, txt(r.ben), txt(r.con), txt(r.cod), r.par, r.parcelaNovaEstim || '', r.sal, r.prazo, r.pag,
       String(r.idade), r.taxaOrig || '',
       r.portRefin108?.banco || r.dest,
       r.portRefin108?.tabelaUsada || '',
@@ -207,7 +211,7 @@ export function ElegiveisTable() {
       r.portRefin108?.taxa ?? r.taxa,
       r.compPct || '', r.compStatus || '', r.resolveExc ? 'SIM' : '', r.viaInconta ? 'SIM' : '', r.reducaoEstim || '',
       r.bancoPagador || '', r.bancoRede ? (r.bancoRedeConhecido ? 'REDE' : 'concentrado') : '',
-      r.t1 || '', r.t2 || '', r.t3 || '',
+      txt(r.t1), txt(r.t2), txt(r.t3),
       descreverMotivo(r, base.compByCpf[r.cpf]),
     ]);
     const csv = [header, ...rows]
@@ -258,7 +262,7 @@ export function ElegiveisTable() {
             {selectedCpfs.size > 0 ? `Limpar (${selectedCpfs.size})` : `Selecionar ${cpfsFiltroNum}`}
           </Button>
           <Button variant="outline" size="sm" onClick={() => exportCSV('enquadrados')} disabled={!nEnquadrados}
-            title="Só clientes que enquadram ou resolvem com port+refin">
+            title="Só clientes que JÁ estão dentro da regra (emp ≤ 35% e total ≤ 45%)">
             <Download className="size-4" />
             Exportar enquadrados ({nEnquadrados})
           </Button>
