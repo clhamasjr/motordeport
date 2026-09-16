@@ -238,6 +238,46 @@
   padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }
 
+html[data-workspace-theme='dark'] .command-shell,
+html[data-workspace-theme='dark'] .workspace-dialog {
+  --background: 225 24% 7%;
+  --foreground: 42 22% 94%;
+  --card: 225 20% 10%;
+  --card-foreground: 42 22% 94%;
+  --popover: 225 22% 9%;
+  --popover-foreground: 42 22% 94%;
+  --primary: 37 100% 50%;
+  --primary-foreground: 225 24% 7%;
+  --secondary: 224 16% 15%;
+  --secondary-foreground: 42 20% 92%;
+  --muted: 224 15% 14%;
+  --muted-foreground: 220 10% 62%;
+  --accent: 38 18% 88%;
+  --accent-foreground: 225 24% 8%;
+  --border: 222 14% 22%;
+  --input: 222 14% 26%;
+  --ring: 37 100% 50%;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+}
+
+html[data-workspace-theme='dark'] .command-bg {
+  background: #101116;
+}
+
+html[data-workspace-theme='dark'] .workspace-paper {
+  background: hsl(var(--card));
+  box-shadow: 0 24px 70px -52px rgba(0, 0, 0, 0.9);
+}
+
+html[data-workspace-theme='dark'] .command-surface {
+  box-shadow: 0 16px 42px -30px rgba(0, 0, 0, 0.9);
+}
+
+html[data-workspace-theme='dark'] .workspace-ink {
+  background: #1b1c21;
+}
+
 .workspace-ink {
   background: #17181d;
   color: #f8f6f1;

@@ -7,6 +7,7 @@ import { AuthUser, useAuth } from '@/hooks/use-auth';
 import { moduloDoPath } from '@/lib/nav';
 import { InstallPwaButton } from '@/components/install-pwa-button';
 import { MobileNav } from '@/components/mobile-nav';
+import { ThemeToggle } from '@/components/theme-toggle';
 
 export function Topbar({ user }: { user: AuthUser }) {
   const { logout } = useAuth();
@@ -34,6 +35,7 @@ export function Topbar({ user }: { user: AuthUser }) {
       </div>
 
       <InstallPwaButton />
+      <ThemeToggle />
 
       <div className="flex items-center gap-1 sm:gap-2">
         <div className="hidden text-right md:block">

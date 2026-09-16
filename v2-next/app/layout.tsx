@@ -50,7 +50,10 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#0a0e1a',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f4f1eb' },
+    { media: '(prefers-color-scheme: dark)', color: '#101116' },
+  ],
   width: 'device-width',
   initialScale: 1,
   maximumScale: 5,
@@ -64,7 +67,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="pt-BR" className={`dark ${fontSans.variable} ${fontMono.variable}`}>
+    <html lang="pt-BR" className={`dark ${fontSans.variable} ${fontMono.variable}`} suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var k='flowforce-workspace-theme';var s=localStorage.getItem(k);var t=s==='light'||s==='dark'?s:(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.dataset.workspaceTheme=t;document.documentElement.style.colorScheme=t;}catch(e){document.documentElement.dataset.workspaceTheme='light';}})();`,
+          }}
+        />
+      </head>
       <body className="min-h-screen bg-background text-foreground antialiased font-sans">
         <ServiceWorkerRegister />
         <Providers>{children}</Providers>
