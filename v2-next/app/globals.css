@@ -4,33 +4,33 @@
 
 @layer base {
   :root {
-    /* Aurora dark — base profundo, accents vivos */
-    --background: 230 35% 6%;
-    --foreground: 210 40% 98%;
-    --card: 230 30% 9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 230 32% 8%;
+    /* FlowForce Command Center — profundo, técnico e de alto contraste */
+    --background: 224 46% 5%;
+    --foreground: 210 35% 96%;
+    --card: 222 38% 8%;
+    --card-foreground: 210 35% 96%;
+    --popover: 222 42% 7%;
     --popover-foreground: 210 40% 98%;
-    --primary: 217 100% 65%;
-    --primary-foreground: 230 35% 6%;
-    --secondary: 230 25% 14%;
+    --primary: 188 100% 52%;
+    --primary-foreground: 224 46% 5%;
+    --secondary: 222 28% 13%;
     --secondary-foreground: 210 40% 98%;
-    --muted: 230 25% 14%;
-    --muted-foreground: 215 25% 70%;
-    --accent: 280 90% 70%;
-    --accent-foreground: 230 35% 6%;
+    --muted: 222 28% 13%;
+    --muted-foreground: 215 20% 67%;
+    --accent: 258 92% 72%;
+    --accent-foreground: 224 46% 5%;
     --destructive: 0 84% 65%;
     --destructive-foreground: 210 40% 98%;
-    --border: 230 30% 18%;
-    --input: 230 30% 16%;
-    --ring: 217 100% 65%;
-    --radius: 0.875rem;
+    --border: 218 27% 18%;
+    --input: 220 30% 15%;
+    --ring: 188 100% 52%;
+    --radius: 0.625rem;
 
     /* Aurora gradient stops */
-    --aurora-1: 217 100% 60%;  /* azul */
-    --aurora-2: 280 90% 65%;   /* roxo */
-    --aurora-3: 188 95% 60%;   /* cyan */
-    --aurora-4: 320 85% 65%;   /* magenta sutil */
+    --aurora-1: 188 100% 52%;  /* cyan de comando */
+    --aurora-2: 258 92% 72%;   /* violeta elétrico */
+    --aurora-3: 203 100% 58%;  /* azul de sinal */
+    --aurora-4: 160 84% 52%;   /* verde operacional */
   }
 }
 
@@ -45,9 +45,11 @@
   }
   body {
     background-image:
-      radial-gradient(at 8% 12%, hsl(var(--aurora-1) / 0.18) 0px, transparent 50%),
-      radial-gradient(at 92% 8%, hsl(var(--aurora-2) / 0.14) 0px, transparent 50%),
-      radial-gradient(at 50% 100%, hsl(var(--aurora-3) / 0.12) 0px, transparent 50%);
+      linear-gradient(hsl(var(--foreground) / 0.018) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--foreground) / 0.018) 1px, transparent 1px),
+      radial-gradient(at 14% 0%, hsl(var(--aurora-1) / 0.10) 0px, transparent 36%),
+      radial-gradient(at 90% 14%, hsl(var(--aurora-2) / 0.08) 0px, transparent 34%);
+    background-size: 32px 32px, 32px 32px, auto, auto;
     background-attachment: fixed;
     min-height: 100vh;
   }
@@ -128,6 +130,63 @@
   .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
   .scrollbar-thin::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
   .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: hsl(var(--primary) / 0.5); }
+
+  /* FlowForce Command Center */
+  .command-surface {
+    background:
+      linear-gradient(135deg, hsl(var(--foreground) / 0.025), transparent 42%),
+      hsl(var(--card) / 0.72);
+    border: 1px solid hsl(var(--border) / 0.82);
+    box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.025);
+  }
+  .command-hover {
+    transition: border-color .18s ease, background-color .18s ease, transform .18s ease;
+  }
+  .command-hover:hover {
+    border-color: hsl(var(--primary) / 0.42);
+    background-color: hsl(var(--card) / 0.9);
+    transform: translateX(2px);
+  }
+  .command-mark {
+    border-radius: 4px 12px 4px 12px;
+    box-shadow: inset 0 0 0 1px hsl(var(--foreground) / 0.24);
+  }
+  .command-nav-row {
+    position: relative;
+  }
+  .command-nav-row[aria-current="page"]::before {
+    content: "";
+    position: absolute;
+    left: -12px;
+    top: 9px;
+    bottom: 9px;
+    width: 2px;
+    background: hsl(var(--primary));
+  }
+}
+
+.command-shell {
+  isolation: isolate;
+  background: hsl(var(--background) / 0.72);
+}
+
+.command-main {
+  position: relative;
+}
+
+.command-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(hsl(var(--foreground) / 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--foreground) / 0.022) 1px, transparent 1px),
+    radial-gradient(circle at 16% 5%, hsl(var(--primary) / 0.11), transparent 30%),
+    radial-gradient(circle at 90% 10%, hsl(var(--accent) / 0.08), transparent 28%);
+  background-size: 32px 32px, 32px 32px, auto, auto;
+  mask-image: linear-gradient(to bottom, black 0%, rgba(0,0,0,.72) 62%, rgba(0,0,0,.28) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, rgba(0,0,0,.72) 62%, rgba(0,0,0,.28) 100%);
 }
 
 /* Aurora floating background — fica fixo, animação lenta */

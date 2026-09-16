@@ -16,7 +16,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (isLoading || isRedirecting) {
     return (
       <div className="relative min-h-screen">
-        <div className="aurora-bg" aria-hidden />
+        <div className="command-bg" aria-hidden />
         <LoadingState
           className="min-h-screen"
           title={isRedirecting ? 'Redirecionando para o acesso' : 'Carregando sua sessão'}
@@ -29,7 +29,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (error || !user) {
     return (
       <div className="relative flex min-h-screen items-center justify-center p-5">
-        <div className="aurora-bg" aria-hidden />
+        <div className="command-bg" aria-hidden />
         <ErrorState
           className="relative w-full max-w-lg"
           title="Não foi possível carregar sua sessão"
@@ -44,7 +44,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (currentItem && !canAccessItem(currentItem, user.role)) {
     return (
       <div className="relative flex min-h-screen items-center justify-center p-5">
-        <div className="aurora-bg" aria-hidden />
+        <div className="command-bg" aria-hidden />
         <EmptyState
           className="relative w-full max-w-lg"
           title="Acesso não disponível"
@@ -61,18 +61,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="relative flex min-h-screen">
-      <div className="aurora-bg" aria-hidden />
+    <div className="command-shell relative flex min-h-screen">
+      <div className="command-bg" aria-hidden />
       <a
         href="#conteudo-principal"
-        className="fixed left-3 top-3 z-[100] -translate-y-20 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-transform focus:translate-y-0"
+        className="fixed left-3 top-3 z-[100] -translate-y-20 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-transform focus:translate-y-0"
       >
         Ir para o conteúdo
       </a>
       <Sidebar user={user} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar user={user} />
-        <main id="conteudo-principal" className="flex-1 overflow-auto scrollbar-thin">
+        <main id="conteudo-principal" className="command-main flex-1 overflow-auto scrollbar-thin">
           {children}
         </main>
       </div>

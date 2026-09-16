@@ -2,17 +2,17 @@ import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
-const cardVariants = cva('rounded-xl text-card-foreground transition-colors', {
+const cardVariants = cva('rounded-lg text-card-foreground transition-colors', {
   variants: {
     variant: {
-      default: 'glass shadow-lg shadow-black/20',
-      strong: 'glass-strong shadow-xl shadow-black/30',
-      subtle: 'glass-subtle',
-      solid: 'border bg-card shadow',
-      gradient: 'glass border-gradient shadow-lg shadow-black/20',
+      default: 'command-surface',
+      strong: 'command-surface border-primary/20 bg-card/90',
+      subtle: 'border border-border/55 bg-card/35',
+      solid: 'border border-border/80 bg-card shadow-none',
+      gradient: 'command-surface border-gradient',
     },
     interactive: {
-      true: 'glow-hover cursor-pointer',
+      true: 'command-hover cursor-pointer',
       false: '',
     },
   },
