@@ -168,6 +168,7 @@
 
 .command-shell {
   isolation: isolate;
+  color-scheme: light;
   --background: 42 33% 96%;
   --foreground: 222 28% 13%;
   --card: 42 38% 99%;
@@ -217,6 +218,7 @@
 }
 
 .workspace-dialog {
+  color-scheme: light;
   --background: 42 33% 96%;
   --foreground: 222 28% 13%;
   --card: 42 38% 99%;
@@ -240,6 +242,7 @@
 
 html[data-workspace-theme='dark'] .command-shell,
 html[data-workspace-theme='dark'] .workspace-dialog {
+  color-scheme: dark;
   --background: 225 24% 7%;
   --foreground: 42 22% 94%;
   --card: 225 20% 10%;
@@ -276,6 +279,31 @@ html[data-workspace-theme='dark'] .command-surface {
 
 html[data-workspace-theme='dark'] .workspace-ink {
   background: #1b1c21;
+}
+
+.command-shell select,
+.command-shell textarea,
+.workspace-dialog select,
+.workspace-dialog textarea {
+  color: hsl(var(--foreground));
+  background-color: hsl(var(--background));
+}
+
+.command-shell select option,
+.workspace-dialog select option {
+  color: hsl(var(--foreground));
+  background-color: hsl(var(--popover));
+}
+
+.command-shell ::placeholder,
+.workspace-dialog ::placeholder {
+  color: hsl(var(--muted-foreground));
+  opacity: 1;
+}
+
+.command-shell :disabled,
+.workspace-dialog :disabled {
+  opacity: .58;
 }
 
 .workspace-ink {
