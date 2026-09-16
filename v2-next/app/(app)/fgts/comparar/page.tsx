@@ -455,6 +455,8 @@ function LinhaNossaFintech({ cpf, onResult }: { cpf: string; onResult: (r: Resul
 // ════════════════════════════════════════════════════════════════════
 // CARD DE CONSULTA (um por CPF) — cabeçalho + linhas + rodapé
 // ════════════════════════════════════════════════════════════════════
+const FGTS_SOURCE_COUNT = 6;
+
 function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClose: () => void }) {
   const [resultados, setResultados] = useState<Record<Fonte, Resultado | undefined>>({} as Record<Fonte, Resultado | undefined>);
   const onResult = useCallback((r: Resultado) => {
@@ -470,7 +472,7 @@ function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClo
   }, [resultados]);
 
   const processando = Object.values(resultados).some((r) => r?.status === 'processando')
-    || Object.keys(resultados).length < 5;
+    || Object.keys(resultados).length < FGTS_SOURCE_COUNT;
 
   const telDigits = consulta.telefone.replace(/\D/g, '');
 
@@ -515,8 +517,8 @@ function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClo
                 </div>
               )}
             </div>
-            <Button variant="ghost" size="icon" onClick={onClose} title="Fechar">
-              <X className="w-4 h-4" />
+            <Button variant="ghost" size="icon" onClick={onClose} title="Fechar consulta" aria-label="Fechar consulta">
+              <X className="w-4 h-4" aria-hidden />
             </Button>
           </div>
         </div>
@@ -533,6 +535,7 @@ function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClo
 
         {/* Rodapé — melhor oferta */}
         <div className="p-3 border-t border-border bg-secondary/20 flex items-center justify-between gap-3 flex-wrap">
+          <div aria-live="polite">
           {melhor ? (
             <span className="flex items-center gap-2 text-sm">
               <Trophy className="size-4 text-green-400" />
@@ -544,6 +547,7 @@ function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClo
           ) : (
             <span className="text-xs text-muted-foreground">⚠️ Nenhum banco retornou oferta líquida — confira autorização no app FGTS</span>
           )}
+          </div>
           <Button variant="outline" size="sm" className="h-7 text-xs" onClick={copiarWhats}>
             <Copy className="size-3 mr-1" /> Msg pro cliente
           </Button>
@@ -588,7 +592,7 @@ export default function FgtsCompararPage() {
     setPilha((prev) => [nova, ...prev].slice(0, 30));
     setCpf(''); setNome(''); setNascimento(''); setTelefone('');
     setExigirDados(false); setFaltam([]);
-    toast.success('Consultando nos 3 bancos…');
+    toast.success(`Consultando ${FGTS_SOURCE_COUNT} fontes…`);
   }
 
   async function consultar(e: React.FormEvent) {
@@ -640,8 +644,7 @@ export default function FgtsCompararPage() {
           <PiggyBank className="size-6 text-cyan-400" /> FGTS — Consulta comparativa
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Digite o CPF — a gente busca nome e nascimento na nossa base. Os 3 bancos consultam em paralelo,
-          cada linha atualiza sozinha.
+          Digite o CPF para buscar os dados disponíveis. Seis fontes consultam em paralelo e cada linha atualiza de forma independente.
         </p>
       </div>
 
