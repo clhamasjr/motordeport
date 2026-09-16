@@ -23,9 +23,9 @@ export function MobileNav({ user }: { user: AuthUser }) {
           <Menu className="size-5" aria-hidden />
         </Button>
       </SheetTrigger>
-      <SheetContent side="left" className="w-72 p-0 sm:w-80">
+      <SheetContent side="left" className="w-[88vw] max-w-sm p-0 sm:w-96">
         <SheetTitle className="sr-only">Menu de navegação</SheetTitle>
-        <SidebarContent user={user} onNavigate={() => setOpen(false)} />
+        <SidebarContent user={user} onNavigate={() => setOpen(false)} mobile />
       </SheetContent>
     </Sheet>
   );

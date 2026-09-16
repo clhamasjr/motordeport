@@ -6,18 +6,18 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-semibold ring-offset-background transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
         default:
-          'bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_0_1px_hsl(var(--primary)/.25),0_8px_24px_-8px_hsl(var(--primary)/.55)] hover:shadow-[0_0_0_1px_hsl(var(--primary)/.45),0_12px_36px_-8px_hsl(var(--primary)/.7)] hover:-translate-y-px',
+          'bg-primary text-primary-foreground shadow-[0_10px_24px_-14px_hsl(var(--primary)/.72)] hover:bg-primary/90 hover:-translate-y-px',
         gradient:
           'bg-aurora text-primary-foreground shadow-[0_0_0_1px_hsl(var(--primary)/.25),0_8px_28px_-8px_hsl(var(--accent)/.55)] hover:shadow-[0_0_0_1px_hsl(var(--primary)/.45),0_14px_40px_-8px_hsl(var(--accent)/.7)] hover:-translate-y-px',
         destructive:
           'bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-[0_8px_24px_-8px_hsl(var(--destructive)/.55)]',
         outline:
-          'border border-border bg-background/40 backdrop-blur-md hover:bg-accent/10 hover:border-primary/40 hover:text-foreground',
+          'border border-border bg-card hover:border-primary/45 hover:bg-card hover:text-foreground',
         secondary:
           'bg-secondary/70 backdrop-blur-md text-secondary-foreground hover:bg-secondary border border-border/60',
         ghost: 'hover:bg-accent/10 hover:text-foreground',

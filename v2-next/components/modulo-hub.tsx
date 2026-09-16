@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ArrowRight, LockKeyhole } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, LockKeyhole } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { NAV, SECTION_LABEL, agruparPorSecao, getVisibleItems } from '@/lib/nav';
 import { EmptyState } from '@/components/system-state';
@@ -19,36 +19,46 @@ export function ModuloHub({ k }: { k: string }) {
   const primaryItem = visibleItems.find((item) => item.featured) ?? visibleItems[0];
 
   return (
-    <div className="mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8">
-      <Link
-        href="/inicio"
-        className="inline-flex min-h-10 items-center gap-2 rounded-md text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
+    <div className="mx-auto w-full max-w-[1480px] px-4 py-7 sm:px-7 lg:px-10 lg:py-10">
+      <Link href="/inicio" className="inline-flex min-h-10 items-center gap-2 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <ArrowLeft className="size-4" aria-hidden />
-        Todos os módulos
+        Produtos
       </Link>
 
-      <header className="mt-4 border-b border-border/70 pb-8 pt-3 sm:pb-10">
-        <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-4 sm:gap-5">
-            <div className={cn('flex size-14 shrink-0 items-center justify-center rounded-lg border border-border/75 sm:size-16', group.boxClass)}>
+      <header className="mt-4 grid overflow-hidden rounded-[28px] border border-border/65 bg-card xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="p-6 sm:p-9 lg:p-11">
+          <div className="flex items-center gap-4">
+            <span className={cn('flex size-14 shrink-0 items-center justify-center rounded-2xl sm:size-16', group.boxClass)}>
               <GroupIcon className={cn('size-7 sm:size-8', group.iconClass)} aria-hidden />
-            </div>
-            <div className="max-w-2xl">
-              <p className="text-sm font-medium text-[hsl(var(--brand-orange))]">Área de operação</p>
-              <h1 className="mt-1 text-4xl font-semibold tracking-[-0.05em] text-foreground sm:text-5xl">{group.label}</h1>
-              <p className="mt-2 text-base font-medium text-foreground/80">{group.desc}</p>
-              <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">{group.detail}</p>
+            </span>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[hsl(var(--brand-gold))]">Produto FlowForce</p>
+              <p className="mt-1 text-sm text-muted-foreground">{group.desc}</p>
             </div>
           </div>
+          <h1 className="mt-8 text-[clamp(3rem,7vw,6rem)] font-semibold leading-none tracking-[-0.075em] text-foreground">{group.label}</h1>
+          <p className="mt-5 max-w-2xl text-base leading-7 text-muted-foreground">{group.detail}</p>
+        </div>
 
+        <div className="workspace-ink flex flex-col justify-between p-6 sm:p-8">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[hsl(var(--brand-orange))]">Jornada deste produto</p>
+            <ol className="mt-6 space-y-4">
+              {sections.map((section, index) => (
+                <li key={section.section ?? index} className="flex items-start gap-3">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-white/15 text-[10px] font-semibold text-white/70">{index + 1}</span>
+                  <span>
+                    <span className="block text-sm font-semibold text-white">{section.section ? SECTION_LABEL[section.section] : 'Ferramentas'}</span>
+                    <span className="mt-0.5 block text-xs text-white/42">{section.items.length} {section.items.length === 1 ? 'ação disponível' : 'ações disponíveis'}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </div>
           {primaryItem && (
-            <Link
-              href={primaryItem.href}
-              className="group inline-flex min-h-11 shrink-0 items-center justify-center gap-2 self-start rounded-md bg-[hsl(var(--brand-orange))] px-4 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-[hsl(var(--brand-orange)/.9)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:self-auto"
-            >
+            <Link href={primaryItem.href} className="group mt-8 flex min-h-12 items-center justify-between rounded-xl bg-[hsl(var(--brand-orange))] px-4 text-sm font-semibold text-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
               Começar por {primaryItem.label}
-              <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
+              <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" aria-hidden />
             </Link>
           )}
         </div>
@@ -58,49 +68,48 @@ export function ModuloHub({ k }: { k: string }) {
         <EmptyState
           className="mt-8"
           title="Nenhuma ferramenta disponível"
-          description="Seu perfil não possui ferramentas liberadas neste módulo."
-          action={
-            <Link href="/inicio" className="inline-flex items-center gap-2 text-sm font-semibold text-[hsl(var(--brand-orange))] hover:underline">
-              <LockKeyhole className="size-4" aria-hidden />
-              Voltar aos módulos
-            </Link>
-          }
+          description="Seu perfil não possui ferramentas liberadas neste produto."
+          action={<Link href="/inicio" className="inline-flex items-center gap-2 text-sm font-semibold text-[hsl(var(--brand-gold))] hover:underline"><LockKeyhole className="size-4" aria-hidden />Voltar aos produtos</Link>}
         />
       ) : (
-        <div className="mt-9 space-y-10">
+        <div className="mt-12 space-y-14">
           {sections.map((section, sectionIndex) => (
-            <section key={section.section ?? sectionIndex} aria-labelledby={`section-${section.section ?? sectionIndex}`}>
-              <div className="flex items-end justify-between gap-4 border-b border-border/65 pb-3">
-                <div>
-                  <p className="text-xs font-medium text-[hsl(var(--brand-orange))]">Etapa {sectionIndex + 1}</p>
-                  <h2 id={`section-${section.section ?? sectionIndex}`} className="mt-1 text-xl font-semibold tracking-tight text-foreground">
-                    {section.section ? SECTION_LABEL[section.section] : 'Ferramentas'}
-                  </h2>
+            <section key={section.section ?? sectionIndex} className="grid gap-5 lg:grid-cols-[180px_1fr]" aria-labelledby={`section-${section.section ?? sectionIndex}`}>
+              <div className="lg:sticky lg:top-28 lg:self-start">
+                <div className="flex items-center gap-3 lg:block">
+                  <span className="flex size-10 items-center justify-center rounded-full bg-[#17181d] text-sm font-semibold text-white lg:size-12">{sectionIndex + 1}</span>
+                  <div className="lg:mt-4">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[hsl(var(--brand-gold))]">Etapa {sectionIndex + 1}</p>
+                    <h2 id={`section-${section.section ?? sectionIndex}`} className="mt-1 text-xl font-semibold tracking-[-0.035em] text-foreground">
+                      {section.section ? SECTION_LABEL[section.section] : 'Ferramentas'}
+                    </h2>
+                  </div>
                 </div>
-                <span className="text-xs text-muted-foreground">
-                  {section.items.length} {section.items.length === 1 ? 'ferramenta' : 'ferramentas'}
-                </span>
               </div>
 
-              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <div className="workspace-paper overflow-hidden rounded-[22px] border border-border/65">
                 {section.items.map((item) => {
                   const ItemIcon = item.icon;
                   return (
                     <Link
                       key={item.href}
                       href={item.href}
-                      className="command-surface command-hover group flex min-h-40 flex-col rounded-lg p-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="group grid min-h-[112px] grid-cols-[48px_1fr_auto] items-center gap-4 border-b border-border/60 px-5 py-5 last:border-b-0 hover:bg-secondary/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[52px_1fr_140px_auto] sm:px-7"
                     >
-                      <div className="flex items-start justify-between gap-4">
-                        <span className={cn('flex size-10 items-center justify-center rounded-md border border-border/75', group.boxClass)}>
-                          <ItemIcon className={cn('size-4.5', group.iconClass)} aria-hidden />
-                        </span>
-                        <ArrowRight className="size-4 text-muted-foreground/40 transition-transform group-hover:translate-x-0.5 group-hover:text-[hsl(var(--brand-orange))]" aria-hidden />
-                      </div>
-                      <div className="mt-5">
-                        <h3 className="text-base font-semibold tracking-tight text-foreground">{item.label}</h3>
-                        <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.description}</p>
-                      </div>
+                      <span className={cn('flex size-11 items-center justify-center rounded-xl', group.boxClass)}>
+                        <ItemIcon className={cn('size-4.5', group.iconClass)} aria-hidden />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-base font-semibold tracking-tight text-foreground">{item.label}</span>
+                        <span className="mt-1 block text-sm leading-5 text-muted-foreground">{item.description}</span>
+                      </span>
+                      <span className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
+                        <Check className="size-3.5 text-emerald-600" aria-hidden />
+                        Disponível
+                      </span>
+                      <span className="flex size-10 items-center justify-center rounded-full border border-border bg-card transition-colors group-hover:border-[hsl(var(--brand-orange)/.45)] group-hover:bg-[hsl(var(--brand-orange))] group-hover:text-black">
+                        <ArrowRight className="size-4" aria-hidden />
+                      </span>
                     </Link>
                   );
                 })}

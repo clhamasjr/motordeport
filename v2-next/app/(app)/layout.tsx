@@ -15,7 +15,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   if (isLoading || isRedirecting) {
     return (
-      <div className="relative min-h-screen">
+      <div className="command-shell relative min-h-screen">
         <div className="command-bg" aria-hidden />
         <LoadingState
           className="min-h-screen"
@@ -28,7 +28,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   if (error || !user) {
     return (
-      <div className="relative flex min-h-screen items-center justify-center p-5">
+      <div className="command-shell relative flex min-h-screen items-center justify-center p-5">
         <div className="command-bg" aria-hidden />
         <ErrorState
           className="relative w-full max-w-lg"
@@ -43,7 +43,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const currentItem = itemDoPath(pathname);
   if (currentItem && !canAccessItem(currentItem, user.role)) {
     return (
-      <div className="relative flex min-h-screen items-center justify-center p-5">
+      <div className="command-shell relative flex min-h-screen items-center justify-center p-5">
         <div className="command-bg" aria-hidden />
         <EmptyState
           className="relative w-full max-w-lg"

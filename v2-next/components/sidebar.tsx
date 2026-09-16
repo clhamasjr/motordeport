@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, ArrowLeft, ChevronRight, Command, Home } from 'lucide-react';
+import { Activity, ArrowLeft, Command, Home } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { AuthUser } from '@/hooks/use-auth';
 import {
@@ -17,83 +17,192 @@ import {
 type SidebarContentProps = {
   user: AuthUser;
   onNavigate?: () => void;
+  mobile?: boolean;
 };
 
-const linkFocus = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
+const focusRing = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--brand-orange))] focus-visible:ring-offset-2 focus-visible:ring-offset-[#17181d]';
 
-export function SidebarContent({ user, onNavigate }: SidebarContentProps) {
+export function SidebarContent({ user, onNavigate, mobile = false }: SidebarContentProps) {
   const pathname = usePathname();
   const currentModule = moduloDoPath(pathname);
 
-  return (
-    <div className="flex h-full flex-col border-r border-border/70 bg-[hsl(var(--background)/.94)] backdrop-blur-xl">
-      <div className="border-b border-border/65 p-4 pr-14 lg:pr-4">
-        <Link href="/inicio" onClick={onNavigate} className={cn('group flex items-center gap-3 rounded-md', linkFocus)}>
-          <div className="command-mark flex size-10 items-center justify-center bg-[hsl(var(--brand-orange))] text-black">
-            <Command className="size-5" aria-hidden />
-          </div>
-          <div className="min-w-0">
-            <div className="text-sm font-extrabold tracking-[-0.02em] text-foreground">FlowForce</div>
-            <div className="truncate text-[10px] text-muted-foreground">Uma plataforma LhamasCred</div>
-          </div>
-        </Link>
-      </div>
-
-      <nav aria-label="Navegação principal" className="flex-1 overflow-y-auto p-3 scrollbar-thin">
-        <div className="space-y-1">
-          <TopLink href="/inicio" icon={Home} label="Início" active={pathname === '/inicio'} onNavigate={onNavigate} />
-          {user.role === 'admin' && (
-            <TopLink href="/orquestrador" icon={Activity} label="Orquestrador" active={pathname === '/orquestrador'} onNavigate={onNavigate} />
+  if (mobile) {
+    return (
+      <div className="workspace-context flex h-full flex-col">
+        <BrandHeader onNavigate={onNavigate} />
+        <div className="flex-1 overflow-y-auto p-4 scrollbar-thin">
+          <PrimaryLinks pathname={pathname} user={user} onNavigate={onNavigate} />
+          {currentModule ? (
+            <ModuleContext module={currentModule} pathname={pathname} user={user} onNavigate={onNavigate} mobile />
+          ) : (
+            <MobileProductList user={user} onNavigate={onNavigate} />
           )}
         </div>
+        <Endorsement />
+      </div>
+    );
+  }
 
-        {currentModule ? (
-          <ModuleNavigation module={currentModule} pathname={pathname} user={user} onNavigate={onNavigate} />
-        ) : (
-          <ModuleList user={user} onNavigate={onNavigate} />
-        )}
-      </nav>
-
-      <div className="border-t border-border/65 px-4 py-3 text-center text-[10px] text-muted-foreground/65">
-        FlowForce · LhamasCred
+  return (
+    <div className="flex h-full">
+      <ProductRail pathname={pathname} user={user} onNavigate={onNavigate} />
+      <div className="workspace-context flex min-w-0 flex-1 flex-col border-r border-white/5">
+        <ContextHeader currentModule={currentModule} />
+        <div className="flex-1 overflow-y-auto px-3 pb-4 scrollbar-thin">
+          {currentModule ? (
+            <ModuleContext module={currentModule} pathname={pathname} user={user} onNavigate={onNavigate} />
+          ) : (
+            <WorkspaceContext pathname={pathname} user={user} onNavigate={onNavigate} />
+          )}
+        </div>
+        <Endorsement />
       </div>
     </div>
   );
 }
 
-function TopLink({ href, icon: Icon, label, active, onNavigate }: {
-  href: string; icon: React.ElementType; label: string; active: boolean; onNavigate?: () => void;
+function ProductRail({ pathname, user, onNavigate }: { pathname: string; user: AuthUser; onNavigate?: () => void }) {
+  const groups = getVisibleGroups(user.role);
+  const current = moduloDoPath(pathname);
+
+  return (
+    <nav aria-label="Produtos FlowForce" className="workspace-rail flex w-[72px] shrink-0 flex-col items-center border-r border-white/5 py-3">
+      <RailLink href="/inicio" label="FlowForce" active={pathname === '/inicio'} onNavigate={onNavigate} prominent>
+        <Command className="size-5" aria-hidden />
+      </RailLink>
+
+      <div className="my-3 h-px w-7 bg-white/10" aria-hidden />
+
+      <RailLink href="/inicio" label="Início" active={pathname === '/inicio'} onNavigate={onNavigate}>
+        <Home className="size-4.5" aria-hidden />
+      </RailLink>
+      {user.role === 'admin' && (
+        <RailLink href="/orquestrador" label="Orquestrador" active={pathname === '/orquestrador'} onNavigate={onNavigate}>
+          <Activity className="size-4.5" aria-hidden />
+        </RailLink>
+      )}
+
+      <div className="my-3 h-px w-7 bg-white/10" aria-hidden />
+
+      <div className="flex flex-1 flex-col gap-1.5">
+        {groups.map((group) => {
+          const Icon = group.icon;
+          return (
+            <RailLink key={group.k} href={group.base} label={group.label} active={current?.k === group.k} onNavigate={onNavigate}>
+              <Icon className={cn('size-4.5', current?.k === group.k ? 'text-[#111216]' : group.iconClass)} aria-hidden />
+            </RailLink>
+          );
+        })}
+      </div>
+
+      <div className="mb-1 size-2 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,.12)]" title="Sistema disponível" aria-label="Sistema disponível" />
+    </nav>
+  );
+}
+
+function RailLink({ href, label, active, onNavigate, prominent, children }: {
+  href: string;
+  label: string;
+  active: boolean;
+  onNavigate?: () => void;
+  prominent?: boolean;
+  children: React.ReactNode;
 }) {
   return (
     <Link
       href={href}
       onClick={onNavigate}
+      aria-label={label}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'command-nav-row flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors',
-        linkFocus,
-        active ? 'bg-[hsl(var(--brand-orange)/.1)] text-foreground' : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground',
+        'group relative mb-1 flex size-11 items-center justify-center rounded-xl transition-all duration-150 ease-out',
+        focusRing,
+        prominent && 'mb-2 bg-[hsl(var(--brand-orange))] text-[#111216] shadow-[0_10px_26px_-12px_rgba(255,159,10,.8)]',
+        !prominent && active && 'bg-[hsl(var(--brand-orange))] text-[#111216]',
+        !prominent && !active && 'text-white/55 hover:bg-white/[0.07] hover:text-white',
       )}
     >
-      <Icon className={cn('size-4', active && 'text-[hsl(var(--brand-orange))]')} aria-hidden />
-      <span>{label}</span>
+      {children}
+      <span className="workspace-rail-tip absolute left-[calc(100%+12px)] z-50 whitespace-nowrap rounded-md bg-[#111216] px-2.5 py-1.5 text-xs font-medium text-white shadow-xl">
+        {label}
+      </span>
     </Link>
   );
 }
 
-function ModuleList({ user, onNavigate }: { user: AuthUser; onNavigate?: () => void }) {
+function ContextHeader({ currentModule }: { currentModule: NavGroup | null }) {
+  return (
+    <div className="border-b border-white/[0.07] px-5 py-5">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[hsl(var(--brand-orange))]">
+        {currentModule ? 'Produto' : 'Workspace'}
+      </div>
+      <div className="mt-2 text-lg font-semibold tracking-[-0.025em] text-white">
+        {currentModule?.label || 'Visão geral'}
+      </div>
+      <p className="mt-1 text-xs leading-5 text-white/48">
+        {currentModule?.desc || 'Acesse produtos, tarefas e saúde da operação.'}
+      </p>
+    </div>
+  );
+}
+
+function BrandHeader({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <div className="border-b border-white/[0.07] px-5 py-5 pr-14">
+      <Link href="/inicio" onClick={onNavigate} className={cn('flex items-center gap-3 rounded-md', focusRing)}>
+        <span className="flex size-10 items-center justify-center rounded-xl bg-[hsl(var(--brand-orange))] text-[#111216]">
+          <Command className="size-5" aria-hidden />
+        </span>
+        <span>
+          <span className="block text-sm font-extrabold tracking-[-0.02em] text-white">FlowForce</span>
+          <span className="block text-[10px] text-white/45">Uma plataforma LhamasCred</span>
+        </span>
+      </Link>
+    </div>
+  );
+}
+
+function PrimaryLinks({ pathname, user, onNavigate }: { pathname: string; user: AuthUser; onNavigate?: () => void }) {
+  return (
+    <div className="space-y-1">
+      <ContextLink href="/inicio" icon={Home} label="Início" active={pathname === '/inicio'} onNavigate={onNavigate} />
+      {user.role === 'admin' && (
+        <ContextLink href="/orquestrador" icon={Activity} label="Orquestrador" active={pathname === '/orquestrador'} onNavigate={onNavigate} />
+      )}
+    </div>
+  );
+}
+
+function WorkspaceContext({ pathname, user, onNavigate }: { pathname: string; user: AuthUser; onNavigate?: () => void }) {
   const groups = getVisibleGroups(user.role);
   return (
-    <div className="mt-6">
-      <div className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/65">Módulos</div>
-      <div className="space-y-0.5">
+    <div className="pt-4">
+      <PrimaryLinks pathname={pathname} user={user} onNavigate={onNavigate} />
+      <div className="mb-2 mt-7 px-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">Produtos</div>
+      <div className="space-y-1">
         {groups.map((group) => {
           const Icon = group.icon;
           return (
-            <Link key={group.k} href={group.base} onClick={onNavigate} className={cn('group flex min-h-11 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground', linkFocus)}>
-              <span className={cn('flex size-8 items-center justify-center rounded-md border border-border/65', group.boxClass)}><Icon className={cn('size-4', group.iconClass)} aria-hidden /></span>
-              <span className="flex-1 font-medium">{group.label}</span>
-              <ChevronRight className="size-3.5 text-muted-foreground/35 transition-transform group-hover:translate-x-0.5" aria-hidden />
+            <ContextLink key={group.k} href={group.base} icon={Icon} label={group.label} active={false} onNavigate={onNavigate} tone={group.iconClass} />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MobileProductList({ user, onNavigate }: { user: AuthUser; onNavigate?: () => void }) {
+  const groups = getVisibleGroups(user.role);
+  return (
+    <div className="mt-7">
+      <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">Produtos</div>
+      <div className="grid grid-cols-2 gap-2">
+        {groups.map((group) => {
+          const Icon = group.icon;
+          return (
+            <Link key={group.k} href={group.base} onClick={onNavigate} className={cn('flex min-h-20 flex-col justify-between rounded-xl border border-white/[0.08] bg-white/[0.035] p-3 text-white transition-colors hover:bg-white/[0.07]', focusRing)}>
+              <Icon className={cn('size-4.5', group.iconClass)} aria-hidden />
+              <span className="text-sm font-semibold">{group.label}</span>
             </Link>
           );
         })}
@@ -102,52 +211,114 @@ function ModuleList({ user, onNavigate }: { user: AuthUser; onNavigate?: () => v
   );
 }
 
-function ModuleNavigation({ module, pathname, user, onNavigate }: {
-  module: NavGroup; pathname: string; user: AuthUser; onNavigate?: () => void;
+function ModuleContext({ module, pathname, user, onNavigate, mobile = false }: {
+  module: NavGroup;
+  pathname: string;
+  user: AuthUser;
+  onNavigate?: () => void;
+  mobile?: boolean;
 }) {
   const Icon = module.icon;
   const visibleItems = getVisibleItems(module, user.role);
   const sections = agruparPorSecao(visibleItems);
 
   return (
-    <div className="mt-5">
-      <Link href="/inicio" onClick={onNavigate} className={cn('mb-2 flex min-h-10 items-center gap-2 rounded-md px-3 text-xs text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground', linkFocus)}>
-        <ArrowLeft className="size-3.5" aria-hidden />
-        Todos os módulos
-      </Link>
-
-      <Link href={module.base} onClick={onNavigate} aria-current={pathname === module.base ? 'page' : undefined} className={cn('command-nav-row flex min-h-12 items-center gap-3 rounded-md px-3 transition-colors', linkFocus, pathname === module.base ? 'bg-[hsl(var(--brand-orange)/.1)]' : 'hover:bg-secondary/40')}>
-        <span className={cn('flex size-8 items-center justify-center rounded-md border border-border/65', module.boxClass)}><Icon className={cn('size-4', module.iconClass)} aria-hidden /></span>
-        <span className="flex-1 text-sm font-semibold">{module.label}</span>
-      </Link>
-
-      {visibleItems.length === 0 ? (
-        <p className="mx-3 mt-3 border border-dashed border-border p-3 text-xs leading-5 text-muted-foreground">Nenhuma ferramenta disponível para seu perfil.</p>
-      ) : (
-        <div className="mt-2">
-          {sections.map((section, index) => (
-            <div key={section.section ?? index} className="mt-4">
-              {section.section && <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/65">{SECTION_LABEL[section.section]}</div>}
-              <div className="space-y-0.5">
-                {section.items.map((item) => {
-                  const ItemIcon = item.icon;
-                  const active = pathname === item.href;
-                  return (
-                    <Link key={item.href} href={item.href} onClick={onNavigate} aria-current={active ? 'page' : undefined} title={item.description} className={cn('command-nav-row flex min-h-9 items-center gap-3 rounded-md px-3 text-[13px] transition-colors', linkFocus, active ? 'bg-[hsl(var(--brand-orange)/.1)] font-medium text-foreground' : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground')}>
-                      <ItemIcon className={cn('size-3.5 shrink-0', active && 'text-[hsl(var(--brand-orange))]')} aria-hidden />
-                      <span className="truncate">{item.label}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
+    <div className={cn(mobile ? 'mt-6' : 'pt-4')}>
+      {mobile && (
+        <Link href="/inicio" onClick={onNavigate} className={cn('mb-4 flex min-h-10 items-center gap-2 rounded-lg text-xs text-white/55 hover:text-white', focusRing)}>
+          <ArrowLeft className="size-4" aria-hidden /> Todos os produtos
+        </Link>
       )}
+
+      <Link
+        href={module.base}
+        onClick={onNavigate}
+        aria-current={pathname === module.base ? 'page' : undefined}
+        className={cn(
+          'flex min-h-14 items-center gap-3 rounded-xl border px-3 transition-colors',
+          focusRing,
+          pathname === module.base ? 'border-[hsl(var(--brand-orange)/.55)] bg-[hsl(var(--brand-orange)/.11)]' : 'border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06]',
+        )}
+      >
+        <span className="flex size-9 items-center justify-center rounded-lg bg-white/[0.07]">
+          <Icon className={cn('size-4.5', module.iconClass)} aria-hidden />
+        </span>
+        <span>
+          <span className="block text-sm font-semibold text-white">Visão geral</span>
+          <span className="block text-[10px] text-white/42">{visibleItems.length} ferramentas</span>
+        </span>
+      </Link>
+
+      {sections.map((section, index) => (
+        <div key={section.section ?? index} className="mt-6">
+          {section.section && (
+            <div className="mb-2 px-2 text-[9px] font-semibold uppercase tracking-[0.16em] text-white/32">
+              {SECTION_LABEL[section.section]}
+            </div>
+          )}
+          <div className="space-y-0.5">
+            {section.items.map((item) => {
+              const ItemIcon = item.icon;
+              const active = pathname === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={onNavigate}
+                  aria-current={active ? 'page' : undefined}
+                  title={item.description}
+                  className={cn(
+                    'flex min-h-10 items-center gap-3 rounded-lg px-3 text-[13px] transition-colors',
+                    focusRing,
+                    active ? 'bg-white text-[#17181d] shadow-sm' : 'text-white/58 hover:bg-white/[0.06] hover:text-white',
+                  )}
+                >
+                  <ItemIcon className={cn('size-3.5 shrink-0', active ? 'text-[hsl(var(--brand-gold))]' : 'text-white/38')} aria-hidden />
+                  <span className="truncate">{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ContextLink({ href, icon: Icon, label, active, onNavigate, tone }: {
+  href: string;
+  icon: React.ElementType;
+  label: string;
+  active: boolean;
+  onNavigate?: () => void;
+  tone?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      onClick={onNavigate}
+      aria-current={active ? 'page' : undefined}
+      className={cn(
+        'flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm transition-colors',
+        focusRing,
+        active ? 'bg-white text-[#17181d]' : 'text-white/58 hover:bg-white/[0.06] hover:text-white',
+      )}
+    >
+      <Icon className={cn('size-4', active ? 'text-[hsl(var(--brand-gold))]' : tone || 'text-white/38')} aria-hidden />
+      <span className="font-medium">{label}</span>
+    </Link>
+  );
+}
+
+function Endorsement() {
+  return (
+    <div className="border-t border-white/[0.07] px-5 py-4">
+      <div className="text-[9px] uppercase tracking-[0.16em] text-white/28">Endossado por</div>
+      <div className="mt-1 text-xs font-semibold text-white/62">LhamasCred</div>
     </div>
   );
 }
 
 export function Sidebar({ user }: { user: AuthUser }) {
-  return <aside className="relative z-30 hidden w-64 shrink-0 flex-col lg:flex"><SidebarContent user={user} /></aside>;
+  return <aside className="relative z-30 hidden w-[304px] shrink-0 flex-col lg:flex"><SidebarContent user={user} /></aside>;
 }
