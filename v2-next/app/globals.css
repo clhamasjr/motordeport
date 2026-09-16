@@ -321,6 +321,26 @@ html[data-workspace-theme='dark'] .workspace-ink {
   filter: blur(14px);
 }
 
+@media (max-height: 760px) and (min-width: 640px) {
+  .login-viewport { padding-block: .75rem; }
+  .login-brand-header { margin-bottom: .5rem; }
+  .login-brand-logo { width: 7.5rem; }
+  .login-brand-kicker { margin-top: .5rem; }
+  .login-brand-message { max-width: none; margin-top: .375rem; font-size: .9375rem; line-height: 1.25rem; }
+  .login-panel-content { padding: .875rem 1rem; }
+  .login-heading { font-size: 1.25rem; line-height: 1.75rem; }
+  .login-form { margin-top: .75rem; gap: .625rem; }
+  .login-security { margin-top: .625rem; }
+  .login-footer { display: none; }
+}
+
+@media (max-height: 650px) and (min-width: 640px) {
+  .login-security { display: none; }
+}
+
+html[data-sidebar-collapsed='1'] .workspace-sidebar { width: 72px; }
+html[data-sidebar-collapsed='1'] .workspace-sidebar-context { display: none; }
+
 /* Aurora floating background — fica fixo, animação lenta */
 @keyframes aurora-float {
   0%, 100% { transform: translate3d(0, 0, 0) scale(1); }

@@ -71,7 +71,7 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var k='flowforce-workspace-theme';var s=localStorage.getItem(k);var t=s==='light'||s==='dark'?s:(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.dataset.workspaceTheme=t;document.documentElement.style.colorScheme=t;}catch(e){document.documentElement.dataset.workspaceTheme='light';}})();`,
+            __html: `(function(){try{var k='flowforce-workspace-theme';var s=localStorage.getItem(k);var t=s==='light'||s==='dark'?s:(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.dataset.workspaceTheme=t;document.documentElement.style.colorScheme=t;document.documentElement.dataset.sidebarCollapsed=localStorage.getItem('flowforce-sidebar-collapsed')==='1'?'1':'0';}catch(e){document.documentElement.dataset.workspaceTheme='light';document.documentElement.dataset.sidebarCollapsed='0';}})();`,
           }}
         />
       </head>

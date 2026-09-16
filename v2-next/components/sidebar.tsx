@@ -18,11 +18,12 @@ type SidebarContentProps = {
   user: AuthUser;
   onNavigate?: () => void;
   mobile?: boolean;
+  collapsed?: boolean;
 };
 
 const focusRing = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--brand-orange))] focus-visible:ring-offset-2 focus-visible:ring-offset-[#17181d]';
 
-export function SidebarContent({ user, onNavigate, mobile = false }: SidebarContentProps) {
+export function SidebarContent({ user, onNavigate, mobile = false, collapsed = false }: SidebarContentProps) {
   const pathname = usePathname();
   const currentModule = moduloDoPath(pathname);
 
@@ -46,17 +47,19 @@ export function SidebarContent({ user, onNavigate, mobile = false }: SidebarCont
   return (
     <div className="flex h-full">
       <ProductRail pathname={pathname} user={user} onNavigate={onNavigate} />
-      <div className="workspace-context flex min-w-0 flex-1 flex-col border-r border-white/5">
-        <ContextHeader currentModule={currentModule} />
-        <div className="flex-1 overflow-y-auto px-3 pb-4 scrollbar-thin">
-          {currentModule ? (
-            <ModuleContext module={currentModule} pathname={pathname} user={user} onNavigate={onNavigate} />
-          ) : (
-            <WorkspaceContext pathname={pathname} user={user} onNavigate={onNavigate} />
-          )}
+      {!collapsed && (
+        <div className="workspace-sidebar-context workspace-context flex w-[232px] min-w-0 flex-1 flex-col overflow-hidden border-r border-white/5">
+          <ContextHeader currentModule={currentModule} />
+          <div className="flex-1 overflow-y-auto px-3 pb-4 scrollbar-thin">
+            {currentModule ? (
+              <ModuleContext module={currentModule} pathname={pathname} user={user} onNavigate={onNavigate} />
+            ) : (
+              <WorkspaceContext pathname={pathname} user={user} onNavigate={onNavigate} />
+            )}
+          </div>
+          <Endorsement />
         </div>
-        <Endorsement />
-      </div>
+      )}
     </div>
   );
 }
@@ -319,6 +322,10 @@ function Endorsement() {
   );
 }
 
-export function Sidebar({ user }: { user: AuthUser }) {
-  return <aside className="relative z-30 hidden w-[304px] shrink-0 flex-col lg:flex"><SidebarContent user={user} /></aside>;
+export function Sidebar({ user, collapsed }: { user: AuthUser; collapsed: boolean }) {
+  return (
+    <aside className={cn('workspace-sidebar relative z-30 hidden shrink-0 flex-col transition-[width] duration-200 ease-out lg:flex', collapsed ? 'w-[72px]' : 'w-[304px]')}>
+      <SidebarContent user={user} collapsed={collapsed} />
+    </aside>
+  );
 }
