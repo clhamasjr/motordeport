@@ -1,25 +1,27 @@
 'use client';
 
+import Image from 'next/image';
 import { FormEvent, Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent } from '@/components/ui/card';
 import { api, setToken, ApiError } from '@/lib/api';
 import { toast } from 'sonner';
 import {
   ArrowRight,
-  BriefcaseBusiness,
   Check,
+  Command,
   Eye,
   EyeOff,
+  Fingerprint,
+  Layers3,
   Loader2,
   LockKeyhole,
+  Radio,
+  ScanLine,
   ShieldCheck,
-  Sparkles,
-  Zap,
 } from 'lucide-react';
 
 interface LoginResponse {
@@ -29,21 +31,24 @@ interface LoginResponse {
   error?: string;
 }
 
-const BENEFITS = [
+const CAPABILITIES = [
   {
-    icon: BriefcaseBusiness,
+    code: '01',
+    icon: Layers3,
     title: 'Operação multiproduto',
-    description: 'INSS, CLT, FGTS e convênios em um só ambiente.',
+    description: 'INSS, CLT, FGTS e convênios em uma única camada operacional.',
   },
   {
-    icon: Sparkles,
-    title: 'Fluxos mais rápidos',
-    description: 'Consulte, analise e acompanhe propostas com menos etapas.',
+    code: '02',
+    icon: ScanLine,
+    title: 'Jornadas orientadas',
+    description: 'Comandos, etapas e próximas ações organizados por contexto.',
   },
   {
+    code: '03',
     icon: ShieldCheck,
-    title: 'Acesso protegido',
-    description: 'Ambiente restrito para a equipe e parceiros autorizados.',
+    title: 'Acesso governado',
+    description: 'Cada perfil visualiza somente as ferramentas autorizadas.',
   },
 ];
 
@@ -57,11 +62,10 @@ export default function LoginPage() {
 
 function LoginLoading() {
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden px-6">
-      <div className="aurora-bg" aria-hidden />
-      <div className="flex items-center gap-3 text-sm text-muted-foreground" role="status">
-        <Loader2 className="size-5 animate-spin text-primary" aria-hidden />
-        Preparando acesso seguro…
+    <main className="brand-login-bg relative flex min-h-screen items-center justify-center overflow-hidden px-6">
+      <div className="flex items-center gap-3 font-mono text-xs uppercase tracking-[0.16em] text-muted-foreground" role="status">
+        <Loader2 className="size-5 animate-spin text-[hsl(var(--brand-orange))]" aria-hidden />
+        Preparando portal seguro…
       </div>
     </main>
   );
@@ -93,7 +97,6 @@ function LoginPageInner() {
         router.replace('/inicio');
         return;
       }
-
       setFormError(data.error || 'Não foi possível entrar. Confira seus dados.');
     },
     onError: (error: ApiError) => {
@@ -101,7 +104,6 @@ function LoginPageInner() {
         setFormError('O serviço está temporariamente indisponível. Tente novamente em instantes.');
         return;
       }
-
       setFormError(error.message || 'Não foi possível conectar ao serviço.');
     },
   });
@@ -122,85 +124,107 @@ function LoginPageInner() {
   const isPending = loginMutation.isPending;
 
   return (
-    <main className="relative min-h-screen overflow-hidden">
-      <div className="aurora-bg" aria-hidden />
-      <div className="login-grid" aria-hidden />
+    <main className="brand-login-bg relative min-h-screen overflow-hidden">
+      <div className="brand-login-grid" aria-hidden />
+      <div className="brand-login-chevron" aria-hidden />
 
-      <div className="relative mx-auto grid min-h-screen w-full max-w-7xl items-center gap-10 px-5 py-8 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(380px,440px)] lg:gap-16 lg:px-12 xl:px-16">
-        <section className="hidden max-w-2xl lg:block" aria-labelledby="login-intro-title">
-          <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
-            <Zap className="size-3.5" aria-hidden />
-            Plataforma de crédito LhamasCred
+      <div className="relative grid min-h-screen lg:grid-cols-[minmax(0,1.18fr)_minmax(430px,.82fr)]">
+        <section className="relative hidden min-h-screen flex-col justify-between overflow-hidden border-r border-border/75 px-10 py-8 lg:flex xl:px-16 xl:py-10" aria-labelledby="login-intro-title">
+          <div className="brand-login-orbit" aria-hidden />
+
+          <header className="relative z-10 flex items-center justify-between gap-6">
+            <BrandSignature />
+            <div className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.18em] text-[hsl(var(--brand-silver))]">
+              <span className="size-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_hsl(142_70%_50%/.8)]" aria-hidden />
+              Secure node / online
+            </div>
+          </header>
+
+          <div className="relative z-10 my-auto max-w-3xl py-12">
+            <div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.22em] text-[hsl(var(--brand-orange))]">
+              <span className="h-px w-10 bg-[hsl(var(--brand-orange))]" aria-hidden />
+              Operação LhamasCred
+            </div>
+            <h1 id="login-intro-title" className="mt-7 max-w-3xl text-5xl font-semibold leading-[1.02] tracking-[-0.06em] text-foreground xl:text-7xl">
+              O centro de comando da sua <span className="text-[hsl(var(--brand-silver))]">operação de crédito.</span>
+            </h1>
+            <p className="mt-6 max-w-2xl text-base leading-7 text-muted-foreground xl:text-lg">
+              O FlowForce conecta produtos, jornadas e equipes em uma experiência operacional desenvolvida para a LhamasCred.
+            </p>
+
+            <div className="mt-12 max-w-3xl border-y border-border/70">
+              {CAPABILITIES.map(({ code, icon: Icon, title, description }) => (
+                <div key={code} className="grid min-h-[96px] grid-cols-[42px_42px_1fr] items-center gap-4 border-b border-border/60 py-4 last:border-b-0">
+                  <span className="font-mono text-[10px] text-[hsl(var(--brand-orange))]">{code}</span>
+                  <span className="flex size-10 items-center justify-center border border-border/80 bg-card/40 text-[hsl(var(--brand-silver))]">
+                    <Icon className="size-4" aria-hidden />
+                  </span>
+                  <span>
+                    <span className="block text-sm font-semibold text-foreground">{title}</span>
+                    <span className="mt-1 block text-sm leading-5 text-muted-foreground">{description}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
 
-          <h1 id="login-intro-title" className="max-w-xl text-4xl font-semibold tracking-[-0.035em] text-foreground xl:text-5xl xl:leading-[1.08]">
-            Sua operação financeira, <span className="text-gradient">mais simples e conectada.</span>
-          </h1>
-          <p className="mt-5 max-w-xl text-base leading-7 text-muted-foreground xl:text-lg">
-            Centralize consultas, análises e acompanhamento comercial em uma experiência criada para a rotina da sua equipe.
-          </p>
-
-          <div className="mt-10 grid max-w-xl gap-3">
-            {BENEFITS.map(({ icon: Icon, title, description }) => (
-              <div key={title} className="flex items-start gap-4 rounded-2xl border border-border/60 bg-card/35 p-4 backdrop-blur-sm">
-                <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/20">
-                  <Icon className="size-4.5" aria-hidden />
-                </div>
-                <div>
-                  <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-                  <p className="mt-1 text-sm leading-5 text-muted-foreground">{description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+          <footer className="relative z-10 flex items-center justify-between gap-6 border-t border-border/65 pt-5 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
+            <span>FlowForce Command Center</span>
+            <span className="text-[hsl(var(--brand-orange))]">Powered by LhamasCred</span>
+          </footer>
         </section>
 
-        <section className="mx-auto w-full max-w-md" aria-labelledby="login-title">
-          <div className="mb-6 flex items-center gap-3 lg:hidden">
-            <div className="flex size-11 items-center justify-center rounded-2xl bg-aurora shadow-[0_12px_36px_-14px_hsl(var(--primary)/.9)] ring-1 ring-primary/30">
-              <Zap className="size-5 text-primary-foreground" aria-hidden />
+        <section className="relative flex min-h-screen items-center justify-center px-4 py-6 sm:px-8 lg:px-10 xl:px-16" aria-labelledby="login-title">
+          <div className="w-full max-w-[480px]">
+            <div className="mb-8 lg:hidden">
+              <BrandSignature compact />
+              <div className="mt-8 border-l-2 border-[hsl(var(--brand-orange))] pl-4">
+                <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-[hsl(var(--brand-orange))]">FlowForce Command Center</div>
+                <p className="mt-2 text-lg font-semibold leading-6 text-foreground">O centro de comando da operação LhamasCred.</p>
+              </div>
             </div>
-            <div>
-              <div className="text-lg font-bold leading-tight text-gradient">FlowForce</div>
-              <div className="text-xs text-muted-foreground">Plataforma de crédito LhamasCred</div>
-            </div>
-          </div>
 
-          <Card variant="strong" className="overflow-hidden border-border/80 shadow-2xl shadow-black/35">
-            <CardContent className="p-6 sm:p-8">
-              <div className="hidden items-center gap-3 lg:flex">
-                <div className="flex size-11 items-center justify-center rounded-2xl bg-aurora shadow-[0_12px_36px_-14px_hsl(var(--primary)/.9)] ring-1 ring-primary/30">
-                  <Zap className="size-5 text-primary-foreground" aria-hidden />
+            <div className="mb-5 flex items-center justify-between gap-4 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+              <span>Authentication gateway / 01</span>
+              <span className="flex items-center gap-2 text-primary"><Radio className="size-3" aria-hidden />System live</span>
+            </div>
+
+            <div className="brand-auth-panel relative overflow-hidden border border-border/85 bg-[hsl(var(--card)/.82)]">
+              <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-[hsl(var(--brand-orange))] via-[hsl(var(--brand-silver))] to-primary" aria-hidden />
+              <div className="border-b border-border/70 p-6 sm:p-8">
+                <div className="flex items-center gap-4">
+                  <div className="command-mark flex size-12 items-center justify-center bg-[hsl(var(--brand-orange))] text-black">
+                    <Command className="size-5" aria-hidden />
+                  </div>
+                  <div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-lg font-extrabold uppercase tracking-[0.08em] text-foreground">FlowForce</span>
+                      <span className="font-mono text-[9px] text-primary">CC</span>
+                    </div>
+                    <div className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">by LhamasCred</div>
+                  </div>
                 </div>
-                <div>
-                  <div className="text-lg font-bold leading-tight text-gradient">FlowForce</div>
-                  <div className="text-xs text-muted-foreground">LhamasCred</div>
+
+                <div className="mt-9">
+                  <div className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.16em] text-[hsl(var(--brand-orange))]"><Fingerprint className="size-3.5" aria-hidden />Identificação segura</div>
+                  <h2 id="login-title" className="mt-3 text-3xl font-semibold tracking-[-0.045em] text-foreground">Acesse sua operação</h2>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">Informe suas credenciais autorizadas para abrir o Command Center.</p>
                 </div>
               </div>
 
-              <div className="mt-1 lg:mt-8">
-                <h2 id="login-title" className="text-2xl font-semibold tracking-tight text-foreground">
-                  Acesse sua operação
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  Use as mesmas credenciais cadastradas na plataforma.
-                </p>
-              </div>
-
-              <form onSubmit={onSubmit} className="mt-7 space-y-5" aria-busy={isPending}>
+              <form onSubmit={onSubmit} className="p-6 sm:p-8" aria-busy={isPending}>
                 {formError && (
-                  <div
-                    id="login-error"
-                    role="alert"
-                    className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm leading-5 text-destructive"
-                  >
+                  <div id="login-error" role="alert" className="mb-6 flex items-start gap-3 border border-destructive/35 bg-destructive/10 px-4 py-3 text-sm leading-5 text-destructive">
                     <LockKeyhole className="mt-0.5 size-4 shrink-0" aria-hidden />
                     <span>{formError}</span>
                   </div>
                 )}
 
-                <div className="space-y-2">
-                  <Label htmlFor="username">Usuário ou e-mail</Label>
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-4">
+                    <Label htmlFor="username" className="font-mono text-[10px] uppercase tracking-[0.14em] text-[hsl(var(--brand-silver))]">01 / Usuário ou e-mail</Label>
+                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">Required</span>
+                  </div>
                   <Input
                     id="username"
                     name="username"
@@ -216,13 +240,16 @@ function LoginPageInner() {
                     }}
                     disabled={isPending}
                     aria-describedby={formError ? 'login-error' : undefined}
-                    className="h-12 bg-background/55 px-4"
+                    className="h-13 rounded-none border-border/85 bg-background/65 px-4 text-base focus-visible:border-[hsl(var(--brand-orange))] focus-visible:ring-[hsl(var(--brand-orange))]"
                     autoFocus
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="password">Senha</Label>
+                <div className="mt-5 space-y-2.5">
+                  <div className="flex items-center justify-between gap-4">
+                    <Label htmlFor="password" className="font-mono text-[10px] uppercase tracking-[0.14em] text-[hsl(var(--brand-silver))]">02 / Senha</Label>
+                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">Encrypted</span>
+                  </div>
                   <div className="relative">
                     <Input
                       id="password"
@@ -237,12 +264,12 @@ function LoginPageInner() {
                       }}
                       disabled={isPending}
                       aria-describedby={formError ? 'login-error' : undefined}
-                      className="h-12 bg-background/55 px-4 pr-12"
+                      className="h-13 rounded-none border-border/85 bg-background/65 px-4 pr-12 text-base focus-visible:border-[hsl(var(--brand-orange))] focus-visible:ring-[hsl(var(--brand-orange))]"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword((visible) => !visible)}
-                      className="absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-r-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                      className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--brand-orange))]"
                       aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
                       aria-pressed={showPassword}
                       disabled={isPending}
@@ -252,33 +279,37 @@ function LoginPageInner() {
                   </div>
                 </div>
 
-                <Button type="submit" variant="gradient" size="lg" className="w-full" disabled={isPending}>
+                <Button type="submit" size="lg" className="mt-7 h-13 w-full rounded-none bg-[hsl(var(--brand-orange))] font-semibold text-black shadow-none hover:bg-[hsl(var(--brand-orange)/.9)] hover:shadow-none" disabled={isPending}>
                   {isPending ? (
-                    <>
-                      <Loader2 className="size-4 animate-spin" aria-hidden />
-                      Validando acesso…
-                    </>
+                    <><Loader2 className="size-4 animate-spin" aria-hidden />Validando acesso…</>
                   ) : (
-                    <>
-                      Entrar na plataforma
-                      <ArrowRight className="size-4" aria-hidden />
-                    </>
+                    <><span>Entrar no Command Center</span><ArrowRight className="size-4" aria-hidden /></>
                   )}
                 </Button>
+
+                <div className="mt-6 flex items-center justify-center gap-2 font-mono text-[9px] uppercase tracking-[0.13em] text-muted-foreground">
+                  <Check className="size-3.5 text-emerald-400" aria-hidden />
+                  Acesso restrito a usuários autorizados
+                </div>
               </form>
+            </div>
 
-              <div className="mt-6 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                <Check className="size-3.5 text-emerald-400" aria-hidden />
-                Acesso restrito a usuários autorizados
-              </div>
-            </CardContent>
-          </Card>
-
-          <p className="mt-5 text-center text-[11px] leading-5 text-muted-foreground/70">
-            Ao continuar, você confirma que está autorizado a acessar os dados desta operação.
-          </p>
+            <p className="mt-5 text-center text-[11px] leading-5 text-muted-foreground/70">Ao continuar, você confirma que está autorizado a acessar os dados desta operação.</p>
+          </div>
         </section>
       </div>
     </main>
+  );
+}
+
+function BrandSignature({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className="flex items-center gap-3">
+      <Image src="/brand/lhamascred-mark.png" alt="" width={143} height={191} className={compact ? 'h-12 w-auto' : 'h-14 w-auto'} priority />
+      <div>
+        <div className="brand-wordmark text-xl font-black italic leading-none tracking-[-0.045em] sm:text-2xl">LHAMASCRED</div>
+        <div className="mt-1 font-mono text-[8px] uppercase tracking-[0.22em] text-[hsl(var(--brand-silver))]">Promotora de crédito</div>
+      </div>
+    </div>
   );
 }
