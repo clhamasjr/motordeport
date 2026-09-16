@@ -67,11 +67,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="pt-BR" className={`dark ${fontSans.variable} ${fontMono.variable}`} suppressHydrationWarning>
+    <html lang="pt-BR" className={`${fontSans.variable} ${fontMono.variable}`} suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var k='flowforce-workspace-theme';var s=localStorage.getItem(k);var t=s==='light'||s==='dark'?s:(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.dataset.workspaceTheme=t;document.documentElement.style.colorScheme=t;document.documentElement.dataset.sidebarCollapsed=localStorage.getItem('flowforce-sidebar-collapsed')==='1'?'1':'0';}catch(e){document.documentElement.dataset.workspaceTheme='light';document.documentElement.dataset.sidebarCollapsed='0';}})();`,
+            __html: `(function(){try{var r=document.documentElement,k='flowforce-workspace-theme',s=localStorage.getItem(k),t=s==='light'||s==='dark'?s:(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');r.dataset.workspaceTheme=t;r.classList.toggle('dark',t==='dark');r.style.colorScheme=t;r.dataset.sidebarCollapsed=localStorage.getItem('flowforce-sidebar-collapsed')==='1'?'1':'0';}catch(e){var r=document.documentElement;r.dataset.workspaceTheme='light';r.classList.remove('dark');r.style.colorScheme='light';r.dataset.sidebarCollapsed='0';}})();`,
           }}
         />
       </head>

@@ -3,28 +3,40 @@
 import { useEffect, useState } from 'react';
 import { Moon, Sun } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-
-const STORAGE_KEY = 'flowforce-workspace-theme';
-type WorkspaceTheme = 'light' | 'dark';
-
-function currentTheme(): WorkspaceTheme {
-  if (typeof document === 'undefined') return 'light';
-  return document.documentElement.dataset.workspaceTheme === 'dark' ? 'dark' : 'light';
-}
+import {
+  applyWorkspaceTheme,
+  getWorkspaceTheme,
+  WORKSPACE_THEME_EVENT,
+  WORKSPACE_THEME_STORAGE_KEY,
+  type WorkspaceTheme,
+} from '@/lib/workspace-theme';
 
 export function ThemeToggle() {
   const [theme, setTheme] = useState<WorkspaceTheme>('light');
 
   useEffect(() => {
-    setTheme(currentTheme());
+    setTheme(getWorkspaceTheme());
+
+    function onThemeChange(event: Event) {
+      setTheme((event as CustomEvent<WorkspaceTheme>).detail);
+    }
+
+    function onStorage(event: StorageEvent) {
+      if (event.key !== WORKSPACE_THEME_STORAGE_KEY) return;
+      const nextTheme: WorkspaceTheme = event.newValue === 'dark' ? 'dark' : 'light';
+      applyWorkspaceTheme(nextTheme, { persist: false });
+    }
+
+    window.addEventListener(WORKSPACE_THEME_EVENT, onThemeChange);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(WORKSPACE_THEME_EVENT, onThemeChange);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   function toggleTheme() {
-    const nextTheme: WorkspaceTheme = theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.workspaceTheme = nextTheme;
-    document.documentElement.style.colorScheme = nextTheme;
-    window.localStorage.setItem(STORAGE_KEY, nextTheme);
-    setTheme(nextTheme);
+    applyWorkspaceTheme(theme === 'dark' ? 'light' : 'dark');
   }
 
   const dark = theme === 'dark';
@@ -36,7 +48,7 @@ export function ThemeToggle() {
       size="icon"
       onClick={toggleTheme}
       aria-label={dark ? 'Ativar modo claro' : 'Ativar modo escuro'}
-      title={dark ? 'Modo claro' : 'Modo escuro'}
+      title={dark ? 'Ativar modo claro' : 'Ativar modo escuro'}
       aria-pressed={dark}
       className="relative overflow-hidden"
     >

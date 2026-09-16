@@ -122,7 +122,7 @@ function RailLink({ href, label, active, onNavigate, prominent, children }: {
         focusRing,
         prominent && 'mb-2 bg-[hsl(var(--brand-orange))] text-[#111216] shadow-[0_10px_26px_-12px_rgba(255,159,10,.8)]',
         !prominent && active && 'bg-[hsl(var(--brand-orange))] text-[#111216]',
-        !prominent && !active && 'text-white/55 hover:bg-white/[0.07] hover:text-white',
+        !prominent && !active && 'text-white/70 hover:bg-white/[0.07] hover:text-white',
       )}
     >
       {children}
@@ -142,7 +142,7 @@ function ContextHeader({ currentModule }: { currentModule: NavGroup | null }) {
       <div className="mt-2 text-lg font-semibold tracking-[-0.025em] text-white">
         {currentModule?.label || 'Visão geral'}
       </div>
-      <p className="mt-1 text-xs leading-5 text-white/48">
+      <p className="mt-1 text-xs leading-5 text-white/65">
         {currentModule?.desc || 'Acesse produtos, tarefas e saúde da operação.'}
       </p>
     </div>
@@ -158,7 +158,7 @@ function BrandHeader({ onNavigate }: { onNavigate?: () => void }) {
         </span>
         <span>
           <span className="block text-sm font-extrabold tracking-[-0.02em] text-white">FlowForce</span>
-          <span className="block text-[10px] text-white/45">Uma plataforma LhamasCred</span>
+          <span className="block text-[10px] text-white/65">Uma plataforma LhamasCred</span>
         </span>
       </Link>
     </div>
@@ -181,7 +181,7 @@ function WorkspaceContext({ pathname, user, onNavigate }: { pathname: string; us
   return (
     <div className="pt-4">
       <PrimaryLinks pathname={pathname} user={user} onNavigate={onNavigate} />
-      <div className="mb-2 mt-7 px-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">Produtos</div>
+      <div className="mb-2 mt-7 px-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/55">Produtos</div>
       <div className="space-y-1">
         {groups.map((group) => {
           const Icon = group.icon;
@@ -198,7 +198,7 @@ function MobileProductList({ user, onNavigate }: { user: AuthUser; onNavigate?: 
   const groups = getVisibleGroups(user.role);
   return (
     <div className="mt-7">
-      <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">Produtos</div>
+      <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/55">Produtos</div>
       <div className="grid grid-cols-2 gap-2">
         {groups.map((group) => {
           const Icon = group.icon;
@@ -228,7 +228,7 @@ function ModuleContext({ module, pathname, user, onNavigate, mobile = false }: {
   return (
     <div className={cn(mobile ? 'mt-6' : 'pt-4')}>
       {mobile && (
-        <Link href="/inicio" onClick={onNavigate} className={cn('mb-4 flex min-h-10 items-center gap-2 rounded-lg text-xs text-white/55 hover:text-white', focusRing)}>
+        <Link href="/inicio" onClick={onNavigate} className={cn('mb-4 flex min-h-10 items-center gap-2 rounded-lg text-xs text-white/70 hover:text-white', focusRing)}>
           <ArrowLeft className="size-4" aria-hidden /> Todos os produtos
         </Link>
       )}
@@ -248,14 +248,14 @@ function ModuleContext({ module, pathname, user, onNavigate, mobile = false }: {
         </span>
         <span>
           <span className="block text-sm font-semibold text-white">Visão geral</span>
-          <span className="block text-[10px] text-white/42">{visibleItems.length} ferramentas</span>
+          <span className="block text-[10px] text-white/65">{visibleItems.length} ferramentas</span>
         </span>
       </Link>
 
       {sections.map((section, index) => (
         <div key={section.section ?? index} className="mt-6">
           {section.section && (
-            <div className="mb-2 px-2 text-[9px] font-semibold uppercase tracking-[0.16em] text-white/32">
+            <div className="mb-2 px-2 text-[9px] font-semibold uppercase tracking-[0.16em] text-white/55">
               {SECTION_LABEL[section.section]}
             </div>
           )}
@@ -273,10 +273,10 @@ function ModuleContext({ module, pathname, user, onNavigate, mobile = false }: {
                   className={cn(
                     'flex min-h-10 items-center gap-3 rounded-lg px-3 text-[13px] transition-colors',
                     focusRing,
-                    active ? 'bg-white text-[#17181d] shadow-sm' : 'text-white/58 hover:bg-white/[0.06] hover:text-white',
+                    active ? 'bg-white text-[#17181d] shadow-sm' : 'text-white/72 hover:bg-white/[0.06] hover:text-white',
                   )}
                 >
-                  <ItemIcon className={cn('size-3.5 shrink-0', active ? 'text-[hsl(var(--brand-gold))]' : 'text-white/38')} aria-hidden />
+                  <ItemIcon className={cn('size-3.5 shrink-0', active ? 'text-[hsl(var(--brand-gold))]' : 'text-white/58')} aria-hidden />
                   <span className="truncate">{item.label}</span>
                 </Link>
               );
@@ -304,10 +304,10 @@ function ContextLink({ href, icon: Icon, label, active, onNavigate, tone }: {
       className={cn(
         'flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm transition-colors',
         focusRing,
-        active ? 'bg-white text-[#17181d]' : 'text-white/58 hover:bg-white/[0.06] hover:text-white',
+        active ? 'bg-white text-[#17181d]' : 'text-white/72 hover:bg-white/[0.06] hover:text-white',
       )}
     >
-      <Icon className={cn('size-4', active ? 'text-[hsl(var(--brand-gold))]' : tone || 'text-white/38')} aria-hidden />
+      <Icon className={cn('size-4', active ? 'text-[hsl(var(--brand-gold))]' : tone || 'text-white/58')} aria-hidden />
       <span className="font-medium">{label}</span>
     </Link>
   );
@@ -316,8 +316,8 @@ function ContextLink({ href, icon: Icon, label, active, onNavigate, tone }: {
 function Endorsement() {
   return (
     <div className="border-t border-white/[0.07] px-5 py-4">
-      <div className="text-[9px] uppercase tracking-[0.16em] text-white/28">Endossado por</div>
-      <div className="mt-1 text-xs font-semibold text-white/62">LhamasCred</div>
+      <div className="text-[9px] uppercase tracking-[0.16em] text-white/50">Endossado por</div>
+      <div className="mt-1 text-xs font-semibold text-white/72">LhamasCred</div>
     </div>
   );
 }

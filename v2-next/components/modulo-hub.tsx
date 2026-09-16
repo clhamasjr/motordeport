@@ -46,10 +46,10 @@ export function ModuloHub({ k }: { k: string }) {
             <ol className="mt-6 space-y-4">
               {sections.map((section, index) => (
                 <li key={section.section ?? index} className="flex items-start gap-3">
-                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-white/15 text-[10px] font-semibold text-white/70">{index + 1}</span>
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-white/20 text-[10px] font-semibold text-white/80">{index + 1}</span>
                   <span>
                     <span className="block text-sm font-semibold text-white">{section.section ? SECTION_LABEL[section.section] : 'Ferramentas'}</span>
-                    <span className="mt-0.5 block text-xs text-white/42">{section.items.length} {section.items.length === 1 ? 'ação disponível' : 'ações disponíveis'}</span>
+                    <span className="mt-0.5 block text-xs text-white/65">{section.items.length} {section.items.length === 1 ? 'ação disponível' : 'ações disponíveis'}</span>
                   </span>
                 </li>
               ))}
