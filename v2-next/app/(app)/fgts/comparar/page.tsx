@@ -432,6 +432,7 @@ function LinhaNossaFintech({ cpf, onResult }: { cpf: string; onResult: (r: Resul
       icon={<Landmark className="size-4 text-cyan-400 shrink-0" />}
       nome="A Nossa Fintech"
       sub="J17 · saque-aniversário"
+      operarHref="/fgts/nossa-fintech"
     >
       {saldo.isPending ? (
         <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" /> consultando…</span>

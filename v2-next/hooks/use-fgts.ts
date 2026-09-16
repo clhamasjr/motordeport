@@ -127,6 +127,108 @@ export function useNossaFintechFgtsSaldo() {
   });
 }
 
+export interface NossaFintechFgtsTabela {
+  id: number;
+  name: string;
+  cod_produto: number;
+  cod_tabela: string;
+  start: number;
+  end: number;
+  amount: number;
+  amount_type: string;
+  disbursement_amount: number;
+}
+
+/** Lista as tabelas FGTS da Nossa Fintech pra um saldo (key) + nº de parcelas. */
+export function useNossaFintechFgtsTabelas() {
+  return useMutation({
+    mutationFn: async (p: {
+      cpf: string; key: string; numberOfInstallments: number;
+      eligibility: boolean; serviceType: string;
+    }) => {
+      const r = await api<{ success: boolean; tabelas?: NossaFintechFgtsTabela[] }>(NOSSAFINTECH, {
+        action: 'fgtsTabelas', cpf: p.cpf.replace(/\D/g, ''), key: p.key,
+        numberOfInstallments: p.numberOfInstallments, eligibility: p.eligibility,
+        serviceType: p.serviceType,
+      });
+      return r.tabelas || [];
+    },
+    onError: (err: Error) => toast.error(err.message || 'Erro ao listar tabelas'),
+  });
+}
+
+export interface NossaFintechFgtsSimulacao {
+  success: boolean;
+  simulationKey?: string | null;
+  disbursedAmount?: number | null;
+  issueAmount?: number | null;
+  iof?: number | null;
+  cet?: number | null;
+  codTabela?: string | null;
+  installments?: Array<{ installment_number?: number; due_date?: string; total_amount?: number }>;
+  erro?: string;
+  message?: string;
+}
+
+/** Simula a antecipação (gera simulation_key pra proposta). */
+export function useNossaFintechFgtsSimular() {
+  return useMutation({
+    mutationFn: async (p: {
+      cpf: string; key: string; numberOfInstallments: number;
+      eligibility: boolean; codProduto: number; serviceType: string;
+    }) => {
+      const r = await api<NossaFintechFgtsSimulacao>(NOSSAFINTECH, {
+        action: 'fgtsSimular', cpf: p.cpf.replace(/\D/g, ''), key: p.key,
+        numberOfInstallments: p.numberOfInstallments, eligibility: p.eligibility,
+        codProduto: p.codProduto, serviceType: p.serviceType,
+      });
+      if (!r.success || !r.simulationKey) throw new Error(r.erro || r.message || 'Falha na simulação');
+      return r;
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}
+
+export interface NossaFintechFgtsClient {
+  person_name: string;
+  mother_name: string;
+  birth_date: string; // YYYY-MM-DD
+  profession?: string;
+  nationality?: string;
+  marital_status: string; // single | married | divorced | widowed | separated
+  email: string;
+  country_code?: string;
+  area_code: string;
+  phone_number: string;
+  street: string;
+  state: string;
+  city: string;
+  neighborhood: string;
+  number: string;
+  postal_code: string;
+  complement?: string;
+  bank_account: Array<Record<string, unknown>>;
+}
+
+/** Cria a proposta FGTS → retorna debt_key + link/ccb + líquido. */
+export function useNossaFintechFgtsProposta() {
+  return useMutation({
+    mutationFn: async (p: { serviceType: string; simulationKey: string; client: NossaFintechFgtsClient }) => {
+      const r = await api<{
+        success: boolean; debtKey?: string | null; linkForm?: string | null;
+        ccbPdf?: string | null; numContrato?: string | null; valLiquido?: number | null;
+        situacao?: string | null; erro?: string; message?: string;
+      }>(NOSSAFINTECH, {
+        action: 'fgtsProposta', serviceType: p.serviceType,
+        simulationKey: p.simulationKey, client: p.client,
+      });
+      if (!r.success || !r.debtKey) throw new Error(r.erro || r.message || 'Falha ao criar proposta');
+      return r;
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}
+
 // ══════════════════════════════════════════════════════════════════
 // NOVOSAQUE
 // ══════════════════════════════════════════════════════════════════

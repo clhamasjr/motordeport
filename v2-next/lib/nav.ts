@@ -96,8 +96,9 @@ export const NAV: NavGroup[] = [
     iconClass: 'text-cyan-400',
     boxClass: 'bg-cyan-500/10 ring-cyan-500/25 group-hover:ring-cyan-400/60',
     items: [
-      { href: '/fgts/comparar', label: 'Consulta (3 bancos)', icon: Search, section: 'consultar' },
+      { href: '/fgts/comparar', label: 'Consulta comparativa', icon: Search, section: 'consultar' },
       { href: '/fgts/fintech-corban', label: 'Fintech do Corban (QI/J17)', icon: Landmark, section: 'consultar' },
+      { href: '/fgts/nossa-fintech', label: 'A Nossa Fintech', icon: Landmark, section: 'operar' },
       { href: '/fgts/v8', label: 'V8 Sistema', icon: Zap, section: 'operar' },
       { href: '/fgts/simulacao', label: 'FINANTO', icon: PiggyBank, section: 'operar' },
     ],
