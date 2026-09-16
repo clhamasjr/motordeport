@@ -127,12 +127,6 @@ function LoginPageInner() {
                 'Entrar'
               )}
             </Button>
-            <p className="text-xs text-center text-muted-foreground pt-2">
-              Mesma senha do{' '}
-              <a href="https://motordeport.vercel.app" className="underline hover:text-primary">
-                sistema V1
-              </a>
-            </p>
           </form>
         </CardContent>
       </Card>
