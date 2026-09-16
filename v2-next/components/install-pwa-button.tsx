@@ -88,19 +88,20 @@ export function InstallPwaButton() {
 
   return (
     <>
-      <div className="flex items-center gap-1">
-        <Button onClick={onInstalar} size="sm" variant="outline" className="gap-1.5 h-8">
-          <Smartphone className="w-3.5 h-3.5" />
+      <div className="hidden items-center gap-1 min-[430px]:flex">
+        <Button onClick={onInstalar} size="sm" variant="outline" className="h-9 gap-1.5">
+          <Smartphone className="size-3.5" aria-hidden />
           <span className="hidden sm:inline">Instalar app</span>
           <span className="sm:hidden">Instalar</span>
         </Button>
         <button
+          type="button"
           onClick={onDispensar}
-          className="text-muted-foreground hover:text-foreground transition-colors p-1"
+          className="flex size-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title="Dispensar"
-          aria-label="Dispensar"
+          aria-label="Dispensar instalação do aplicativo"
         >
-          <X className="w-3 h-3" />
+          <X className="size-3.5" aria-hidden />
         </button>
       </div>
 

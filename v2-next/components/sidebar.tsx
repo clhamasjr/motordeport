@@ -2,120 +2,122 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { ArrowLeft, ChevronRight, Compass, Home, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { AuthUser } from '@/hooks/use-auth';
-import { Home, Zap, Compass, ArrowLeft, ChevronRight } from 'lucide-react';
+import type { AuthUser } from '@/hooks/use-auth';
 import {
-  NAV, SECTION_LABEL, agruparPorSecao, moduloDoPath,
-  type NavItem, type Role,
+  SECTION_LABEL,
+  agruparPorSecao,
+  getVisibleGroups,
+  getVisibleItems,
+  moduloDoPath,
+  type NavGroup,
 } from '@/lib/nav';
 
-/**
- * Conteúdo INTERNO da navegação lateral — CONTEXTUAL por módulo.
- *
- * - Na home (/inicio) ou no /orquestrador: lista os MÓDULOS (atalhos pros hubs).
- * - Dentro de um módulo (ex: /inss/*): mostra só as telas daquele módulo,
- *   agrupadas por seção, + um "← Módulos" pra voltar.
- *
- * Fonte de navegação: lib/nav.ts (compartilhada com as páginas-hub).
- * Usado pela `<Sidebar>` (desktop) e pelo `<MobileNav>` (drawer).
- */
-export function SidebarContent({ user }: { user: AuthUser }) {
+type SidebarContentProps = {
+  user: AuthUser;
+  onNavigate?: () => void;
+};
+
+const linkFocus = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
+
+export function SidebarContent({ user, onNavigate }: SidebarContentProps) {
   const pathname = usePathname();
-  const modulo = moduloDoPath(pathname);
-  const canSee = (item: NavItem) =>
-    !item.needsRole || item.needsRole.includes(user.role as Role);
+  const currentModule = moduloDoPath(pathname);
 
   return (
-    <div className="flex flex-col h-full glass-strong">
-      {/* Logo */}
-      <div className="p-4 border-b border-border/60">
-        <Link href="/inicio" className="flex items-center gap-3 group">
-          <div className="w-9 h-9 rounded-lg bg-aurora flex items-center justify-center ring-1 ring-primary/30 shadow-[0_0_22px_-4px_hsl(var(--primary)/.7)] group-hover:shadow-[0_0_28px_-2px_hsl(var(--accent)/.7)] transition-shadow">
-            <Zap className="w-4 h-4 text-primary-foreground" />
+    <div className="flex h-full flex-col glass-strong">
+      <div className="border-b border-border/60 p-4 pr-14 lg:pr-4">
+        <Link href="/inicio" onClick={onNavigate} className={cn('group flex items-center gap-3 rounded-lg', linkFocus)}>
+          <div className="flex size-9 items-center justify-center rounded-xl bg-aurora shadow-[0_0_22px_-4px_hsl(var(--primary)/.7)] ring-1 ring-primary/30 transition-shadow group-hover:shadow-[0_0_28px_-2px_hsl(var(--accent)/.7)]">
+            <Zap className="size-4 text-primary-foreground" aria-hidden />
           </div>
-          <div>
-            <div className="font-bold text-sm leading-tight text-gradient">FlowForce</div>
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">V2 · Plataforma de crédito</div>
+          <div className="min-w-0">
+            <div className="text-sm font-bold leading-tight text-gradient">FlowForce</div>
+            <div className="truncate text-[10px] uppercase tracking-wider text-muted-foreground">Plataforma de crédito</div>
           </div>
         </Link>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto p-2 space-y-1">
-        <TopLink href="/inicio" icon={Home} label="Início" active={pathname === '/inicio'} />
+      <nav aria-label="Navegação principal" className="flex-1 space-y-1 overflow-y-auto p-2 scrollbar-thin">
+        <TopLink href="/inicio" icon={Home} label="Início" active={pathname === '/inicio'} onNavigate={onNavigate} />
         {user.role === 'admin' && (
-          <TopLink href="/orquestrador" icon={Compass} label="Orquestrador" active={pathname === '/orquestrador'} />
+          <TopLink href="/orquestrador" icon={Compass} label="Orquestrador" active={pathname === '/orquestrador'} onNavigate={onNavigate} />
         )}
 
-        {modulo ? (
-          <ModuloNav modulo={modulo} pathname={pathname} canSee={canSee} />
+        {currentModule ? (
+          <ModuleNavigation module={currentModule} pathname={pathname} user={user} onNavigate={onNavigate} />
         ) : (
-          <ModulosList user={user} />
+          <ModuleList user={user} onNavigate={onNavigate} />
         )}
       </nav>
 
-      {/* Versão */}
-      <div className="p-3 border-t border-border/60">
-        <div className="text-[10px] text-muted-foreground text-center">
-          FlowForce · LhamasCred
-        </div>
+      <div className="border-t border-border/60 p-3">
+        <div className="text-center text-[10px] text-muted-foreground">FlowForce · LhamasCred</div>
       </div>
     </div>
   );
 }
 
-// ── Link de topo (Início, Orquestrador) ────────────────────────────
-function TopLink({ href, icon: Icon, label, active }: { href: string; icon: React.ElementType; label: string; active: boolean }) {
+function TopLink({
+  href,
+  icon: Icon,
+  label,
+  active,
+  onNavigate,
+}: {
+  href: string;
+  icon: React.ElementType;
+  label: string;
+  active: boolean;
+  onNavigate?: () => void;
+}) {
   return (
     <Link
       href={href}
+      onClick={onNavigate}
+      aria-current={active ? 'page' : undefined}
       className={cn(
-        'w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs uppercase tracking-wider font-semibold transition-colors',
-        active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+        'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors',
+        linkFocus,
+        active ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground',
       )}
     >
       <span
         className={cn(
-          'w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 transition-all',
+          'flex size-7 shrink-0 items-center justify-center rounded-lg transition-all',
           active
-            ? 'bg-aurora-subtle ring-1 ring-primary/30 text-foreground shadow-[0_0_14px_-4px_hsl(var(--primary)/.55)]'
+            ? 'bg-aurora-subtle text-foreground shadow-[0_0_14px_-4px_hsl(var(--primary)/.55)] ring-1 ring-primary/30'
             : 'bg-secondary/40 text-muted-foreground',
         )}
       >
-        <Icon className="w-4 h-4" />
+        <Icon className="size-4" aria-hidden />
       </span>
       <span className="flex-1 text-left">{label}</span>
     </Link>
   );
 }
 
-// ── FORA de módulo: lista de módulos (atalhos pros hubs) ────────────
-function ModulosList({ user }: { user: AuthUser }) {
-  const grupos = NAV.filter((g) => {
-    // só mostra o grupo se o user vê ao menos 1 item dele
-    return g.items.some((it) => !it.needsRole || it.needsRole.includes(user.role as Role));
-  });
+function ModuleList({ user, onNavigate }: { user: AuthUser; onNavigate?: () => void }) {
+  const groups = getVisibleGroups(user.role);
+
   return (
     <div className="pt-3">
-      <div className="px-3 pb-1 text-[9px] uppercase tracking-wider font-semibold text-muted-foreground/60">
-        Módulos
-      </div>
-      {grupos.map((g) => {
-        const Icon = g.icon;
-        // Nota: quando pathname === g.base, o SidebarContent renderiza ModuloNav
-        // (não esta lista) — então aqui nunca há item "ativo".
+      <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Módulos</div>
+      {groups.map((group) => {
+        const Icon = group.icon;
         return (
           <Link
-            key={g.k}
-            href={g.base}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+            key={group.k}
+            href={group.base}
+            onClick={onNavigate}
+            className={cn('flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground', linkFocus)}
           >
-            <span className={cn('w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0', g.boxClass)}>
-              <Icon className={cn('w-4 h-4', g.iconClass)} />
+            <span className={cn('flex size-7 shrink-0 items-center justify-center rounded-lg', group.boxClass)}>
+              <Icon className={cn('size-4', group.iconClass)} aria-hidden />
             </span>
-            <span className="flex-1 text-left font-medium">{g.label}</span>
-            <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 flex-shrink-0" />
+            <span className="flex-1 text-left font-medium">{group.label}</span>
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/40" aria-hidden />
           </Link>
         );
       })}
@@ -123,85 +125,95 @@ function ModulosList({ user }: { user: AuthUser }) {
   );
 }
 
-// ── DENTRO de módulo: telas do módulo por seção ─────────────────────
-function ModuloNav({
-  modulo, pathname, canSee,
+function ModuleNavigation({
+  module,
+  pathname,
+  user,
+  onNavigate,
 }: {
-  modulo: NonNullable<ReturnType<typeof moduloDoPath>>;
+  module: NavGroup;
   pathname: string;
-  canSee: (item: NavItem) => boolean;
+  user: AuthUser;
+  onNavigate?: () => void;
 }) {
-  const Icon = modulo.icon;
-  const visiveis = modulo.items.filter(canSee);
-  const secoes = agruparPorSecao(visiveis);
+  const Icon = module.icon;
+  const visibleItems = getVisibleItems(module, user.role);
+  const sections = agruparPorSecao(visibleItems);
 
   return (
     <div className="pt-3">
-      {/* Voltar aos módulos */}
       <Link
         href="/inicio"
-        className="w-full flex items-center gap-2 px-3 py-1.5 mb-1 rounded-md text-xs text-muted-foreground hover:text-foreground transition-colors"
+        onClick={onNavigate}
+        className={cn('mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground', linkFocus)}
       >
-        <ArrowLeft className="w-3.5 h-3.5" />
-        Módulos
+        <ArrowLeft className="size-3.5" aria-hidden />
+        Todos os módulos
       </Link>
 
-      {/* Cabeçalho do módulo atual */}
       <Link
-        href={modulo.base}
+        href={module.base}
+        onClick={onNavigate}
+        aria-current={pathname === module.base ? 'page' : undefined}
         className={cn(
-          'w-full flex items-center gap-2.5 px-3 py-2 rounded-md transition-colors',
-          pathname === modulo.base ? 'bg-aurora-subtle ring-1 ring-primary/30' : 'hover:bg-secondary/40',
+          'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 transition-colors',
+          linkFocus,
+          pathname === module.base ? 'bg-aurora-subtle ring-1 ring-primary/30' : 'hover:bg-secondary/40',
         )}
       >
-        <span className={cn('w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0', modulo.boxClass)}>
-          <Icon className={cn('w-4 h-4', modulo.iconClass)} />
+        <span className={cn('flex size-7 shrink-0 items-center justify-center rounded-lg', module.boxClass)}>
+          <Icon className={cn('size-4', module.iconClass)} aria-hidden />
         </span>
-        <span className="flex-1 text-left font-bold text-sm">{modulo.label}</span>
+        <span className="flex-1 text-left text-sm font-bold">{module.label}</span>
       </Link>
 
-      {/* Seções */}
-      <div className="mt-1 space-y-0.5">
-        {secoes.map((sec, idx) => (
-          <div key={idx}>
-            {sec.section && (
-              <div className="px-3 pt-3 pb-0.5 text-[9px] uppercase tracking-wider font-semibold text-muted-foreground/60">
-                {SECTION_LABEL[sec.section]}
-              </div>
-            )}
-            {sec.items.map((item) => {
-              const ItemIcon = item.icon;
-              const active = pathname === item.href;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'flex items-center gap-3 pl-6 pr-3 py-1.5 rounded-md text-sm transition-all',
-                    active
-                      ? 'bg-aurora-subtle text-foreground font-medium ring-1 ring-primary/30 shadow-[0_0_14px_-6px_hsl(var(--primary)/.5)]'
-                      : 'hover:bg-secondary/50 text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  <ItemIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span className="truncate">{item.label}</span>
-                </Link>
-              );
-            })}
-          </div>
-        ))}
-      </div>
+      {visibleItems.length === 0 ? (
+        <p className="mx-3 mt-3 rounded-lg border border-dashed border-border p-3 text-xs leading-5 text-muted-foreground">
+          Nenhuma ferramenta deste módulo está disponível para seu perfil.
+        </p>
+      ) : (
+        <div className="mt-1 space-y-1">
+          {sections.map((section, index) => (
+            <div key={section.section ?? index}>
+              {section.section && (
+                <div className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">
+                  {SECTION_LABEL[section.section]}
+                </div>
+              )}
+              {section.items.map((item) => {
+                const ItemIcon = item.icon;
+                const active = pathname === item.href;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={onNavigate}
+                    aria-current={active ? 'page' : undefined}
+                    title={item.description}
+                    className={cn(
+                      'flex min-h-9 items-center gap-3 rounded-lg py-2 pl-5 pr-3 text-sm transition-all',
+                      linkFocus,
+                      active
+                        ? 'bg-aurora-subtle font-medium text-foreground shadow-[0_0_14px_-6px_hsl(var(--primary)/.5)] ring-1 ring-primary/30'
+                        : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground',
+                    )}
+                  >
+                    <ItemIcon className="size-3.5 shrink-0" aria-hidden />
+                    <span className="truncate">{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-/**
- * Sidebar desktop — wrapper fixo de 256px (w-64).
- * Escondida em telas < lg; nesses casos o `<MobileNav>` exibe o mesmo conteúdo.
- */
 export function Sidebar({ user }: { user: AuthUser }) {
   return (
-    <aside className="hidden lg:flex w-64 border-r border-border/60 flex-col flex-shrink-0 relative z-10">
+    <aside className="relative z-10 hidden w-64 shrink-0 flex-col border-r border-border/60 lg:flex">
       <SidebarContent user={user} />
     </aside>
   );

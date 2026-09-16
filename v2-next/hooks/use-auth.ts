@@ -16,31 +16,16 @@ export interface AuthUser {
   bank_codes?: Record<string, string> | null;
 }
 
-// V1 retorna { ok: true, user } — não { success: true }
 interface MeResponse {
   ok: boolean;
   user: AuthUser;
 }
 
-/**
- * Hook que gerencia auth state. Faz POST /api/auth { action: 'me' } na
- * primeira carga, redireciona pra /login se não autenticado.
- *
- * IMPORTANTE: hasToken usa estado tri-state (null/false/true) pra evitar
- * race condition durante hydration:
- *   null  = ainda não checou localStorage (1º render no client)
- *   false = checou e NÃO tem token  → redireciona
- *   true  = checou e TEM token       → busca user via 'me'
- *
- * Sem isso, o redirect rodava com hasToken=false (initial useState) ANTES
- * do useEffect ler o localStorage — kicked out instantâneo após login.
- */
 export function useAuth(opts: { redirectTo?: string } = {}) {
   const router = useRouter();
   const { redirectTo = '/login' } = opts;
   const [hasToken, setHasToken] = useState<boolean | null>(null);
 
-  // Verifica token no client após mount (evita SSR mismatch)
   useEffect(() => {
     setHasToken(!!getToken());
   }, []);
@@ -48,26 +33,25 @@ export function useAuth(opts: { redirectTo?: string } = {}) {
   const query = useQuery({
     queryKey: ['auth', 'me'],
     queryFn: async () => {
-      const r = await api<MeResponse>('/api/auth', { action: 'me' });
-      if (!r.ok || !r.user) throw new ApiError('Sessão expirada', 401);
-      return r.user;
+      const response = await api<MeResponse>('/api/auth', { action: 'me' });
+      if (!response.ok || !response.user) throw new ApiError('Sessão expirada', 401);
+      return response.user;
     },
-    enabled: hasToken === true, // só roda quando confirmado que tem token
+    enabled: hasToken === true,
     staleTime: 10 * 60 * 1000,
-    retry: false,
+    retry: (failureCount, error) => {
+      if (error instanceof ApiError && error.status < 500) return false;
+      return failureCount < 1;
+    },
   });
 
-  // Redireciona APENAS quando explicitamente false (não null) ou erro 401
+  const sessionInvalid = hasToken === false || (query.error instanceof ApiError && query.error.status === 401);
+
   useEffect(() => {
-    if (hasToken === false && redirectTo) {
-      router.replace(redirectTo);
-      return;
-    }
-    if (query.error instanceof ApiError && query.error.status === 401) {
-      clearToken();
-      router.replace(redirectTo);
-    }
-  }, [hasToken, query.error, redirectTo, router]);
+    if (!sessionInvalid || !redirectTo) return;
+    if (query.error instanceof ApiError && query.error.status === 401) clearToken();
+    router.replace(redirectTo);
+  }, [query.error, redirectTo, router, sessionInvalid]);
 
   function logout() {
     clearToken();
@@ -76,9 +60,11 @@ export function useAuth(opts: { redirectTo?: string } = {}) {
 
   return {
     user: query.data,
-    // Loading enquanto: ainda não checou token (null) OU checou e tem token mas query rodando
     isLoading: hasToken === null || (hasToken === true && query.isLoading),
+    isRedirecting: sessionInvalid,
     isAuthenticated: !!query.data,
+    error: sessionInvalid ? null : query.error,
+    retry: query.refetch,
     logout,
   };
 }
