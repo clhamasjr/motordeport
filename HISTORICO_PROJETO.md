@@ -256,7 +256,7 @@ Problemas encontrados:
 - `npm.ps1` bloqueado por ExecutionPolicy → `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` OU usar `cmd.exe`
 - `npm install` funcionou: 65-69 packages, 0 vulnerabilidades
 - Secret gerado: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
-- Valor gerado: `d75f8b52deaebbad9e48f6b5be3f7b8ad26f6ecb9eb6351d7d29a1db952a7ba6`
+- Valor gerado: `[REMOVIDO — rotacione a credencial]`
 
 ---
 
@@ -292,7 +292,7 @@ Problemas encontrados:
 #### Cloudflare Access Service Token (#872, #873, #875)
 - Motivo: Cloudflare Bot Fight Mode bloqueando Vercel → proxy
 - `CF_ACCESS_CLIENT_ID` e `CF_ACCESS_CLIENT_SECRET` adicionados ao Vercel production
-- Secret: `0ffd57f8550149b6f444d795f71f9e40c2e182fd34a11b1b9e39b3c2d7a3289a`
+- Secret: `[REMOVIDO — rotacione a credencial]`
 - `getConfig()` em api/facta.js expõe as duas vars (trim aplicado)
 - Commit `30a565b`: "feat: Cloudflare Access Service Token nas requisicoes Vercel->proxy"
 
