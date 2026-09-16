@@ -116,6 +116,9 @@ function LoginPageInner() {
             Plataforma operacional
             <span className="h-px w-7 bg-[hsl(var(--brand-orange)/.65)]" aria-hidden />
           </div>
+          <p className="mt-5 max-w-sm text-xl font-semibold leading-7 tracking-[-0.025em] text-foreground sm:text-2xl sm:leading-8">
+            O centro de comando da sua operação de crédito.
+          </p>
         </header>
 
         <div className="brand-auth-panel overflow-hidden border border-border/85 bg-[hsl(var(--card)/.88)] backdrop-blur-xl">
