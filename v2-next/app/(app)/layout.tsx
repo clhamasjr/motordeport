@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { Sidebar } from '@/components/sidebar';
@@ -12,6 +13,20 @@ import { canAccessItem, itemDoPath } from '@/lib/nav';
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, isLoading, isRedirecting, error, retry } = useAuth();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    setSidebarCollapsed(window.localStorage.getItem('flowforce-sidebar-collapsed') === '1');
+  }, []);
+
+  function toggleSidebar() {
+    setSidebarCollapsed((collapsed) => {
+      const next = !collapsed;
+      window.localStorage.setItem('flowforce-sidebar-collapsed', next ? '1' : '0');
+      document.documentElement.dataset.sidebarCollapsed = next ? '1' : '0';
+      return next;
+    });
+  }
 
   if (isLoading || isRedirecting) {
     return (
@@ -69,9 +84,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       >
         Ir para o conteúdo
       </a>
-      <Sidebar user={user} />
+      <Sidebar user={user} collapsed={sidebarCollapsed} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar user={user} />
+        <Topbar user={user} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleSidebar} />
         <main id="conteudo-principal" className="command-main flex-1 overflow-auto scrollbar-thin">
           {children}
         </main>

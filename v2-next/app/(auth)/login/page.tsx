@@ -97,26 +97,26 @@ function LoginPageInner() {
   const isPending = loginMutation.isPending;
 
   return (
-    <main className="brand-login-bg relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-8 sm:px-6">
+    <main className="login-viewport brand-login-bg relative flex min-h-[100dvh] items-center justify-center overflow-x-hidden px-4 py-4 sm:px-6 sm:py-6">
       <div className="login-clean-glow" aria-hidden />
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[hsl(var(--brand-orange)/.8)] to-transparent" aria-hidden />
 
       <section className="relative w-full max-w-[440px]" aria-labelledby="login-title">
-        <header className="mb-8 flex flex-col items-center text-center">
+        <header className="login-brand-header mb-5 flex flex-col items-center text-center">
           <Image
             src="/brand/lhamascred-logo.png"
             alt="LhamasCred — Promotora de Crédito"
             width={687}
             height={368}
-            className="h-auto w-[190px] sm:w-[210px]"
+            className="login-brand-logo h-auto w-[165px] sm:w-[190px]"
             priority
           />
-          <div className="mt-5 flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+          <div className="login-brand-kicker mt-3 flex items-center gap-3 text-[9px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
             <span className="h-px w-7 bg-[hsl(var(--brand-orange)/.65)]" aria-hidden />
             Plataforma operacional
             <span className="h-px w-7 bg-[hsl(var(--brand-orange)/.65)]" aria-hidden />
           </div>
-          <p className="mt-5 max-w-sm text-xl font-semibold leading-7 tracking-[-0.025em] text-foreground sm:text-2xl sm:leading-8">
+          <p className="login-brand-message mt-3 max-w-sm text-lg font-semibold leading-6 tracking-[-0.025em] text-foreground sm:text-xl sm:leading-7">
             O centro de comando da sua operação de crédito.
           </p>
         </header>
@@ -124,18 +124,18 @@ function LoginPageInner() {
         <div className="brand-auth-panel overflow-hidden border border-border/85 bg-[hsl(var(--card)/.88)] backdrop-blur-xl">
           <div className="h-0.5 bg-gradient-to-r from-[hsl(var(--brand-orange))] via-[hsl(var(--brand-gold))] to-[hsl(var(--brand-silver)/.6)]" aria-hidden />
 
-          <div className="p-6 sm:p-8">
+          <div className="login-panel-content p-5 sm:p-6">
             <div>
               <p className="text-sm font-medium text-[hsl(var(--brand-orange))]">FlowForce</p>
-              <h1 id="login-title" className="mt-1 text-3xl font-semibold tracking-[-0.045em] text-foreground">
+              <h1 id="login-title" className="login-heading mt-1 text-2xl font-semibold tracking-[-0.045em] text-foreground">
                 Entrar no FlowForce
               </h1>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              <p className="mt-1.5 text-sm leading-5 text-muted-foreground">
                 Use suas credenciais para acessar sua operação.
               </p>
             </div>
 
-            <form onSubmit={onSubmit} className="mt-7 space-y-5" aria-busy={isPending}>
+            <form onSubmit={onSubmit} className="login-form mt-5 space-y-4" aria-busy={isPending}>
               {formError && (
                 <div
                   id="login-error"
@@ -164,7 +164,7 @@ function LoginPageInner() {
                   }}
                   disabled={isPending}
                   aria-describedby={formError ? 'login-error' : undefined}
-                  className="h-12 rounded-md border-border/90 bg-background/65 px-4 text-base focus-visible:ring-[hsl(var(--brand-orange))]"
+                  className="h-11 rounded-md border-border/90 bg-background/65 px-4 text-base focus-visible:ring-[hsl(var(--brand-orange))]"
                   autoFocus
                 />
               </div>
@@ -185,7 +185,7 @@ function LoginPageInner() {
                     }}
                     disabled={isPending}
                     aria-describedby={formError ? 'login-error' : undefined}
-                    className="h-12 rounded-md border-border/90 bg-background/65 px-4 pr-12 text-base focus-visible:ring-[hsl(var(--brand-orange))]"
+                    className="h-11 rounded-md border-border/90 bg-background/65 px-4 pr-12 text-base focus-visible:ring-[hsl(var(--brand-orange))]"
                   />
                   <button
                     type="button"
@@ -203,7 +203,7 @@ function LoginPageInner() {
               <Button
                 type="submit"
                 size="lg"
-                className="h-12 w-full bg-[hsl(var(--brand-orange))] font-semibold text-black shadow-none hover:bg-[hsl(var(--brand-orange)/.9)] hover:shadow-none"
+                className="h-11 w-full bg-[hsl(var(--brand-orange))] font-semibold text-black shadow-none hover:bg-[hsl(var(--brand-orange)/.9)] hover:shadow-none"
                 disabled={isPending}
               >
                 {isPending ? (
@@ -214,14 +214,14 @@ function LoginPageInner() {
               </Button>
             </form>
 
-            <div className="mt-6 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+            <div className="login-security mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
               <Check className="size-3.5 text-emerald-400" aria-hidden />
               Ambiente seguro e restrito
             </div>
           </div>
         </div>
 
-        <footer className="mt-6 text-center text-[11px] leading-5 text-muted-foreground/65">
+        <footer className="login-footer mt-4 text-center text-[11px] leading-5 text-muted-foreground/65">
           FlowForce Command Center · Uma plataforma LhamasCred
         </footer>
       </section>

@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { Activity, Command, Home, LogOut, User as UserIcon } from 'lucide-react';
+import { Activity, Command, Home, LogOut, PanelLeftClose, PanelLeftOpen, User as UserIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AuthUser, useAuth } from '@/hooks/use-auth';
 import { moduloDoPath } from '@/lib/nav';
@@ -9,7 +9,11 @@ import { InstallPwaButton } from '@/components/install-pwa-button';
 import { MobileNav } from '@/components/mobile-nav';
 import { ThemeToggle } from '@/components/theme-toggle';
 
-export function Topbar({ user }: { user: AuthUser }) {
+export function Topbar({ user, sidebarCollapsed, onToggleSidebar }: {
+  user: AuthUser;
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
+}) {
   const { logout } = useAuth();
   const pathname = usePathname();
   const context = getPageContext(pathname);
@@ -18,6 +22,18 @@ export function Topbar({ user }: { user: AuthUser }) {
   return (
     <header className="sticky top-0 z-20 flex min-h-[72px] shrink-0 items-center gap-3 border-b border-border/65 bg-[hsl(var(--card)/.88)] px-3 py-2 backdrop-blur-xl sm:px-6">
       <MobileNav user={user} />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={onToggleSidebar}
+        className="hidden lg:inline-flex"
+        aria-label={sidebarCollapsed ? 'Expandir navegação lateral' : 'Recolher navegação lateral'}
+        title={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
+        aria-pressed={sidebarCollapsed}
+      >
+        {sidebarCollapsed ? <PanelLeftOpen className="size-4" aria-hidden /> : <PanelLeftClose className="size-4" aria-hidden />}
+      </Button>
 
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <div className="hidden size-9 shrink-0 items-center justify-center rounded-xl bg-[hsl(var(--secondary))] text-foreground sm:flex">
