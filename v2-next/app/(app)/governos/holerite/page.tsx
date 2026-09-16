@@ -54,7 +54,7 @@ export default function GovHoleritePage() {
         ...(convenioSlug ? { convenio_slug: convenioSlug } : {}),
       });
       setResultado(r);
-    } catch (e) {
+    } catch {
       // erro fica visível pelo mut.error
     }
   };
@@ -82,7 +82,7 @@ export default function GovHoleritePage() {
             <>
               <FileUp className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
               <div className="text-sm text-muted-foreground mb-3">
-                Arraste o arquivo aqui ou clique no botão
+                Selecione um PDF ou uma imagem do holerite
               </div>
               <input
                 type="file"
@@ -91,7 +91,7 @@ export default function GovHoleritePage() {
                 className="hidden"
                 onChange={(e) => onPickFile(e.target.files?.[0])}
               />
-              <Button onClick={() => document.getElementById('govHolFile')?.click()}>
+              <Button type="button" onClick={() => document.getElementById('govHolFile')?.click()}>
                 📎 Selecionar arquivo
               </Button>
               <div className="text-[11px] text-muted-foreground mt-2">
@@ -104,7 +104,7 @@ export default function GovHoleritePage() {
               <div className="text-[11px] text-muted-foreground mt-1">
                 {(arquivo.size / 1024).toFixed(0)} KB · {arquivo.type}
               </div>
-              <Button variant="outline" size="sm" onClick={onLimpar} className="mt-3 gap-1">
+              <Button type="button" variant="outline" size="sm" onClick={onLimpar} className="mt-3 gap-1">
                 <Trash2 className="w-3.5 h-3.5" /> Trocar arquivo
               </Button>
             </>
@@ -115,10 +115,11 @@ export default function GovHoleritePage() {
       {/* Convênio (opcional) */}
       <Card>
         <CardContent className="p-4 space-y-2">
-          <div className="text-xs text-muted-foreground">
+          <label htmlFor="gov-convenio" className="block text-xs text-muted-foreground">
             Convênio (opcional — se não escolher, a IA tenta detectar):
-          </div>
+          </label>
           <select
+            id="gov-convenio"
             value={convenioSlug}
             onChange={(e) => setConvenioSlug(e.target.value)}
             className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"

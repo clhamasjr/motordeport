@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useFedConvenios, useFedConvenio } from '@/hooks/use-fed-catalogo';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConvenioCard } from '@/components/fed/convenio-card';
+import { EmptyState, ErrorState } from '@/components/system-state';
 import {
   Dialog,
   DialogContent,
@@ -21,20 +23,26 @@ import {
   categoriaLabel,
   operacaoTipoLabel,
 } from '@/lib/fed-types';
-import { Search, AlertCircle, RefreshCw, FileText } from 'lucide-react';
+import { Search, RefreshCw, FileText, Landmark } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 
 export default function FederalCatalogoPage() {
   const [busca, setBusca] = useState('');
+  const [buscaDebounced, setBuscaDebounced] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState<CategoriaFed | ''>('');
   const [filtroOrgao, setFiltroOrgao] = useState('');
   const [convenioAbertoSlug, setConvenioAbertoSlug] = useState<string | null>(null);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setBuscaDebounced(busca.trim()), 350);
+    return () => window.clearTimeout(timer);
+  }, [busca]);
+
   const { data, isLoading, error, refetch, isFetching } = useFedConvenios({
     categoria: filtroCategoria,
     orgao: filtroOrgao,
-    busca,
+    busca: buscaDebounced,
   });
 
   const orgaosDisponiveis = useMemo(() => {
@@ -51,55 +59,76 @@ export default function FederalCatalogoPage() {
   );
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-4">
-      {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">🇧🇷 Federal — Catálogo de Convênios</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Convênios federais civis (SIAPE, SERPRO) e militares (Marinha, Exército, Aeronáutica).
-            Clica num card pra ver as regras operacionais e bancos.
-          </p>
+    <div className="mx-auto w-full max-w-6xl space-y-6 p-4 sm:p-6 lg:p-8">
+      <header className="flex flex-wrap items-start justify-between gap-4 rounded-3xl border border-border/70 bg-card/45 p-6 shadow-lg shadow-black/10 backdrop-blur-xl">
+        <div className="flex items-start gap-4">
+          <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-400 ring-1 ring-blue-500/25">
+            <Landmark className="size-6" aria-hidden />
+          </div>
+          <div className="max-w-3xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Federal · referência operacional</p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">Catálogo de convênios</h1>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              Pesquise convênios civis e militares, consulte regras e abra a análise de contracheque com o contexto selecionado.
+            </p>
+          </div>
         </div>
         <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching} className="gap-2">
-          <RefreshCw className={cn('w-4 h-4', isFetching && 'animate-spin')} />
-          Atualizar
+          <RefreshCw className={cn('size-4', isFetching && 'animate-spin')} aria-hidden />
+          {isFetching ? 'Atualizando…' : 'Atualizar catálogo'}
         </Button>
-      </div>
+      </header>
 
-      {/* Filtros */}
-      <Card>
-        <CardContent className="p-3 flex flex-wrap gap-2 items-center">
-          <div className="flex-1 min-w-[220px] relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Buscar (ex: SIAPE, Marinha, port)..."
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-              className="pl-9"
-            />
+      <Card className="border-border/70">
+        <CardContent className="grid gap-3 p-4 md:grid-cols-[minmax(240px,1fr)_180px_220px_auto] md:items-end">
+          <div className="space-y-2">
+            <Label htmlFor="federal-busca">Buscar convênio</Label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+              <Input
+                id="federal-busca"
+                placeholder="Ex.: SIAPE, Marinha, portabilidade"
+                value={busca}
+                onChange={(event) => setBusca(event.target.value)}
+                className="pl-9"
+              />
+            </div>
           </div>
-          <select
-            value={filtroCategoria}
-            onChange={(e) => setFiltroCategoria(e.target.value as CategoriaFed | '')}
-            className="h-9 px-3 text-sm rounded-md border border-input bg-background"
+          <div className="space-y-2">
+            <Label htmlFor="federal-categoria">Categoria</Label>
+            <select
+              id="federal-categoria"
+              value={filtroCategoria}
+              onChange={(event) => setFiltroCategoria(event.target.value as CategoriaFed | '')}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <option value="">Todas</option>
+              <option value="civil">Civis</option>
+              <option value="militar">Militares</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="federal-orgao">Órgão</Label>
+            <select
+              id="federal-orgao"
+              value={filtroOrgao}
+              onChange={(event) => setFiltroOrgao(event.target.value)}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <option value="">Todos os órgãos</option>
+              {orgaosDisponiveis.map((orgao) => (
+                <option key={orgao} value={orgao}>{orgaoIcone(orgao)} {orgao}</option>
+              ))}
+            </select>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={!busca && !filtroCategoria && !filtroOrgao}
+            onClick={() => { setBusca(''); setFiltroCategoria(''); setFiltroOrgao(''); }}
           >
-            <option value="">Todas categorias</option>
-            <option value="civil">👔 Civis</option>
-            <option value="militar">🪖 Militares</option>
-          </select>
-          <select
-            value={filtroOrgao}
-            onChange={(e) => setFiltroOrgao(e.target.value)}
-            className="h-9 px-3 text-sm rounded-md border border-input bg-background"
-          >
-            <option value="">Todos órgãos</option>
-            {orgaosDisponiveis.map((o) => (
-              <option key={o} value={o}>
-                {orgaoIcone(o)} {o}
-              </option>
-            ))}
-          </select>
+            Limpar filtros
+          </Button>
         </CardContent>
       </Card>
 
@@ -114,27 +143,24 @@ export default function FederalCatalogoPage() {
 
       {/* Erro */}
       {error && (
-        <Card className="border-destructive/50">
-          <CardContent className="p-4 flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <div className="font-bold text-destructive">Erro carregando catálogo</div>
-              <div className="text-sm text-muted-foreground mt-1">{(error as Error).message}</div>
-            </div>
-            <Button size="sm" variant="outline" onClick={() => refetch()}>
-              Tentar de novo
-            </Button>
-          </CardContent>
-        </Card>
+        <ErrorState
+          title="Não foi possível carregar o catálogo"
+          description="A consulta pode estar temporariamente indisponível. Tente novamente sem perder seus filtros."
+          onRetry={() => void refetch()}
+        />
       )}
 
       {/* Empty */}
       {!isLoading && !error && totalConv === 0 && (
-        <Card>
-          <CardContent className="p-8 text-center text-muted-foreground">
-            Nenhum convênio encontrado com esses filtros.
-          </CardContent>
-        </Card>
+        <EmptyState
+          title="Nenhum convênio encontrado"
+          description="Revise o termo, a categoria ou o órgão selecionado. Você também pode limpar todos os filtros."
+          action={
+            <Button type="button" variant="outline" onClick={() => { setBusca(''); setFiltroCategoria(''); setFiltroOrgao(''); }}>
+              Limpar filtros
+            </Button>
+          }
+        />
       )}
 
       {/* Lista agrupada por categoria */}
@@ -153,13 +179,15 @@ export default function FederalCatalogoPage() {
               </div>
               <div className="space-y-2">
                 {g.convenios.map((c) => (
-                  <div
+                  <button
+                    type="button"
                     key={c.id}
                     onClick={() => setConvenioAbertoSlug(c.slug)}
-                    className="cursor-pointer"
+                    className="block w-full rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    aria-label={`Abrir detalhes de ${c.nome}`}
                   >
                     <ConvenioCard convenio={c} />
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -178,25 +206,46 @@ export default function FederalCatalogoPage() {
 }
 
 function ConvenioDetalhe({ slug }: { slug: string | null }) {
-  const { data, isLoading, error } = useFedConvenio(slug);
+  const { data, isLoading, error, refetch } = useFedConvenio(slug);
 
   if (isLoading) {
     return (
-      <div className="space-y-3">
-        <Skeleton className="h-6 w-1/2" />
-        <Skeleton className="h-4 w-1/3" />
+      <div className="space-y-4">
+        <DialogHeader>
+          <DialogTitle>Carregando detalhes do convênio</DialogTitle>
+          <DialogDescription>Aguarde enquanto consultamos regras e bancos disponíveis.</DialogDescription>
+        </DialogHeader>
         <Skeleton className="h-32 w-full" />
       </div>
     );
   }
   if (error) {
     return (
-      <div className="text-sm text-destructive p-4">
-        Erro: {(error as Error).message}
+      <div className="space-y-4">
+        <DialogHeader>
+          <DialogTitle>Detalhes do convênio</DialogTitle>
+          <DialogDescription>Não foi possível concluir esta consulta.</DialogDescription>
+        </DialogHeader>
+        <ErrorState
+          title="Falha ao carregar as regras"
+          description="Tente novamente. O catálogo principal continua disponível."
+          onRetry={() => void refetch()}
+          className="min-h-0"
+        />
       </div>
     );
   }
-  if (!data) return null;
+  if (!data) {
+    return (
+      <>
+        <DialogHeader>
+          <DialogTitle>Detalhes do convênio</DialogTitle>
+          <DialogDescription>Nenhuma informação foi retornada para este convênio.</DialogDescription>
+        </DialogHeader>
+        <EmptyState title="Detalhes indisponíveis" description="Feche esta janela e selecione outro convênio." />
+      </>
+    );
+  }
 
   const c = data.convenio;
   const bancos = data.bancos || [];
@@ -218,11 +267,11 @@ function ConvenioDetalhe({ slug }: { slug: string | null }) {
       <Card className="border-cyan-500/40 mt-3">
         <CardContent className="p-3 flex items-center justify-between flex-wrap gap-2 text-sm">
           <div>📄 Tem o contracheque do servidor? Sobe pra ver bancos compatíveis e simulação de port.</div>
-          <Link href={`/federal/analise?conv=${encodeURIComponent(c.slug)}`}>
-            <Button size="sm" className="gap-2">
-              <FileText className="w-4 h-4" /> Analisar Contracheque
-            </Button>
-          </Link>
+          <Button asChild size="sm" className="gap-2">
+            <Link href={`/federal/analise?conv=${encodeURIComponent(c.slug)}`}>
+              <FileText className="size-4" aria-hidden /> Analisar contracheque
+            </Link>
+          </Button>
         </CardContent>
       </Card>
 
