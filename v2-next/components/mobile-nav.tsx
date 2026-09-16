@@ -1,18 +1,5 @@
 'use client';
 
-// ════════════════════════════════════════════════════════════════════
-// components/mobile-nav.tsx
-//
-// Botão hamburger + drawer lateral pra navegação em mobile (telas <lg).
-// Reusa `<SidebarContent>` (mesmo conteúdo da sidebar desktop) dentro
-// de um `<Sheet side="left">`.
-//
-// Comportamento:
-//  - Só aparece em <lg (className="lg:hidden")
-//  - Fecha automaticamente quando a rota muda (useEffect)
-//  - Botão de 44x44px (Apple HIG mínimo pra touch)
-// ════════════════════════════════════════════════════════════════════
-
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { Menu } from 'lucide-react';
@@ -25,8 +12,6 @@ export function MobileNav({ user }: { user: AuthUser }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
-  // Fecha o drawer automaticamente quando a rota muda — UX padrão de
-  // navegação mobile (clicou no link, o menu some).
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
@@ -34,23 +19,13 @@ export function MobileNav({ user }: { user: AuthUser }) {
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="lg:hidden h-11 w-11 -ml-2"
-          aria-label="Abrir menu"
-        >
-          <Menu className="w-5 h-5" />
+        <Button variant="ghost" size="icon" className="-ml-2 size-11 lg:hidden" aria-label="Abrir menu de navegação">
+          <Menu className="size-5" aria-hidden />
         </Button>
       </SheetTrigger>
-      <SheetContent
-        side="left"
-        className="p-0 w-72 sm:w-80"
-        hideCloseButton
-      >
-        {/* Título invisível pra a11y (Radix exige) */}
+      <SheetContent side="left" className="w-[88vw] max-w-sm p-0 sm:w-96">
         <SheetTitle className="sr-only">Menu de navegação</SheetTitle>
-        <SidebarContent user={user} />
+        <SidebarContent user={user} onNavigate={() => setOpen(false)} mobile />
       </SheetContent>
     </Sheet>
   );

@@ -1,173 +1,152 @@
 'use client';
 
-import { useAuth } from '@/hooks/use-auth';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Briefcase, Building2, Landmark, FileSpreadsheet, Users, ArrowRight, CheckCircle2, PiggyBank } from 'lucide-react';
 import Link from 'next/link';
-
-// Portas de entrada por PRODUTO — o parceiro escolhe por onde quer operar.
-// Classes completas (não interpoladas) — Tailwind só gera classe que aparece
-// literal no fonte. Cada produto tem cor própria pra leitura rápida.
-const PRODUTOS = [
-  {
-    href: '/inss',
-    label: 'INSS',
-    desc: 'Aposentados e pensionistas',
-    icon: Briefcase,
-    iconClass: 'text-purple-400',
-    boxClass: 'bg-purple-500/10 ring-purple-500/25 group-hover:ring-purple-400/60',
-    cardClass: 'hover:border-purple-500/50 hover:shadow-purple-500/10',
-  },
-  {
-    href: '/clt',
-    label: 'CLT',
-    desc: 'Trabalhador de carteira assinada',
-    icon: Users,
-    iconClass: 'text-emerald-400',
-    boxClass: 'bg-emerald-500/10 ring-emerald-500/25 group-hover:ring-emerald-400/60',
-    cardClass: 'hover:border-emerald-500/50 hover:shadow-emerald-500/10',
-  },
-  {
-    href: '/fgts',
-    label: 'FGTS',
-    desc: 'Antecipação saque-aniversário',
-    icon: PiggyBank,
-    iconClass: 'text-cyan-400',
-    boxClass: 'bg-cyan-500/10 ring-cyan-500/25 group-hover:ring-cyan-400/60',
-    cardClass: 'hover:border-cyan-500/50 hover:shadow-cyan-500/10',
-  },
-  {
-    href: '/federal',
-    label: 'Federal',
-    desc: 'Servidor federal (SIAPE)',
-    icon: Landmark,
-    iconClass: 'text-blue-400',
-    boxClass: 'bg-blue-500/10 ring-blue-500/25 group-hover:ring-blue-400/60',
-    cardClass: 'hover:border-blue-500/50 hover:shadow-blue-500/10',
-  },
-  {
-    href: '/governos',
-    label: 'Governos',
-    desc: 'Servidor estadual',
-    icon: Building2,
-    iconClass: 'text-yellow-400',
-    boxClass: 'bg-yellow-500/10 ring-yellow-500/25 group-hover:ring-yellow-400/60',
-    cardClass: 'hover:border-yellow-500/50 hover:shadow-yellow-500/10',
-  },
-  {
-    href: '/prefeituras',
-    label: 'Prefeituras',
-    desc: 'Servidor municipal',
-    icon: FileSpreadsheet,
-    iconClass: 'text-orange-400',
-    boxClass: 'bg-orange-500/10 ring-orange-500/25 group-hover:ring-orange-400/60',
-    cardClass: 'hover:border-orange-500/50 hover:shadow-orange-500/10',
-  },
-];
+import { Activity, ArrowRight, CornerDownRight, Layers3 } from 'lucide-react';
+import { useAuth } from '@/hooks/use-auth';
+import { getFeaturedItems, getVisibleGroups, getVisibleItems } from '@/lib/nav';
+import { cn } from '@/lib/utils';
 
 export default function InicioPage() {
   const { user } = useAuth();
-  const greeting = (() => {
-    const h = new Date().getHours();
-    if (h < 12) return 'Bom dia';
-    if (h < 18) return 'Boa tarde';
-    return 'Boa noite';
-  })();
+  const firstName = user?.name?.trim().split(/\s+/)[0] || user?.username || 'operador';
+  const groups = getVisibleGroups(user?.role);
+  const featured = getFeaturedItems(user?.role).slice(0, 4);
+  const primary = featured[0];
+  const secondary = featured.slice(1);
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">
-          {greeting}, {user?.name?.split(' ')[0] || user?.username} 👋
+    <div className="mx-auto w-full max-w-[1480px] px-4 py-8 sm:px-7 lg:px-10 lg:py-12">
+      <header className="max-w-5xl">
+        <div className="flex items-center gap-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[hsl(var(--brand-gold))]">
+          <span className="h-px w-8 bg-[hsl(var(--brand-orange))]" aria-hidden />
+          Sua mesa de trabalho
+        </div>
+        <h1 className="mt-5 text-[clamp(2.7rem,6vw,5.7rem)] font-semibold leading-[0.92] tracking-[-0.07em] text-foreground">
+          {getGreeting()}, {firstName}.
+          <span className="mt-2 block text-muted-foreground">Qual missão começa agora?</span>
         </h1>
-        <p className="text-muted-foreground mt-1">
-          {user?.role === 'admin'
-            ? 'Visão completa da plataforma'
-            : user?.role === 'gestor'
-              ? `Equipe ${user?.nome_parceiro || 'LhamasCred'}`
-              : 'Escolha por onde quer começar hoje'}
+        <p className="mt-6 max-w-2xl text-base leading-7 text-muted-foreground">
+          Um ponto de partida para consultar, operar e acompanhar crédito sem perder o contexto entre produtos.
         </p>
-      </div>
+      </header>
 
-      <div>
-        <h2 className="text-sm uppercase tracking-wider text-muted-foreground mb-4">
-          Por onde você quer entrar?
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {PRODUTOS.map((p) => {
-            const Icon = p.icon;
+      <section className="mt-10 grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,.45fr)]" aria-labelledby="continuar-title">
+        {primary && (() => {
+          const Icon = primary.icon;
+          return (
+            <Link
+              href={primary.href}
+              className="workspace-ink group relative min-h-[310px] overflow-hidden rounded-[28px] p-7 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-9"
+            >
+              <div className="absolute -right-16 -top-16 size-56 rounded-full border border-white/10" aria-hidden />
+              <div className="absolute -right-4 -top-4 size-36 rounded-full border border-[hsl(var(--brand-orange)/.28)]" aria-hidden />
+              <div className="relative flex h-full flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[hsl(var(--brand-orange))]">
+                    <CornerDownRight className="size-3.5" aria-hidden />
+                    Começar por aqui
+                  </div>
+                  <div className="mt-8 flex size-14 items-center justify-center rounded-2xl bg-white/[0.07] text-[hsl(var(--brand-orange))]">
+                    <Icon className="size-6" aria-hidden />
+                  </div>
+                  <h2 id="continuar-title" className="mt-5 text-3xl font-semibold tracking-[-0.045em] text-white sm:text-4xl">{primary.label}</h2>
+                  <p className="mt-3 max-w-xl text-sm leading-6 text-white/55 sm:text-base">{primary.description}</p>
+                </div>
+                <div className="mt-8 flex items-center justify-between border-t border-white/10 pt-5">
+                  <span className="text-xs font-medium text-white/50">{primary.group.label} · {primary.group.desc}</span>
+                  <span className="flex size-11 items-center justify-center rounded-full bg-[hsl(var(--brand-orange))] text-black transition-transform duration-150 group-hover:translate-x-1">
+                    <ArrowRight className="size-4.5" aria-hidden />
+                  </span>
+                </div>
+              </div>
+            </Link>
+          );
+        })()}
+
+        <div className="workspace-paper rounded-[28px] border border-border/65 p-6 sm:p-7">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[hsl(var(--brand-gold))]">Atalhos</p>
+              <h2 className="mt-1 text-xl font-semibold tracking-[-0.03em]">Próximas ações</h2>
+            </div>
+            <Layers3 className="size-5 text-muted-foreground" aria-hidden />
+          </div>
+          <div className="mt-6 divide-y divide-border/65">
+            {secondary.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link key={item.href} href={item.href} className="group flex min-h-[74px] items-center gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <span className={cn('flex size-10 shrink-0 items-center justify-center rounded-xl', item.group.boxClass)}>
+                    <Icon className={cn('size-4', item.group.iconClass)} aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-foreground">{item.label}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">{item.group.label}</span>
+                  </span>
+                  <ArrowRight className="size-4 text-muted-foreground/45 transition-transform group-hover:translate-x-1 group-hover:text-[hsl(var(--brand-gold))]" aria-hidden />
+                </Link>
+              );
+            })}
+          </div>
+          {user?.role === 'admin' && (
+            <Link href="/orquestrador" className="mt-5 flex min-h-11 items-center justify-between rounded-xl bg-secondary px-4 text-sm font-semibold text-foreground hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <span className="flex items-center gap-2"><Activity className="size-4 text-emerald-600" aria-hidden />Saúde da operação</span>
+              <ArrowRight className="size-4" aria-hidden />
+            </Link>
+          )}
+        </div>
+      </section>
+
+      <section className="mt-14" aria-labelledby="produtos-title">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[hsl(var(--brand-gold))]">Portfólio</p>
+            <h2 id="produtos-title" className="mt-1 text-3xl font-semibold tracking-[-0.045em]">Produtos da operação</h2>
+          </div>
+          <p className="max-w-md text-sm leading-6 text-muted-foreground">Cada produto organiza suas ferramentas em uma jornada contínua, da consulta ao acompanhamento.</p>
+        </div>
+
+        <div className="workspace-paper mt-6 overflow-hidden rounded-[24px] border border-border/65">
+          {groups.map((group) => {
+            const Icon = group.icon;
+            const tools = getVisibleItems(group, user?.role).length;
             return (
-              <Link key={p.href} href={p.href} className="group">
-                <Card
-                  className={`h-full cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:shadow-lg ${p.cardClass}`}
-                >
-                  <CardContent className="flex items-center gap-4 p-5">
-                    <div
-                      className={`w-16 h-16 rounded-2xl ring-1 flex items-center justify-center flex-shrink-0 transition-all duration-200 ${p.boxClass}`}
-                    >
-                      <Icon
-                        className={`size-8 ${p.iconClass} transition-transform duration-200 group-hover:scale-110`}
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-bold text-lg leading-tight">{p.label}</div>
-                      <div className="text-xs text-muted-foreground mt-0.5">{p.desc}</div>
-                    </div>
-                    <ArrowRight className="size-5 text-muted-foreground/40 group-hover:text-foreground group-hover:translate-x-1 transition-all duration-200 flex-shrink-0" />
-                  </CardContent>
-                </Card>
+              <Link
+                key={group.base}
+                href={group.base}
+                className="group grid min-h-[112px] grid-cols-[52px_1fr_auto] items-center gap-4 border-b border-border/60 px-5 py-5 last:border-b-0 hover:bg-secondary/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[66px_1fr_220px_auto] sm:px-7"
+              >
+                <span className={cn('flex size-12 items-center justify-center rounded-2xl', group.boxClass)}>
+                  <Icon className={cn('size-5', group.iconClass)} aria-hidden />
+                </span>
+                <span className="min-w-0">
+                  <span className="text-lg font-semibold tracking-tight text-foreground">{group.label}</span>
+                  <span className="mt-1 block text-sm text-muted-foreground">{group.desc}</span>
+                </span>
+                <span className="hidden text-sm leading-5 text-muted-foreground sm:block">{group.detail}</span>
+                <span className="flex items-center gap-3">
+                  <span className="hidden text-xs text-muted-foreground xl:inline">{tools} ferramentas</span>
+                  <span className="flex size-10 items-center justify-center rounded-full border border-border bg-card transition-colors group-hover:border-[hsl(var(--brand-orange)/.45)] group-hover:bg-[hsl(var(--brand-orange))] group-hover:text-black">
+                    <ArrowRight className="size-4" aria-hidden />
+                  </span>
+                </span>
               </Link>
             );
           })}
         </div>
-      </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="size-5 text-emerald-400" />
-            <CardTitle>Migração V2 — praticamente concluída</CardTitle>
-          </div>
-          <CardDescription>
-            Todos os produtos já operam aqui no V2. Faltam só ajustes finos.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground space-y-1">
-          <div className="font-semibold text-foreground/80 pt-1">✅ CLT — completo</div>
-          <div className="pl-4">✅ Consulta unitária + Análise em lote + Análise de cliente</div>
-          <div className="pl-4">✅ Empresas Aprovadas + Esteira + Catálogo de bancos</div>
-          <div className="pl-4">✅ Extrair Base CAGED (com botão Pesquisar)</div>
-          <div className="pl-4">✅ Conversas IA Sofia + Conexão WhatsApp + Autorizações LGPD</div>
-          <div className="pl-4">✅ Painel Operacional (KPIs + usuários online)</div>
-
-          <div className="font-semibold text-foreground/80 pt-2">✅ INSS — completo</div>
-          <div className="pl-4">✅ Consulta + Higienização + Pipeline + Esteira</div>
-          <div className="pl-4">✅ IN100 (DataPrev) + Extrato PDF + Enquadramento (manual)</div>
-          <div className="pl-4">✅ RMC/RCC + Saque + Propostas + Gestão</div>
-          <div className="pl-4">✅ Sofia Knowledge + Conexão WhatsApp</div>
-
-          <div className="font-semibold text-foreground/80 pt-2">✅ Federal (SIAPE) — completo</div>
-          <div className="pl-4">✅ Catálogo + Análise de holerite</div>
-
-          <div className="font-semibold text-foreground/80 pt-2">✅ Governos (Estaduais) — completo</div>
-          <div className="pl-4">✅ Catálogo + Análise de holerite</div>
-
-          <div className="font-semibold text-foreground/80 pt-2">✅ Prefeituras (Municipais) — completo</div>
-          <div className="pl-4">✅ Catálogo + Análise de holerite</div>
-
-          <div className="font-semibold text-foreground/80 pt-2">⚙️ Admin — completo</div>
-          <div className="pl-4">✅ Usuários + Parceiros + Manutenção</div>
-          <div className="pl-4">✅ Redefinir senha v2 (gerar aleatória, mostrar/esconder, confirmar, aviso de sessão)</div>
-
-          <div className="font-semibold text-foreground/80 pt-2">🧭 Orquestrador — V1 entregue</div>
-          <div className="pl-4">✅ Painel de visibilidade macro do SaaS (saúde de bancos, agentes, módulos)</div>
-
-          <div className="font-semibold text-foreground/80 pt-2">🟡 Ajustes finos pendentes</div>
-          <div className="pl-4">🟡 Sofia INSS (Conversas) + Disparo em massa — em ajuste</div>
-          <div className="pl-4">⏳ Consulta CLT com Supabase Realtime (substituir polling)</div>
-          <div className="pl-4">⏳ Migrar backend Vercel → Next.js API routes (autonomia total da VPS)</div>
-        </CardContent>
-      </Card>
+      <footer className="mt-10 flex flex-col gap-1 border-t border-border/65 pt-5 text-[11px] text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <span>FlowForce Workspace</span>
+        <span>Uma plataforma LhamasCred</span>
+      </footer>
     </div>
   );
+}
+
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Bom dia';
+  if (hour < 18) return 'Boa tarde';
+  return 'Boa noite';
 }

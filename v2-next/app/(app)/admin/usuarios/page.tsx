@@ -159,12 +159,13 @@ export default function UsuariosAdminPage() {
       <Card>
         <CardContent className="p-4 flex flex-wrap items-end gap-3">
           <div className="flex-1 min-w-[200px]">
-            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            <Label htmlFor="admin-user-search" className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
               Buscar (nome ou login)
             </Label>
             <div className="relative mt-1">
               <Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
+                id="admin-user-search"
                 placeholder="ex: carlos"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
@@ -173,10 +174,11 @@ export default function UsuariosAdminPage() {
             </div>
           </div>
           <div>
-            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            <Label htmlFor="admin-role-filter" className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
               Perfil
             </Label>
             <select
+              id="admin-role-filter"
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value as UserRole | '')}
               className="mt-1 h-10 rounded-md border border-input bg-background px-3 text-sm block"
@@ -188,10 +190,11 @@ export default function UsuariosAdminPage() {
             </select>
           </div>
           <div>
-            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            <Label htmlFor="admin-partner-filter" className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
               Parceiro
             </Label>
             <select
+              id="admin-partner-filter"
               value={parceiroFilter}
               onChange={(e) => setParceiroFilter(e.target.value)}
               className="mt-1 h-10 rounded-md border border-input bg-background px-3 text-sm block"
@@ -259,14 +262,15 @@ export default function UsuariosAdminPage() {
           <CardContent className="p-0">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
+                <caption className="sr-only">Usuários, perfis, parceiros, códigos configurados e ações administrativas</caption>
                 <thead className="bg-muted/30 text-xs">
                   <tr>
-                    <th className="text-left p-3 font-semibold">Nome</th>
-                    <th className="text-left p-3 font-semibold">Login</th>
-                    <th className="text-left p-3 font-semibold">Perfil</th>
-                    <th className="text-left p-3 font-semibold">Parceiro</th>
-                    <th className="text-left p-3 font-semibold">Códigos</th>
-                    <th className="text-right p-3 font-semibold">Ações</th>
+                    <th scope="col" className="text-left p-3 font-semibold">Nome</th>
+                    <th scope="col" className="text-left p-3 font-semibold">Login</th>
+                    <th scope="col" className="text-left p-3 font-semibold">Perfil</th>
+                    <th scope="col" className="text-left p-3 font-semibold">Parceiro</th>
+                    <th scope="col" className="text-left p-3 font-semibold">Códigos</th>
+                    <th scope="col" className="text-right p-3 font-semibold">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -324,7 +328,12 @@ function UserRow({
 
   return (
     <tr className="hover:bg-muted/20">
-      <td className="p-3 font-medium">{user.name}</td>
+      <td className="p-3 font-medium">
+        <div className="flex flex-wrap items-center gap-2">
+          <span>{user.name}</span>
+          {user.active === false && <Badge variant="muted" className="text-[9px]">Inativo</Badge>}
+        </div>
+      </td>
       <td className="p-3 font-mono text-xs">{user.username}</td>
       <td className="p-3">
         <Badge variant={ROLE_VARIANT[user.role]} className="text-[10px]">
@@ -345,18 +354,9 @@ function UserRow({
       </td>
       <td className="p-3">
         {bankKeys.length > 0 ? (
-          <div className="flex gap-1 flex-wrap">
-            {bankKeys.slice(0, 3).map((k) => (
-              <Badge key={k} variant="muted" className="text-[9px] font-mono">
-                {k}:{String(user.bank_codes![k]).slice(0, 6)}
-              </Badge>
-            ))}
-            {bankKeys.length > 3 && (
-              <Badge variant="muted" className="text-[9px]">
-                +{bankKeys.length - 3}
-              </Badge>
-            )}
-          </div>
+          <Badge variant="muted" className="text-[10px]">
+            {bankKeys.length} {bankKeys.length === 1 ? 'banco configurado' : 'bancos configurados'}
+          </Badge>
         ) : (
           <span className="text-muted-foreground text-xs">—</span>
         )}
@@ -366,8 +366,8 @@ function UserRow({
           <span className="text-muted-foreground text-xs">—</span>
         ) : (
           <div className="flex justify-end gap-1">
-            <Button variant="ghost" size="sm" onClick={onEdit} title="Editar">
-              <Edit2 className="size-3.5" />
+            <Button variant="ghost" size="sm" onClick={onEdit} title="Editar" aria-label={`Editar ${user.name}`}>
+              <Edit2 className="size-3.5" aria-hidden />
             </Button>
             {isAdmin && (
               <Button
@@ -375,9 +375,10 @@ function UserRow({
                 size="sm"
                 onClick={onResetPw}
                 title="Redefinir senha"
+                aria-label={`Redefinir senha de ${user.name}`}
                 className="text-yellow-400"
               >
-                <Key className="size-3.5" />
+                <Key className="size-3.5" aria-hidden />
               </Button>
             )}
             <Button
@@ -385,9 +386,10 @@ function UserRow({
               size="sm"
               onClick={onBankCodes}
               title="Códigos de banco"
+              aria-label={`Gerenciar códigos de banco de ${user.name}`}
               className="text-green-400"
             >
-              📋
+              <Copy className="size-3.5" aria-hidden />
             </Button>
             {isAdmin && (
               <Button
@@ -400,9 +402,10 @@ function UserRow({
                 }}
                 disabled={del.isPending}
                 title="Desativar"
+                aria-label={`Desativar ${user.name}`}
                 className="text-destructive"
               >
-                <Trash2 className="size-3.5" />
+                <Trash2 className="size-3.5" aria-hidden />
               </Button>
             )}
           </div>

@@ -40,7 +40,7 @@ const DialogContent = React.forwardRef<
         // os `sm:left-/top-/right-/bottom-` do override desktop e acaba
         // apagando o posicionamento responsivo, jogando o modal a 3000px do topo.
         // Mantemos cada lado explícito pra cada um poder ser sobrescrito sozinho.
-        'fixed top-0 left-0 right-0 bottom-0 z-50 grid w-full h-full max-h-screen overflow-y-auto bg-card p-4',
+        'workspace-dialog fixed top-0 left-0 right-0 bottom-0 z-50 grid w-full h-full max-h-[100dvh] overflow-y-auto bg-card p-4',
         // sm+: volta a ser modal centralizado clássico.
         'sm:left-[50%] sm:top-[50%] sm:right-auto sm:bottom-auto sm:h-auto sm:max-w-2xl sm:max-h-[90vh] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:p-6 sm:border sm:rounded-lg sm:gap-4',
         'shadow-lg duration-200',
@@ -51,8 +51,8 @@ const DialogContent = React.forwardRef<
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
-        <X className="h-4 w-4" />
+      <DialogPrimitive.Close className="absolute right-2 top-2 flex size-11 items-center justify-center rounded-xl text-muted-foreground ring-offset-background transition-colors hover:bg-secondary hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none sm:right-3 sm:top-3">
+        <X className="size-5" />
         <span className="sr-only">Fechar</span>
       </DialogPrimitive.Close>
     </DialogPrimitive.Content>

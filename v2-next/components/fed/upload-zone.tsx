@@ -1,18 +1,17 @@
 'use client';
 
-import { useRef } from 'react';
+import { useId, useRef, useState } from 'react';
+import { FileCheck2, Paperclip, Trash2, UploadCloud } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Paperclip, Trash2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface Props {
   label: string;
   hint?: string;
   file: File | null;
-  onChange: (f: File | null) => void;
-  /** Padrão: PDF + qualquer imagem */
+  onChange: (file: File | null) => void;
   accept?: string;
-  /** Máximo em MB. Padrão 10 */
   maxMB?: number;
 }
 
@@ -25,55 +24,105 @@ export function UploadZone({
   maxMB = 10,
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputId = useId();
+  const descriptionId = `${inputId}-description`;
+  const errorId = `${inputId}-error`;
+  const [error, setError] = useState('');
+  const [dragActive, setDragActive] = useState(false);
 
-  function pick(f: File | null) {
-    if (!f) return onChange(null);
-    if (f.size > maxMB * 1024 * 1024) {
-      alert(`Arquivo > ${maxMB}MB. Reduza ou comprima.`);
+  function pick(nextFile: File | null) {
+    setError('');
+    if (!nextFile) {
+      onChange(null);
       return;
     }
-    const t = f.type;
-    if (!(t === 'application/pdf' || t.startsWith('image/'))) {
-      alert('Tipo não suportado. Use PDF, JPG, PNG ou WEBP.');
+    if (nextFile.size > maxMB * 1024 * 1024) {
+      setError(`O arquivo ultrapassa ${maxMB} MB. Reduza ou comprima antes de continuar.`);
+      if (inputRef.current) inputRef.current.value = '';
       return;
     }
-    onChange(f);
+    const type = nextFile.type;
+    if (!(type === 'application/pdf' || type.startsWith('image/'))) {
+      setError('Formato não suportado. Envie um arquivo PDF, JPG, PNG ou WEBP.');
+      if (inputRef.current) inputRef.current.value = '';
+      return;
+    }
+    onChange(nextFile);
+  }
+
+  function clearFile() {
+    setError('');
+    if (inputRef.current) inputRef.current.value = '';
+    onChange(null);
   }
 
   return (
-    <Card className="border-dashed">
-      <CardContent className="p-5 text-center">
+    <Card
+      className={cn(
+        'border-dashed transition-colors',
+        dragActive && 'border-primary bg-primary/5',
+        error && 'border-destructive/40',
+      )}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        setDragActive(true);
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={() => setDragActive(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragActive(false);
+        pick(event.dataTransfer.files?.[0] ?? null);
+      }}
+    >
+      <CardContent className="p-5 text-center sm:p-6">
+        <input
+          ref={inputRef}
+          id={inputId}
+          type="file"
+          accept={accept}
+          className="sr-only"
+          aria-describedby={`${descriptionId}${error ? ` ${errorId}` : ''}`}
+          onChange={(event) => pick(event.target.files?.[0] ?? null)}
+        />
+
         {!file ? (
           <>
-            <div className="text-sm text-muted-foreground mb-2">{label}</div>
-            {hint && <div className="text-[11px] text-muted-foreground/80 mb-3">{hint}</div>}
-            <input
-              ref={inputRef}
-              type="file"
-              accept={accept}
-              className="hidden"
-              onChange={(e) => pick(e.target.files?.[0] || null)}
-            />
-            <Button size="sm" variant="outline" onClick={() => inputRef.current?.click()} className="gap-2">
-              <Paperclip className="w-4 h-4" /> Selecionar arquivo
-            </Button>
-            <div className="text-[10px] text-muted-foreground/70 mt-2">
-              PDF, JPG, PNG ou WEBP — máx {maxMB}MB
+            <div className="mx-auto flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/20">
+              <UploadCloud className="size-5" aria-hidden />
             </div>
+            <label htmlFor={inputId} className="mt-3 block text-sm font-semibold text-foreground">{label}</label>
+            {hint && <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-muted-foreground">{hint}</p>}
+            <Button type="button" size="sm" variant="outline" onClick={() => inputRef.current?.click()} className="mt-4 gap-2">
+              <Paperclip className="size-4" aria-hidden />
+              Selecionar arquivo
+            </Button>
+            <p id={descriptionId} className="mt-2 text-[11px] text-muted-foreground">
+              Arraste aqui ou selecione PDF, JPG, PNG ou WEBP · máximo de {maxMB} MB
+            </p>
           </>
         ) : (
           <>
-            <div className="text-sm font-bold flex items-center justify-center gap-2">
-              <Paperclip className="w-4 h-4 text-primary" />
-              <span className="truncate max-w-[260px]">{file.name}</span>
+            <div className="mx-auto flex size-11 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20">
+              <FileCheck2 className="size-5" aria-hidden />
             </div>
-            <div className="text-[11px] text-muted-foreground mt-1">
-              {(file.size / 1024).toFixed(0)} KB · {file.type || 'application/octet-stream'}
+            <div className="mt-3 flex items-center justify-center gap-2 text-sm font-semibold">
+              <span className="max-w-[280px] truncate">{file.name}</span>
             </div>
-            <Button size="sm" variant="outline" onClick={() => onChange(null)} className="mt-3 gap-2">
-              <Trash2 className="w-3.5 h-3.5" /> Trocar
+            <p id={descriptionId} className="mt-1 text-[11px] text-muted-foreground">
+              {(file.size / 1024).toFixed(0)} KB · {file.type || 'tipo não informado'}
+            </p>
+            <Button type="button" size="sm" variant="outline" onClick={clearFile} className="mt-4 gap-2">
+              <Trash2 className="size-3.5" aria-hidden />
+              Trocar arquivo
             </Button>
           </>
+        )}
+
+        {error && (
+          <p id={errorId} role="alert" className="mt-3 text-xs font-medium text-destructive">
+            {error}
+          </p>
         )}
       </CardContent>
     </Card>

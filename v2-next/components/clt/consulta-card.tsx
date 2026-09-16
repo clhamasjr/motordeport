@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useFilaStatus, useReprocessarBanco } from '@/hooks/use-clt-fila';
-import { BancoSlug, FilaConsulta } from '@/lib/clt-types';
+import { BancoSlug } from '@/lib/clt-types';
 import { BancoOfertaCard } from './banco-oferta-card';
 import { BancoLinhas } from './banco-linhas';
 import { ModalDigitar } from './modal-digitar';
@@ -29,7 +29,7 @@ interface Props {
 const VISAO_KEY = 'flowforce_clt_visao';
 
 export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
-  const { data: fila, isLoading, error } = useFilaStatus(filaId, pool);
+  const { data: fila, isLoading, error, refetch, isFetching } = useFilaStatus(filaId, pool);
   const [bancoDigitar, setBancoDigitar] = useState<string | null>(null);
   // Visão dos bancos: 'linhas' (tabela, padrão) ou 'cards'. Persiste a escolha.
   const [visao, setVisao] = useState<'linhas' | 'cards'>('linhas');
@@ -44,6 +44,22 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
     try { localStorage.setItem(VISAO_KEY, v); } catch { /* ignore */ }
   };
   const reprocessar = useReprocessarBanco();
+  const [retryProgress, setRetryProgress] = useState<{ completed: number; total: number } | null>(null);
+
+  async function retryFailures(banks: BancoSlug[]) {
+    if (banks.length === 0 || retryProgress) return;
+    setRetryProgress({ completed: 0, total: banks.length });
+    for (let index = 0; index < banks.length; index += 1) {
+      try {
+        await reprocessar.mutateAsync({ filaId, banco: banks[index] });
+      } catch {
+        // O hook mantém o erro individual visível; a fila continua nos demais bancos.
+      }
+      setRetryProgress({ completed: index + 1, total: banks.length });
+    }
+    setRetryProgress(null);
+    void refetch();
+  }
 
   // Se backend retorna 4xx (id antigo no localStorage que ja sumiu), avisa o pai
   // pra remover da pilha automaticamente — evita "card de erro" eterno na tela.
@@ -87,8 +103,13 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
               <span>Erro carregando consulta: {error?.message || 'desconhecido'}</span>
             )}
           </div>
+          {!isExpiraId && (
+            <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isFetching} className="h-8 gap-1">
+              <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} aria-hidden /> Tentar novamente
+            </Button>
+          )}
           {onClose && (
-            <Button variant="ghost" size="sm" onClick={onClose} className="h-7 gap-1">
+            <Button variant="ghost" size="sm" onClick={onClose} className="h-8 gap-1">
               <X className="w-3.5 h-3.5" /> Fechar
             </Button>
           )}
@@ -191,8 +212,8 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
                 </div>
               )}
               {onClose && (
-                <Button variant="ghost" size="icon" onClick={onClose} title="Fechar">
-                  <X className="w-4 h-4" />
+                <Button variant="ghost" size="icon" onClick={onClose} title="Fechar consulta" aria-label="Fechar consulta">
+                  <X className="w-4 h-4" aria-hidden />
                 </Button>
               )}
             </div>
@@ -217,11 +238,11 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
                   variant="outline"
                   size="sm"
                   className="h-7 gap-1 text-xs"
-                  disabled={reprocessar.isPending}
-                  onClick={() => falhas.forEach((o) => reprocessar.mutate({ filaId: fila.id, banco: o.slug }))}
+                  disabled={!!retryProgress || reprocessar.isPending}
+                  onClick={() => void retryFailures(falhas.map((failure) => failure.slug))}
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${reprocessar.isPending ? 'animate-spin' : ''}`} />
-                  Re-tentar todos ({falhas.length})
+                  <RefreshCw className={`w-3.5 h-3.5 ${retryProgress || reprocessar.isPending ? 'animate-spin' : ''}`} aria-hidden />
+                  {retryProgress ? `Reprocessando ${retryProgress.completed}/${retryProgress.total}` : `Re-tentar falhas (${falhas.length})`}
                 </Button>
               ) : <span />;
             })()}

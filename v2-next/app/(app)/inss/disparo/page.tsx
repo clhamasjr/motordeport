@@ -7,6 +7,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { formatCpf, formatBRL } from '@/lib/utils';
 import { useInssBaseStore } from '@/hooks/use-inss-base-store';
 import { useBulkDispatch, type DispatchClientData } from '@/hooks/use-inss-disparo';
@@ -14,11 +22,17 @@ import { Send, ShoppingCart, AlertCircle, CheckCircle2, Loader2 } from 'lucide-r
 
 type CampaignType = 'completa' | 'portabilidade' | 'novo' | 'cartao' | 'saque';
 
+function canonicalPhone(value?: string) {
+  const digits = (value || '').replace(/\D/g, '');
+  return digits.startsWith('55') && digits.length >= 12 ? digits.slice(2) : digits;
+}
+
 export default function DisparoInssPage() {
   const { base, selectedCpfs } = useInssBaseStore();
   const [instance, setInstance] = useState('testesofia');
   const [campaignType, setCampaignType] = useState<CampaignType>('completa');
   const [resultados, setResultados] = useState<{ nome: string; phone?: string; ok: boolean; message?: string; error?: string }[]>([]);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const bulk = useBulkDispatch();
 
   // Constrói clientes elegíveis a partir da base + seleção
@@ -75,7 +89,7 @@ export default function DisparoInssPage() {
 
   async function disparar() {
     if (clientes.length === 0) return;
-    if (!confirm(`Disparar Sofia pra ${clientes.length} cliente(s) via instance "${instance}"?\n\nCampanha: ${campaignType}\n\nIsso vai enviar mensagens WhatsApp reais.`)) return;
+    setReviewOpen(false);
     setResultados([]);
     try {
       const r = await bulk.mutateAsync({ instance, campaignType, clients: clientes });
@@ -94,9 +108,7 @@ export default function DisparoInssPage() {
           <CardContent className="p-10 text-center text-muted-foreground">
             <Send className="size-12 mx-auto mb-2 opacity-30" />
             <div className="text-sm mb-3">Nenhuma base carregada.</div>
-            <Link href="/inss/higienizacao">
-              <Button size="sm">Ir para Higienização</Button>
-            </Link>
+            <Button asChild size="sm"><Link href="/inss/higienizacao">Ir para Higienização</Link></Button>
           </CardContent>
         </Card>
       </div>
@@ -119,18 +131,20 @@ export default function DisparoInssPage() {
       <Card>
         <CardContent className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            <Label htmlFor="dispatch-instance" className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
               Instance Evolution
             </Label>
-            <Input value={instance} onChange={(e) => setInstance(e.target.value)} placeholder="testesofia" className="font-mono mt-1" />
+            <Input id="dispatch-instance" value={instance} onChange={(e) => setInstance(e.target.value)} placeholder="testesofia" className="font-mono mt-1" disabled={bulk.isPending} />
           </div>
           <div>
-            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            <Label htmlFor="dispatch-campaign" className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
               Tipo de campanha
             </Label>
             <select
+              id="dispatch-campaign"
               value={campaignType}
               onChange={(e) => setCampaignType(e.target.value as CampaignType)}
+              disabled={bulk.isPending}
               className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
             >
               <option value="completa">Completa (oferece tudo: melhor oportunidade primeiro)</option>
@@ -168,9 +182,7 @@ export default function DisparoInssPage() {
           <CardContent className="p-10 text-center text-muted-foreground">
             <ShoppingCart className="size-12 mx-auto mb-2 opacity-30" />
             <div className="text-sm mb-3">Nenhum cliente selecionado com telefone.</div>
-            <Link href="/inss/higienizacao">
-              <Button size="sm">Ir selecionar clientes</Button>
-            </Link>
+            <Button asChild size="sm"><Link href="/inss/higienizacao">Ir selecionar clientes</Link></Button>
           </CardContent>
         </Card>
       ) : (
@@ -179,7 +191,8 @@ export default function DisparoInssPage() {
           <Card>
             <CardContent className="p-4">
               <Button
-                onClick={disparar}
+                type="button"
+                onClick={() => setReviewOpen(true)}
                 disabled={bulk.isPending || !instance}
                 size="lg"
                 className="w-full"
@@ -187,7 +200,7 @@ export default function DisparoInssPage() {
                 {bulk.isPending ? (
                   <><Loader2 className="size-4 animate-spin" />Disparando {clientes.length} mensagens... pode levar 1-3min</>
                 ) : (
-                  <><Send className="size-4" />🚀 Disparar Sofia pra {clientes.length} clientes</>
+                  <><Send className="size-4" />Revisar disparo para {clientes.length} clientes</>
                 )}
               </Button>
               <div className="text-[10px] text-muted-foreground text-center mt-2">
@@ -201,19 +214,20 @@ export default function DisparoInssPage() {
             <CardContent className="p-0">
               <div className="overflow-x-auto max-h-96">
                 <table className="w-full text-xs">
+                  <caption className="sr-only">Destinatários incluídos no disparo e estado do envio</caption>
                   <thead className="bg-muted/30 sticky top-0">
                     <tr>
-                      <th className="text-left p-2 font-semibold">Nome</th>
-                      <th className="text-left p-2 font-semibold">CPF</th>
-                      <th className="text-left p-2 font-semibold">Telefone</th>
-                      <th className="text-right p-2 font-semibold">Troco</th>
-                      <th className="text-right p-2 font-semibold">Margem emp.</th>
-                      <th className="text-center p-2 font-semibold">Status</th>
+                      <th scope="col" className="text-left p-2 font-semibold">Nome</th>
+                      <th scope="col" className="text-left p-2 font-semibold">CPF</th>
+                      <th scope="col" className="text-left p-2 font-semibold">Telefone</th>
+                      <th scope="col" className="text-right p-2 font-semibold">Troco</th>
+                      <th scope="col" className="text-right p-2 font-semibold">Margem emp.</th>
+                      <th scope="col" className="text-center p-2 font-semibold">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {clientes.map((c, i) => {
-                      const res = resultados.find((r) => r.phone === c.phone || r.nome === c.nome);
+                      const res = resultados.find((r) => canonicalPhone(r.phone) === canonicalPhone(c.phone));
                       return (
                         <tr key={`${c.cpf}-${i}`} className="hover:bg-muted/20">
                           <td className="p-2 font-medium">{c.nome}</td>
@@ -221,7 +235,7 @@ export default function DisparoInssPage() {
                           <td className="p-2 font-mono text-[10px]">{c.phone || '—'}</td>
                           <td className="p-2 text-right font-mono text-green-400">{formatBRL(c.troco || 0)}</td>
                           <td className="p-2 text-right font-mono text-yellow-400">{formatBRL(c.margem_emprestimo || 0)}</td>
-                          <td className="p-2 text-center">
+                          <td className="p-2 text-center" aria-live="polite">
                             {res ? (
                               res.ok ? (
                                 <Badge variant="success" className="text-[10px]"><CheckCircle2 className="size-3" /> enviado</Badge>
@@ -254,6 +268,37 @@ export default function DisparoInssPage() {
           )}
         </>
       )}
+
+      <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Revisar disparo</DialogTitle>
+            <DialogDescription>
+              Esta ação enviará mensagens reais pelo WhatsApp. Confira o escopo antes de confirmar.
+            </DialogDescription>
+          </DialogHeader>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-3 rounded-xl border border-border bg-secondary/20 p-4 text-sm">
+            <dt className="text-muted-foreground">Instance</dt>
+            <dd className="break-all text-right font-mono font-semibold">{instance}</dd>
+            <dt className="text-muted-foreground">Campanha</dt>
+            <dd className="text-right font-semibold capitalize">{campaignType}</dd>
+            <dt className="text-muted-foreground">Destinatários</dt>
+            <dd className="text-right font-semibold text-emerald-400">{clientes.length} com telefone</dd>
+            <dt className="text-muted-foreground">Não incluídos</dt>
+            <dd className="text-right font-semibold text-amber-300">{semTel} sem telefone</dd>
+          </dl>
+          <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs leading-5 text-amber-200">
+            Após confirmar, mantenha esta página aberta. Um resultado ausente não deve ser interpretado como falha segura para reenvio.
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setReviewOpen(false)} disabled={bulk.isPending}>Cancelar</Button>
+            <Button type="button" variant="destructive" onClick={() => void disparar()} disabled={bulk.isPending || !instance}>
+              {bulk.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Send className="size-4" aria-hidden />}
+              Confirmar e enviar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

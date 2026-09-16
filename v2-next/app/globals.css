@@ -4,33 +4,36 @@
 
 @layer base {
   :root {
-    /* Aurora dark — base profundo, accents vivos */
-    --background: 230 35% 6%;
-    --foreground: 210 40% 98%;
-    --card: 230 30% 9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 230 32% 8%;
+    /* FlowForce Command Center — profundo, técnico e de alto contraste */
+    --background: 224 46% 5%;
+    --foreground: 210 35% 96%;
+    --card: 222 38% 8%;
+    --card-foreground: 210 35% 96%;
+    --popover: 222 42% 7%;
     --popover-foreground: 210 40% 98%;
-    --primary: 217 100% 65%;
-    --primary-foreground: 230 35% 6%;
-    --secondary: 230 25% 14%;
+    --primary: 188 100% 52%;
+    --primary-foreground: 224 46% 5%;
+    --secondary: 222 28% 13%;
     --secondary-foreground: 210 40% 98%;
-    --muted: 230 25% 14%;
-    --muted-foreground: 215 25% 70%;
-    --accent: 280 90% 70%;
-    --accent-foreground: 230 35% 6%;
+    --muted: 222 28% 13%;
+    --muted-foreground: 215 20% 67%;
+    --accent: 258 92% 72%;
+    --accent-foreground: 224 46% 5%;
     --destructive: 0 84% 65%;
     --destructive-foreground: 210 40% 98%;
-    --border: 230 30% 18%;
-    --input: 230 30% 16%;
-    --ring: 217 100% 65%;
-    --radius: 0.875rem;
+    --border: 218 27% 18%;
+    --input: 220 30% 15%;
+    --ring: 188 100% 52%;
+    --radius: 0.625rem;
 
     /* Aurora gradient stops */
-    --aurora-1: 217 100% 60%;  /* azul */
-    --aurora-2: 280 90% 65%;   /* roxo */
-    --aurora-3: 188 95% 60%;   /* cyan */
-    --aurora-4: 320 85% 65%;   /* magenta sutil */
+    --aurora-1: 188 100% 52%;  /* cyan de comando */
+    --aurora-2: 258 92% 72%;   /* violeta elétrico */
+    --aurora-3: 203 100% 58%;  /* azul de sinal */
+    --aurora-4: 160 84% 52%;   /* verde operacional */
+    --brand-orange: 37 100% 50%;
+    --brand-gold: 31 100% 36%;
+    --brand-silver: 218 10% 72%;
   }
 }
 
@@ -45,11 +48,17 @@
   }
   body {
     background-image:
-      radial-gradient(at 8% 12%, hsl(var(--aurora-1) / 0.18) 0px, transparent 50%),
-      radial-gradient(at 92% 8%, hsl(var(--aurora-2) / 0.14) 0px, transparent 50%),
-      radial-gradient(at 50% 100%, hsl(var(--aurora-3) / 0.12) 0px, transparent 50%);
+      linear-gradient(hsl(var(--foreground) / 0.018) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--foreground) / 0.018) 1px, transparent 1px),
+      radial-gradient(at 14% 0%, hsl(var(--aurora-1) / 0.10) 0px, transparent 36%),
+      radial-gradient(at 90% 14%, hsl(var(--aurora-2) / 0.08) 0px, transparent 34%);
+    background-size: 32px 32px, 32px 32px, auto, auto;
     background-attachment: fixed;
     min-height: 100vh;
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.3);
+    color: hsl(var(--foreground));
   }
 }
 
@@ -124,6 +133,192 @@
   .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
   .scrollbar-thin::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
   .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: hsl(var(--primary) / 0.5); }
+
+  /* Superfícies compartilhadas — escuras no login, claras no workspace */
+  .command-surface {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border) / 0.72);
+    box-shadow: 0 12px 36px -28px rgba(24, 21, 16, 0.42);
+  }
+  .command-hover {
+    transition: border-color .18s cubic-bezier(.23,1,.32,1), box-shadow .18s cubic-bezier(.23,1,.32,1), transform .18s cubic-bezier(.23,1,.32,1);
+  }
+  .command-hover:hover {
+    border-color: hsl(var(--primary) / 0.48);
+    box-shadow: 0 22px 46px -30px rgba(24, 21, 16, 0.5);
+    transform: translateY(-2px);
+  }
+  .command-mark {
+    border-radius: 4px 12px 4px 12px;
+    box-shadow: inset 0 0 0 1px hsl(var(--foreground) / 0.24);
+  }
+  .command-nav-row {
+    position: relative;
+  }
+  .command-nav-row[aria-current="page"]::before {
+    content: "";
+    position: absolute;
+    left: -12px;
+    top: 9px;
+    bottom: 9px;
+    width: 2px;
+    background: hsl(var(--primary));
+  }
+}
+
+.command-shell {
+  isolation: isolate;
+  --background: 42 33% 96%;
+  --foreground: 222 28% 13%;
+  --card: 42 38% 99%;
+  --card-foreground: 222 28% 13%;
+  --popover: 42 38% 99%;
+  --popover-foreground: 222 28% 13%;
+  --primary: 37 100% 50%;
+  --primary-foreground: 222 28% 10%;
+  --secondary: 38 22% 91%;
+  --secondary-foreground: 222 24% 18%;
+  --muted: 38 18% 92%;
+  --muted-foreground: 218 12% 43%;
+  --accent: 222 33% 18%;
+  --accent-foreground: 42 38% 98%;
+  --border: 35 14% 82%;
+  --input: 35 14% 79%;
+  --ring: 37 100% 50%;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+}
+
+.command-main {
+  position: relative;
+}
+
+.command-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: #f4f1eb;
+}
+
+.workspace-rail {
+  background: #0d0e12;
+  color: #f8f6f1;
+}
+
+.workspace-context {
+  background: #17181d;
+  color: #f8f6f1;
+}
+
+.workspace-paper {
+  background: #fbfaf7;
+  box-shadow: 0 24px 70px -52px rgba(28, 24, 18, 0.56);
+}
+
+.workspace-dialog {
+  --background: 42 33% 96%;
+  --foreground: 222 28% 13%;
+  --card: 42 38% 99%;
+  --card-foreground: 222 28% 13%;
+  --popover: 42 38% 99%;
+  --popover-foreground: 222 28% 13%;
+  --primary: 37 100% 50%;
+  --primary-foreground: 222 28% 10%;
+  --secondary: 38 22% 91%;
+  --secondary-foreground: 222 24% 18%;
+  --muted: 38 18% 92%;
+  --muted-foreground: 218 12% 43%;
+  --accent: 222 33% 18%;
+  --accent-foreground: 42 38% 98%;
+  --border: 35 14% 82%;
+  --input: 35 14% 79%;
+  --ring: 37 100% 50%;
+  color: hsl(var(--foreground));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+html[data-workspace-theme='dark'] .command-shell,
+html[data-workspace-theme='dark'] .workspace-dialog {
+  --background: 225 24% 7%;
+  --foreground: 42 22% 94%;
+  --card: 225 20% 10%;
+  --card-foreground: 42 22% 94%;
+  --popover: 225 22% 9%;
+  --popover-foreground: 42 22% 94%;
+  --primary: 37 100% 50%;
+  --primary-foreground: 225 24% 7%;
+  --secondary: 224 16% 15%;
+  --secondary-foreground: 42 20% 92%;
+  --muted: 224 15% 14%;
+  --muted-foreground: 220 10% 62%;
+  --accent: 38 18% 88%;
+  --accent-foreground: 225 24% 8%;
+  --border: 222 14% 22%;
+  --input: 222 14% 26%;
+  --ring: 37 100% 50%;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+}
+
+html[data-workspace-theme='dark'] .command-bg {
+  background: #101116;
+}
+
+html[data-workspace-theme='dark'] .workspace-paper {
+  background: hsl(var(--card));
+  box-shadow: 0 24px 70px -52px rgba(0, 0, 0, 0.9);
+}
+
+html[data-workspace-theme='dark'] .command-surface {
+  box-shadow: 0 16px 42px -30px rgba(0, 0, 0, 0.9);
+}
+
+html[data-workspace-theme='dark'] .workspace-ink {
+  background: #1b1c21;
+}
+
+.workspace-ink {
+  background: #17181d;
+  color: #f8f6f1;
+}
+
+.workspace-rail-tip {
+  transform: translateX(-4px);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 160ms cubic-bezier(.23,1,.32,1), opacity 160ms cubic-bezier(.23,1,.32,1);
+}
+
+.group:hover > .workspace-rail-tip,
+.group:focus-visible > .workspace-rail-tip {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.brand-login-bg {
+  background:
+    radial-gradient(circle at 14% 10%, hsl(var(--brand-orange) / 0.09), transparent 28%),
+    radial-gradient(circle at 84% 10%, hsl(var(--primary) / 0.055), transparent 24%),
+    linear-gradient(135deg, #050608 0%, #090b10 54%, #07090d 100%);
+}
+
+.brand-auth-panel {
+  box-shadow:
+    0 26px 80px -44px rgba(0, 0, 0, 0.92),
+    inset 0 1px 0 hsl(var(--brand-silver) / 0.04);
+}
+
+.login-clean-glow {
+  position: fixed;
+  left: 50%;
+  top: 42%;
+  width: 42rem;
+  height: 42rem;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, hsl(var(--brand-orange) / 0.075), transparent 64%);
+  filter: blur(14px);
 }
 
 /* Aurora floating background — fica fixo, animação lenta */
@@ -166,7 +361,27 @@
   animation: aurora-float 28s ease-in-out infinite reverse;
 }
 
+.login-grid {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.16;
+  background-image:
+    linear-gradient(hsl(var(--foreground) / 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--foreground) / 0.08) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(circle at 50% 45%, black 0%, transparent 78%);
+  -webkit-mask-image: radial-gradient(circle at 50% 45%, black 0%, transparent 78%);
+}
+
 /* Respeita reduce-motion */
 @media (prefers-reduced-motion: reduce) {
   .aurora-bg::before, .aurora-bg::after { animation: none; }
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

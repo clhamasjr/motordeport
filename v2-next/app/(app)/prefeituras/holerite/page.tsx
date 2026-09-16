@@ -100,7 +100,7 @@ export default function HoleritePage() {
           {!arquivo ? (
             <div className="border-2 border-dashed border-border rounded-lg p-8 text-center space-y-3">
               <Upload className="w-10 h-10 mx-auto text-muted-foreground" />
-              <div className="text-sm text-muted-foreground">Arraste o arquivo ou clique no botão</div>
+              <div className="text-sm text-muted-foreground">Selecione um PDF ou uma imagem do holerite</div>
               <input
                 ref={fileRef}
                 type="file"
@@ -108,7 +108,7 @@ export default function HoleritePage() {
                 className="hidden"
                 onChange={onSelecionarArquivo}
               />
-              <Button onClick={() => fileRef.current?.click()} className="gap-2">
+              <Button type="button" onClick={() => fileRef.current?.click()} className="gap-2">
                 <Upload className="w-4 h-4" /> Selecionar arquivo
               </Button>
               <div className="text-[11px] text-muted-foreground">PDF, JPG, PNG ou WEBP — máx 10MB</div>
@@ -122,7 +122,7 @@ export default function HoleritePage() {
                   {(arquivo.tamanho / 1024).toFixed(0)} KB · {arquivo.tipo}
                 </div>
               </div>
-              <Button variant="outline" size="sm" onClick={trocarArquivo}>🗑 Trocar arquivo</Button>
+              <Button type="button" variant="outline" size="sm" onClick={trocarArquivo}>Trocar arquivo</Button>
             </div>
           )}
         </CardContent>
@@ -131,10 +131,11 @@ export default function HoleritePage() {
       {/* Forçar convênio (opcional) */}
       <Card>
         <CardContent className="p-4">
-          <div className="text-xs text-muted-foreground mb-2">
+          <label htmlFor="pref-convenio" className="mb-2 block text-xs text-muted-foreground">
             Convênio (opcional — se não escolher, a IA tenta detectar pelo holerite):
-          </div>
+          </label>
           <select
+            id="pref-convenio"
             value={convenioForcado}
             onChange={(e) => setConvenioForcado(e.target.value)}
             className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
