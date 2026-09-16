@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { formatCpf, formatBRL } from '@/lib/utils';
-import { ElegivelRow, descreverMotivo } from '@/lib/inss-base-parser';
+import { ElegivelRow, descreverMotivo, projetarParaBanco } from '@/lib/inss-base-parser';
 import { ORDEM } from '@/lib/inss-motor';
 import { useInssBaseStore } from '@/hooks/use-inss-base-store';
 import { Search, Download, ShoppingCart, X } from 'lucide-react';
@@ -33,6 +33,8 @@ interface Filtros {
   invalidez: string;
   enquadramento: string;
   bancoRede: string;     // '' | 'rede' (recebe+todos contratos em banco de rede) | 'concentrado' (todos no mesmo banco)
+  /** Direcionamento manual: recalcula tudo como se o destino fosse esse banco e mostra só quem ele aceita. '' = automático (ORDEM). */
+  direcionar: string;
   busca: string;
 }
 
@@ -40,8 +42,11 @@ const INITIAL: Filtros = {
   banco: '', taxa: '', trocoMin: '', trocoMax: '', vcMin: '', vcMax: '',
   parMin: '', parMax: '', salMin: '', salMax: '', pagasMin: '', pagasMax: '',
   idadeMin: '', idadeMax: '', margemPctMin: '', margemPctMax: '',
-  cartao: '', invalidez: '', enquadramento: '', bancoRede: '', busca: '',
+  cartao: '', invalidez: '', enquadramento: '', bancoRede: '', direcionar: '', busca: '',
 };
+
+const BANCO_NOME: Record<string, string> = { FINTECH_CORBAN: 'Fintech do Corban', DAYCOVAL: 'Daycoval' };
+const nomeBanco = (b: string) => BANCO_NOME[b] || b;
 
 const pN = (v: string) => parseFloat(v.replace(',', '.')) || 0;
 const pI = (v: string) => parseInt(v, 10) || 0;
@@ -67,8 +72,16 @@ export function ElegiveisTable() {
   }, [base]);
 
   // Mesmo pipeline de filtros pra lista (elegíveis) e pro export "todos" (analise).
-  const aplicarFiltros = useCallback((src: ElegivelRow[]) => {
+  const aplicarFiltros = useCallback((src: ElegivelRow[], opts?: { semDirecionar?: boolean }) => {
     let arr = src;
+    // 🎯 Direcionar: projeta cada linha no banco escolhido; quem ele não aceita sai da lista
+    // (o export "todos + motivo" passa semDirecionar e explica o porquê por linha).
+    if (f.direcionar && !opts?.semDirecionar && base) {
+      const alvo = f.direcionar;
+      arr = arr
+        .map((r) => projetarParaBanco(r, base.compByCpf[r.cpf], alvo))
+        .filter((r): r is ElegivelRow => r !== null);
+    }
 
     // Sem filtro de "nova regra": tudo que encaixa em algum banco aparece;
     // o enquadramento (compStatus) fica como informação/filtro opcional e a
@@ -137,7 +150,7 @@ export function ElegiveisTable() {
     }
 
     return arr;
-  }, [f, rmcByCpf]);
+  }, [f, rmcByCpf, base]);
 
   const filtered = useMemo(() => {
     if (!base) return [] as ElegivelRow[];
@@ -160,7 +173,7 @@ export function ElegiveisTable() {
   // Contagens pros dois exports
   // "Enquadrados" = SÓ quem já está dentro da regra (dono, 14/09). Resolvíveis vão no "todos + motivo".
   const nEnquadrados = useMemo(() => filtered.filter((r) => r.compStatus === 'dentro_regra').length, [filtered]);
-  const nTodos = useMemo(() => (base ? aplicarFiltros(base.analise).length : 0), [base, aplicarFiltros]);
+  const nTodos = useMemo(() => (base ? aplicarFiltros(base.analise, { semDirecionar: true }).length : 0), [base, aplicarFiltros]);
 
   const items = filtered.slice(pg * PER_PAGE, (pg + 1) * PER_PAGE);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
@@ -191,7 +204,10 @@ export function ElegiveisTable() {
     // todos = TODOS os contratos do filtro (inclusive sem banco que aceite), com coluna de motivo.
     const lista = modo === 'enquadrados'
       ? filtered.filter((r) => r.compStatus === 'dentro_regra')
-      : aplicarFiltros(base.analise);
+      : aplicarFiltros(base.analise, { semDirecionar: true })
+          // com direcionamento: quem o banco aceita sai projetado nele; quem não aceita
+          // sai na linha original e a coluna Motivo explica por quê
+          .map((r) => (f.direcionar ? (projetarParaBanco(r, base.compByCpf[r.cpf], f.direcionar) ?? r) : r));
     if (!lista.length) return;
     // Excel transforma CPF/NB/contrato/telefone em numero (6,47E+08, perde zero a
     // esquerda). Forca texto via formula ="..." — abre certo no Excel/LibreOffice/Sheets.
@@ -214,7 +230,7 @@ export function ElegiveisTable() {
       r.margemLivre || '', r.empNovoEstim || '',
       r.bancoPagador || '', r.bancoRede ? (r.bancoRedeConhecido ? 'REDE' : 'concentrado') : '',
       txt(r.t1), txt(r.t2), txt(r.t3),
-      descreverMotivo(r, base.compByCpf[r.cpf]),
+      descreverMotivo(r, base.compByCpf[r.cpf], f.direcionar || undefined),
     ]);
     const csv = [header, ...rows]
       .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(';'))
@@ -223,7 +239,7 @@ export function ElegiveisTable() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `inss-${modo === 'enquadrados' ? 'enquadrados' : 'todos-com-motivo'}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `inss-${modo === 'enquadrados' ? 'enquadrados' : 'todos-com-motivo'}${f.direcionar ? '-' + f.direcionar : ''}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -263,6 +279,11 @@ export function ElegiveisTable() {
             <ShoppingCart className="size-4" />
             {selectedCpfs.size > 0 ? `Limpar (${selectedCpfs.size})` : `Selecionar ${cpfsFiltroNum}`}
           </Button>
+          {f.direcionar && (
+            <Badge variant="info" className="text-[10px]" title="Lista e exports calculados neste banco; quem ele não aceita só aparece em 'todos + motivo'">
+              🎯 direcionado: {nomeBanco(f.direcionar)}
+            </Badge>
+          )}
           <Button variant="outline" size="sm" onClick={() => exportCSV('enquadrados')} disabled={!nEnquadrados}
             title="Só clientes que JÁ estão dentro da regra (emp ≤ 35% e total ≤ 45%)">
             <Download className="size-4" />
@@ -280,10 +301,21 @@ export function ElegiveisTable() {
       <Card>
         <CardContent className="p-3">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+            <Field label="🎯 Direcionar para">
+              <select
+                className={`h-9 rounded-md border px-2 text-xs ${f.direcionar ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300 font-semibold' : 'border-input bg-background'}`}
+                value={f.direcionar}
+                onChange={(e) => update('direcionar', e.target.value)}
+                title="Recalcula tudo (parcela, troco, tabela) como se o destino fosse esse banco e mostra só quem ele aceita. Automático = primeiro banco da ordem que aceita."
+              >
+                <option value="">Automático (ordem)</option>
+                {ORDEM.map((b) => <option key={b} value={b}>{nomeBanco(b)}</option>)}
+              </select>
+            </Field>
             <Field label="Banco destino">
               <select className="h-9 rounded-md border border-input bg-background px-2 text-xs" value={f.banco} onChange={(e) => update('banco', e.target.value)}>
                 <option value="">Todos</option>
-                {ORDEM.map((b) => <option key={b} value={b}>{b}</option>)}
+                {ORDEM.map((b) => <option key={b} value={b}>{nomeBanco(b)}</option>)}
               </select>
             </Field>
             <Field label="Taxa mínima %">

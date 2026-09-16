@@ -22,7 +22,7 @@ import { EnviarOportunidadesButton } from './enviar-oportunidades';
 const COEF_EMP_185 = 0.02153;
 
 // Rótulo de exibição do banco destino (chave do motor → nome amigável).
-const BANCO_LABEL: Record<string, string> = { FINTECH_CORBAN: 'Fintech do Corban' };
+const BANCO_LABEL: Record<string, string> = { FINTECH_CORBAN: 'Fintech do Corban', DAYCOVAL: 'Daycoval' };
 const bl = (k: string) => BANCO_LABEL[k] ?? k;
 
 // Diagnóstico do motivo de bloqueio pra contratos que ninguém aceita.
@@ -134,6 +134,8 @@ interface AnaliseNovaRegra {
 function calcularTudo(
   parsed: InssParsedResult,
   saldoOverrides: Record<number, number> = {},
+  /** Direcionamento manual: força este banco como destino (se ele aceitar). '' = automático (ORDEM). */
+  direcionar = '',
 ): { contratos: ContratoCalc[]; analise: AnaliseNovaRegra } {
   const ben = parsed.beneficio || {};
   const b = parsed.beneficiario || {};
@@ -319,7 +321,15 @@ function calcularTudo(
       // primeiro banco da lista que aceita — não o de maior troco/redução.
       const prio = (b: string) => { const i = ORDEM.indexOf(b); return i < 0 ? 999 : i; };
       todosCenarios.sort((a, b) => prio(a.result.banco) - prio(b.result.banco));
-      portRefin108 = todosCenarios[0]?.result || null;
+      if (direcionar) {
+        // 🎯 Direcionamento manual: usa o banco escolhido se ele aceita este
+        // contrato; senão marca bloqueado com o motivo (operador vê e decide).
+        const alvo = todosCenarios.find((c) => c.result.banco === direcionar);
+        if (alvo) portRefin108 = alvo.result;
+        else { portRefin108 = null; bloqueado = true; motivo = `${bl(direcionar)} não aceita este contrato`; }
+      } else {
+        portRefin108 = todosCenarios[0]?.result || null;
+      }
     }
 
     // Resolve o excedente da nova regra?
@@ -385,9 +395,10 @@ interface Props {
 
 export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
   const [saldoOverrides, setSaldoOverrides] = useState<Record<number, number>>({});
+  const [direcionar, setDirecionar] = useState('');
   const { contratos, analise } = useMemo(
-    () => calcularTudo(parsed, saldoOverrides),
-    [parsed, saldoOverrides],
+    () => calcularTudo(parsed, saldoOverrides, direcionar),
+    [parsed, saldoOverrides, direcionar],
   );
 
   const ajustarSaldo = (idx: number, valor: number) => {
@@ -595,6 +606,15 @@ export function OportunidadesIdentificadas({ parsed, cpf }: Props) {
           <div className="flex items-center gap-2">
             <Sparkles className="size-5 text-cyan-400" />
             <h3 className="font-bold text-base">Enquadramento INSS (35% emp + 5% RMC + 5% RCC = 45%)</h3>
+            <select
+              className={`h-7 rounded-md border px-2 text-[11px] ${direcionar ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300 font-semibold' : 'border-input bg-background text-muted-foreground'}`}
+              value={direcionar}
+              onChange={(e) => setDirecionar(e.target.value)}
+              title="Direcionar: força este banco como destino em todos os contratos que ele aceita. Automático = primeiro banco da ordem que aceita."
+            >
+              <option value="">🎯 Direcionar: automático</option>
+              {ORDEM.map((b) => <option key={b} value={b}>🎯 {bl(b)}</option>)}
+            </select>
             <Badge
               variant={temAlgumCartao ? 'muted' : 'info'}
               className="text-[10px]"

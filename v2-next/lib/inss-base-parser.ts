@@ -11,7 +11,7 @@ import {
 } from '@/lib/inss-motor';
 import {
   calcPortRefin108, calcViaBrbInconta,
-  type PortRefin108Result, type ContratoReducao,
+  type ContratoReducao,
 } from '@/lib/inss-motor';
 
 const TROCO_MIN_ENQUADRADO = 250;
@@ -88,8 +88,13 @@ export interface ElegivelRow {
     port_vc: number;
     tabelaUsada: 'alta' | 'baixa'; // qual tabela do banco foi escolhida
   };
+  /** Cenário 108m em CADA banco que aceita este contrato (chave = banco). Permite
+   *  "direcionar" pra outro destino na tela sem recalcular. */
+  cenariosPorBanco?: Record<string, PortRefin108Lite>;
   _semContrato?: boolean;
 }
+
+export type PortRefin108Lite = NonNullable<ElegivelRow['portRefin108']>;
 
 export interface RmcRow {
   nome: string;
@@ -546,107 +551,23 @@ export function processBase(data: unknown[][], fname = ''): BaseProcessada | nul
     reg.compPct = Math.round(c.compPct * 10) / 10;
 
     const enquadrado = c.compStatus === 'dentro_regra';
-    let melhor: { pr108: PortRefin108Result; tabelaUsada: 'alta' | 'baixa'; troco: number; reducao: number } | null = null;
-
+    // Cenário 108m em CADA destino que aceita (já em ORDEM). Guardado em
+    // cenariosPorBanco pra tela poder "direcionar" pra outro banco; o principal
+    // (portRefin108) é o PRIMEIRO da ORDEM que gera cenário válido.
+    const cenarios: Record<string, PortRefin108Lite> = {};
     if (reg.ok && reg.sal > 0 && reg.par > 0 && reg.destinos && reg.destinos.length > 0) {
-      // Reconstrói candidatos BancoSimul a partir dos destinos
       for (const d of reg.destinos) {
-        const bSim: BancoSimul = { banco: d.banco, troco: d.troco, vc: d.vc, taxa: typeof d.taxa === 'number' ? d.taxa : parseFloat(String(d.taxa)) || 0 };
-        const r = calcPortRefin108(reg.par, reg.sal, bSim, reg.taxaOrig, reg.cod);
-        if (!r || !r.taxaOrigVale) continue;
-
-        // Calcula valores do cenário escolhido (mesma lógica da consulta unitária)
-        let refin_novaParc: number;
-        let refin_reducao: number;
-        let port_novaParc: number;
-        let port_vc: number;
-        let port_troco: number;
-        let taxaUsada: number;
-        let coefUsado: number;
-        let tabelaUsada: 'alta' | 'baixa';
-
-        if (enquadrado) {
-          // Cliente JÁ ENQUADRA: tabelaAlta (mais comissão) se troco>=250, senão baixa
-          const cenarioEsc = r.tabelaAlta.port_troco >= TROCO_MIN_ENQUADRADO
-            ? r.tabelaAlta
-            : r.tabelaBaixa;
-          tabelaUsada = cenarioEsc === r.tabelaAlta ? 'alta' : 'baixa';
-          taxaUsada = cenarioEsc.taxa;
-          coefUsado = cenarioEsc.coef;
-          refin_novaParc = cenarioEsc.refin_novaParc;
-          refin_reducao = cenarioEsc.refin_reducao;
-          port_novaParc = cenarioEsc.port_novaParc;
-          port_vc = cenarioEsc.port_vc;
-          port_troco = cenarioEsc.port_troco;
-        } else {
-          // FORA DA REGRA: reduz EXATAMENTE o excedente, troco = sobra do VC
-          const cenarioBase = r.tabelaBaixa;
-          tabelaUsada = 'baixa';
-          taxaUsada = cenarioBase.taxa;
-          coefUsado = cenarioBase.coef;
-          const exced = c.excedente;
-          const novaParcAlvo = Math.max(0, reg.par - exced);
-          const vcAlvo = coefUsado > 0 ? novaParcAlvo / coefUsado : 0;
-          if (vcAlvo >= reg.sal) {
-            // Viável: reduz exato e gera troco
-            refin_novaParc = novaParcAlvo;
-            refin_reducao = reg.par - novaParcAlvo;
-            port_novaParc = novaParcAlvo;
-            port_vc = vcAlvo;
-            port_troco = vcAlvo - reg.sal;
-          } else {
-            // VC < saldo: cai pra refin puro (max redução, sem troco)
-            refin_novaParc = cenarioBase.refin_novaParc;
-            refin_reducao = cenarioBase.refin_reducao;
-            port_novaParc = cenarioBase.refin_novaParc;
-            port_vc = reg.sal;
-            port_troco = 0;
-          }
-        }
-
-        const trocoEf = port_troco;
-        const reducaoEf = refin_reducao;
-        // Critério de "melhor": enquadrado por troco desc, não-enquadrado por redução desc
-        const candScore = enquadrado ? trocoEf : reducaoEf;
-        const melhorScore = melhor ? (enquadrado ? melhor.troco : melhor.reducao) : -Infinity;
-
-        // Prioridade comercial: destinos já vêm em ORDEM, o primeiro válido fica.
-        void candScore; void melhorScore;
-        if (!melhor) {
-          melhor = {
-            pr108: {
-              ...r,
-              taxa: taxaUsada,
-              coef: coefUsado,
-              refin_novaParc,
-              refin_reducao,
-              port_novaParc,
-              port_vc,
-              port_troco,
-            },
-            tabelaUsada,
-            troco: trocoEf,
-            reducao: reducaoEf,
-          };
-        }
+        const cen = cenarioParaBanco(reg, d, enquadrado, c.excedente);
+        if (cen) cenarios[d.banco] = cen;
       }
     }
+    reg.cenariosPorBanco = cenarios;
+    const melhor = (reg.destinos || []).map((d) => cenarios[d.banco]).find((x) => !!x) || null;
 
-    const reduz = melhor ? Math.max(0, melhor.reducao) : 0;
+    const reduz = melhor ? Math.max(0, melhor.refin_reducao) : 0;
     reg.reducaoEstim = Math.round(reduz * 100) / 100;
     reg.parcelaNovaEstim = reduz > 0 ? Math.round((reg.par - reduz) * 100) / 100 : 0;
-    if (melhor) {
-      reg.portRefin108 = {
-        banco: melhor.pr108.banco,
-        taxa: Math.round(melhor.pr108.taxa * 100) / 100,
-        coef: melhor.pr108.coef,
-        refin_novaParc: Math.round(melhor.pr108.refin_novaParc * 100) / 100,
-        refin_reducao: Math.round(melhor.pr108.refin_reducao * 100) / 100,
-        port_troco: Math.round(melhor.pr108.port_troco * 100) / 100,
-        port_vc: Math.round(melhor.pr108.port_vc * 100) / 100,
-        tabelaUsada: melhor.tabelaUsada,
-      };
-    }
+    if (melhor) reg.portRefin108 = melhor;
 
     if (enquadrado) {
       reg.compStatus = 'dentro_regra';
@@ -745,6 +666,31 @@ export async function parseFileToBase(file: File): Promise<BaseProcessada | null
 // MOTIVOS — pro export "todos + motivo" da higienização em lote
 // ──────────────────────────────────────────────────────────────────
 
+/** Por que o banco `b` NÃO aceita este contrato (1 frase). Retorna null se passa
+ *  nas regras cadastrais — nesse caso o que barrou foi troco/valor mínimo. */
+export function motivoBancoNaoAceita(
+  b: string, par: number, sal: number, pag: number, cod: string, idade: number | null,
+  isInv: boolean, eN: number, txOrig: number, i1: boolean,
+): string | null {
+  const r = BD[b];
+  if (!r) return 'banco não cadastrado no motor';
+  if (idade !== null && idade > IDADE_MAX) return `idade ${idade} acima do teto de ${IDADE_MAX} anos`;
+  if (r.block.includes(cod)) return `origem ${cod} bloqueada`;
+  if (r.espBlock && eN && r.espBlock.includes(eN)) return `espécie ${eN} não atendida`;
+  if (isInv && r.blockInv) return 'não porta invalidez';
+  if (isInv && r.invRules?.minAge && idade !== null && idade < r.invRules.minAge) return `invalidez só a partir de ${r.invRules.minAge} anos`;
+  if (r.idadeMax && idade !== null && idade > r.idadeMax) return `idade acima de ${r.idadeMax}`;
+  if (r.pMin && par < r.pMin) return `parcela abaixo de R$ ${r.pMin}`;
+  if (r.sMin && sal < r.sMin) return `saldo abaixo de R$ ${r.sMin}`;
+  const pgR = (r.pgMinMap && r.pgMinMap[cod] !== undefined) ? r.pgMinMap[cod] : (i1 ? 1 : r.pgMin);
+  if (pgR && pag < pgR) return `${pag} pagas (mínimo ${pgR})`;
+  let minTx: number | undefined;
+  if (r.taxaOrigemMin && r.taxaOrigemMin[cod] !== undefined) minTx = r.taxaOrigemMin[cod];
+  else if (r.taxaOrigemMinDefault !== undefined) minTx = r.taxaOrigemMinDefault;
+  if (minTx && txOrig > 0 && txOrig < minTx) return `taxa origem ${txOrig.toFixed(2)}% abaixo de ${minTx}%`;
+  return 'troco/valor fora do mínimo';
+}
+
 /** Por que NENHUM banco da ORDEM aceita este contrato — resumo em 1 linha. */
 export function motivoSemDestino(
   par: number, sal: number, pag: number, cod: string, idade: number | null,
@@ -756,22 +702,8 @@ export function motivoSemDestino(
   if (!par) return 'Sem valor de parcela na planilha';
   const motivos: string[] = [];
   for (const b of ORDEM) {
-    const r = BD[b];
-    if (!r) continue;
-    if (r.block.includes(cod)) { motivos.push(`${b}: origem ${cod} bloqueada`); continue; }
-    if (r.espBlock && eN && r.espBlock.includes(eN)) { motivos.push(`${b}: espécie ${eN} não atendida`); continue; }
-    if (isInv && r.blockInv) { motivos.push(`${b}: não porta invalidez`); continue; }
-    if (isInv && r.invRules?.minAge && idade !== null && idade < r.invRules.minAge) { motivos.push(`${b}: invalidez só a partir de ${r.invRules.minAge} anos`); continue; }
-    if (r.idadeMax && idade !== null && idade > r.idadeMax) { motivos.push(`${b}: idade acima de ${r.idadeMax}`); continue; }
-    if (r.pMin && par < r.pMin) { motivos.push(`${b}: parcela abaixo de R$ ${r.pMin}`); continue; }
-    if (r.sMin && sal < r.sMin) { motivos.push(`${b}: saldo abaixo de R$ ${r.sMin}`); continue; }
-    const pgR = (r.pgMinMap && r.pgMinMap[cod] !== undefined) ? r.pgMinMap[cod] : (i1 ? 1 : r.pgMin);
-    if (pgR && pag < pgR) { motivos.push(`${b}: ${pag} pagas (mínimo ${pgR})`); continue; }
-    let minTx: number | undefined;
-    if (r.taxaOrigemMin && r.taxaOrigemMin[cod] !== undefined) minTx = r.taxaOrigemMin[cod];
-    else if (r.taxaOrigemMinDefault !== undefined) minTx = r.taxaOrigemMinDefault;
-    if (minTx && txOrig > 0 && txOrig < minTx) { motivos.push(`${b}: taxa origem ${txOrig.toFixed(2)}% abaixo de ${minTx}%`); continue; }
-    motivos.push(`${b}: troco/valor fora do mínimo`);
+    const m = motivoBancoNaoAceita(b, par, sal, pag, cod, idade, isInv, eN, txOrig, i1);
+    if (m) motivos.push(`${b}: ${m}`);
   }
   const todos = (k: string) => motivos.length > 0 && motivos.every((m) => m.includes(k));
   if (todos('bloqueada')) return `Origem ${cod} bloqueada em todos os bancos`;
@@ -787,8 +719,14 @@ export function motivoSemDestino(
 const fmtR = (v: number) => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** Observação em 1 linha: situação de enquadramento + aceitação bancária do contrato. */
-export function descreverMotivo(reg: ElegivelRow, comp?: CompPorCpf): string {
+export function descreverMotivo(reg: ElegivelRow, comp?: CompPorCpf, direcionar?: string): string {
   const partes: string[] = [];
+  // Direcionamento manual: se o banco escolhido não aceita ESTE contrato, diz por quê.
+  if (direcionar && !reg._semContrato && !reg.cenariosPorBanco?.[direcionar]) {
+    const idadeN = typeof reg.idade === 'number' ? reg.idade : (parseInt(String(reg.idade), 10) || null);
+    const m = motivoBancoNaoAceita(direcionar, reg.par, reg.sal, reg.pag, reg.cod, idadeN, reg.isInv, pEN(reg.esp), reg.taxaOrig, reg.is1p);
+    partes.push(`${direcionar} não aceita este contrato: ${m || 'fora dos critérios'}`);
+  }
   const st = reg.compStatus || comp?.compStatus || 'sem_dados';
   if (st === 'sem_dados' || !comp || !comp.benef) {
     partes.push('Enquadramento não calculado (sem valor do benefício na planilha)');
@@ -821,4 +759,77 @@ export function descreverMotivo(reg: ElegivelRow, comp?: CompPorCpf): string {
     partes.push(`Nenhum banco aceita este contrato: ${reg.motivoSemDestino || 'motivo não identificado'}`);
   }
   return partes.join(' | ');
+}
+
+// ──────────────────────────────────────────────────────────────────
+// CENÁRIO POR BANCO + DIRECIONAMENTO MANUAL
+// ──────────────────────────────────────────────────────────────────
+
+/** Cenário port+refin 108m de UM contrato em UM banco destino (mesma regra da
+ *  consulta unitária): enquadrado → tabela alta se troco ≥ R$250, senão baixa;
+ *  fora da regra → tabela baixa reduzindo exatamente o excedente. */
+export function cenarioParaBanco(
+  reg: Pick<ElegivelRow, 'par' | 'sal' | 'taxaOrig' | 'cod'>, d: ElegivelDestino,
+  enquadrado: boolean, excedente: number,
+): PortRefin108Lite | null {
+  const bSim: BancoSimul = { banco: d.banco, troco: d.troco, vc: d.vc, taxa: typeof d.taxa === 'number' ? d.taxa : parseFloat(String(d.taxa)) || 0 };
+  const r = calcPortRefin108(reg.par, reg.sal, bSim, reg.taxaOrig, reg.cod);
+  if (!r || !r.taxaOrigVale) return null;
+  let taxa: number, coef: number, refin_novaParc: number, refin_reducao: number, port_vc: number, port_troco: number;
+  let tabelaUsada: 'alta' | 'baixa';
+  if (enquadrado) {
+    const cen = r.tabelaAlta.port_troco >= TROCO_MIN_ENQUADRADO ? r.tabelaAlta : r.tabelaBaixa;
+    tabelaUsada = cen === r.tabelaAlta ? 'alta' : 'baixa';
+    taxa = cen.taxa; coef = cen.coef;
+    refin_novaParc = cen.refin_novaParc; refin_reducao = cen.refin_reducao;
+    port_vc = cen.port_vc; port_troco = cen.port_troco;
+  } else {
+    const cen = r.tabelaBaixa;
+    tabelaUsada = 'baixa'; taxa = cen.taxa; coef = cen.coef;
+    const novaParcAlvo = Math.max(0, reg.par - excedente);
+    const vcAlvo = coef > 0 ? novaParcAlvo / coef : 0;
+    if (vcAlvo >= reg.sal) {
+      refin_novaParc = novaParcAlvo; refin_reducao = reg.par - novaParcAlvo;
+      port_vc = vcAlvo; port_troco = vcAlvo - reg.sal;
+    } else {
+      refin_novaParc = cen.refin_novaParc; refin_reducao = cen.refin_reducao;
+      port_vc = reg.sal; port_troco = 0;
+    }
+  }
+  const R = (v: number) => Math.round(v * 100) / 100;
+  return {
+    banco: d.banco, taxa: R(taxa), coef,
+    refin_novaParc: R(refin_novaParc), refin_reducao: R(refin_reducao),
+    port_troco: R(port_troco), port_vc: R(port_vc), tabelaUsada,
+  };
+}
+
+/** Projeta a linha como se o destino fosse `banco` (direcionamento manual do
+ *  operador). Retorna null se o banco não aceita este contrato (ou linha sem contrato). */
+export function projetarParaBanco(reg: ElegivelRow, comp: CompPorCpf | undefined, banco: string): ElegivelRow | null {
+  if (reg._semContrato) return null;
+  const cen = reg.cenariosPorBanco?.[banco];
+  if (!cen) return null;
+  const d = (reg.destinos || []).find((x) => x.banco === banco);
+  const exc = comp?.excedente || 0;
+  const dentro = reg.compStatus === 'dentro_regra';
+  const resolve = !dentro && exc > 0 && cen.refin_reducao >= exc - 0.01;
+  const combo = banco === 'BRB' && !!reg.viaInconta;
+  const status: CompStatusBase = dentro ? 'dentro_regra'
+    : reg.compStatus === 'sem_dados' ? 'sem_dados'
+    : (resolve || combo) ? 'fora_regra_resolvivel' : 'fora_regra_inviavel';
+  return {
+    ...reg,
+    dest: banco,
+    troco: d?.troco ?? cen.port_troco,
+    vc: d?.vc ?? cen.port_vc,
+    taxa: cen.taxa,
+    portRefin108: cen,
+    reducaoEstim: Math.max(0, cen.refin_reducao),
+    parcelaNovaEstim: cen.refin_reducao > 0 ? Math.round((reg.par - cen.refin_reducao) * 100) / 100 : 0,
+    resolveExc: resolve,
+    viaInconta: combo,
+    compStatus: status,
+    elegRealOk: dentro || resolve || combo,
+  };
 }
