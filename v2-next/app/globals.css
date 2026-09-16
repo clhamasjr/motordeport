@@ -199,57 +199,22 @@
     linear-gradient(135deg, #050608 0%, #090b10 54%, #07090d 100%);
 }
 
-.brand-login-grid {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.18;
-  background-image:
-    linear-gradient(hsl(var(--brand-silver) / 0.10) 1px, transparent 1px),
-    linear-gradient(90deg, hsl(var(--brand-silver) / 0.10) 1px, transparent 1px);
-  background-size: 40px 40px;
-  mask-image: linear-gradient(115deg, black 0%, rgba(0,0,0,.72) 52%, transparent 88%);
-  -webkit-mask-image: linear-gradient(115deg, black 0%, rgba(0,0,0,.72) 52%, transparent 88%);
-}
-
-.brand-login-chevron {
-  position: fixed;
-  left: -7vw;
-  bottom: -38vh;
-  width: 64vw;
-  height: 78vh;
-  pointer-events: none;
-  opacity: 0.16;
-  transform: rotate(-8deg) skewX(-8deg);
-  border-top: 2px solid hsl(var(--brand-orange));
-  border-right: 2px solid hsl(var(--brand-silver) / 0.8);
-  box-shadow: 38px -38px 0 -36px hsl(var(--brand-orange) / 0.75);
-}
-
-.brand-login-orbit {
-  position: absolute;
-  right: -17rem;
-  top: 9%;
-  width: 38rem;
-  height: 38rem;
-  border: 1px solid hsl(var(--brand-silver) / 0.10);
-  border-radius: 50%;
-  box-shadow:
-    inset 0 0 0 72px hsl(var(--brand-orange) / 0.018),
-    inset 0 0 0 144px hsl(var(--brand-silver) / 0.012);
-}
-
-.brand-wordmark {
-  background: linear-gradient(105deg, #f6a400 4%, #8c4b00 36%, #ffc24a 62%, #a95a00 94%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
 .brand-auth-panel {
   box-shadow:
     0 26px 80px -44px rgba(0, 0, 0, 0.92),
     inset 0 1px 0 hsl(var(--brand-silver) / 0.04);
+}
+
+.login-clean-glow {
+  position: fixed;
+  left: 50%;
+  top: 42%;
+  width: 42rem;
+  height: 42rem;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, hsl(var(--brand-orange) / 0.075), transparent 64%);
+  filter: blur(14px);
 }
 
 /* Aurora floating background — fica fixo, animação lenta */
