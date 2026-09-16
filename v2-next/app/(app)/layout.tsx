@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { Sidebar } from '@/components/sidebar';
@@ -19,14 +19,44 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     setSidebarCollapsed(window.localStorage.getItem('flowforce-sidebar-collapsed') === '1');
   }, []);
 
-  function toggleSidebar() {
+  const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((collapsed) => {
       const next = !collapsed;
       window.localStorage.setItem('flowforce-sidebar-collapsed', next ? '1' : '0');
       document.documentElement.dataset.sidebarCollapsed = next ? '1' : '0';
       return next;
     });
-  }
+  }, []);
+
+  useEffect(() => {
+    function handleSidebarShortcut(event: KeyboardEvent) {
+      const target = event.target;
+      const isEditable = target instanceof HTMLElement && (
+        target.isContentEditable
+        || target.tagName === 'INPUT'
+        || target.tagName === 'TEXTAREA'
+        || target.tagName === 'SELECT'
+      );
+
+      if (
+        event.repeat
+        || event.altKey
+        || event.shiftKey
+        || !(event.ctrlKey || event.metaKey)
+        || event.key.toLowerCase() !== 'b'
+        || isEditable
+        || !window.matchMedia('(min-width: 1024px)').matches
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      toggleSidebar();
+    }
+
+    window.addEventListener('keydown', handleSidebarShortcut);
+    return () => window.removeEventListener('keydown', handleSidebarShortcut);
+  }, [toggleSidebar]);
 
   if (isLoading || isRedirecting) {
     return (

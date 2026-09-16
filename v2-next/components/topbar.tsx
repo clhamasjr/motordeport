@@ -29,7 +29,8 @@ export function Topbar({ user, sidebarCollapsed, onToggleSidebar }: {
         onClick={onToggleSidebar}
         className="hidden lg:inline-flex"
         aria-label={sidebarCollapsed ? 'Expandir navegação lateral' : 'Recolher navegação lateral'}
-        title={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
+        aria-keyshortcuts="Control+B Meta+B"
+        title={`${sidebarCollapsed ? 'Expandir' : 'Recolher'} menu (Ctrl/⌘ + B)`}
         aria-pressed={sidebarCollapsed}
       >
         {sidebarCollapsed ? <PanelLeftOpen className="size-4" aria-hidden /> : <PanelLeftClose className="size-4" aria-hidden />}
