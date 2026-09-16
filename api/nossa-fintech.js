@@ -834,8 +834,126 @@ export default async function handler(req) {
       return jsonResp({ success: true, modo, marginKey, employerDoc, codTabela, simKey, debtKey, passos }, 200, req);
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // FGTS — ANTECIPAÇÃO SAQUE-ANIVERSÁRIO (namespace /nossa/v1/)
+    // Auth = MESMO JWT do CLT. service_type = j17 | bmp | qi
+    // (bancarizadora). Cliente precisa ter autorizado a instituição
+    // no app FGTS da Caixa (senão eligible=false / sem saldo).
+    // Fluxo: fgtsSaldo → fgtsTabelas → fgtsSimular → fgtsProposta →
+    //        fgtsStatus / fgtsLinkForm / fgtsCancelar.
+    // ═══════════════════════════════════════════════════════════
+    const fgtsService = (body.serviceType || body.service_type || 'j17').toLowerCase();
+
+    // 1) Consulta de saldo — POST /nossa/v1/balance
+    if (action === 'fgtsSaldo') {
+      const cpf = onlyDigits(body.cpf);
+      if (cpf.length !== 11) return jsonError('cpf invalido (11 digitos)', 400, req);
+      const r = await nfCall('/nossa/v1/balance', 'POST', { cpf, service_type: fgtsService });
+      const d = r.data || {};
+      const data = d.data || {};
+      return jsonResp({
+        success: r.ok && (d.eligible === true || d.status === 'completed'),
+        httpStatus: r.status,
+        serviceType: fgtsService,
+        key: d.key || null,
+        status: d.status || null,
+        elegivel: d.eligible === true,
+        maxLoanValue: data.max_loan_value ?? null,
+        periods: data.periods || [],
+        balanceDate: data.balance_date || null,
+        erro: r.ok ? null : (d.message || d.error || `HTTP ${r.status}`),
+        _raw: d,
+      }, 200, req);
+    }
+
+    // 2) Listar tabelas FGTS — POST /nossa/v2/simulation
+    if (action === 'fgtsTabelas') {
+      const cpf = onlyDigits(body.cpf);
+      if (cpf.length !== 11 || !body.key) return jsonError('cpf e key obrigatorios', 400, req);
+      const r = await nfCall('/nossa/v2/simulation', 'POST', {
+        cpf, key: body.key,
+        number_of_installments: parseInt(body.numberOfInstallments || body.number_of_installments || 4),
+        eligibility: body.eligibility !== false,
+        service_type: fgtsService,
+      });
+      return jsonResp({ success: r.ok, httpStatus: r.status, tabelas: Array.isArray(r.data) ? r.data : (r.data?.data || []), _raw: r.data }, 200, req);
+    }
+
+    // 3) Simulação — POST /nossa/v1/simulation
+    if (action === 'fgtsSimular') {
+      const cpf = onlyDigits(body.cpf);
+      if (cpf.length !== 11 || !body.key || !body.codProduto && !body.cod_produto) {
+        return jsonError('cpf, key e codProduto obrigatorios', 400, req);
+      }
+      const r = await nfCall('/nossa/v1/simulation', 'POST', {
+        cpf, key: body.key,
+        number_of_installments: parseInt(body.numberOfInstallments || body.number_of_installments || 4),
+        eligibility: body.eligibility !== false,
+        cod_produto: parseInt(body.codProduto || body.cod_produto),
+        service_type: fgtsService,
+      });
+      const d = r.data || {};
+      return jsonResp({
+        success: r.ok, httpStatus: r.status,
+        simulationKey: d.key || null,
+        disbursedAmount: d.disbursed_issue_amount ?? null,
+        issueAmount: d.issue_amount ?? null,
+        iof: d.iof_amount ?? null,
+        cet: d.cet ?? null,
+        codTabela: d.cod_tabela || null,
+        installments: d.installments || [],
+        _raw: d,
+      }, 200, req);
+    }
+
+    // 4) Criação de proposta — POST /nossa/v1/proposal
+    if (action === 'fgtsProposta') {
+      if (!body.simulationKey && !body.simulation_key) return jsonError('simulationKey obrigatorio', 400, req);
+      if (!body.client) return jsonError('client obrigatorio', 400, req);
+      const r = await nfCall('/nossa/v1/proposal', 'POST', {
+        service_type: fgtsService,
+        simulation_key: body.simulationKey || body.simulation_key,
+        client: body.client,
+      });
+      const d = r.data || {};
+      return jsonResp({
+        success: r.ok, httpStatus: r.status,
+        debtKey: d.debt_key || null,
+        linkForm: d.link_form || null,
+        ccbPdf: d.ccb_pdf || null,
+        numContrato: d.num_contrato || null,
+        valLiquido: d.val_liquido ?? null,
+        situacao: d.dsc_situacao_emprestimo || null,
+        _raw: d,
+      }, 200, req);
+    }
+
+    // 5) Status da proposta — GET /nossa/v1/proposal/{debt_key}
+    if (action === 'fgtsStatus') {
+      const dk = body.debtKey || body.debt_key;
+      if (!dk) return jsonError('debtKey obrigatorio', 400, req);
+      const r = await nfCall(`/nossa/v1/proposal/${encodeURIComponent(dk)}`, 'GET');
+      return jsonResp({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
+    }
+
+    // 6) Link do formulário de assinatura — GET /nossa/v1/proposal/link_form/{debt_key}
+    if (action === 'fgtsLinkForm') {
+      const dk = body.debtKey || body.debt_key;
+      if (!dk) return jsonError('debtKey obrigatorio', 400, req);
+      const r = await nfCall(`/nossa/v1/proposal/link_form/${encodeURIComponent(dk)}`, 'GET');
+      return jsonResp({ success: r.ok, httpStatus: r.status, formLink: r.data?.form_link || null, _raw: r.data }, 200, req);
+    }
+
+    // 7) Cancelamento — POST /nossa/v1/cancel_operation
+    if (action === 'fgtsCancelar') {
+      const dk = body.debtKey || body.debt_key;
+      if (!dk) return jsonError('debtKey obrigatorio', 400, req);
+      const r = await nfCall('/nossa/v1/cancel_operation', 'POST', { debt_key: dk });
+      return jsonResp({ success: r.ok, httpStatus: r.status, ...r.data }, 200, req);
+    }
+
     return jsonError(
-      'Action invalida. Validas: test, consultarAprovacao, enviarSms, cancelarProposta, listarRebates, simular, digitar, statusOperacao, certificar',
+      'Action invalida. Validas: test, consultarAprovacao, enviarSms, cancelarProposta, listarRebates, simular, digitar, statusOperacao, certificar, fgtsSaldo, fgtsTabelas, fgtsSimular, fgtsProposta, fgtsStatus, fgtsLinkForm, fgtsCancelar',
       400, req
     );
   } catch (e) {

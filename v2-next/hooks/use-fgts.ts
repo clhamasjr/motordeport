@@ -19,6 +19,7 @@ const FINTECH = '/api/fintechdocorban';
 const V8 = '/api/v8';
 const FACTA = '/api/facta';
 const NOVOSAQUE = '/api/novosaque';
+const NOSSAFINTECH = '/api/nossa-fintech';
 
 // ══════════════════════════════════════════════════════════════════
 // FINTECH DO CORBAN
@@ -93,6 +94,36 @@ export function useFactaFgtsSaldo() {
       return await api<FactaFgtsSaldo>(FACTA, { action: 'fgtsSaldo', cpf: c });
     },
     onError: (err: Error) => toast.error(err.message || 'Erro na consulta FACTA'),
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// A NOSSA FINTECH (Spixii) — FGTS namespace /nossa/v1/
+// service_type: j17 | bmp | qi
+// ══════════════════════════════════════════════════════════════════
+
+export interface NossaFintechFgtsSaldo {
+  success: boolean;
+  serviceType?: string;
+  key?: string | null;
+  status?: string | null;
+  elegivel?: boolean;
+  maxLoanValue?: number | null;
+  periods?: Array<{ due_date?: string; amount?: number; anticipation_amount?: number }>;
+  erro?: string | null;
+}
+
+/** Consulta o saldo FGTS na Nossa Fintech (default bancarizadora j17). */
+export function useNossaFintechFgtsSaldo() {
+  return useMutation({
+    mutationFn: async (params: { cpf: string; serviceType?: 'j17' | 'bmp' | 'qi' }) => {
+      const c = params.cpf.replace(/\D/g, '');
+      if (c.length !== 11) throw new Error('CPF inválido — precisa ter 11 dígitos');
+      return await api<NossaFintechFgtsSaldo>(NOSSAFINTECH, {
+        action: 'fgtsSaldo', cpf: c, serviceType: params.serviceType || 'j17',
+      });
+    },
+    onError: (err: Error) => toast.error(err.message || 'Erro na consulta Nossa Fintech'),
   });
 }
 

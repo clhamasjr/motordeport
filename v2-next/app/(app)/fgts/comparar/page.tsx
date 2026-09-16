@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { formatBRL, formatCpf, formatDateBR } from '@/lib/utils';
 import {
-  useFintechFgtsSaldo, useFactaFgtsSaldo,
+  useFintechFgtsSaldo, useFactaFgtsSaldo, useNossaFintechFgtsSaldo,
   useV8FgtsIniciarConsulta, useV8FgtsSaldo, useV8FgtsTabelas, useV8FgtsSimular,
   useNovoSaqueFgtsIniciar, useNovoSaqueFgtsContrato,
   type V8FgtsProvider,
@@ -55,7 +55,7 @@ function lerPilha(): ConsultaFgts[] {
 }
 
 // ── Resultado que cada linha reporta pro card (pra achar o melhor) ──
-type Fonte = 'fintech' | 'v8' | 'finanto' | 'facta' | 'novosaque';
+type Fonte = 'fintech' | 'v8' | 'finanto' | 'facta' | 'novosaque' | 'nossafintech';
 interface Resultado {
   fonte: Fonte;
   label: string;
@@ -404,6 +404,54 @@ function LinhaNovoSaque({ cpf, onResult }: { cpf: string; onResult: (r: Resultad
 }
 
 // ════════════════════════════════════════════════════════════════════
+// LINHA A NOSSA FINTECH — saldo FGTS (namespace /nossa/v1/, bancarizadora j17)
+// ════════════════════════════════════════════════════════════════════
+function LinhaNossaFintech({ cpf, onResult }: { cpf: string; onResult: (r: Resultado) => void }) {
+  const saldo = useNossaFintechFgtsSaldo();
+  const disparado = useRef(false);
+
+  useEffect(() => {
+    if (!disparado.current && cpf) { disparado.current = true; saldo.mutate({ cpf, serviceType: 'j17' }); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cpf]);
+
+  const elegivel = !!saldo.data?.elegivel && (saldo.data?.maxLoanValue ?? 0) > 0;
+
+  useEffect(() => {
+    if (saldo.isPending) { onResult({ fonte: 'nossafintech', label: 'A Nossa Fintech', liquido: null, tipoValor: null, status: 'processando' }); return; }
+    if (saldo.isError) { onResult({ fonte: 'nossafintech', label: 'A Nossa Fintech', liquido: null, tipoValor: null, status: 'indisponivel' }); return; }
+    if (saldo.data) {
+      // maxLoanValue = teto do empréstimo (bruto); o líquido vem da simulação (fase 2)
+      onResult({ fonte: 'nossafintech', label: 'A Nossa Fintech', liquido: saldo.data.maxLoanValue ?? null, tipoValor: elegivel ? 'bruto' : null, status: elegivel ? 'ok' : 'indisponivel' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saldo.isPending, saldo.isError, saldo.data]);
+
+  return (
+    <Linha
+      icon={<Landmark className="size-4 text-cyan-400 shrink-0" />}
+      nome="A Nossa Fintech"
+      sub="J17 · saque-aniversário"
+    >
+      {saldo.isPending ? (
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" /> consultando…</span>
+      ) : saldo.isError ? (
+        <span className="text-xs text-red-400 flex items-center gap-1"><AlertCircle className="size-3.5" /> indisponível</span>
+      ) : elegivel ? (
+        <div className="text-right">
+          <div className="text-sm font-bold">{formatBRL(saldo.data?.maxLoanValue || 0)}</div>
+          <div className="text-[9px] text-muted-foreground uppercase">máx.</div>
+        </div>
+      ) : (
+        <span className="text-xs text-yellow-500 flex items-center gap-1 max-w-[220px] truncate" title={saldo.data?.erro || saldo.data?.status || ''}>
+          <AlertCircle className="size-3.5 shrink-0" /> {saldo.data?.erro ? 'sem autorização' : 'sem saldo'}
+        </span>
+      )}
+    </Linha>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
 // CARD DE CONSULTA (um por CPF) — cabeçalho + linhas + rodapé
 // ════════════════════════════════════════════════════════════════════
 function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClose: () => void }) {
@@ -479,6 +527,7 @@ function FgtsConsultaCard({ consulta, onClose }: { consulta: ConsultaFgts; onClo
           <LinhaNovoSaque cpf={consulta.cpf} onResult={onResult} />
           <LinhaV8 cpf={consulta.cpf} onResult={onResult} />
           <LinhaFinanto cpf={consulta.cpf} nome={consulta.nome} nascimento={consulta.nascimento} onResult={onResult} />
+          <LinhaNossaFintech cpf={consulta.cpf} onResult={onResult} />
         </div>
 
         {/* Rodapé — melhor oferta */}
