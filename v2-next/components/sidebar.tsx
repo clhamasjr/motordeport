@@ -58,7 +58,7 @@ export function SidebarContent({ user }: { user: AuthUser }) {
       {/* Versão */}
       <div className="p-3 border-t border-border/60">
         <div className="text-[10px] text-muted-foreground text-center">
-          V2 · Beta · {process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA?.substring(0, 7) || 'dev'}
+          FlowForce · LhamasCred
         </div>
       </div>
     </div>

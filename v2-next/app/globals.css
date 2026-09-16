@@ -51,6 +51,10 @@
     background-attachment: fixed;
     min-height: 100vh;
   }
+  ::selection {
+    background: hsl(var(--primary) / 0.3);
+    color: hsl(var(--foreground));
+  }
 }
 
 @layer utilities {
@@ -166,7 +170,27 @@
   animation: aurora-float 28s ease-in-out infinite reverse;
 }
 
+.login-grid {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.16;
+  background-image:
+    linear-gradient(hsl(var(--foreground) / 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--foreground) / 0.08) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(circle at 50% 45%, black 0%, transparent 78%);
+  -webkit-mask-image: radial-gradient(circle at 50% 45%, black 0%, transparent 78%);
+}
+
 /* Respeita reduce-motion */
 @media (prefers-reduced-motion: reduce) {
   .aurora-bg::before, .aurora-bg::after { animation: none; }
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

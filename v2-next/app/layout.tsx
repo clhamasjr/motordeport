@@ -18,12 +18,17 @@ const fontMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: 'FlowForce — LhamasCred',
-  description: 'Operação consignado INSS/CLT/Governos — LhamasCred',
-  applicationName: 'LhamasCred',
+  description: 'Plataforma de operação de crédito da LhamasCred.',
+  applicationName: 'FlowForce',
+  robots: {
+    index: false,
+    follow: false,
+    nocache: true,
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'LhamasCred',
+    title: 'FlowForce',
   },
   formatDetection: { telephone: false },
   icons: {
