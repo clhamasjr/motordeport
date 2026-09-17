@@ -15,6 +15,9 @@ supabase_seed_gov.sql
 # Modulo PREFEITURAS — SQL batches gerados (so o convenios.json importa)
 scripts/pref/sql_batches/
 
+# Modulo FEDERAIS — backups locais da planilha fonte (a versao anterior ja esta no historico git)
+scripts/_backup/
+
 # TypeScript incremental build info — local, nao versionar
 v2-next/tsconfig.tsbuildinfo
 

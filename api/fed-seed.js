@@ -6,14 +6,21 @@
 //      python scripts/fed/02_parse.py     (gera scripts/fed/convenios.json)
 //      python scripts/fed/05_compact_seed.py  (gera fed_seed.json na raiz)
 //      git push
-//   2) Apos o deploy completar, dispare 1x:
-//      curl -X POST https://flowforce.vercel.app/api/fed-seed \
+//   2) Apos o deploy completar, dispare 1x (secret interno OU sessao admin/gestor):
+//      curl -X POST https://motordeport.vercel.app/api/fed-seed \
 //           -H "Content-Type: application/json" \
 //           -H "x-internal-secret: <WEBHOOK_SECRET>" \
 //           -d '{"action":"reseed"}'
+//      Ou, logado como admin no V2 (flowforce.tec.br), no console do navegador:
+//      fetch('/api/fed-seed',{method:'POST',headers:{'Content-Type':'application/json',
+//        Authorization:'Bearer '+localStorage.ff_token},body:'{"action":"reseed"}'}).then(r=>r.json()).then(console.log)
 //
 // O endpoint:
-//   - Le /fed_seed.json (publico no proprio dominio)
+//   - Le fed_seed.json do dominio da API (SEED_BASE_URL, default motordeport.vercel.app).
+//     NAO usa origin/host da request: desde a desativacao do V1 (vercel.json
+//     redireciona tudo exceto /api/ pra flowforce.tec.br, que roda na VPS e nao
+//     tem o arquivo) a chamada chega via rewrite do V2 e esses headers apontam
+//     pro lugar errado. O vercel.json libera *_seed.json do redirect.
 //   - UPSERT em fed_bancos por slug
 //   - UPSERT em fed_convenios por slug
 //   - DELETE + INSERT em fed_banco_convenio (relacao limpa toda vez)
@@ -25,7 +32,8 @@ export const config = { runtime: 'edge' };
 import { json as jsonResp, jsonError, handleOptions, requireAuth, requireRole } from './_lib/auth.js';
 import { dbQuery } from './_lib/supabase.js';
 
-const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
+// Base onde fed_seed.json e servido como estatico (ver comentario no topo).
+const SEED_BASE_URL = () => (process.env.SEED_BASE_URL || 'https://motordeport.vercel.app').replace(/\/$/, '');
 const SUPABASE_URL = () => process.env.SUPABASE_URL;
 const SUPABASE_KEY = () => process.env.SUPABASE_SERVICE_KEY;
 
@@ -49,11 +57,14 @@ export default async function handler(req) {
 
   const t0 = Date.now();
   try {
-    const baseUrl = req.headers.get('origin') || (`https://${req.headers.get('host')}`) || APP_URL();
-    const seedUrl = baseUrl.replace(/\/$/, '') + '/fed_seed.json';
-    const r = await fetch(seedUrl);
-    if (!r.ok) return jsonError(`Falha ao carregar ${seedUrl}: HTTP ${r.status}`, 500, req);
-    const seed = await r.json();
+    const seedUrl = SEED_BASE_URL() + '/fed_seed.json';
+    // redirect manual: se o vercel.json voltar a redirecionar *_seed.json, falha
+    // aqui com status claro em vez de seguir pro HTML do V2 e quebrar no JSON.parse.
+    const r = await fetch(seedUrl, { redirect: 'manual' });
+    if (!r.ok) return jsonError(`Falha ao carregar ${seedUrl}: HTTP ${r.status} (3xx = vercel.json esta redirecionando o seed)`, 500, req);
+    let seed;
+    try { seed = await r.json(); }
+    catch (e) { return jsonError(`fed_seed.json invalido em ${seedUrl}: ${e.message}`, 500, req); }
     const stats = { bancos: 0, convenios: 0, banco_convenio: 0 };
 
     // ── 1) UPSERT bancos ──

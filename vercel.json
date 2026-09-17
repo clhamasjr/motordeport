@@ -1,7 +1,7 @@
 {
   "redirects": [
     {
-      "source": "/((?!api/).*)",
+      "source": "/((?!api/|fed_seed\\.json|gov_seed\\.json|pref_seed\\.json).*)",
       "destination": "https://flowforce.tec.br/",
       "permanent": false
     }
