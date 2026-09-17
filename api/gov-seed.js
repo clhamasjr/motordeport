@@ -19,7 +19,9 @@
 //     verdade na tela depois de `preservar_desde` (default 2026-05-06, dia seguinte a marcacao em massa;
 //     criterio: editado_manual = true E updated_at > preservar_desde) e recria a partir do seed com
 //     editado_manual = false (assim o modo conservador volta a funcionar nas proximas rodadas).
-//     Convenios que nao estao no seed nao sao tocados.
+//     Convenios que nao estao no seed: por padrao nao sao tocados; com `excluir_fora_da_planilha: true`
+//     sao EXCLUIDOS (relacoes somem em cascata; analises de holerite que apontavam pra eles ficam sem
+//     convenio sugerido). Decisao do dono em 17/09/2026: a planilha de setembro e a lista completa.
 //
 // Em ambos os modos:
 //   - Le gov_seed.json do dominio da API (SEED_BASE_URL, default motordeport.vercel.app). NAO usa
@@ -86,6 +88,20 @@ async function diagnostico(body, req) {
     `editado_manual=eq.true&updated_at=gt.${desde}&select=id,updated_at,created_at,suspenso,taxa_minima_port,margem_utilizavel,gov_bancos(slug,nome),gov_convenios(slug,nome,uf)&order=updated_at.desc&limit=2000`
   );
   if (error) throw new Error(error.substring(0, 300));
+  // convenios que existem no banco mas nao estao na planilha (seed) atual
+  let foraDaPlanilha = [], seedGeradoEm = null;
+  try {
+    const rs = await fetch(SEED_BASE_URL() + '/gov_seed.json', { redirect: 'manual' });
+    if (rs.ok) {
+      const sd = await rs.json(); seedGeradoEm = sd.meta?.gerado_em || null;
+      const seedSlugs = new Set((sd.convenios || []).map(c => c.slug));
+      const { data: todos } = await dbQuery('gov_convenios', 'select=id,slug,nome,uf,ativo&limit=2000');
+      const { data: rels } = await dbQuery('gov_banco_convenio', 'select=convenio_id&limit=10000');
+      const qtd = new Map(); for (const r of rels || []) qtd.set(r.convenio_id, (qtd.get(r.convenio_id) || 0) + 1);
+      foraDaPlanilha = (todos || []).filter(c => !seedSlugs.has(c.slug))
+        .map(c => ({ id: c.id, slug: c.slug, nome: c.nome, uf: c.uf, ativo: c.ativo, relacoes: qtd.get(c.id) || 0 }));
+    }
+  } catch {}
   const { data: convEditados } = await dbQuery('gov_convenios', 'editado_manual=eq.true&select=id,slug,nome,uf&limit=2000');
   const { data: bancosEditados } = await dbQuery('gov_bancos', 'editado_manual=eq.true&select=id,slug,nome&limit=2000');
   return jsonResp({
@@ -97,6 +113,8 @@ async function diagnostico(body, req) {
       suspenso: r.suspenso, taxa_minima_port: r.taxa_minima_port, margem_utilizavel: r.margem_utilizavel,
       criado_em: r.created_at, editado_em: r.updated_at,
     })),
+    seed_gerado_em: seedGeradoEm,
+    convenios_fora_da_planilha: foraDaPlanilha,
     convenios_editados: (convEditados || []).map(c => c.slug),
     bancos_editados: (bancosEditados || []).map(b => b.slug),
     explicacao: 'Em 05/05/2026 todas as relacoes foram marcadas editado_manual=true. No modo "planilha" so ficam ' +
@@ -128,6 +146,7 @@ export default async function handler(req) {
   }
   const modoPlanilha = body.modo === 'planilha';
   const preservarDesde = isoDateOk(body.preservar_desde) ? body.preservar_desde : PRESERVAR_DESDE_DEFAULT;
+  const excluirFora = modoPlanilha && body.excluir_fora_da_planilha === true;
 
   const t0 = Date.now();
   try {
@@ -141,7 +160,7 @@ export default async function handler(req) {
     try { seed = await r.json(); }
     catch (e) { return jsonError(`gov_seed.json invalido em ${seedUrl}: ${e.message}`, 500, req); }
     const stats = { modo: modoPlanilha ? 'planilha' : 'conservador', bancos: 0, convenios: 0, convenios_atualizados: 0,
-                    relacoes_apagadas: 0, relacoes_preservadas: 0, banco_convenio: 0 };
+                    convenios_excluidos: 0, relacoes_apagadas: 0, relacoes_preservadas: 0, banco_convenio: 0 };
 
     // ── 2) Bancos: pega os ja existentes e SO insere os novos (preserva edits) ──
     const { data: bancosExistentes } = await dbQuery('gov_bancos', 'select=slug&limit=1000');
@@ -176,6 +195,22 @@ export default async function handler(req) {
         await sbFetch(`gov_convenios?slug=in.(${encodeURIComponent(lote)})`, 'PATCH',
           { atualizado_em: seed.meta.gerado_em }, 'return=minimal');
         stats.convenios_atualizados += slugsExistentes.slice(i, i + SL_BATCH).length;
+      }
+    }
+
+    // ── 3c) (modo planilha + excluir_fora_da_planilha) EXCLUI convenios que nao estao no seed ──
+    //        Relacoes somem em cascata (FK on delete cascade). gov_holerite_analises.convenio_sugerido_id
+    //        aponta pra gov_convenios sem cascade: zera antes pra nao violar a FK.
+    if (excluirFora) {
+      const seedSlugs = new Set((seed.convenios || []).map(c => c.slug));
+      const { data: todosConv } = await dbQuery('gov_convenios', 'select=id,slug&limit=2000');
+      const foraIds = (todosConv || []).filter(c => !seedSlugs.has(c.slug)).map(c => c.id);
+      if (foraIds.length) {
+        const ids = foraIds.join(',');
+        await sbFetch(`gov_holerite_analises?convenio_sugerido_id=in.(${ids})`, 'PATCH', { convenio_sugerido_id: null }, 'return=minimal');
+        const exc = await sbFetch(`gov_convenios?id=in.(${ids})&select=id,slug`, 'DELETE', undefined, 'return=representation');
+        stats.convenios_excluidos = Array.isArray(exc) ? exc.length : 0;
+        stats.convenios_excluidos_slugs = (exc || []).map(c => c.slug);
       }
     }
 
