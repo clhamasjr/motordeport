@@ -2,22 +2,31 @@
 // api/gov-seed.js — Popula tabelas gov_* a partir de /gov_seed.json
 //
 // USO:
-//   1) Apos atualizar a planilha de governos:
-//      python scripts/gov/02_parse.py     (gera scripts/gov/convenios.json)
-//      python scripts/gov/05_compact_seed.py  (gera public/gov_seed.json)
-//      git push
-//   2) Apos o deploy completar, dispare 1x:
-//      curl -X POST https://motordeport.vercel.app/api/gov-seed \
-//           -H "Content-Type: application/json" \
-//           -H "x-internal-secret: <WEBHOOK_SECRET>" \
-//           -d '{"action":"reseed"}'
+//   1) Apos atualizar a planilha de governos (ver scripts/gov/RUNBOOK_ATUALIZAR_CATALOGO_GOVERNOS.md):
+//      python scripts/gov/02_parse.py -> 03_clean_lev.py -> 05_compact_seed.py (gera gov_seed.json na raiz)
+//      commit + push (dono)
+//   2) Apos o deploy completar, com sessao admin/gestor (ou x-internal-secret):
+//      POST /api/gov-seed {"action":"diagnostico"}                 -> o que esta protegido / editado na tela
+//      POST /api/gov-seed {"action":"reseed"}                      -> modo CONSERVADOR (padrao antigo)
+//      POST /api/gov-seed {"action":"reseed","modo":"planilha"}    -> modo PLANILHA MANDA
 //
-// O endpoint:
-//   - Le gov_seed.json do dominio da API (SEED_BASE_URL, default motordeport.vercel.app)
+// Modos do reseed (relacoes banco x convenio):
+//   - conservador (default): apaga so as relacoes com editado_manual = false/null e recria a partir do
+//     seed, pulando pares editado_manual = true. ATENCAO: em 05/05/2026 TODAS as relacoes existentes
+//     foram marcadas editado_manual = true ("estado canonico") — nesse modo a planilha nova so ADICIONA
+//     pares que ainda nao existem; regras/taxas/LEV das existentes NAO mudam.
+//   - planilha: para cada convenio presente no seed, apaga todas as relacoes EXCETO as editadas de
+//     verdade na tela depois de `preservar_desde` (default 2026-05-06, dia seguinte a marcacao em massa;
+//     criterio: editado_manual = true E updated_at > preservar_desde) e recria a partir do seed com
+//     editado_manual = false (assim o modo conservador volta a funcionar nas proximas rodadas).
+//     Convenios que nao estao no seed nao sao tocados.
+//
+// Em ambos os modos:
+//   - Le gov_seed.json do dominio da API (SEED_BASE_URL, default motordeport.vercel.app). NAO usa
+//     origin/host da request: desde a desativacao do V1 o vercel.json redireciona tudo exceto /api/ e
+//     *_seed.json pra flowforce.tec.br (VPS, sem o arquivo) e a chamada chega via rewrite do V2.
 //   - INSERT so dos bancos/convenios NOVOS (nome/UF existentes podem ter sido corrigidos na UI)
 //   - PATCH atualizado_em nos convenios que ja existiam (data do seed)
-//   - DELETE + INSERT em gov_banco_convenio, preservando pares editado_manual=true
-//   - Retorna estatisticas
 //
 // Auth: x-internal-secret OU role admin/gestor.
 // ══════════════════════════════════════════════════════════════════
@@ -25,7 +34,7 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth, requireRole } from './_lib/auth.js';
-import { dbInsert, dbDelete, dbQuery, dbUpsert } from './_lib/supabase.js';
+import { dbQuery } from './_lib/supabase.js';
 
 // Base onde gov_seed.json e servido como estatico. NAO usa origin/host da request:
 // desde a desativacao do V1 o vercel.json redireciona tudo exceto /api/ e *_seed.json
@@ -34,6 +43,66 @@ import { dbInsert, dbDelete, dbQuery, dbUpsert } from './_lib/supabase.js';
 const SEED_BASE_URL = () => (process.env.SEED_BASE_URL || 'https://motordeport.vercel.app').replace(/\/$/, '');
 const SUPABASE_URL = () => process.env.SUPABASE_URL;
 const SUPABASE_KEY = () => process.env.SUPABASE_SERVICE_KEY;
+const PRESERVAR_DESDE_DEFAULT = '2026-05-06';
+
+function sbHeaders(prefer) {
+  const h = {
+    'apikey': SUPABASE_KEY(),
+    'Authorization': `Bearer ${SUPABASE_KEY()}`,
+    'Content-Type': 'application/json',
+  };
+  if (prefer) h['Prefer'] = prefer;
+  return h;
+}
+
+async function sbFetch(pathAndQuery, method, body, prefer) {
+  const resp = await fetch(`${SUPABASE_URL()}/rest/v1/${pathAndQuery}`, {
+    method, headers: sbHeaders(prefer), body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`${method} ${pathAndQuery.split('?')[0]}: HTTP ${resp.status} ${t.substring(0, 300)}`);
+  }
+  if (prefer && prefer.includes('return=representation')) return await resp.json();
+  return null;
+}
+
+const isoDateOk = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+// ── Diagnostico: o que esta protegido e o que foi editado na tela ──────────
+async function diagnostico(body, req) {
+  const desde = isoDateOk(body.preservar_desde) ? body.preservar_desde : PRESERVAR_DESDE_DEFAULT;
+  const count = async (filtro) => {
+    const { data, error } = await dbQuery('gov_banco_convenio', `${filtro}select=id&limit=10000`);
+    if (error) throw new Error(error.substring(0, 300));
+    return (data || []).length;
+  };
+  const total = await count('');
+  const protegidas = await count('editado_manual=eq.true&');
+  const livres = await count('editado_manual=eq.false&');
+  const nulas = await count('editado_manual=is.null&');
+  const { data: editadas, error } = await dbQuery(
+    'gov_banco_convenio',
+    `editado_manual=eq.true&updated_at=gt.${desde}&select=id,updated_at,created_at,suspenso,taxa_minima_port,margem_utilizavel,gov_bancos(slug,nome),gov_convenios(slug,nome,uf)&order=updated_at.desc&limit=2000`
+  );
+  if (error) throw new Error(error.substring(0, 300));
+  const { data: convEditados } = await dbQuery('gov_convenios', 'editado_manual=eq.true&select=id,slug,nome,uf&limit=2000');
+  const { data: bancosEditados } = await dbQuery('gov_bancos', 'editado_manual=eq.true&select=id,slug,nome&limit=2000');
+  return jsonResp({
+    ok: true,
+    preservar_desde: desde,
+    relacoes: { total, protegidas, livres, nulas, editadas_na_tela_depois: (editadas || []).length },
+    editadas_na_tela: (editadas || []).map(r => ({
+      id: r.id, banco: r.gov_bancos?.slug, convenio: r.gov_convenios?.slug, uf: r.gov_convenios?.uf,
+      suspenso: r.suspenso, taxa_minima_port: r.taxa_minima_port, margem_utilizavel: r.margem_utilizavel,
+      criado_em: r.created_at, editado_em: r.updated_at,
+    })),
+    convenios_editados: (convEditados || []).map(c => c.slug),
+    bancos_editados: (bancosEditados || []).map(b => b.slug),
+    explicacao: 'Em 05/05/2026 todas as relacoes foram marcadas editado_manual=true. No modo "planilha" so ficam ' +
+      'preservadas as relacoes com editado_manual=true E updated_at > preservar_desde; o resto e recriado pelo seed.',
+  }, 200, req);
+}
 
 export default async function handler(req) {
   if (req.method === 'OPTIONS') return handleOptions(req);
@@ -50,9 +119,15 @@ export default async function handler(req) {
   let body = {};
   try { body = await req.json(); } catch {}
 
-  if (body.action !== 'reseed') {
-    return jsonError("action invalida. Use 'reseed'.", 400, req);
+  if (body.action === 'diagnostico') {
+    try { return await diagnostico(body, req); }
+    catch (e) { return jsonError(`Falha no diagnostico: ${e.message}`, 500, req); }
   }
+  if (body.action !== 'reseed') {
+    return jsonError("action invalida. Use 'reseed' (modo 'conservador' ou 'planilha') ou 'diagnostico'.", 400, req);
+  }
+  const modoPlanilha = body.modo === 'planilha';
+  const preservarDesde = isoDateOk(body.preservar_desde) ? body.preservar_desde : PRESERVAR_DESDE_DEFAULT;
 
   const t0 = Date.now();
   try {
@@ -65,7 +140,8 @@ export default async function handler(req) {
     let seed;
     try { seed = await r.json(); }
     catch (e) { return jsonError(`gov_seed.json invalido em ${seedUrl}: ${e.message}`, 500, req); }
-    const stats = { bancos: 0, convenios: 0, convenios_atualizados: 0, banco_convenio: 0 };
+    const stats = { modo: modoPlanilha ? 'planilha' : 'conservador', bancos: 0, convenios: 0, convenios_atualizados: 0,
+                    relacoes_apagadas: 0, relacoes_preservadas: 0, banco_convenio: 0 };
 
     // ── 2) Bancos: pega os ja existentes e SO insere os novos (preserva edits) ──
     const { data: bancosExistentes } = await dbQuery('gov_bancos', 'select=slug&limit=1000');
@@ -74,22 +150,7 @@ export default async function handler(req) {
       slug: b.slug, nome: b.nome
     }));
     if (bancosNovos.length) {
-      const url = `${SUPABASE_URL()}/rest/v1/gov_bancos`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_KEY(),
-          'Authorization': `Bearer ${SUPABASE_KEY()}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation'
-        },
-        body: JSON.stringify(bancosNovos)
-      });
-      if (!resp.ok) {
-        const t = await resp.text();
-        return jsonError(`Erro insert bancos novos: ${t.substring(0,300)}`, 500, req);
-      }
-      const arr = await resp.json();
+      const arr = await sbFetch('gov_bancos', 'POST', bancosNovos, 'return=representation');
       stats.bancos = Array.isArray(arr) ? arr.length : 0;
     }
 
@@ -101,22 +162,7 @@ export default async function handler(req) {
       sheet_origem: c.sheet, atualizado_em: seed.meta?.gerado_em || null
     }));
     if (conveniosNovos.length) {
-      const url = `${SUPABASE_URL()}/rest/v1/gov_convenios`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_KEY(),
-          'Authorization': `Bearer ${SUPABASE_KEY()}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation'
-        },
-        body: JSON.stringify(conveniosNovos)
-      });
-      if (!resp.ok) {
-        const t = await resp.text();
-        return jsonError(`Erro insert convenios novos: ${t.substring(0,300)}`, 500, req);
-      }
-      const arr = await resp.json();
+      const arr = await sbFetch('gov_convenios', 'POST', conveniosNovos, 'return=representation');
       stats.convenios = Array.isArray(arr) ? arr.length : 0;
     }
 
@@ -127,22 +173,9 @@ export default async function handler(req) {
       const SL_BATCH = 40;
       for (let i = 0; i < slugsExistentes.length; i += SL_BATCH) {
         const lote = slugsExistentes.slice(i, i + SL_BATCH).map(sl => `"${sl}"`).join(',');
-        const url = `${SUPABASE_URL()}/rest/v1/gov_convenios?slug=in.(${encodeURIComponent(lote)})`;
-        const resp = await fetch(url, {
-          method: 'PATCH',
-          headers: {
-            'apikey': SUPABASE_KEY(),
-            'Authorization': `Bearer ${SUPABASE_KEY()}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal'
-          },
-          body: JSON.stringify({ atualizado_em: seed.meta.gerado_em })
-        });
-        if (!resp.ok) {
-          const t = await resp.text();
-          return jsonError(`Erro ao carimbar atualizado_em dos convenios: ${t.substring(0,300)}`, 500, req);
-        }
-        stats.convenios_atualizados = (stats.convenios_atualizados || 0) + slugsExistentes.slice(i, i + SL_BATCH).length;
+        await sbFetch(`gov_convenios?slug=in.(${encodeURIComponent(lote)})`, 'PATCH',
+          { atualizado_em: seed.meta.gerado_em }, 'return=minimal');
+        stats.convenios_atualizados += slugsExistentes.slice(i, i + SL_BATCH).length;
       }
     }
 
@@ -151,26 +184,39 @@ export default async function handler(req) {
     const { data: convDb } = await dbQuery('gov_convenios', 'select=id,slug&limit=1000');
     const bancoIdBySlug = new Map((bancosDb||[]).map(b => [b.slug, b.id]));
     const convIdBySlug = new Map((convDb||[]).map(c => [c.slug, c.id]));
+    const convIdsNoSeed = (seed.convenios || []).map(c => convIdBySlug.get(c.slug)).filter(Boolean);
 
-    // ── 5) DELETE banco_convenio que NAO foi editado manualmente ──
-    // (preserva edicoes manuais e estado canonico atual)
-    {
-      const url = `${SUPABASE_URL()}/rest/v1/gov_banco_convenio?editado_manual=eq.false`;
-      const resp = await fetch(url, {
-        method: 'DELETE',
-        headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` }
-      });
-      if (!resp.ok) {
-        const t = await resp.text();
-        return jsonError(`Erro delete banco_convenio: ${t.substring(0,300)}`, 500, req);
+    // ── 5) Quais pares ficam PRESERVADOS (nao apagar, nao reinserir) ──
+    //   conservador: todo par editado_manual = true
+    //   planilha:    so pares editado_manual = true E editados na tela depois de preservarDesde
+    const filtroPreservar = modoPlanilha
+      ? `editado_manual=eq.true&updated_at=gt.${preservarDesde}`
+      : 'editado_manual=eq.true';
+    const { data: protegidosRaw, error: eP } = await dbQuery('gov_banco_convenio', `${filtroPreservar}&select=id,banco_id,convenio_id&limit=10000`);
+    if (eP) throw new Error(`select protegidos: ${eP.substring(0, 300)}`);
+    const protegidos = new Set((protegidosRaw||[]).map(r => `${r.banco_id}-${r.convenio_id}`));
+    stats.relacoes_preservadas = protegidos.size;
+
+    // ── 6) DELETE das relacoes que serao recriadas pelo seed ──
+    if (modoPlanilha) {
+      // so convenios presentes no seed; tudo que nao esta preservado
+      const ID_BATCH = 30;
+      for (let i = 0; i < convIdsNoSeed.length; i += ID_BATCH) {
+        const ids = convIdsNoSeed.slice(i, i + ID_BATCH).join(',');
+        const apagadas = await sbFetch(
+          `gov_banco_convenio?convenio_id=in.(${ids})&or=(editado_manual.is.null,editado_manual.eq.false,updated_at.lte.${preservarDesde})&select=id`,
+          'DELETE', undefined, 'return=representation');
+        stats.relacoes_apagadas += Array.isArray(apagadas) ? apagadas.length : 0;
       }
+    } else {
+      // conservador: apaga o que NAO foi editado manualmente (false OU null)
+      const apagadas = await sbFetch(
+        'gov_banco_convenio?or=(editado_manual.is.null,editado_manual.eq.false)&select=id',
+        'DELETE', undefined, 'return=representation');
+      stats.relacoes_apagadas = Array.isArray(apagadas) ? apagadas.length : 0;
     }
 
-    // ── 5b) Pega lista de pares (banco_id, convenio_id) ja protegidos ──
-    const { data: protegidosRaw } = await dbQuery('gov_banco_convenio', 'editado_manual=eq.true&select=banco_id,convenio_id');
-    const protegidos = new Set((protegidosRaw||[]).map(r => `${r.banco_id}-${r.convenio_id}`));
-
-    // ── 6) INSERT banco_convenio em batches de 50 (PULA pares protegidos) ──
+    // ── 7) INSERT banco_convenio em batches de 50 (PULA pares preservados) ──
     const todasRels = [];
     for (const c of seed.convenios || []) {
       const cid = convIdBySlug.get(c.slug);
@@ -178,7 +224,6 @@ export default async function handler(req) {
       for (const b of c.bancos || []) {
         const bid = bancoIdBySlug.get(b.slug);
         if (!bid) continue;
-        // PROTEGE: se par ja existe e foi editado manualmente, pula
         if (protegidos.has(`${bid}-${cid}`)) continue;
         const ops = b.operacoes || {};
         const a = b.atributos || {};
@@ -199,33 +244,21 @@ export default async function handler(req) {
           qtd_contratos: a.qtd_contratos || null,
           atributos: a,
           atributos_brutos: b.atributos_brutos || [],
+          editado_manual: false,   // veio da planilha: o proximo reseed pode substituir
         });
       }
     }
     const BATCH = 50;
     for (let i = 0; i < todasRels.length; i += BATCH) {
       const batch = todasRels.slice(i, i + BATCH);
-      const url = `${SUPABASE_URL()}/rest/v1/gov_banco_convenio`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_KEY(),
-          'Authorization': `Bearer ${SUPABASE_KEY()}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=minimal'
-        },
-        body: JSON.stringify(batch)
-      });
-      if (!resp.ok) {
-        const t = await resp.text();
-        return jsonError(`Erro insert banco_convenio batch ${i}: ${t.substring(0,300)}`, 500, req);
-      }
+      await sbFetch('gov_banco_convenio', 'POST', batch, 'return=minimal');
       stats.banco_convenio += batch.length;
     }
 
     return jsonResp({
       ok: true,
       stats,
+      preservar_desde: modoPlanilha ? preservarDesde : null,
       duracao_ms: Date.now() - t0,
       seed_meta: seed.meta,
     }, 200, req);

@@ -25,10 +25,18 @@ em produção. Responda em português, direto. O dono não é programador: entre
   **não precisa de deploy na VPS** (o workflow da VPS só roda quando `v2-next/**` muda).
 - Fonte da verdade: `scripts/GOVERNOS_RESUMO.xlsx` → pipeline Python em `scripts/gov/` → `gov_seed.json`
   (raiz, servido estático pelo Vercel) → endpoint `POST /api/gov-seed {"action":"reseed"}` grava no Supabase.
-- **O reseed de governos é conservador** (diferente do federal): só INSERE bancos/convênios novos (nome/UF dos
-  existentes podem ter sido corrigidos na tela e não são sobrescritos), carimba `atualizado_em` nos que já
-  existiam, apaga e recria as relações banco×convênio **exceto** as marcadas `editado_manual=true` (correções
-  feitas pelo admin na tela). Convênios que sumiram da planilha **não são apagados** — ficam como estão.
+- **O reseed de governos tem dois modos** (o federal não tem isso). Em ambos: só INSERE bancos/convênios
+  novos (nome/UF dos existentes podem ter sido corrigidos na tela e não são sobrescritos) e carimba
+  `atualizado_em` nos que já existiam. Convênios que sumiram da planilha **não são apagados**.
+  - `{"action":"reseed"}` = **conservador**: apaga e recria só as relações banco×convênio com
+    `editado_manual` false/null e pula as `true`. **Armadilha:** em 05/05/2026 TODAS as relações foram
+    marcadas `true` ("estado canônico"), então nesse modo a planilha nova **só adiciona pares novos** —
+    taxas/regras/LEV dos pares existentes não mudam (foi o que aconteceu em 17/09: 87 pares, LEV continuou).
+  - `{"action":"reseed","modo":"planilha"}` = **planilha manda** (é o que o dono quer nas atualizações):
+    para os convênios presentes no seed, apaga tudo **exceto** relações editadas de verdade na tela depois de
+    `preservar_desde` (default `2026-05-06`; critério `editado_manual=true` E `updated_at >` essa data) e recria
+    a partir do seed com `editado_manual=false`. Rode antes `{"action":"diagnostico"}` para ver quantas
+    relações seriam preservadas e mostrar ao dono.
 - A planilha tem ~150 abas; ~30 são placeholders vazios ("sem colunas", "0 linhas") ou auxiliares (ADF,
   índices por estado). O parser ignora as auxiliares via `SKIP_SHEETS` e reporta as vazias como "problemas" —
   isso é normal. Só investigue uma aba-problema se ela **era convênio no seed anterior** (regressão).
@@ -112,13 +120,18 @@ Exige sessão **admin/gestor** do FlowForce (ou `x-internal-secret`, que só exi
 local). Três formas, na ordem de preferência:
 
 **a) Botão na tela (1 clique, sem agente):** logado no `flowforce.tec.br` como admin →
-`/admin/manutencao` → card **"Reseed Catálogo de Governos"** → **Reseed** → confirmar. Mostra
-bancos/convênios/relações e a duração.
+`/admin/manutencao` → card **"Reseed Catálogo de Governos"** → **Reseed** → confirmar. **Atenção:** o botão
+roda o modo **conservador** (só adiciona pares novos). Para a planilha mandar, use (b) ou (c) com
+`modo:'planilha'`. Antes, rode o diagnóstico e mostre ao dono o que será preservado:
+```js
+const d=await fetch('/api/gov-seed',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.getItem('ff_token')},body:JSON.stringify({action:'diagnostico'})}).then(r=>r.json());
+`relacoes=${JSON.stringify(d.relacoes)} | preservadas no modo planilha: `+d.editadas_na_tela.map(e=>e.convenio+'/'+e.banco+' ('+e.editado_em.slice(0,10)+')').join(', ')
+```
 
 **b) Pela sessão do dono no Chrome (Claude in Chrome):** dono logado em `https://flowforce.tec.br` no Chrome
 dele; abra uma aba nova em `https://flowforce.tec.br/governos/catalogo` e execute via `javascript_tool`:
 ```js
-const r = await fetch('/api/gov-seed',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.getItem('ff_token')},body:JSON.stringify({action:'reseed'})});
+const r = await fetch('/api/gov-seed',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.getItem('ff_token')},body:JSON.stringify({action:'reseed',modo:'planilha'})});
 const d = await r.json();
 `HTTP ${r.status} | ok=${d.ok} | stats=${JSON.stringify(d.stats)} | seed=${d.seed_meta?.gerado_em} | erro=${d.error ?? 'nenhum'}`
 ```
@@ -126,10 +139,11 @@ const d = await r.json();
 
 **c) O próprio dono no console (F12 → Console):**
 ```js
-fetch('/api/gov-seed',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.getItem('ff_token')},body:JSON.stringify({action:'reseed'})}).then(r=>r.json()).then(console.log)
+fetch('/api/gov-seed',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.getItem('ff_token')},body:JSON.stringify({action:'reseed',modo:'planilha'})}).then(r=>r.json()).then(console.log)
 ```
-Esperado: `ok: true`, `stats: {bancos: <só novos>, convenios: <só novos>, convenios_atualizados: ~107,
-banco_convenio: ~420 menos as protegidas}`, alguns segundos. `HTTP 500 ... 3xx` = `vercel.json` voltou a
+Esperado (modo planilha): `ok: true`, `stats: {modo:'planilha', bancos: <só novos>, convenios: <só novos>,
+convenios_atualizados: ~104, relacoes_apagadas: ~440, relacoes_preservadas: <as do diagnóstico>,
+banco_convenio: ~420 menos as preservadas}`, alguns segundos. `HTTP 500 ... 3xx` = `vercel.json` voltou a
 redirecionar `gov_seed.json`; 401/403 = sessão não é admin. Rodar antes do passo 6 falha de forma segura.
 
 ### 8. Prova real em produção
