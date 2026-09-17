@@ -7,13 +7,13 @@
 //      python scripts/pref/05_compact_seed.py  (gera pref_seed.json na raiz)
 //      git push
 //   2) Apos o deploy completar, dispare 1x:
-//      curl -X POST https://flowforce.vercel.app/api/pref-seed \
+//      curl -X POST https://motordeport.vercel.app/api/pref-seed \
 //           -H "Content-Type: application/json" \
 //           -H "x-internal-secret: <WEBHOOK_SECRET>" \
 //           -d '{"action":"reseed"}'
 //
 // O endpoint:
-//   - Le /pref_seed.json (publico no proprio dominio)
+//   - Le pref_seed.json do dominio da API (SEED_BASE_URL, default motordeport.vercel.app)
 //   - UPSERT em pref_bancos por slug
 //   - UPSERT em pref_convenios por slug
 //   - DELETE + INSERT em pref_banco_convenio (relacao limpa toda vez)
@@ -25,7 +25,11 @@ export const config = { runtime: 'edge' };
 import { json as jsonResp, jsonError, handleOptions, requireAuth, requireRole } from './_lib/auth.js';
 import { dbQuery } from './_lib/supabase.js';
 
-const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
+// Base onde pref_seed.json e servido como estatico. NAO usa origin/host da request:
+// desde a desativacao do V1 o vercel.json redireciona tudo exceto /api/ e *_seed.json
+// pra flowforce.tec.br (VPS, sem o arquivo) e a chamada chega via rewrite do V2 —
+// esses headers apontam pro lugar errado. Mesmo padrao do api/fed-seed.js.
+const SEED_BASE_URL = () => (process.env.SEED_BASE_URL || 'https://motordeport.vercel.app').replace(/\/$/, '');
 const SUPABASE_URL = () => process.env.SUPABASE_URL;
 const SUPABASE_KEY = () => process.env.SUPABASE_SERVICE_KEY;
 
@@ -49,11 +53,14 @@ export default async function handler(req) {
 
   const t0 = Date.now();
   try {
-    const baseUrl = req.headers.get('origin') || (`https://${req.headers.get('host')}`) || APP_URL();
-    const seedUrl = baseUrl.replace(/\/$/, '') + '/pref_seed.json';
-    const r = await fetch(seedUrl);
-    if (!r.ok) return jsonError(`Falha ao carregar ${seedUrl}: HTTP ${r.status}`, 500, req);
-    const seed = await r.json();
+    const seedUrl = SEED_BASE_URL() + '/pref_seed.json';
+    // redirect manual: se o vercel.json voltar a redirecionar *_seed.json, falha aqui com
+    // status claro em vez de seguir pro HTML do V2 e quebrar no JSON.parse.
+    const r = await fetch(seedUrl, { redirect: 'manual' });
+    if (!r.ok) return jsonError(`Falha ao carregar ${seedUrl}: HTTP ${r.status} (3xx = vercel.json esta redirecionando o seed)`, 500, req);
+    let seed;
+    try { seed = await r.json(); }
+    catch (e) { return jsonError(`pref_seed.json invalido em ${seedUrl}: ${e.message}`, 500, req); }
     const stats = { bancos: 0, convenios: 0, banco_convenio: 0 };
 
     // ── 1) UPSERT bancos ──

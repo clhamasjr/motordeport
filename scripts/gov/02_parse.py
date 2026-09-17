@@ -15,14 +15,16 @@ import openpyxl
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-XLSX = Path(r"C:\Users\clham\Downloads\GOVERNOS  RESUMO OPERACIONAL CONVENIOS ATUALIZADO_0_1777552913261.xlsx")
+# Planilha-fonte versionada em scripts/ (substituida a cada atualizacao; ver RUNBOOK em scripts/gov/)
+XLSX = Path(__file__).parent.parent / "GOVERNOS_RESUMO.xlsx"
 OUT = Path(__file__).parent / 'convenios.json'
 
 # Abas indices/grupos - nao sao convenios individuais
 SKIP_SHEETS = {
     'BASE','GOVERNOS','GOV PA','AM_CONVÊNIOS','TO - CONVÊNIOS','BAHIA_GOVERNOS',
     'PB_GOVERNOS','DF_GOVERNO','ES_GOVERNOS','MG_GOVERNOS','SP_GOVERNOS',
-    'ELEGIVEIS','ELEGIVEIS1','GOVMG_INFORMAÇÕES OPERACIONAIS '
+    'ELEGIVEIS','ELEGIVEIS1','GOVMG_INFORMAÇÕES OPERACIONAIS ',
+    'ADF',  # regras de ADF (autorizacao de desconto) por banco em MG — auxiliar, nao e convenio
 }
 
 # UF -> nome estado
@@ -59,9 +61,11 @@ def detect_uf(sheet_name):
         'MINIST. PUBL. DISTRI. FED. TERR':'DF', 'MINIT. PUBL. MILITAR':'DF',
         'SOCIEDADE':'DF', 'TJ DFT':'DF',
         'UEPB':'PB',
+        'AMPREVAM':'AM', 'CB AMPREV AM':'AM',  # Instituto de Previdencia do Amazonas (planilha set/2026)
     }
-    if sheet_name in OVERRIDES_EXATOS: return OVERRIDES_EXATOS[sheet_name]
-    if sheet_name.strip() in OVERRIDES_EXATOS: return OVERRIDES_EXATOS[sheet_name.strip()]
+    # comparacao sem depender de caixa: a aba 'Cartão Beneficio' (Gov SC) veio em caixa mista em set/2026
+    for k, v in OVERRIDES_EXATOS.items():
+        if s == k.upper() or s.strip() == k.strip().upper(): return v
 
     # padrao mais comum: "GOV XX" ou "TJ XX" ou "MP XX" etc
     for uf in UF_NAMES:
@@ -89,6 +93,8 @@ def detect_uf(sheet_name):
     if 'MINIST' in s and ('FEDERAL' in s or 'TRABALHO' in s or 'MILITAR' in s):
         return 'DF'
     return None
+
+EXCEL_ERR = re.compile(r'^#(VALUE|REF|N/A|DIV/0|NAME\?|NUM|NULL)!?$', re.IGNORECASE)
 
 def is_suspenso(banco_name):
     if not banco_name: return False
@@ -210,6 +216,13 @@ def parse_idade_range(text):
         a, b = int(m.group(1)), int(m.group(2))
         if 16 <= a <= 99 and 16 <= b <= 99 and a < b:
             return a, b
+    # formato em blocos (planilha set/2026): "Idade Minima: 18 anos ... Idade Maxima: 76 anos, 11 meses..."
+    mi = re.search(r'm[ií]nima\D{0,25}?(\d{2})\s*anos', s, re.IGNORECASE)
+    ma = re.search(r'm[aá]xima\D{0,25}?(\d{2})\s*anos', s, re.IGNORECASE)
+    if mi and ma:
+        a, b = int(mi.group(1)), int(ma.group(1))
+        if 16 <= a <= 99 and 16 <= b <= 99 and a < b:
+            return a, b
     return None, None
 
 def parse_margem(text):
@@ -304,6 +317,8 @@ for sn in wb.sheetnames:
         if not attr_label or not str(attr_label).strip(): continue
         attr_label = str(attr_label).strip()
         valores_cols = {i: ('' if v is None else str(v).strip()) for i, v in enumerate(r[1:], start=1)}
+        # celula com formula quebrada na planilha (#VALUE!, #REF!, #N/A, #DIV/0!...) = sem informacao
+        valores_cols = {i: ('' if EXCEL_ERR.match(v) else v) for i, v in valores_cols.items()}
         # detecta secao (linha onde so col A tem texto)
         if is_section_header(attr_label) and not any(valores_cols.values()):
             n = normalize_attr_name(attr_label)

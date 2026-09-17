@@ -142,8 +142,8 @@ existir: botão "Recarregar catálogo" (só admin) na tela Federal, para o passo
 - `vercel.json` redireciona tudo exceto `/api/` para `flowforce.tec.br`; os `*_seed.json` estão **excluídos** do
   redirect desde 17/09 — se alguém reescrever essa regra, o passo 6 volta a dar 307 e o reseed quebra.
 - `api/fed-seed.js` lê o seed de `SEED_BASE_URL` (default `motordeport.vercel.app`), **não** do `origin/host`
-  da request. `api/gov-seed.js` e `api/pref-seed.js` **ainda têm o bug antigo** (usam origin/host): se for
-  atualizar Governo/Prefeituras, corrija-os primeiro no mesmo padrão.
+  da request. `api/gov-seed.js` e `api/pref-seed.js` seguem o mesmo padrão desde 17/09/2026 (o runbook de
+  Governos está em `scripts/gov/RUNBOOK_ATUALIZAR_CATALOGO_GOVERNOS.md`).
 - O script `05_compact_seed.py` usa a data de hoje em `gerado_em` — é isso que vira "atualizado em" no catálogo.
 - `git push` e a edição das próprias permissões são bloqueados pelo classificador do Claude Code, mesmo com
   autorização no chat. O push é sempre um clique do dono.

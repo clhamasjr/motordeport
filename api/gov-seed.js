@@ -7,16 +7,16 @@
 //      python scripts/gov/05_compact_seed.py  (gera public/gov_seed.json)
 //      git push
 //   2) Apos o deploy completar, dispare 1x:
-//      curl -X POST https://flowforce.vercel.app/api/gov-seed \
+//      curl -X POST https://motordeport.vercel.app/api/gov-seed \
 //           -H "Content-Type: application/json" \
 //           -H "x-internal-secret: <WEBHOOK_SECRET>" \
 //           -d '{"action":"reseed"}'
 //
 // O endpoint:
-//   - Le /gov_seed.json (publico no proprio dominio)
-//   - UPSERT em gov_bancos por slug
-//   - UPSERT em gov_convenios por slug
-//   - DELETE + INSERT em gov_banco_convenio (relacao limpa toda vez)
+//   - Le gov_seed.json do dominio da API (SEED_BASE_URL, default motordeport.vercel.app)
+//   - INSERT so dos bancos/convenios NOVOS (nome/UF existentes podem ter sido corrigidos na UI)
+//   - PATCH atualizado_em nos convenios que ja existiam (data do seed)
+//   - DELETE + INSERT em gov_banco_convenio, preservando pares editado_manual=true
 //   - Retorna estatisticas
 //
 // Auth: x-internal-secret OU role admin/gestor.
@@ -27,7 +27,11 @@ export const config = { runtime: 'edge' };
 import { json as jsonResp, jsonError, handleOptions, requireAuth, requireRole } from './_lib/auth.js';
 import { dbInsert, dbDelete, dbQuery, dbUpsert } from './_lib/supabase.js';
 
-const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
+// Base onde gov_seed.json e servido como estatico. NAO usa origin/host da request:
+// desde a desativacao do V1 o vercel.json redireciona tudo exceto /api/ e *_seed.json
+// pra flowforce.tec.br (VPS, sem o arquivo) e a chamada chega via rewrite do V2 —
+// esses headers apontam pro lugar errado. Mesmo padrao do api/fed-seed.js.
+const SEED_BASE_URL = () => (process.env.SEED_BASE_URL || 'https://motordeport.vercel.app').replace(/\/$/, '');
 const SUPABASE_URL = () => process.env.SUPABASE_URL;
 const SUPABASE_KEY = () => process.env.SUPABASE_SERVICE_KEY;
 
@@ -53,12 +57,15 @@ export default async function handler(req) {
   const t0 = Date.now();
   try {
     // ── 1) Carrega o JSON publico (na raiz do dominio, junto do index.html) ──
-    const baseUrl = req.headers.get('origin') || (`https://${req.headers.get('host')}`) || APP_URL();
-    const seedUrl = baseUrl.replace(/\/$/, '') + '/gov_seed.json';
-    const r = await fetch(seedUrl);
-    if (!r.ok) return jsonError(`Falha ao carregar ${seedUrl}: HTTP ${r.status}`, 500, req);
-    const seed = await r.json();
-    const stats = { bancos: 0, convenios: 0, banco_convenio: 0 };
+    const seedUrl = SEED_BASE_URL() + '/gov_seed.json';
+    // redirect manual: se o vercel.json voltar a redirecionar *_seed.json, falha aqui com
+    // status claro em vez de seguir pro HTML do V2 e quebrar no JSON.parse.
+    const r = await fetch(seedUrl, { redirect: 'manual' });
+    if (!r.ok) return jsonError(`Falha ao carregar ${seedUrl}: HTTP ${r.status} (3xx = vercel.json esta redirecionando o seed)`, 500, req);
+    let seed;
+    try { seed = await r.json(); }
+    catch (e) { return jsonError(`gov_seed.json invalido em ${seedUrl}: ${e.message}`, 500, req); }
+    const stats = { bancos: 0, convenios: 0, convenios_atualizados: 0, banco_convenio: 0 };
 
     // ── 2) Bancos: pega os ja existentes e SO insere os novos (preserva edits) ──
     const { data: bancosExistentes } = await dbQuery('gov_bancos', 'select=slug&limit=1000');
@@ -111,6 +118,32 @@ export default async function handler(req) {
       }
       const arr = await resp.json();
       stats.convenios = Array.isArray(arr) ? arr.length : 0;
+    }
+
+    // ── 3b) Convenios que JA existiam: so carimba atualizado_em (nao mexe em nome/UF,
+    //        que podem ter sido corrigidos na UI). E o que vira "atualizado em" no catalogo.
+    if (seed.meta?.gerado_em) {
+      const slugsExistentes = (seed.convenios || []).map(c => c.slug).filter(sl => convExistentesSlugs.has(sl));
+      const SL_BATCH = 40;
+      for (let i = 0; i < slugsExistentes.length; i += SL_BATCH) {
+        const lote = slugsExistentes.slice(i, i + SL_BATCH).map(sl => `"${sl}"`).join(',');
+        const url = `${SUPABASE_URL()}/rest/v1/gov_convenios?slug=in.(${encodeURIComponent(lote)})`;
+        const resp = await fetch(url, {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_KEY(),
+            'Authorization': `Bearer ${SUPABASE_KEY()}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({ atualizado_em: seed.meta.gerado_em })
+        });
+        if (!resp.ok) {
+          const t = await resp.text();
+          return jsonError(`Erro ao carimbar atualizado_em dos convenios: ${t.substring(0,300)}`, 500, req);
+        }
+        stats.convenios_atualizados = (stats.convenios_atualizados || 0) + slugsExistentes.slice(i, i + SL_BATCH).length;
+      }
     }
 
     // ── 4) Mapeia slug -> id de bancos e convenios ──
