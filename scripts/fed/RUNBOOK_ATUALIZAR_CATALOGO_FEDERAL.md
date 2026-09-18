@@ -24,7 +24,9 @@ Responda em português, direto. O dono não é programador: entregue pronto, mos
   VPS) só exibe — **não precisa de deploy na VPS** para esta mudança (o workflow da VPS nem dispara: só roda
   quando `v2-next/**` muda).
 - Fonte da verdade: `scripts/FEDERAIS_RESUMO.xlsx` → pipeline Python em `scripts/fed/` → `fed_seed.json`
-  (raiz, servido estático pelo Vercel) → endpoint `POST /api/fed-seed {"action":"reseed"}` grava no Supabase.
+  (raiz, servido estático pelo Vercel) → endpoint `POST /api/fed-seed {"action":"reseed","excluir_fora_da_planilha":true}`
+  grava no Supabase **e exclui bancos/convênios que saíram da planilha** (regra do dono, 17/09/2026: a planilha é
+  a lista completa — o que não existe nela não pode ficar no catálogo).
 - **LEV = Lev Negócios, a averbadora** (não é banco). Aparece embutida em regras ("Reserva: LEV ou BANCO",
   "* Verificar também Regra LEV *", e-mails `@levnegocios.com.br`). A LhamasCred não opera mais via LEV: o
   passo `03_clean_lev.py` remove a menção **preservando a regra do banco ao redor**. Não reinvente essa limpeza.
@@ -100,21 +102,23 @@ Você pode vigiar em background: repetir a cada 15 s por até 10 min.
 
 ### 7. Recarregar o catálogo no Supabase (reseed)
 O endpoint exige sessão de **admin/gestor** do FlowForce (ou `x-internal-secret`, que só existe no Vercel — não
-há `.env` local). Duas formas, na ordem de preferência:
+há `.env` local). **Sempre** com `excluir_fora_da_planilha: true` — o catálogo tem que ser espelho da planilha.
+Antes de recarregar, veja o que será excluído (não altera nada): `{"action":"diagnostico"}` → campo `fora_da_planilha`.
+Duas formas, na ordem de preferência:
 
 **a) Pela sessão do dono no Chrome (Claude in Chrome):** peça ao dono para estar logado em
 `https://flowforce.tec.br` no Chrome dele; abra uma aba nova em `https://flowforce.tec.br/federal/catalogo`
 (mesmo perfil = mesmo `localStorage.ff_token`) e execute via `javascript_tool`:
 ```js
-const r = await fetch('/api/fed-seed',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.getItem('ff_token')},body:JSON.stringify({action:'reseed'})});
+const r = await fetch('/api/fed-seed',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.getItem('ff_token')},body:JSON.stringify({action:'reseed',excluir_fora_da_planilha:true})});
 const d = await r.json();
-`HTTP ${r.status} | ok=${d.ok} | stats=${JSON.stringify(d.stats)} | seed=${d.seed_meta?.gerado_em} | erro=${d.error ?? 'nenhum'}`
+`HTTP ${r.status} | ok=${d.ok} | stats=${JSON.stringify(d.stats)} | excluidos: bancos=${d.stats?.bancos_excluidos} convenios=${d.stats?.convenios_excluidos} | seed=${d.seed_meta?.gerado_em} | erro=${d.error ?? 'nenhum'}`
 ```
 (Retorne **string**, não objeto com chave contendo "token" — a extensão redige isso.)
 
 **b) O próprio dono, sem agente:** logado no `flowforce.tec.br`, aperta **F12 → aba Console**, cola e Enter:
 ```js
-fetch('/api/fed-seed',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.getItem('ff_token')},body:JSON.stringify({action:'reseed'})}).then(r=>r.json()).then(console.log)
+fetch('/api/fed-seed',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.getItem('ff_token')},body:JSON.stringify({action:'reseed',excluir_fora_da_planilha:true})}).then(r=>r.json()).then(console.log)
 ```
 Esperado: `ok: true`, `stats: {bancos, convenios, banco_convenio}` batendo com o `04_diff`, ~3 s.
 Se der `HTTP 500 ... 3xx` o `vercel.json` voltou a redirecionar `fed_seed.json`; se der 401/403 a sessão não é
@@ -145,6 +149,8 @@ existir: botão "Recarregar catálogo" (só admin) na tela Federal, para o passo
   da request. `api/gov-seed.js` e `api/pref-seed.js` seguem o mesmo padrão desde 17/09/2026 (o runbook de
   Governos está em `scripts/gov/RUNBOOK_ATUALIZAR_CATALOGO_GOVERNOS.md`).
 - O script `05_compact_seed.py` usa a data de hoje em `gerado_em` — é isso que vira "atualizado em" no catálogo.
+- O `reseed` **sem** `excluir_fora_da_planilha` só faz UPSERT em bancos/convênios: o que saiu da planilha fica
+  órfão no banco (foi assim que `safra-alfa` sobrou em 17/09). Por isso o runbook sempre passa a opção.
 - `git push` e a edição das próprias permissões são bloqueados pelo classificador do Claude Code, mesmo com
   autorização no chat. O push é sempre um clique do dono.
 - Diferencie os navegadores: o **painel built-in** do app e o **Chrome do dono** são navegadores separados;

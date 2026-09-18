@@ -27,6 +27,17 @@
 //   - Retorna estatisticas
 // ══════════════════════════════════════════════════════════════════
 
+// ── Acoes ─────────────────────────────────────────────────────────
+//   {"action":"diagnostico"}  → compara o banco com o seed e lista bancos/convenios
+//                               FORA da planilha (o que a exclusao apagaria). Nao altera nada.
+//   {"action":"reseed"}       → UPSERT bancos/convenios + DELETE/INSERT das relacoes (planilha manda).
+//   {"action":"reseed","excluir_fora_da_planilha":true}
+//                             → idem e, no fim, EXCLUI bancos e convenios que nao estao no seed
+//                               (decisao do dono 17/09/2026: a planilha de setembro e a lista completa).
+//                               Convenios excluidos levam as relacoes em cascata; analises de holerite
+//                               que apontavam pra eles ficam sem convenio sugerido (FK sem cascade).
+//                               Trava: se o seed vier com <5 bancos ou 0 convenios, a exclusao e PULADA.
+// Mesmo nome de opcao do api/gov-seed.js pra manter os runbooks iguais.
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth, requireRole } from './_lib/auth.js';
@@ -51,21 +62,20 @@ export default async function handler(req) {
   let body = {};
   try { body = await req.json(); } catch {}
 
-  if (body.action !== 'reseed') {
-    return jsonError("action invalida. Use 'reseed'.", 400, req);
+  if (body.action === 'diagnostico') {
+    try { return await diagnostico(req); }
+    catch (e) { return jsonError(`Falha no diagnostico: ${e.message}`, 500, req); }
   }
+  if (body.action !== 'reseed') {
+    return jsonError("action invalida. Use 'reseed' (opcional: excluir_fora_da_planilha: true) ou 'diagnostico'.", 400, req);
+  }
+  const excluirFora = body.excluir_fora_da_planilha === true;
 
   const t0 = Date.now();
   try {
-    const seedUrl = SEED_BASE_URL() + '/fed_seed.json';
-    // redirect manual: se o vercel.json voltar a redirecionar *_seed.json, falha
-    // aqui com status claro em vez de seguir pro HTML do V2 e quebrar no JSON.parse.
-    const r = await fetch(seedUrl, { redirect: 'manual' });
-    if (!r.ok) return jsonError(`Falha ao carregar ${seedUrl}: HTTP ${r.status} (3xx = vercel.json esta redirecionando o seed)`, 500, req);
-    let seed;
-    try { seed = await r.json(); }
-    catch (e) { return jsonError(`fed_seed.json invalido em ${seedUrl}: ${e.message}`, 500, req); }
-    const stats = { bancos: 0, convenios: 0, banco_convenio: 0 };
+    const seed = await carregarSeed();
+    const stats = { bancos: 0, convenios: 0, banco_convenio: 0,
+                    excluir_fora_da_planilha: excluirFora, bancos_excluidos: 0, convenios_excluidos: 0, analises_desvinculadas: 0 };
 
     // ── 1) UPSERT bancos ──
     const bancosList = (seed.bancos_unicos || []).map(b => ({
@@ -191,6 +201,9 @@ export default async function handler(req) {
       stats.banco_convenio += batch.length;
     }
 
+    // ── 6) (opcional) EXCLUI o que nao esta na planilha ──
+    if (excluirFora) await excluirForaDaPlanilha(seed, stats);
+
     return jsonResp({
       ok: true,
       stats,
@@ -200,4 +213,90 @@ export default async function handler(req) {
   } catch (e) {
     return jsonError(`Falha no reseed: ${e.message}`, 500, req);
   }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Helpers — seed, diagnostico e exclusao do que esta fora da planilha
+// ══════════════════════════════════════════════════════════════════
+const SB_HEADERS = (extra = {}) => ({
+  'apikey': SUPABASE_KEY(),
+  'Authorization': `Bearer ${SUPABASE_KEY()}`,
+  'Content-Type': 'application/json',
+  ...extra,
+});
+
+// Le fed_seed.json do dominio da API. redirect manual: se o vercel.json voltar a
+// redirecionar *_seed.json, falha com status claro em vez de engolir o HTML do V2.
+async function carregarSeed() {
+  const seedUrl = SEED_BASE_URL() + '/fed_seed.json';
+  const r = await fetch(seedUrl, { redirect: 'manual' });
+  if (!r.ok) throw new Error(`Falha ao carregar ${seedUrl}: HTTP ${r.status} (3xx = vercel.json esta redirecionando o seed)`);
+  try { return await r.json(); }
+  catch (e) { throw new Error(`fed_seed.json invalido em ${seedUrl}: ${e.message}`); }
+}
+
+// Compara o banco com o seed. Retorna o que existe no Supabase mas NAO esta na planilha.
+async function calcularForaDaPlanilha(seed) {
+  const seedBancos = new Set((seed.bancos_unicos || []).map(b => b.slug));
+  const seedConv = new Set((seed.convenios || []).map(c => c.slug));
+  const { data: bancosDb, error: e1 } = await dbQuery('fed_bancos', 'select=id,slug,nome&limit=2000');
+  if (e1) throw new Error(`Falha ao ler fed_bancos: ${e1}`);
+  const { data: convDb, error: e2 } = await dbQuery('fed_convenios', 'select=id,slug,nome&limit=2000');
+  if (e2) throw new Error(`Falha ao ler fed_convenios: ${e2}`);
+  return {
+    bancos: (bancosDb || []).filter(b => !seedBancos.has(b.slug)),
+    convenios: (convDb || []).filter(c => !seedConv.has(c.slug)),
+    // trava: seed vazio/quebrado nunca pode apagar o catalogo inteiro
+    seguro: seedBancos.size >= 5 && seedConv.size >= 1,
+    totais_db: { bancos: (bancosDb || []).length, convenios: (convDb || []).length },
+    totais_seed: { bancos: seedBancos.size, convenios: seedConv.size },
+  };
+}
+
+async function diagnostico(req) {
+  const seed = await carregarSeed();
+  const fora = await calcularForaDaPlanilha(seed);
+  return jsonResp({
+    ok: true,
+    seed_meta: seed.meta,
+    totais_db: fora.totais_db,
+    totais_seed: fora.totais_seed,
+    fora_da_planilha: { bancos: fora.bancos, convenios: fora.convenios },
+    exclusao_permitida: fora.seguro,
+    como_excluir: 'POST {"action":"reseed","excluir_fora_da_planilha":true}',
+  }, 200, req);
+}
+
+// Exclui bancos e convenios que nao estao no seed. Roda DEPOIS das relacoes serem
+// recriadas (assim o que esta fora da planilha ja nao tem relacao nenhuma).
+async function excluirForaDaPlanilha(seed, stats) {
+  const fora = await calcularForaDaPlanilha(seed);
+  stats.fora_da_planilha_bancos = fora.bancos.map(b => b.slug);
+  stats.fora_da_planilha_convenios = fora.convenios.map(c => c.slug);
+  if (!fora.seguro) {
+    stats.exclusao = `PULADA: seed com ${fora.totais_seed.bancos} bancos / ${fora.totais_seed.convenios} convenios (trava de seguranca)`;
+    return;
+  }
+  const H = SB_HEADERS({ 'Prefer': 'return=representation' });
+  const lerQtd = async (resp, oque) => {
+    if (!resp.ok) throw new Error(`Erro ao ${oque}: ${(await resp.text()).substring(0, 300)}`);
+    const arr = await resp.json();
+    return Array.isArray(arr) ? arr.length : 0;
+  };
+  if (fora.convenios.length) {
+    const ids = fora.convenios.map(c => c.id).join(',');
+    // 1) solta as analises de holerite que apontavam pra esses convenios (FK sem cascade)
+    stats.analises_desvinculadas = await lerQtd(await fetch(
+      `${SUPABASE_URL()}/rest/v1/fed_holerite_analises?convenio_sugerido_id=in.(${ids})`,
+      { method: 'PATCH', headers: H, body: JSON.stringify({ convenio_sugerido_id: null }) }), 'desvincular analises');
+    // 2) exclui os convenios (relacoes somem em cascata)
+    stats.convenios_excluidos = await lerQtd(await fetch(
+      `${SUPABASE_URL()}/rest/v1/fed_convenios?id=in.(${ids})`, { method: 'DELETE', headers: H }), 'excluir convenios');
+  }
+  if (fora.bancos.length) {
+    const ids = fora.bancos.map(b => b.id).join(',');
+    stats.bancos_excluidos = await lerQtd(await fetch(
+      `${SUPABASE_URL()}/rest/v1/fed_bancos?id=in.(${ids})`, { method: 'DELETE', headers: H }), 'excluir bancos');
+  }
+  stats.exclusao = 'OK';
 }
