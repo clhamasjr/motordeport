@@ -22,7 +22,8 @@ import openpyxl
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-XLSX = Path(r"C:\Users\clham\Downloads\PREFEITURAS - RESUMO OPERACIONAL CONVENIOS_0_1777485648411.xlsx")
+# Planilha-fonte versionada em scripts/ (substituida a cada atualizacao; ver RUNBOOK em scripts/pref/)
+XLSX = Path(__file__).parent.parent / "PREFEITURAS_RESUMO.xlsx"
 OUT = Path(__file__).parent / 'convenios.json'
 
 # ── Abas que sao indices/grupos/separadores - nao sao convenios ──
@@ -271,6 +272,7 @@ print(f'Lendo {XLSX.name}...')
 wb = openpyxl.load_workbook(XLSX, data_only=True)
 convenios = []
 problemas = []
+uf_pelo_nome = []   # convenios cuja UF veio do sufixo do nome, nao do contexto da aba
 
 # UF "atual" — vai sendo atualizada conforme percorre as abas em ORDEM
 current_uf = None
@@ -312,6 +314,16 @@ for sn in wb.sheetnames:
             nome_conv = str(v).strip()
             break
     if not nome_conv: nome_conv = sn.strip()
+    nome_conv = re.sub(r'\s+', ' ', nome_conv).strip()   # celulas com quebra de linha viram 1 linha
+
+    # UF: contexto (aba-separador anterior) — mas se o NOME do convenio termina em "- XX" com
+    # UF valida e diferente, o nome manda (ex.: "SAO MIGUEL DOS CAMPOS - AL" vinha antes do separador
+    # "AL" na planilha de set/2026 e caia em AC). Registrado em uf_pelo_nome pra conferir no diff.
+    uf_conv = current_uf
+    m_uf = re.search(r'[-–/]\s*([A-Z]{2})\s*$', nome_conv.upper())
+    if m_uf and m_uf.group(1) in UF_NAMES and m_uf.group(1) != current_uf:
+        uf_pelo_nome.append({'sheet': sn, 'uf_contexto': current_uf, 'uf_nome': m_uf.group(1), 'nome': nome_conv})
+        uf_conv = m_uf.group(1)
 
     # Linha 2: bancos
     bancos_header = []
@@ -392,8 +404,8 @@ for sn in wb.sheetnames:
         'sheet': sn,
         'slug': slugify(sn),
         'nome': nome_conv,
-        'uf': current_uf,
-        'estado_nome': UF_NAMES.get(current_uf) if current_uf else None,
+        'uf': uf_conv,
+        'estado_nome': UF_NAMES.get(uf_conv) if uf_conv else None,
         'municipio': municipio,
         'tipo': tipo,
         'qtd_bancos': len(bancos_out),

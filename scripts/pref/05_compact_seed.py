@@ -3,6 +3,7 @@ Gera versao enxuta do convenios.json pra empacotar como seed publico no FlowForc
 Saida: pref_seed.json (na raiz do repo - servido como estatico no Vercel)
 """
 import json, sys
+from datetime import date
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding='utf-8')
@@ -26,7 +27,7 @@ slim = {
     'meta': {
         **data['meta'],
         'versao_seed': '1',
-        'gerado_em': '2026-05-05',
+        'gerado_em': date.today().isoformat(),  # data da geracao = 'atualizado em' no catalogo
     },
     'labels': labels_canonicos,
     'bancos_unicos': data['bancos_unicos'],

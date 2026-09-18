@@ -12,8 +12,12 @@ scripts/gov/04_seed_chunks.py
 scripts/gov/parse_planilha.py
 supabase_seed_gov.sql
 
-# Modulo PREFEITURAS — SQL batches gerados (so o convenios.json importa)
+# Modulo PREFEITURAS — intermediarios do parser (so o pref_seed.json importa; convenios.json tem 10 MB)
 scripts/pref/sql_batches/
+scripts/pref/convenios.json
+
+# Python bytecode
+__pycache__/
 
 # Modulo FEDERAIS — backups locais da planilha fonte (a versao anterior ja esta no historico git)
 scripts/_backup/
