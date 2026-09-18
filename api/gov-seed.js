@@ -253,6 +253,7 @@ export default async function handler(req) {
 
     // ── 7) INSERT banco_convenio em batches de 50 (PULA pares preservados) ──
     const todasRels = [];
+    const vistos = new Set();   // a planilha pode repetir o mesmo banco no mesmo convenio (ex.: MEU CASHCARD 2x em CB PB)
     for (const c of seed.convenios || []) {
       const cid = convIdBySlug.get(c.slug);
       if (!cid) continue;
@@ -260,6 +261,8 @@ export default async function handler(req) {
         const bid = bancoIdBySlug.get(b.slug);
         if (!bid) continue;
         if (protegidos.has(`${bid}-${cid}`)) continue;
+        if (vistos.has(`${bid}-${cid}`)) { stats.pares_duplicados_no_seed = (stats.pares_duplicados_no_seed || 0) + 1; continue; }
+        vistos.add(`${bid}-${cid}`);
         const ops = b.operacoes || {};
         const a = b.atributos || {};
         todasRels.push({

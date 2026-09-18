@@ -37,9 +37,17 @@ slim = {
     'bancos_unicos': data['bancos_unicos'],
     'convenios': []
 }
+duplicados = []
 for c in data['convenios']:
     bancos_slim = []
+    vistos = set()
     for b in c['bancos']:
+        # a planilha pode repetir o mesmo banco em duas colunas do mesmo convenio (ex.: MEU CASHCARD 2x em CB PB);
+        # a tabela tem unique(banco_id, convenio_id) -> fica a 1a coluna, as demais sao descartadas com aviso
+        if b['slug'] in vistos:
+            duplicados.append(f"{c['slug']}: {b['nome']}")
+            continue
+        vistos.add(b['slug'])
         bancos_slim.append({
             'slug': b['slug'],
             'nome': b['nome'],
@@ -71,3 +79,5 @@ print(f'OK -> {OUT}')
 print(f'  Original: {original:>10,} bytes ({original/1024/1024:.2f} MB)')
 print(f'  Enxuto:   {nova:>10,} bytes ({nova/1024/1024:.2f} MB)')
 print(f'  Reducao:  {(1-nova/original)*100:.0f}%')
+if duplicados:
+    print(f'  AVISO: {len(duplicados)} banco(s) repetido(s) no mesmo convenio, mantida a 1a coluna: ' + '; '.join(duplicados))
