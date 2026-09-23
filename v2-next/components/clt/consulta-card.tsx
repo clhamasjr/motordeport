@@ -29,6 +29,16 @@ interface Props {
 
 const VISAO_KEY = 'flowforce_clt_visao';
 
+// Celular BR valido: 11 digitos com '9' apos o DDD (ou 10 digitos no formato
+// antigo, iniciando 6-9). Fixo (2-5) NAO serve: bancos tipo SOMA recusam com
+// "Celular invalido!". O CAGED 2024 costuma trazer FIXO -> avisamos pra corrigir.
+function celularValido(completo?: string | null): boolean {
+  const d = String(completo || '').replace(/\D/g, '');
+  if (d.length === 11) return d[2] === '9';
+  if (d.length === 10) return /[6-9]/.test(d[2]);
+  return false;
+}
+
 export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
   const { data: fila, isLoading, error, refetch, isFetching } = useFilaStatus(filaId, pool);
   const [bancoDigitar, setBancoDigitar] = useState<string | null>(null);
@@ -235,6 +245,18 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
                       📱 {t.ddd} {t.numero}
                     </a>
                   ))}
+                </div>
+              )}
+
+              {/* Telefone principal nao e celular (ex: fixo do CAGED) -> bancos recusam */}
+              {cliente.telefones && cliente.telefones.length > 0 && !celularValido(cliente.telefones[0]?.completo) && (
+                <div className="mt-1 text-[11px] text-yellow-500">
+                  ⚠️ O telefone do cadastro não é celular válido — bancos como SOMA recusam. Corrija abaixo.
+                </div>
+              )}
+              {(!cliente.telefones || cliente.telefones.length === 0) && (
+                <div className="mt-1 text-[11px] text-yellow-500">
+                  ⚠️ Sem telefone no cadastro — vários bancos precisam de celular. Informe abaixo.
                 </div>
               )}
 
