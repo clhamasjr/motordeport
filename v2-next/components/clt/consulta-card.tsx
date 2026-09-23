@@ -12,7 +12,8 @@ import { BancoLinhas } from './banco-linhas';
 import { ModalDigitar } from './modal-digitar';
 import { formatCpf, formatCnpj, formatDateBR } from '@/lib/utils';
 import { X, Loader2, CheckCircle2, AlertCircle, List, LayoutGrid, RefreshCw } from 'lucide-react';
-import { ApiError } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
+import { toast } from 'sonner';
 
 // Ordem que os cards aparecem — vem do catalogo central (lib/clt-bancos).
 // Bancos OCULTOS (V8, JoinBank) nao aparecem aqui.
@@ -31,6 +32,13 @@ const VISAO_KEY = 'flowforce_clt_visao';
 export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
   const { data: fila, isLoading, error, refetch, isFetching } = useFilaStatus(filaId, pool);
   const [bancoDigitar, setBancoDigitar] = useState<string | null>(null);
+  // Edicao dos dados do cliente (corrigir celular invalido, nome, nascimento...)
+  const [editando, setEditando] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [fNome, setFNome] = useState('');
+  const [fTel, setFTel] = useState('');
+  const [fNasc, setFNasc] = useState('');
+  const [fMae, setFMae] = useState('');
   // Visão dos bancos: 'linhas' (tabela, padrão) ou 'cards'. Persiste a escolha.
   const [visao, setVisao] = useState<'linhas' | 'cards'>('linhas');
   useEffect(() => {
@@ -126,6 +134,40 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
   const cliente = { ...(fila.cliente || {}), cpf: fila.cliente?.cpf || fila.cpf };
   const vinculo = fila.vinculo;
 
+  function abrirEdicao() {
+    setFNome(cliente.nome || '');
+    setFTel(cliente.telefones?.[0]?.completo || '');
+    setFNasc(cliente.dataNascimento || '');
+    setFMae(cliente.nomeMae || '');
+    setEditando(true);
+  }
+
+  async function salvarEdicao() {
+    const tel = fTel.replace(/\D/g, '');
+    if (tel && tel.length !== 10 && tel.length !== 11) {
+      toast.error('Celular invalido - use DDD + numero (10 ou 11 digitos)');
+      return;
+    }
+    setSalvando(true);
+    try {
+      const r = await api<{ success: boolean; mensagem?: string }>('/api/clt-fila', {
+        action: 'editarCliente',
+        id: filaId,
+        nome: fNome.trim() || undefined,
+        telefone: tel || undefined,
+        dataNascimento: fNasc.trim() || undefined,
+        nomeMae: fMae.trim() || undefined,
+      });
+      toast.success(r.mensagem || 'Dados corrigidos - re-consultando...');
+      setEditando(false);
+      refetch();
+    } catch (e) {
+      toast.error('Erro ao salvar: ' + (e as Error).message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   // Só renderiza bancos que ESTÃO nesta consulta (fila.bancos). Banco ausente
   // (inativo no catálogo, ou consulta filtrada/varredura de 1 banco) NÃO pode
   // aparecer como "consultando" eternamente — antes caía num fallback `pending`
@@ -193,6 +235,63 @@ export function ConsultaCard({ filaId, onClose, pool = false }: Props) {
                       📱 {t.ddd} {t.numero}
                     </a>
                   ))}
+                </div>
+              )}
+
+              {/* EDITAR DADOS DO CLIENTE — corrige celular invalido/nome/nascimento
+                  e re-dispara os bancos que ainda nao deram oferta. */}
+              {!editando ? (
+                <button
+                  onClick={abrirEdicao}
+                  className="mt-2 text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2"
+                >
+                  ✏️ Editar dados do cliente
+                </button>
+              ) : (
+                <div className="mt-2 p-2 rounded-md border border-border bg-background/60 space-y-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Nome
+                      <input
+                        className="mt-0.5 w-full rounded border border-input bg-background px-2 py-1 text-xs normal-case"
+                        value={fNome} onChange={(e) => setFNome(e.target.value)} placeholder="Nome do cliente"
+                      />
+                    </label>
+                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Celular (DDD + numero)
+                      <input
+                        className="mt-0.5 w-full rounded border border-input bg-background px-2 py-1 text-xs font-mono"
+                        value={fTel} onChange={(e) => setFTel(e.target.value)}
+                        placeholder="15998583505" inputMode="numeric"
+                      />
+                    </label>
+                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Nascimento (AAAA-MM-DD)
+                      <input
+                        className="mt-0.5 w-full rounded border border-input bg-background px-2 py-1 text-xs font-mono"
+                        value={fNasc} onChange={(e) => setFNasc(e.target.value)} placeholder="1991-11-25"
+                      />
+                    </label>
+                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Nome da mae
+                      <input
+                        className="mt-0.5 w-full rounded border border-input bg-background px-2 py-1 text-xs normal-case"
+                        value={fMae} onChange={(e) => setFMae(e.target.value)} placeholder="Nome da mae"
+                      />
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button size="sm" className="h-7 text-xs gap-1" disabled={salvando} onClick={salvarEdicao}>
+                      {salvando ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                      Salvar e re-consultar
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={salvando} onClick={() => setEditando(false)}>
+                      Cancelar
+                    </Button>
+                    <span className="text-[10px] text-muted-foreground">
+                      Corrige o cadastro e re-dispara os bancos que nao deram oferta.
+                    </span>
+                  </div>
                 </div>
               )}
             </div>

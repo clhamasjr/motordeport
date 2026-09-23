@@ -2682,6 +2682,109 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     }, 200, req);
   }
 
+  // ─── EDITAR DADOS DO CLIENTE (correção do operador) ───────
+  // Diferente do complementarCliente (que só PREENCHE lacunas via mesclarCliente,
+  // onde o dado existente tem prioridade), aqui o operador CORRIGE: o valor
+  // enviado SOBRESCREVE. Caso clássico: telefone inválido (sem o 9º dígito)
+  // travando SOMA/HAPPY/V8/PresençaBank. Depois de salvar, re-dispara os bancos
+  // que ainda não deram 'ok' com os dados corrigidos.
+  if (action === 'editarCliente') {
+    const id = body.id;
+    if (!id) return jsonError('id obrigatório', 400, req);
+    const { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+    if (!row) return jsonError('Fila não encontrada', 404, req);
+
+    const cliAtual = row.cliente || {};
+    const novo = { ...cliAtual };
+    const mudou = [];
+
+    const nome = (body.nome || '').trim();
+    if (nome) { novo.nome = nome; mudou.push('nome'); }
+
+    let dataNasc = (body.dataNascimento || '').trim();
+    if (dataNasc) {
+      const m1 = dataNasc.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      const m2 = dataNasc.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (m1) dataNasc = `${m1[1]}-${m1[2]}-${m1[3]}`;
+      else if (m2) dataNasc = `${m2[3]}-${m2[2]}-${m2[1]}`;
+      else return jsonError('Data de nascimento inválida (use AAAA-MM-DD ou DD/MM/AAAA)', 400, req);
+      novo.dataNascimento = dataNasc; mudou.push('dataNascimento');
+    }
+
+    const sexoIn = (body.sexo || '').toUpperCase();
+    if (sexoIn) {
+      const sexo = sexoIn.startsWith('F') ? 'F' : sexoIn.startsWith('M') ? 'M' : null;
+      if (!sexo) return jsonError('Sexo inválido (use M ou F)', 400, req);
+      novo.sexo = sexo; mudou.push('sexo');
+    }
+
+    const nomeMae = (body.nomeMae || '').trim();
+    if (nomeMae) { novo.nomeMae = nomeMae; mudou.push('nomeMae'); }
+
+    // TELEFONE — o caso mais comum. Vai pro TOPO da lista (os bancos usam o [0]).
+    const telDigits = String(body.telefone || '').replace(/\D/g, '');
+    if (telDigits) {
+      if (telDigits.length !== 10 && telDigits.length !== 11) {
+        return jsonError('Telefone inválido — informe DDD + número (10 ou 11 dígitos)', 400, req);
+      }
+      const novoTel = {
+        ddd: telDigits.substring(0, 2), numero: telDigits.substring(2),
+        completo: telDigits, whatsapp: true, fonte: 'manual_operador',
+      };
+      const resto = (Array.isArray(cliAtual.telefones) ? cliAtual.telefones : [])
+        .filter((t) => String(t && t.completo || '') !== telDigits);
+      novo.telefones = [novoTel, ...resto];
+      mudou.push('telefone');
+    }
+
+    if (!mudou.length) {
+      return jsonError('Nada pra editar — envie nome, telefone, dataNascimento, sexo ou nomeMae', 400, req);
+    }
+
+    // SOBRESCREVE de propósito (não usa mesclarCliente — edição do operador manda)
+    await dbUpdate('clt_consultas_fila', { id }, { cliente: novo });
+
+    // Persiste a correção no cadastro do CPF (vale pras próximas consultas)
+    try {
+      const persistir = { cpf: row.cpf, ultima_consulta_at: new Date().toISOString() };
+      if (novo.nome) persistir.nome = novo.nome;
+      if (novo.dataNascimento) persistir.data_nascimento = novo.dataNascimento;
+      if (novo.sexo) persistir.sexo = novo.sexo;
+      if (novo.nomeMae) persistir.nome_mae = novo.nomeMae;
+      if (Array.isArray(novo.telefones) && novo.telefones.length) persistir.telefones = novo.telefones;
+      await dbUpsert('clt_clientes', persistir, 'cpf');
+    } catch { /* não quebra a edição */ }
+
+    // Re-dispara os bancos que ainda NÃO deram 'ok' (agora com os dados certos)
+    const redisparar = Object.keys(row.bancos || {})
+      .filter((b) => b !== 'multicorban' && row.bancos[b] && row.bancos[b].status !== 'ok');
+    if (redisparar.length) {
+      if (row.status_geral === 'concluido') {
+        await dbUpdate('clt_consultas_fila', { id }, { status_geral: 'processando' });
+      }
+      const baseUrl = APP_URL();
+      for (const banco of redisparar) {
+        await patchBanco(id, banco, {
+          status: 'pending', tentativas: 0, retryable: true,
+          mensagem: '🔄 Re-consultando com os dados corrigidos...',
+        }).catch(() => {});
+        fetch(baseUrl + '/api/clt-fila', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
+          body: JSON.stringify({ action: 'processar', id, banco, force: true }),
+        }).catch((e) => console.error('[editarCliente] dispatch ' + banco + ':', e.message));
+      }
+    }
+
+    return jsonResp({
+      success: true,
+      editado: mudou,
+      cliente: novo,
+      bancosRedisparados: redisparar,
+      mensagem: `Dados corrigidos (${mudou.join(', ')}). Re-consultando ${redisparar.length} banco(s).`,
+    }, 200, req);
+  }
+
   // ─── ENRIQUECER COM NOVA VIDA ─────────────────────────────
   // Pega os dados que faltam (nome / nascimento / telefone) no Nova Vida TI
   // por CPF e mescla na consulta. Usado pra "ressuscitar" clientes da categoria
