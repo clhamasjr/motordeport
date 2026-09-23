@@ -38,7 +38,7 @@ async function callApi(path, payload, authHeader, internalSecret, timeoutMs = 18
     return { ok: r.ok, status: r.status, data: d };
   } catch (e) {
     if (e.name === 'AbortError') {
-      return { ok: false, status: 408, data: { error: 'Timeout (18s) — banco lento, marca como falha pra retry' } };
+      return { ok: false, status: 408, data: { error: `Timeout (${Math.round(timeoutMs / 1000)}s) — banco lento, marca como falha pra retry` } };
     }
     return { ok: false, status: 0, data: { error: e.message } };
   } finally {
@@ -355,7 +355,7 @@ async function processarPresencaBank(id, cpf, auth, secret) {
   const r = await callApi('/api/presencabank', {
     action: 'oportunidadesPorCPF', cpf, nome: nomePB, telefone: telPB,
     simular: !ehLote,
-  }, auth, secret, ehLote ? 18000 : 30000);   // individual: 30s p/ as 4 chamadas + simulação
+  }, auth, secret, ehLote ? 18000 : 22000);   // individual: 22s (limite Edge ~25s) p/ margem + simulação
   const pb = r.data || {};
 
   // Mescla dados de cliente / vinculo na fila
@@ -873,7 +873,7 @@ async function processarFintech(id, provider, cpf, auth, secret) {
     action: 'cltCheckEligibility',
     cpf,
     provider: provider === 'celcoin' ? 'celcoin' : 'qi'
-  }, auth, secret).catch(() => ({ ok: false, data: {} }));
+  }, auth, secret, 22000).catch(() => ({ ok: false, data: {} }));   // 22s: login+4 chamadas, dentro do limite Edge (~25s)
   const d = r.data || {};
 
   // Casos:
@@ -889,7 +889,19 @@ async function processarFintech(id, provider, cpf, auth, secret) {
     });
     return;
   }
-  if (!d.temVinculo) {
+  // ERRO real (API/credencial/timeout) NAO e "sem vinculo" — antes caia aqui e o
+  // card mentia "sem vinculo" com o Fintech quebrado (falso negativo).
+  if (!r.ok || d.etapa === 'erro') {
+    await patchBanco(id, banco, {
+      status: 'falha',
+      disponivel: false,
+      retryable: r.ok ? d.retryable !== false : true,   // timeout/rede do callApi -> re-tenta
+      mensagem: d.mensagem || d.error || `Erro Fintech do Corban (HTTP ${d.httpStatus || r.status})`,
+      _raw_response: d
+    });
+    return;
+  }
+  if (d.temVinculo === false) {
     await patchBanco(id, banco, {
       status: 'falha',
       disponivel: false,
@@ -973,6 +985,7 @@ async function processarFintech(id, provider, cpf, auth, secret) {
   await patchBanco(id, banco, {
     status: 'falha',
     mensagem: d.mensagem || 'Fintech do Corban não retornou dados',
+    retryable: true,
     _raw_response: d
   });
 }
@@ -1104,7 +1117,7 @@ async function processarUnno(id, cpf, auth, secret) {
     telefone,
     email: cli?.emails?.[0] || null,
     provedor: 'CELCOIN',
-  }, auth, secret, 25000);
+  }, auth, secret, 22000);   // limite Edge ~25s
 
   const u = r.data || {};
   if (!r.ok || !u.sucesso) {
@@ -1192,7 +1205,7 @@ async function processarSoma(id, cpf, slug, bancarizadora, auth, secret) {
     // o robô confirma o aceite e re-consulta sozinho → volta APROVADO com margem.
     // Sem sessão, o confirmarAceite falha gracioso e cai no fallback (envia link).
     autoAutorizar: true,
-  }, auth, secret, 30000);
+  }, auth, secret, 22000);   // limite Edge ~25s
   const u = r.data || {};
 
   if (!r.ok && !u.etapa) {
@@ -1319,7 +1332,7 @@ async function processarHappy(id, cpf, auth, secret) {
   const nome = cli?.nome || null;
   const telefone = cli?.telefones?.[0]?.completo || null;
 
-  const r = await callApi('/api/happy', { action: 'consultarMargem', cpf, nome, telefone }, auth, secret, 30000);
+  const r = await callApi('/api/happy', { action: 'consultarMargem', cpf, nome, telefone }, auth, secret, 22000);   // limite Edge ~25s
   const u = r.data || {};
 
   if (!r.ok && !u.etapa) {

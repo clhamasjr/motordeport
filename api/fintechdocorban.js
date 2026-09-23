@@ -128,6 +128,29 @@ function pathPrefix(provider) {
   return '/Api/V1/Qi'; // default
 }
 
+// Erro da API Fintech -> resposta padronizada. NUNCA confundir com "sem vinculo":
+// 401/403 = credencial recusada, 409 = config pendente deles, 429 = rate limit,
+// 0/408/5xx = API fora. So rede/limite/servidor valem re-tentar.
+function erroFintech(etapa, r, cpf, provider) {
+  const d = (r && r.data) || {};
+  const errs = Array.isArray(d.errors) ? d.errors.map((e) => (e && e.message) || e).join('; ') : null;
+  const msgApi = d.message || d.mensagem || d.error || d.title || errs
+    || (typeof d.raw === 'string' ? d.raw.substring(0, 160) : null);
+  const st = (r && r.status) || 0;
+  const tipo = (st === 401 || st === 403) ? 'credencial recusada — revisar FINTECH_API_KEY/LOGIN no Vercel'
+    : st === 409 ? 'configuração pendente no Fintech (ex: bancarizadora não habilitada)'
+    : st === 429 ? 'limite de requisições — re-tenta sozinho'
+    : (st === 0 || st === 408 || st >= 500) ? 'API do Fintech fora/instável — re-tenta sozinho'
+    : 'Fintech recusou a requisição';
+  return {
+    success: false, etapa: 'erro', etapaFalhou: etapa, provider, cpf,
+    temVinculo: null, disponivel: false, httpStatus: st,
+    retryable: st === 0 || st === 408 || st === 429 || st >= 500,
+    mensagem: `Fintech do Corban (HTTP ${st || 'rede'}) — ${tipo}${msgApi ? ': ' + String(msgApi).substring(0, 140) : ''}`,
+    _raw: d,
+  };
+}
+
 const j = (data, status = 200, req = null) => jsonResp(data, status, req);
 
 // ══════════════════════════════════════════════════════════════════
@@ -800,7 +823,12 @@ export default async function handler(req) {
       const d2 = r2.data?.result || r2.data?.data || r2.data || {};
       const vinculos = Array.isArray(d2) ? d2 : (Array.isArray(d2?.items) ? d2.items : [d2].filter(v => v && typeof v === 'object'));
 
-      if (!r2.ok || vinculos.length === 0) {
+      // ERRO da API (auth/config/servidor/rede) NAO e "sem vinculo" — antes caia
+      // no mesmo if e o card mentia "Sem vinculos CLT elegiveis" (falso negativo).
+      if (!r2.ok) {
+        return j(erroFintech('consultar-vinculos', r2, cpf, provider), 200, req);
+      }
+      if (vinculos.length === 0) {
         return j({
           success: false,
           provider, cpf,
@@ -824,10 +852,16 @@ export default async function handler(req) {
         employer_document_number: cnpj
       });
       const d3 = r3.data || {};
+      if (!r3.ok) {
+        return j({ ...erroFintech('autorizacao', r3, cpf, provider), temVinculo: true, vinculo: { matricula, cnpj, empregador } }, 200, req);
+      }
 
       // 4) Re-consulta dados — agora deve estar populado
       const r4 = await fc(`${prefix}/Get-All-Consult-Data-Worker-By-Cpf/${cpf}`, 'GET');
       const d4 = r4.data?.result || r4.data?.data || r4.data || {};
+      if (!r4.ok) {
+        return j({ ...erroFintech('consulta-final', r4, cpf, provider), temVinculo: true, vinculo: { matricula, cnpj, empregador } }, 200, req);
+      }
       const lista4 = Array.isArray(d4) ? d4 : (Array.isArray(d4?.items) ? d4.items : []);
       const primeiro4 = lista4[0] || (typeof d4 === 'object' && !Array.isArray(d4) ? d4 : null);
 
