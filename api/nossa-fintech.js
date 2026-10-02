@@ -309,7 +309,7 @@ async function getOperationDetails(debtKey) {
 //     dadosCliente?: {...},
 //     vinculo?: {...},
 //   }
-async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutorizar = true, forcar = false }) {
+async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutorizar = true, forcar = false, _reSolicitou = false }) {
   const cpfLimpo = onlyDigits(cpf);
   if (cpfLimpo.length !== 11) return { approved: false, etapa: 'ERRO', error: 'CPF invalido' };
 
@@ -344,10 +344,24 @@ async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutori
     link = auth.data?.data?.authorization_link;
   } else {
     const msg = (auth.data?.message || '').toLowerCase();
+    // INELIGIBLE = "CPF não encontrado na base ou trabalhador inelegível" →
+    // NEGATIVA legítima (sem vínculo), não erro. Antes virava ERRO e o motor
+    // queimava 5 re-tentativas num CPF que o banco já disse que não atende.
+    const statusAuth = String(auth.data?.data?.status || '').toUpperCase();
+    if (statusAuth === 'INELIGIBLE' || /ineleg[ií]vel|n[aã]o encontrado na base/.test(msg)) {
+      return {
+        approved: false,
+        etapa: 'SEM_VINCULO',
+        status: 'INELIGIBLE',
+        mensagem: auth.data?.message || 'CPF não encontrado na base / inelegível na Nossa Fintech',
+        _raw: auth.data,
+      };
+    }
     const isNotFound =
       msg.includes('não encontrada') || msg.includes('nao encontrada') ||
       msg.includes('not found') || msg.includes('autorização não') ||
-      msg.includes('sem autorização');
+      msg.includes('sem autorização') ||
+      msg.includes('expirad'); // "Autorização expirada" → cria autorização nova
     if (!isNotFound) {
       return {
         approved: false,
@@ -443,6 +457,15 @@ async function consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutori
   const enr = await checkEnrollment(cpfLimpo, provider);
   if (!enr.ok || enr.data?.success !== true) {
     const msgEnr = String(enr.data?.message || '').toLowerCase();
+    // "Autorização expirada. É necessário solicitar uma nova autorização." →
+    // re-solicita + auto-autoriza e refaz a consulta UMA vez (antes travava em
+    // ERRO re-tentável pra sempre, porque o check-auth seguia dizendo AUTHORIZED).
+    if (/expirad/.test(msgEnr) && !_reSolicitou && nome && telefone) {
+      const req2 = await requestAutorizacao({ cpf: cpfLimpo, nome, telefone, serviceType: provider });
+      const uuid2 = extrairUuidLink(req2.data?.data?.authorization_link);
+      if (uuid2 && autoAutorizar) await autorizarConsulta(uuid2);
+      return consultarAprovacao({ cpf, nome, telefone, serviceType, autoAutorizar, forcar, _reSolicitou: true });
+    }
     if (msgEnr.includes('processamento') || msgEnr.includes('aguarde')) {
       return {
         approved: false,

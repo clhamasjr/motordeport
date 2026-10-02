@@ -17,6 +17,7 @@ export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 import { dbSelect, dbUpsert } from './_lib/supabase.js';
+import { loginBloqueado, marcarLoginBloqueado } from './_lib/login-guard.js';
 
 const BASE = 'https://api.mercantil.com.br:8443';
 const SITE_BFF = '/pcb/sitebff/api';
@@ -65,6 +66,10 @@ async function loginAutomatico() {
   if (!usuario || !senha) {
     return { ok: false, error: 'MERCANTIL_USER e MERCANTIL_PASS precisam estar setados nas env vars' };
   }
+  // Disjuntor: o banco recusou o login automático há pouco → não insiste (o
+  // motor cai pro modo "colar sessão do portal" com mensagem clara).
+  const bl = await loginBloqueado('mercantil');
+  if (bl.bloqueado) return { ok: false, error: `Login Mercantil HTTP ${bl.httpStatus}: ${bl.motivo} (pausado até ${bl.ateStr})`, httpStatus: bl.httpStatus };
 
   // Senha base64: usa Buffer (Node) ou TextEncoder→btoa (Edge) — robusto contra
   // caracteres unicode/acentos que quebrariam btoa direto.
@@ -151,6 +156,8 @@ async function loginAutomatico() {
       raw: text.substring(0, 800),
     });
     const mensagemCompleta = erro?.mensagem || erro?.message || erro?.error || erro?.raw?.substring(0, 500) || 'sem detalhes';
+    // 401/403/500 no login = não vai passar nas próximas também; pausa 30min
+    if (res.status === 401 || res.status === 403 || res.status === 500) await marcarLoginBloqueado('mercantil', mensagemCompleta.substring(0, 160), 30, res.status);
     return {
       ok: false,
       error: 'Login Mercantil HTTP ' + res.status + ': ' + mensagemCompleta.substring(0, 500),

@@ -19,6 +19,7 @@ export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 import { dbInsert, dbUpdate, dbSelect } from './_lib/supabase.js';
+import { loginBloqueado, marcarLoginBloqueado, liberarLogin } from './_lib/login-guard.js';
 
 const AUTH_URL = () => process.env.V8_AUTH_URL || 'https://auth.v8sistema.com/oauth/token';
 const BFF_BASE = () => process.env.V8_BFF_URL || 'https://bff.v8sistema.com';
@@ -38,6 +39,10 @@ async function getToken() {
 
   if (!USERNAME() || !PASSWORD()) throw new Error('V8_USERNAME/V8_PASSWORD nao configurados');
   if (!AUDIENCE()) throw new Error('V8_AUDIENCE nao configurado (solicitar a gerente comercial V8)');
+  // Disjuntor: credencial recusada há pouco → não bate no login de novo
+  // (foi isso que gerou o "user is blocked" na V8).
+  const bl = await loginBloqueado('v8');
+  if (bl.bloqueado) throw new Error(`Falha auth V8 (HTTP ${bl.httpStatus}): ${bl.motivo} — login pausado até ${bl.ateStr} pra não agravar o bloqueio`);
 
   const body = new URLSearchParams({
     grant_type: 'password',
@@ -55,8 +60,11 @@ async function getToken() {
   const t = await r.text();
   let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 500) }; }
   if (!r.ok || !d.access_token) {
-    throw new Error(`Falha auth V8 (HTTP ${r.status}): ${d.error_description || d.error || d.raw || 'sem detalhes'}`);
+    const motivo = d.error_description || d.error || d.raw || 'sem detalhes';
+    if (r.status === 401 || r.status === 403) await marcarLoginBloqueado('v8', motivo, 30, r.status);
+    throw new Error(`Falha auth V8 (HTTP ${r.status}): ${motivo}`);
   }
+  await liberarLogin('v8');
   const ttlMs = ((d.expires_in || 86400) * 1000) - 60_000;
   TOKEN_CACHE = { token: d.access_token, expiresAt: now + ttlMs };
   return d.access_token;
@@ -321,7 +329,10 @@ async function handleAction(body, req) {
       if (!cpf) return jsonError('CPF invalido', 400, req);
       const startDate = body.startDate || new Date(Date.now() - 30 * 86400000).toISOString();
       const endDate = body.endDate || new Date().toISOString();
-      const r = await v8Call(`/private-consignment/consult?startDate=${startDate}&endDate=${endDate}&limit=10&page=1&provider=${PROVIDER_DEFAULT}&search=${cpf}`, 'GET');
+      // provider do body (QI | CELCOIN) — antes era fixo QI e o card v8_celcoin
+      // lia a lista do QI (termo gerado no Celcoin nunca era "encontrado").
+      const provider = PROVIDERS_DISPONIVEIS.includes(String(body.provider || '').toUpperCase()) ? String(body.provider).toUpperCase() : PROVIDER_DEFAULT;
+      const r = await v8Call(`/private-consignment/consult?startDate=${startDate}&endDate=${endDate}&limit=10&page=1&provider=${provider}&search=${cpf}`, 'GET');
       const items = r.data?.data || [];
       const found = items.find(it => (it.documentNumber || '').replace(/\D/g, '') === cpf);
       return j({
@@ -742,6 +753,10 @@ async function handleAction(body, req) {
     );
   } catch (err) {
     console.error('v8 erro:', err);
-    return jsonResp({ error: 'Erro interno', message: err.message }, 500, req);
+    // Login recusado → httpStatus real (401/403) pro motor dizer "credencial
+    // recusada / usuário bloqueado" em vez de "API instável"
+    const m = err.message || String(err);
+    const auth = /Falha auth V8 \(HTTP (\d{3})\)/.exec(m);
+    return jsonResp({ success: false, error: 'Erro interno', message: m, httpStatus: auth ? Number(auth[1]) : (/nao configurad/i.test(m) ? 401 : 500) }, 500, req);
   }
 }

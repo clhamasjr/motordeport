@@ -671,7 +671,8 @@ export default async function handler(req) {
   } catch (err) {
     console.error('[FACTA] erro interno:', err?.message, err?.stack);
     return j({
-      error: 'Erro interno',
+      error: err?.message || 'Erro interno', // o motor mostra `error`: tem que ser o motivo real
+      tipo: 'Erro interno',
       mensagem: err?.message || 'Erro nao especificado',
       stack: (err?.stack || '').substring(0, 500),
       proxyUsed: !!(getConfig().PROXY_URL && getConfig().PROXY_SECRET),

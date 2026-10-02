@@ -7,6 +7,7 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
+import { loginBloqueado, marcarLoginBloqueado, liberarLogin } from './_lib/login-guard.js';
 
 // ── Config ─────────────────────────────────────────────────────
 function getConfig() {
@@ -34,6 +35,9 @@ async function getToken() {
   if (!cfg.USER || !cfg.PASS) {
     throw new Error('C6_USERNAME/C6_PASSWORD nao configurados no ambiente');
   }
+  // Disjuntor: credencial recusada há pouco → não insiste no login
+  const bl = await loginBloqueado('c6');
+  if (bl.bloqueado) throw new Error(`Falha auth C6 (HTTP ${bl.httpStatus}): ${bl.motivo} — login pausado até ${bl.ateStr}`);
   const body = new URLSearchParams({ username: cfg.USER, password: cfg.PASS });
   const r = await fetch(cfg.BASE + '/auth/token', {
     method: 'POST',
@@ -43,8 +47,11 @@ async function getToken() {
   const t = await r.text();
   let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 500) }; }
   if (!r.ok || !d.access_token) {
-    throw new Error(`Falha auth C6 (HTTP ${r.status}): ${d.message || d.error || d.raw || 'sem detalhes'}`);
+    const motivo = d.message || d.error || d.raw || 'sem detalhes';
+    if (r.status === 401 || r.status === 403) await marcarLoginBloqueado('c6', motivo, 30, r.status);
+    throw new Error(`Falha auth C6 (HTTP ${r.status}): ${motivo}`);
   }
+  await liberarLogin('c6');
   const ttlMs = ((d.expires_in_seconds || 1199) * 1000) - 30_000; // margem de 30s
   TOKEN_CACHE = { token: d.access_token, expiresAt: now + ttlMs };
   return d.access_token;
@@ -219,9 +226,13 @@ export default async function handler(req) {
         temOferta,
         oferta: ofertaFinal,
         fonte, // 'pre_aprovada' | 'simulacao_max'
+        // Chamada falhou (≠ 404) → mensagem REAL do C6, não "sem oferta" (falso negativo)
+        retryable: !chamadaOk && (r.status === 0 || r.status === 401 || r.status === 403 || r.status === 408 || r.status === 429 || r.status >= 500),
         mensagem: temOferta
           ? `Oferta CLT (${fonte}): R$ ${ofertaFinal.valorCliente.toFixed(2)} em ${ofertaFinal.qtdParcelas}x de R$ ${ofertaFinal.valorParcela.toFixed(2)}`
-          : 'Cliente autorizado mas sem oferta CLT disponível no C6 (sem vínculo elegível ou margem insuficiente).',
+          : !chamadaOk
+            ? `C6 (HTTP ${r.status}): ${r.data?.message || r.data?.mensagem || r.data?.error || (Array.isArray(r.data?.errors) ? r.data.errors.map((e) => e?.message || e).join('; ') : '') || 'sem detalhe'}`.substring(0, 220)
+            : 'Cliente autorizado mas sem oferta CLT disponível no C6 (sem vínculo elegível ou margem insuficiente).',
         _raw: r.data
       }, 200, req);
     }
@@ -496,6 +507,11 @@ export default async function handler(req) {
     );
   } catch (err) {
     console.error('c6.js erro:', err);
-    return j({ error: 'Erro interno', message: err.message || String(err) }, 500, req);
+    // Login C6 recusado/sem env → httpStatus 401 (o motor mostra "credencial
+    // recusada", não "API instável"). Demais exceções = 500.
+    const m = err.message || String(err);
+    const auth = /Falha auth C6 \(HTTP (\d{3})\)/.exec(m);
+    const ehAuth = !!auth || /nao configurados/i.test(m);
+    return j({ success: false, error: 'Erro interno', message: m, httpStatus: auth ? Number(auth[1]) : (ehAuth ? 401 : 500) }, 500, req);
   }
 }

@@ -18,9 +18,12 @@ import type { BancoSlug } from '@/lib/clt-types';
 // Ordem e rótulo das categorias do pipeline
 const CATEGORIAS: { key: CategoriaCliente; label: string; cor: string }[] = [
   { key: 'apto', label: 'Aptos', cor: 'text-green-500' },
+  { key: 'com_margem_inapto', label: 'Com margem, não apto', cor: 'text-amber-500' },
   { key: 'sem_margem', label: 'Sem margem', cor: 'text-yellow-500' },
   { key: 'aguardando', label: 'Aguardando autorização', cor: 'text-orange-400' },
   { key: 'sem_dados', label: 'Sem dados', cor: 'text-zinc-400' },
+  { key: 'cnpj_invalido', label: 'CNPJ/vínculo inválido', cor: 'text-rose-500' },
+  { key: 'erro_api', label: 'Erro de API (re-consultar)', cor: 'text-sky-400' },
   { key: 'inapto', label: 'Inaptos', cor: 'text-red-400' },
   { key: 'processando', label: 'Processando', cor: 'text-cyan-400' },
   { key: 'standby', label: 'Agendados (26/06)', cor: 'text-amber-400' },
@@ -45,7 +48,7 @@ export default function PipelineCltPage() {
   const [enrich, setEnrich] = useState<{ rodando: boolean; feitos: number; total: number; ok: number } | null>(null);
 
   const clientes = (data?.clientes || []).filter((c) => c.categoria === aba);
-  const mostraMargem = aba === 'apto' || aba === 'sem_margem';
+  const mostraMargem = aba === 'apto' || aba === 'sem_margem' || aba === 'com_margem_inapto';
   const mostraTravado = aba === 'aguardando';
 
   // Enriquece TODOS os "sem dados" da lista atual, 1 por vez (Nova Vida).
@@ -96,7 +99,7 @@ export default function PipelineCltPage() {
       {data && (
         <>
           {/* Cards por categoria — clicáveis (filtram a tabela) */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2">
             {CATEGORIAS.map((cat) => {
               const n = data.contadores?.[cat.key] || 0;
               const ativo = aba === cat.key;

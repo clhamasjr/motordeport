@@ -45,12 +45,19 @@ const MODULOS = [
   {
     key: 'consulta_clt',
     label: 'Consulta CLT',
+    // critico = PresençaBank (o banco CLT que está operando). C6 ficou
+    // informativo: a credencial dele está recusada (out/2026) e, como crítico,
+    // derrubava o módulo inteiro e alertava o dono sem parar. Mercantil saiu:
+    // está fora de operação e cada ping era um login falho no banco.
     bancos: [
-      { ep: 'c6', action: 'test', critico: true },
-      { ep: 'presencabank', action: 'test', critico: false },
+      { ep: 'presencabank', action: 'test', critico: true },
+      { ep: 'c6', action: 'test', critico: false },
       { ep: 'v8', action: 'test', critico: false },
       { ep: 'handbank', action: 'status', critico: false },
-      { ep: 'mercantil', action: 'test', critico: false },
+      { ep: 'facta', action: 'test', critico: false },
+      { ep: 'unno', action: 'test', critico: false },
+      { ep: 'soma', action: 'test', critico: false },
+      { ep: 'nossa-fintech', action: 'test', critico: false },
     ],
   },
 ];

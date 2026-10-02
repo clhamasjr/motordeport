@@ -126,9 +126,15 @@ function parseCltHTML(html) {
   };
   if (!html) return result;
 
-  // Nome (id nome_beneficiario)
-  let m = html.match(/id="nome_beneficiario"[^>]*>\s*([^<]+?)\s*<\/small>/i);
+  // Nome (id nome_beneficiario) — com fallbacks: o layout do Multicorban
+  // mudou (set/2026) e o id sumiu; tenta por rótulo e por id parcial.
+  let m = html.match(/id="nome_beneficiario"[^>]*>\s*([^<]+?)\s*<\/small>/i)
+    || html.match(/id="nome[^"]*"[^>]*>\s*([^<]{3,}?)\s*<\//i)
+    || html.match(/Nome(?:\s+(?:do\s+)?(?:Trabalhador|Cliente|Completo|Benefici[áa]rio))?\s*<\/(?:p|label|span|strong|b|small|div|th|td)>[\s\S]{0,250}?<(?:small|span|strong|b|td|div|p|h\d)[^>]*>\s*([A-Za-zÀ-ú][^<]{3,}?)\s*<\//)
+    || html.match(/"nome"\s*:\s*"([^"]{3,})"/i);
   if (m) result.nome = m[1].trim();
+  // CPF por id parcial (fallback)
+  if (!result.cpf) { const mc = html.match(/id="cpf[^"]*"[^>]*>\s*([\d.\-\s]{11,}?)\s*<\//i); if (mc) result.cpf = mc[1].replace(/\D/g, ''); }
 
   // CPF (id cpf_beneficiario)
   m = html.match(/id="cpf_beneficiario"[^>]*>\s*([\d\s]+?)\s*<\/small>/i);
@@ -206,6 +212,16 @@ function parseCltHTML(html) {
         whatsapp: true
       });
     }
+  }
+
+  // DIAGNÓSTICO: se veio HTML mas o nome não parseou, guarda um trecho
+  // MASCARADO (dígitos → #, tags reduzidas) pra ajustar o parser sem adivinhar.
+  if (!result.nome && html.length > 0) {
+    result._diag = {
+      htmlLen: html.length,
+      preview: html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/\d/g, '#').replace(/\s+/g, ' ').replace(/<(\w+)[^>]*>/g, '<$1>').substring(0, 1800),
+    };
   }
 
   return result;

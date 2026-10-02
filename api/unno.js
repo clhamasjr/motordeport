@@ -26,6 +26,7 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
+import { loginBloqueado, marcarLoginBloqueado, liberarLogin } from './_lib/login-guard.js';
 
 // ── Config ─────────────────────────────────────────────────────
 function getConfig() {
@@ -60,6 +61,8 @@ async function getToken() {
   if (!cfg.USER || !cfg.PASS) {
     throw new Error('UNNO_USERNAME/UNNO_PASSWORD nao configurados no ambiente');
   }
+  const bl = await loginBloqueado('unno');
+  if (bl.bloqueado) throw new Error(`Falha login Unno (HTTP ${bl.httpStatus}): ${bl.motivo} — login pausado até ${bl.ateStr}`);
   const r = await fetch(cfg.BASE + '/auth/api/v1/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -68,8 +71,11 @@ async function getToken() {
   const t = await r.text();
   let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 500) }; }
   if (!r.ok || !d.access_token) {
-    throw new Error(`Falha login Unno (HTTP ${r.status}): ${d.error || d.message || d.raw || 'sem detalhes'}`);
+    const motivo = d.error || d.message || d.raw || 'sem detalhes';
+    if (r.status === 401 || r.status === 403) await marcarLoginBloqueado('unno', motivo, 30, r.status);
+    throw new Error(`Falha login Unno (HTTP ${r.status}): ${motivo}`);
   }
+  await liberarLogin('unno');
   const realExp = decodeJwtExp(d.access_token);
   const fallbackTtl = now + (3 * 60 * 60 * 1000);
   TOKEN_CACHE = {
@@ -537,7 +543,11 @@ async function simularStep({ cpf, telefone, email, provider }) {
   const proposalUuid = draft.data?.proposal_uuid;
   passos.START_DRAFT = { http: draft.status, status: draft.data?.status };
   if (!draft.ok || !proposalUuid) {
-    return { sucesso: false, etapa: 'START_DRAFT', error: draft.data?.message || `HTTP ${draft.status}`, passos, _raw: draft.data };
+    return {
+      sucesso: false, etapa: 'START_DRAFT', httpStatus: draft.status,
+      retryAfterMs: Number(draft.data?.retry_after_ms) || null, // 429: a Unno diz quanto esperar
+      error: draft.data?.message || draft.data?.error || `HTTP ${draft.status}`, passos, _raw: draft.data,
+    };
   }
 
   // 2) TERMO VINCULADO — mudanca da Unno (13/07/2026, confirmada por captura
@@ -563,7 +573,7 @@ async function simularStep({ cpf, telefone, email, provider }) {
   passos.TERMS = { http: termo.status, termStatus: termo.data?.response?.status };
   if (!termo.ok) {
     return {
-      sucesso: false, etapa: 'TERMS', proposalUuid,
+      sucesso: false, etapa: 'TERMS', proposalUuid, httpStatus: termo.status,
       error: termo.data?.error?.message || termo.data?.message || `HTTP ${termo.status}`,
       mensagem: termStatus !== 'AGREED'
         ? `Termo ${termStatus || 'ausente'} — auto-autorizacao nao confirmou (ver passos.TERMO_AUTZ)`
@@ -573,13 +583,28 @@ async function simularStep({ cpf, telefone, email, provider }) {
   }
 
   // 3) GET_BALANCE — a margem
-  const bal = await unnoCall(`${base}/GET_BALANCE/${proposalUuid}`, 'POST', {});
+  let bal = await unnoCall(`${base}/GET_BALANCE/${proposalUuid}`, 'POST', {});
+  // A Unno às vezes responde 400 "Terms and conditions not accepted or expired"
+  // logo DEPOIS do TERMS 200 (consistência eventual). Espera e tenta mais 2x.
+  for (let i = 0; i < 2 && bal.status === 400 && /terms and conditions/i.test(JSON.stringify(bal.data || {})); i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    bal = await unnoCall(`${base}/GET_BALANCE/${proposalUuid}`, 'POST', {});
+  }
   passos.GET_BALANCE = { http: bal.status };
   const link0 = bal.data?.response?.links?.[0];
   const prod0 = link0?.products?.[0];
   const meta = link0?.meta_data || {};
-  if (!bal.ok || !link0) {
-    return { sucesso: false, etapa: 'GET_BALANCE', proposalUuid, error: bal.data?.message || `HTTP ${bal.status}`, passos, _raw: bal.data };
+  if (!bal.ok) {
+    return { sucesso: false, etapa: 'GET_BALANCE', proposalUuid, httpStatus: bal.status, error: bal.data?.error?.message || bal.data?.message || `HTTP ${bal.status}`, passos, _raw: bal.data };
+  }
+  if (!link0) {
+    // 200 sem nenhum vínculo (links vazio) = negativa legítima, não erro.
+    // Antes virava sucesso:false "HTTP 200" e o motor re-tentava 5x à toa.
+    return {
+      sucesso: true, etapa: 'SEM_VINCULO', elegivel: false, aprovado: false, proposalUuid,
+      mensagem: bal.data?.message || 'Unno não retornou vínculo empregatício elegível (sem vínculo CLT)',
+      linkPainel: `https://app.unnotech.com.br/loans/clt/${proposalUuid}`, passos, _raw: bal.data,
+    };
   }
   const margem = Number(prod0?.available_balance) || 0;
   const balanceCheckId = prod0?.balance_check_id || null;

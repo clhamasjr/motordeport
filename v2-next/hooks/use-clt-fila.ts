@@ -165,7 +165,9 @@ export interface PrecheckResult {
  * banco. Lista trabalhável pós-consulta. Mesmo isolamento (vendedor vê
  * os seus, admin vê todos). Ordenado por maior margem.
  */
-export type CategoriaCliente = 'apto' | 'sem_margem' | 'aguardando' | 'sem_dados' | 'inapto' | 'standby' | 'processando';
+export type CategoriaCliente =
+  | 'apto' | 'com_margem_inapto' | 'sem_margem' | 'aguardando' | 'sem_dados'
+  | 'cnpj_invalido' | 'erro_api' | 'inapto' | 'standby' | 'processando';
 export interface ClientePipeline {
   id: string;
   cpf: string;

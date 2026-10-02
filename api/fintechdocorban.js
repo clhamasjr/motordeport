@@ -42,6 +42,7 @@
 export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
+import { loginBloqueado, marcarLoginBloqueado, liberarLogin } from './_lib/login-guard.js';
 
 function getConfig() {
   const ambiente = (process.env.FINTECH_AMBIENTE || 'PRD').toUpperCase();
@@ -70,6 +71,9 @@ async function getAccessToken(cfg, force = false) {
   if (!force && _tokenCache.token && _tokenCache.exp > agora && _tokenCache.ambiente === cfg.ambiente) {
     return { token: _tokenCache.token, status: 200, fromCache: true };
   }
+  // Disjuntor: login recusado há pouco (usuário inativo/senha) → não insiste
+  const bl = await loginBloqueado('fintech');
+  if (bl.bloqueado) return { token: null, status: bl.httpStatus, error: `${bl.motivo} — login pausado até ${bl.ateStr}` };
   try {
     // O gateway (Azure APIM) exige a chave Subscription em TODAS as chamadas,
     // INCLUSIVE no login (senao: 401 "missing subscription key").
@@ -82,9 +86,14 @@ async function getAccessToken(cfg, force = false) {
     });
     const text = await r.text();
     let d; try { d = JSON.parse(text); } catch { d = { raw: text.substring(0, 500) }; }
-    if (!r.ok) return { token: null, status: r.status, error: d?.message || d?.mensagem || `Login HTTP ${r.status}`, raw: d };
+    if (!r.ok) {
+      const motivo = d?.message || d?.mensagem || `Login HTTP ${r.status}`;
+      if (r.status === 401 || r.status === 403) await marcarLoginBloqueado('fintech', motivo, 30, r.status);
+      return { token: null, status: r.status, error: motivo, raw: d };
+    }
     const tok = d.access_token || d.accessToken || d.token || d?.result?.access_token || d?.data?.access_token || null;
     if (!tok) return { token: null, status: r.status, error: 'Login OK mas sem access_token', raw: d };
+    await liberarLogin('fintech');
     _tokenCache = { token: tok, exp: agora + 25 * 60 * 1000, ambiente: cfg.ambiente };
     return { token: tok, status: r.status, raw: d };
   } catch (e) {

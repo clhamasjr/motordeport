@@ -19,6 +19,7 @@ export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 import { dbQuery } from './_lib/supabase.js';
+import { waitUntil } from '@vercel/functions';
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
 const MAX_AUTO_RETRY = 5; // alinhado com api/clt-fila.js
@@ -72,12 +73,14 @@ export default async function handler(req) {
   for (const f of filas) {
     if (!temTrabalhoPendente(f.bancos)) continue;
     // "Cutuca" o status — ele dispara o auto-retry interno (re-dispara o banco
-    // que falhou e incrementa tentativas). Fire-and-forget.
-    fetch(baseUrl + '/api/clt-fila', {
+    // que falhou e incrementa tentativas). waitUntil: no Edge, fetch sem await
+    // era descartado assim que o cron respondia → cutucada perdida.
+    const p = fetch(baseUrl + '/api/clt-fila', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-secret': webhookSecret },
       body: JSON.stringify({ action: 'status', id: f.id }),
     }).catch(() => {});
+    try { waitUntil(p); } catch { /* fora da Vercel */ }
     filasCutucadas++;
   }
 
