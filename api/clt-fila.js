@@ -193,27 +193,65 @@ function podeVerFilaCLT(user, row) {
 // Quando status muda pra terminal (ok/falha/bloqueado/manual_aguardando)
 // limpa flags transitorias (processando) automaticamente — evita ficarem
 // gruda do nos merges e travarem o card no frontend.
+// Gravação do resultado de UM banco. Antes era read-modify-write do jsonb
+// `bancos` inteiro: com ~17 bancos em paralelo, a gravação de um APAGAVA a do
+// outro (lost update) → card ficava 'processando'/'pending' pra sempre mesmo com
+// o banco tendo respondido. Agora: (1) RPC clt_patch_banco (merge atômico no
+// Postgres — supabase_migration_clt_patch_banco.sql); (2) sem a função, fallback
+// read-modify-write que CONFERE se a própria gravação sobreviveu e refaz.
+let _rpcPatchIndisponivelAte = 0;
 async function patchBanco(id, banco, payload) {
-  // Lê estado atual
-  const { data: row } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
-  if (!row) return { error: 'fila nao encontrada' };
-  const bancos = { ...(row.bancos || {}) };
-  const merged = { ...(bancos[banco] || {}), ...payload, atualizado_em: new Date().toISOString() };
+  const agoraIso = new Date().toISOString();
+  const merged0 = { ...payload, atualizado_em: agoraIso };
   // GARANTIA: mensagem sempre string. Algumas APIs de banco retornam erro
   // como objeto ({id, code, message}) — se vazar pro jsonb, o React do V2
   // quebra ao renderizar (error #31: objects are not valid as React child).
-  if (merged.mensagem != null && typeof merged.mensagem !== 'string') {
-    const m = merged.mensagem;
-    merged.mensagem = (typeof m === 'object' && (m.message || m.detail || m.error))
+  if (merged0.mensagem != null && typeof merged0.mensagem !== 'string') {
+    const m = merged0.mensagem;
+    merged0.mensagem = (typeof m === 'object' && (m.message || m.detail || m.error))
       ? String(m.message || m.detail || m.error)
       : JSON.stringify(m).substring(0, 300);
   }
   // Limpa flags transitorias quando status virou terminal
   const terminal = ['ok', 'falha', 'bloqueado', 'manual_aguardando', 'pulado'];
-  if (terminal.includes(merged.status) && payload.processando !== true) {
-    merged.processando = false;
+  if (terminal.includes(merged0.status) && payload.processando !== true) {
+    merged0.processando = false;
   }
-  bancos[banco] = merged;
+
+  let row = null;
+  // 1) Caminho ATÔMICO (RPC) — uma UPDATE só, sem corrida
+  if (Date.now() > _rpcPatchIndisponivelAte) {
+    const r = await dbRPC('clt_patch_banco', { p_id: String(id), p_banco: banco, p_payload: merged0 });
+    if (!r.error) {
+      row = Array.isArray(r.data) ? (r.data[0] || null) : (r.data && r.data.id ? r.data : null);
+      if (!row && Array.isArray(r.data) && r.data.length === 0) return { error: 'fila nao encontrada' };
+    } else if (/PGRST202|Could not find the function|does not exist|schema cache/i.test(String(r.error))) {
+      // função ainda não criada no Supabase → não insiste por 10min
+      _rpcPatchIndisponivelAte = Date.now() + 10 * 60 * 1000;
+    }
+  }
+  // 2) Fallback com VERIFICAÇÃO: grava e confere se a nossa gravação ficou;
+  //    se outro banco sobrescreveu (stale), re-lê e re-aplica (até 4x)
+  if (!row) {
+    for (let tent = 0; tent < 4 && !row; tent++) {
+      const { data: atual } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+      if (!atual) return { error: 'fila nao encontrada' };
+      const bancosF = { ...(atual.bancos || {}) };
+      bancosF[banco] = { ...(bancosF[banco] || {}), ...merged0 };
+      await dbUpdate('clt_consultas_fila', { id }, { bancos: bancosF });
+      const { data: check } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+      if (check?.bancos?.[banco]?.atualizado_em === agoraIso) { row = check; break; }
+      await new Promise((res) => setTimeout(res, 150 + tent * 250));
+    }
+    if (!row) {
+      const { data: last } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
+      if (!last) return { error: 'fila nao encontrada' };
+      row = last; // desistiu de brigar — segue com o estado atual
+    }
+  }
+
+  const bancos = row.bancos || {};
+  const merged = bancos[banco] || merged0;
 
   // Marca conclusao quando TODOS os bancos disparados terminaram.
   // 'em_manutencao' tambem eh terminal (banco desativado no catalogo).
@@ -228,7 +266,8 @@ async function patchBanco(id, banco, payload) {
   const bancosPresentes = TODOS_BANCOS_CLT.filter(b => bancos[b]);
   const todosTerminaram = bancosPresentes.length > 0 &&
     bancosPresentes.every(b => ehTerminal(bancos[b]));
-  const patch = { bancos };
+  // Só os campos de controle — `bancos` já foi gravado (nunca regravar aqui)
+  const patch = {};
   if (todosTerminaram && row.status_geral !== 'concluido') {
     patch.status_geral = 'concluido';
     patch.concluido_em = new Date().toISOString();
@@ -253,7 +292,6 @@ async function patchBanco(id, banco, payload) {
         margem: margemNova, disponivel: margemNova > 0,
         consultado_em: new Date().toISOString(),
       }, 'cpf,banco');
-      // GANHOU margem = nunca teve snapshot positivo nesse banco
       if (margemNova > 0 && (margemAntiga === null || margemAntiga <= 0)) {
         const nab = { ...(row.novo_apto_bancos || {}) };
         nab[banco] = margemNova;
@@ -264,12 +302,13 @@ async function patchBanco(id, banco, payload) {
     } catch { /* snapshot é opcional — segue sem */ }
   }
 
-  const { error: patchErr } = await dbUpdate('clt_consultas_fila', { id }, patch);
-  // Se a migration ainda nao rodou, colunas novo_apto* nao existem — re-tenta
-  // sem elas pra NUNCA perder o resultado do banco.
-  if (patchErr && (patch.novo_apto !== undefined)) {
-    delete patch.novo_apto; delete patch.novo_apto_em; delete patch.novo_apto_bancos;
-    await dbUpdate('clt_consultas_fila', { id }, patch);
+  if (Object.keys(patch).length) {
+    const { error: patchErr } = await dbUpdate('clt_consultas_fila', { id }, patch);
+    if (patchErr && (patch.novo_apto !== undefined)) {
+      // colunas de novo_apto podem nao existir (migration pendente) — regrava so o resto
+      delete patch.novo_apto; delete patch.novo_apto_em; delete patch.novo_apto_bancos;
+      if (Object.keys(patch).length) await dbUpdate('clt_consultas_fila', { id }, patch);
+    }
   }
   return { ok: true, todosTerminaram };
 }
