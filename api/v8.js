@@ -102,6 +102,16 @@ function normalizePhone(raw) {
 }
 
 const j = (data, status = 200, req = null) => jsonResp(data, status, req);
+// Usuário MASCARADO pro teste de conexão: o dono confere QUAL conta está
+// configurada no Vercel sem o valor inteiro aparecer em tela/log.
+function mascararUsuario(u) {
+  const s = String(u || '');
+  if (!s) return '(vazio)';
+  const [local, dom] = s.includes('@') ? s.split('@') : [s, null];
+  const vis = local.length <= 4 ? local[0] + '***' : local.slice(0, 3) + '***' + local.slice(-2);
+  return (dom ? `${vis}@${dom}` : vis) + ` (${s.length} caracteres)`;
+}
+
 
 // ══════════════════════════════════════════════════════════════
 // HANDLER
@@ -255,11 +265,14 @@ async function handleAction(body, req) {
             authUrl: AUTH_URL(), bff: BFF_BASE(),
             client: CLIENT_ID().substring(0, 12) + '...',
             audienceSet: !!AUDIENCE(),
-            user: USERNAME()
+            user: mascararUsuario(USERNAME()) // nunca o valor inteiro em tela/log
           }
         }, 200, req);
       } catch (e) {
-        return j({ success: false, apiActive: false, error: e.message }, 200, req);
+        return j({
+          success: false, apiActive: false, error: e.message,
+          credencial: { usuario: mascararUsuario(USERNAME()), senhaConfigurada: !!PASSWORD(), tamanhoSenha: (PASSWORD() || '').length, audience: mascararUsuario(AUDIENCE()), authUrl: AUTH_URL(), envs: ['V8_USERNAME', 'V8_PASSWORD', 'V8_AUDIENCE'] },
+        }, 200, req);
       }
     }
 

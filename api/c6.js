@@ -77,6 +77,16 @@ async function c6Call(path, method, accept, body) {
 }
 
 const j = (data, status = 200, req = null) => jsonResp(data, status, req);
+// Usuário MASCARADO pro teste de conexão: o dono confere QUAL conta está
+// configurada no Vercel sem o valor inteiro aparecer em tela/log.
+function mascararUsuario(u) {
+  const s = String(u || '');
+  if (!s) return '(vazio)';
+  const [local, dom] = s.includes('@') ? s.split('@') : [s, null];
+  const vis = local.length <= 4 ? local[0] + '***' : local.slice(0, 3) + '***' + local.slice(-2);
+  return (dom ? `${vis}@${dom}` : vis) + ` (${s.length} caracteres)`;
+}
+
 
 // ══════════════════════════════════════════════════════════════
 // HANDLER
@@ -106,10 +116,16 @@ export default async function handler(req) {
             promoter: getConfig().PROMOTER,
             codigoOrigem: getConfig().CODIGO_ORIGEM,
             cpfCertificado: (getConfig().CPF_CERT || '').substring(0, 6) + '...',
+            usuario: mascararUsuario(getConfig().USER),
           },
         }, 200, req);
       } catch (e) {
-        return j({ success: false, apiActive: false, error: e.message }, 200, req);
+        const cfg = getConfig();
+        return j({
+          success: false, apiActive: false, error: e.message,
+          // diagnóstico sem segredo: qual usuário está configurado e se a senha existe
+          credencial: { usuario: mascararUsuario(cfg.USER), senhaConfigurada: !!cfg.PASS, tamanhoSenha: (cfg.PASS || '').length, baseUrl: cfg.BASE, envs: ['C6_USERNAME', 'C6_PASSWORD'] },
+        }, 200, req);
       }
     }
 
