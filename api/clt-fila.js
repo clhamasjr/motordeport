@@ -233,7 +233,7 @@ async function patchBanco(id, banco, payload) {
       : JSON.stringify(m).substring(0, 300);
   }
   // Limpa flags transitorias quando status virou terminal
-  const terminal = ['ok', 'falha', 'bloqueado', 'manual_aguardando', 'pulado'];
+  const terminal = ['ok', 'falha', 'bloqueado', 'manual_aguardando', 'pulado', 'em_manutencao'];
   if (terminal.includes(merged0.status) && payload.processando !== true) {
     merged0.processando = false;
   }
@@ -263,7 +263,9 @@ async function patchBanco(id, banco, payload) {
     // ('processando') não paga 2 round-trips extras — se perder, o processar
     // regrava em seguida. 2 tentativas: pior caso ~1s, cabe nos 25s.
     const verificar = terminal.includes(merged0.status);
-    for (let tent = 0; tent < 2 && !row; tent++) {
+    // 3 tentativas: na largada 17 bancos gravam 'processando' em ~1s e um resultado
+    // rapido (ex: em_manutencao) era sobrescrito por esses writes velhos
+    for (let tent = 0; tent < 3 && !row; tent++) {
       const { data: atual } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
       if (!atual) return { error: 'fila nao encontrada' };
       const bancosF = { ...(atual.bancos || {}) };
@@ -272,7 +274,7 @@ async function patchBanco(id, banco, payload) {
       if (!verificar) { row = { ...atual, bancos: bancosF }; break; }
       const { data: check } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
       if (check?.bancos?.[banco]?.atualizado_em === agoraIso) { row = check; break; }
-      await new Promise((res) => setTimeout(res, 120));
+      await new Promise((res) => setTimeout(res, 200 + tent * 150));
     }
     if (!row) {
       const { data: last } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
@@ -2844,12 +2846,22 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       const { data: fresca } = await dbSelect('clt_consultas_fila', { filters: { id: f.id }, single: true });
       const novos = { ...((fresca || f).bancos || {}) };
       const agoraIsoR = new Date().toISOString();
+      const paraDisparar = [];
       for (const k of bancos) {
+        // Banco desligado no catálogo: marca em_manutencao direto (não dispara).
+        // Antes era re-disparado, respondia em 1s e a gravação se perdia na corrida
+        // com os 'processando' iniciais dos outros → voltava a contar como presa.
+        const manutK = await _bancoEmManutencao(k);
+        if (manutK) {
+          novos[k] = { ...novos[k], status: 'em_manutencao', disponivel: false, emManutencao: true, processando: false, retryable: false, mensagem: manutK, atualizado_em: agoraIsoR };
+          continue;
+        }
         novos[k] = { ...novos[k], status: 'processando', processando: false, tentativas: 0, resgates: 0, retryable: false,
           proximaTentativaEm: null, mensagem: '🔄 Reprocessando (consulta estava travada)...', atualizado_em: agoraIsoR };
+        paraDisparar.push(k);
       }
       await dbUpdate('clt_consultas_fila', { id: f.id }, { bancos: novos, status_geral: 'processando', concluido_em: null });
-      for (const k of bancos) {
+      for (const k of paraDisparar) {
         // só a SOMA tem limite de 1 req/s por rota: escalona por consulta (1,1s cada)
         const atraso = k === 'soma_celcoin' ? feitas * 1100 : (k === 'soma_uy3' ? feitas * 1100 + 600 : 0);
         dispararProcessar(f.id, k, secret, true, atraso); disparos++;
