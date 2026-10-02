@@ -113,13 +113,19 @@ function emBackground(promise) {
   try { waitUntil(p); } catch { /* fora da Vercel (teste local): segue sem segurar */ }
   return p;
 }
-function dispararProcessar(id, banco, secret, force = false) {
-  return emBackground(fetch(APP_URL() + '/api/clt-fila', {
+// delayMs: escalona disparos (a SOMA aceita 1 req/s por rota — soma_uy3 e
+// soma_celcoin disparados juntos derrubavam um deles com "Rate limit excedido";
+// no reprocesso em lote, 10 consultas × 2 SOMA no mesmo segundo = pior ainda).
+function dispararProcessar(id, banco, secret, force = false, delayMs = 0) {
+  const envia = () => fetch(APP_URL() + '/api/clt-fila', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
     body: JSON.stringify({ action: 'processar', id, banco, ...(force ? { force: true } : {}) }),
-  }));
+  });
+  return emBackground(delayMs > 0 ? new Promise((res) => setTimeout(res, delayMs)).then(envia) : envia());
 }
+// Atraso padrão por banco no disparo de UMA consulta (só a SOMA precisa)
+const ATRASO_DISPARO_MS = { soma_uy3: 1500, soma_celcoin: 0 };
 
 function normalizeCPF(raw) {
   const d = String(raw || '').replace(/\D/g, '');
@@ -1528,6 +1534,18 @@ async function processarSoma(id, cpf, slug, bancarizadora, auth, secret) {
     return;
   }
 
+  // Rate limit da SOMA (1 req/s por rota) — erro de infra, NÃO negativa:
+  // re-tenta sozinho depois de uns segundos.
+  if (/rate limit/i.test(u.mensagem || '')) {
+    await patchBanco(id, slug, {
+      status: 'falha', disponivel: false, retryable: true,
+      proximaTentativaEm: new Date(Date.now() + 20000).toISOString(),
+      mensagem: '⏳ SOMA: limite de requisições (1 por segundo) — NÃO é recusa; re-tenta sozinho',
+      _raw_response: u,
+    });
+    return;
+  }
+
   // SEM_MARGEM / ERRO
   await patchBanco(id, slug, {
     status: 'falha', disponivel: false,
@@ -2306,7 +2324,7 @@ export default async function handler(req) {
       // chamadas) — fica 'pending' e o worker SERIAL global drena (kick abaixo)
       if (banco === 'facta_clt_offline') continue;
       // Fire-and-forget mas COM internal-secret (evita 401 de chamadas internas)
-      dispararProcessar(row.id, banco, secret);   // waitUntil: a requisição sai mesmo com a resposta já devolvida
+      dispararProcessar(row.id, banco, secret, false, ATRASO_DISPARO_MS[banco] || 0);   // waitUntil: a requisição sai mesmo com a resposta já devolvida
     }
     if (bancos.includes('facta_clt_offline')) {
       emBackground(fetch(baseUrl + '/api/facta-offline-lote', {
@@ -2736,7 +2754,7 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       const ultimo = b.atualizado_em ? agoraP - new Date(b.atualizado_em).getTime() : idadeFila;
       if (b.status === 'pending') return idadeFila > 180000;
       if (b.status === 'processando' && b.processando !== true) return ultimo > 180000;
-      if (b.status === 'falha') return /Timeout \d+min|disparo perdido|Não processado|fila travada/i.test(b.mensagem || '');
+      if (b.status === 'falha') return /Timeout \d+min|disparo perdido|Não processado|fila travada|rate limit excedido/i.test(b.mensagem || '');
       return false;
     };
     const alvo = [];
@@ -2752,7 +2770,7 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
           proximaTentativaEm: null, mensagem: '🔄 Reprocessando (consulta estava travada)...', atualizado_em: new Date().toISOString() };
       }
       await dbUpdate('clt_consultas_fila', { id: f.id }, { bancos: novos, status_geral: 'processando', concluido_em: null });
-      for (const k of bancos) { dispararProcessar(f.id, k, secret, true); disparos++; }
+      for (const k of bancos) { dispararProcessar(f.id, k, secret, true, disparos * 350); disparos++; }
       feitas++;
     }
     return jsonResp({

@@ -352,7 +352,9 @@ export default async function handler(req) {
       const r = await somaCall('/v2/privado/externo/consultas/', 'POST', payload);
       if (!r.ok) {
         return j({
-          etapa: 'ERRO', approved: false, retryable: r.status >= 500 || r.status === 429,
+          etapa: 'ERRO', approved: false,
+          // 429 OU "Rate limit excedido (1 req/s por rota)" (vem como 4xx) = infra, re-tentável
+          retryable: r.status >= 500 || r.status === 429 || /rate limit/i.test(String(r.data?.message || r.data?.error || '')),
           httpStatus: r.status,
           mensagem: r.data?.message || r.data?.error || `Erro SOMA (HTTP ${r.status})`,
           _raw: r.data,
