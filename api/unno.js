@@ -597,8 +597,19 @@ async function simularStep({ cpf, telefone, email, provider }) {
   if (!bal.ok) {
     return { sucesso: false, etapa: 'GET_BALANCE', proposalUuid, httpStatus: bal.status, error: bal.data?.error?.message || bal.data?.message || `HTTP ${bal.status}`, passos, _raw: bal.data };
   }
+  const linksArr = bal.data?.response?.links;
+  const balStatus = String(bal.data?.status || '').toUpperCase();
+  if (!link0 && (!Array.isArray(linksArr) || balStatus === 'FAILED' || /PROCESS|PENDING|RUNNING/.test(balStatus) || bal.data?.response?.error || bal.data?.error)) {
+    // 200 mas SEM a lista de vínculos (passo FAILED / ainda processando) = erro
+    // do passo, re-tentável — NÃO é "sem vínculo"
+    return {
+      sucesso: false, etapa: 'GET_BALANCE', proposalUuid, httpStatus: bal.status, retryable: true,
+      error: bal.data?.response?.error?.message || bal.data?.error?.message || bal.data?.message || `GET_BALANCE ${balStatus || 'sem lista de vínculos'}`,
+      passos, _raw: bal.data,
+    };
+  }
   if (!link0) {
-    // 200 sem nenhum vínculo (links vazio) = negativa legítima, não erro.
+    // 200 com links = [] (lista vazia de verdade) = negativa legítima, não erro.
     // Antes virava sucesso:false "HTTP 200" e o motor re-tentava 5x à toa.
     return {
       sucesso: true, etapa: 'SEM_VINCULO', elegivel: false, aprovado: false, proposalUuid,

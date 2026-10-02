@@ -69,7 +69,10 @@ function erroApiBanco(nomeBanco, status, msgApi) {
   const msg = msgApi ? String(msgApi).substring(0, 160) : '';
   const low = msg.toLowerCase();
   const bloqueado = /blocked|bloquead/.test(low);
-  const credencial = st === 401 || st === 403 || /inativ|incorret|invalid credentials|credencia|unauthorized/.test(low);
+  // credencial = HTTP 401/403 OU mensagem de LOGIN ("Falha auth/login X (HTTP 401)" dos api/<banco>.js);
+  // texto livre de negócio ("vínculo inativo", "telefone incorreto") NÃO conta
+  const credencial = st === 401 || st === 403
+    || /falha (auth|login) [^(]*\(http (401|403)\)|invalid credentials|credenciais? (inv[aá]lid|recusad)|usu[aá]rio (inativ|bloquead)|senha incorret|unauthorized/.test(low);
   const tipo = bloqueado ? 'usuário bloqueado no banco — pedir desbloqueio ao banco (login parado)'
     : credencial ? 'credencial recusada — conferir login/senha no portal do banco e no Vercel'
     : st === 429 ? 'limite de requisições — re-tenta sozinho'
@@ -683,7 +686,8 @@ async function processarV8(id, provider, cpf, auth, secret) {
       telefone: telefonePadrao,
       sexo: sexoPadrao
     }, auth, secret, prazo.timeout(10000)).catch(() => ({ ok: false, status: 0, data: {} }));
-    if (ehErroV8(termoR) && !termoR.data?.consultId) { await falhaV8(termoR); return; }
+    // Se já há veredito REJECTED/FAILED no passo 1, a falha ao gerar termo NOVO não apaga a negativa: segue pro passo 3
+    if (ehErroV8(termoR) && !termoR.data?.consultId && !['REJECTED', 'FAILED'].includes(v8.status)) { await falhaV8(termoR); return; }
 
     if (termoR.data?.consultId) {
       // Auto-autoriza (Lhamas como correspondente)
@@ -1367,7 +1371,7 @@ async function processarUnno(id, cpf, auth, secret) {
       status: 'falha',
       // GET_BALANCE 400 "terms not accepted" logo após o termo = consistência
       // eventual da Unno → vale re-tentar
-      retryable: eU.retryable || (u.etapa === 'GET_BALANCE' && httpUnno === 400),
+      retryable: eU.retryable || u.retryable === true || (u.etapa === 'GET_BALANCE' && httpUnno === 400),
       mensagem: `${eU.mensagem}${u.etapa ? ` (passo ${u.etapa})` : ''}`,
       _raw_response: u,
     });
@@ -2773,7 +2777,7 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
   if (action === 'reprocessarPresas') {
     if (!(user.role === 'admin' || user.role === 'gestor' || user._internal)) return jsonError('Sem permissão', 403, req);
     const dias = Math.min(parseInt(body.dias || 7), 60);
-    const limite = Math.min(parseInt(body.limite || 5), 15);
+    const limite = Math.min(parseInt(body.limite || 5), 8); // >8 estourava os 25s da Edge (504)
     const desde = new Date(Date.now() - dias * 86400000).toISOString();
     const { data: filas } = await dbQuery('clt_consultas_fila',
       `select=id,cpf,bancos,status_geral,iniciado_em&iniciado_em=gte.${encodeURIComponent(desde)}&status_geral=neq.standby&order=iniciado_em.desc&limit=400`
@@ -2797,13 +2801,18 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     }
     let feitas = 0, disparos = 0;
     for (const { f, bancos } of alvo.slice(0, limite)) {
-      // Reabre ANTES de mexer nos bancos (senão o patchBanco pode re-concluir) e
-      // grava banco a banco pelo patchBanco (RPC atômico) — nunca o jsonb inteiro.
-      await dbUpdate('clt_consultas_fila', { id: f.id }, { status_geral: 'processando', concluido_em: null });
+      // 1 escrita por consulta (banco a banco via patchBanco estourava os 25s da
+      // Edge com o fallback sem RPC). A consulta está parada há >=3min por
+      // definição, então a corrida com outro banco gravando é residual — e o
+      // RESGATE cobre. Relê a linha na hora pra não usar snapshot velho.
+      const { data: fresca } = await dbSelect('clt_consultas_fila', { filters: { id: f.id }, single: true });
+      const novos = { ...((fresca || f).bancos || {}) };
+      const agoraIsoR = new Date().toISOString();
       for (const k of bancos) {
-        await patchBanco(f.id, k, { status: 'processando', processando: false, tentativas: 0, resgates: 0, retryable: false,
-          proximaTentativaEm: null, mensagem: '🔄 Reprocessando (consulta estava travada)...' });
+        novos[k] = { ...novos[k], status: 'processando', processando: false, tentativas: 0, resgates: 0, retryable: false,
+          proximaTentativaEm: null, mensagem: '🔄 Reprocessando (consulta estava travada)...', atualizado_em: agoraIsoR };
       }
+      await dbUpdate('clt_consultas_fila', { id: f.id }, { bancos: novos, status_geral: 'processando', concluido_em: null });
       for (const k of bancos) { dispararProcessar(f.id, k, secret, true, disparos * 350); disparos++; }
       feitas++;
     }
@@ -2886,7 +2895,7 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
           const msg = String(st.mensagem || '');
           // 🔧 Falha de INFRA (credencial/timeout/5xx/disparo perdido) não diz
           // nada sobre o cliente — conta à parte pra não virar "inapto".
-          if (st.retryable === true || /\(HTTP \d+\)|HTTP \d{3}|Timeout|credencial|fora\/inst|disparo perdido|Não processado|Reprocessando|re-tenta sozinho|não confirmou|bloqueado no banco|Sessão do Mercantil/i.test(msg)) nErroApi++;
+          if (st.retryable === true || /HTTP (0|408|429|5\d\d)\b|Timeout|credencial|fora\/inst|disparo perdido|Não processado|Reprocessando|re-tenta sozinho|não confirmou|bloqueado no banco|Sessão do Mercantil|login pausado/i.test(msg)) nErroApi++;
           else nNegativa++;
           // 🔴 CNPJ / empregador / vínculo inválido (problema de cadastro)
           if (/(cnpj|empregador|v[ií]nculo|raz[aã]o social).{0,40}(inv[aá]lid|inexist|n[aã]o (foi )?(encontrad|localizad|conveni))/i.test(msg)) {
