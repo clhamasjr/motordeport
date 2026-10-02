@@ -223,6 +223,12 @@ async function patchBanco(id, banco, payload) {
   if (terminal.includes(merged0.status) && payload.processando !== true) {
     merged0.processando = false;
   }
+  // O merge (RPC jsonb || e fallback spread) HERDA chaves da tentativa anterior.
+  // Falha final sem `retryable` explícito = NÃO re-tentável — senão um "sem
+  // vínculo" que veio depois de um timeout ficava retryable:true (4 re-tentativas
+  // à toa) e o raio-X classificava como erro_api.
+  if (merged0.status === 'falha' && payload.retryable === undefined) merged0.retryable = false;
+  if (merged0.status && merged0.status !== 'falha' && payload.proximaTentativaEm === undefined) merged0.proximaTentativaEm = null;
 
   let row = null;
   // 1) Caminho ATÔMICO (RPC) — uma UPDATE só, sem corrida
@@ -239,7 +245,7 @@ async function patchBanco(id, banco, payload) {
   // 2) Fallback com VERIFICAÇÃO: grava e confere se a nossa gravação ficou;
   //    se outro banco sobrescreveu (stale), re-lê e re-aplica (até 4x)
   if (!row) {
-    for (let tent = 0; tent < 4 && !row; tent++) {
+    for (let tent = 0; tent < 2 && !row; tent++) {   // 2 brigas bastam — mais que isso estoura o orçamento Edge após um callApi de 22s
       const { data: atual } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
       if (!atual) return { error: 'fila nao encontrada' };
       const bancosF = { ...(atual.bancos || {}) };
@@ -247,7 +253,7 @@ async function patchBanco(id, banco, payload) {
       await dbUpdate('clt_consultas_fila', { id }, { bancos: bancosF });
       const { data: check } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
       if (check?.bancos?.[banco]?.atualizado_em === agoraIso) { row = check; break; }
-      await new Promise((res) => setTimeout(res, 150 + tent * 250));
+      await new Promise((res) => setTimeout(res, 120));
     }
     if (!row) {
       const { data: last } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
@@ -475,7 +481,8 @@ async function processarPresencaBank(id, cpf, auth, secret) {
   // O PB exige TERMO assinado (precisa nome+telefone) antes de consultar.
   // Espera o cliente enriquecer (CAGED/clt_clientes pre-populam; multicorban
   // completa em paralelo) e manda junto — o endpoint gera+assina o termo.
-  const cliPB = await aguardarCliente(id, 6000);
+  const prazoPB = criarPrazo(22000);
+  const cliPB = await aguardarCliente(id, prazoPB.timeout(6000));
   const { data: rowPB } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
   const nomePB = cliPB?.nome || rowPB?.cliente?.nome || null;
   const telPB = celularDoCliente(cliPB).numero || celularDoCliente(rowPB?.cliente).numero || null;
@@ -488,7 +495,7 @@ async function processarPresencaBank(id, cpf, auth, secret) {
   const r = await callApi('/api/presencabank', {
     action: 'oportunidadesPorCPF', cpf, nome: nomePB, telefone: telPB,
     simular: !ehLote,
-  }, auth, secret, ehLote ? 18000 : 22000);   // individual: 22s (limite Edge ~25s) p/ margem + simulação
+  }, auth, secret, prazoPB.timeout(ehLote ? 18000 : 22000));   // o que SOBRAR do orçamento (nunca passa dos ~25s da Edge)
   const pb = r.data || {};
 
   // Mescla dados de cliente / vinculo na fila
@@ -820,25 +827,28 @@ async function processarHandbank(id, cpf, auth, secret) {
   const manut = await _bancoEmManutencao('handbank');
   if (manut) { await _marcarEmManutencao(id, 'handbank', manut); return; }
   await patchBanco(id, 'handbank', { status: 'processando' });
-  let r = await callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret);
+  // Orçamento: consulta + (espera cliente + auto-autz + re-consulta) tem que
+  // caber nos ~25s da Edge — antes somava até 60s e a função morria sem gravar.
+  const prazoHB = criarPrazo(22000);
+  let r = await callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret, prazoHB.timeout(12000));
   let d = r.data || {};
 
   // Cenario 1: precisa autorizacao (202)
   if (d.precisaAutorizacao && d.linkAutorizacao) {
     // Tenta auto-autorizar se temos os dados necessarios (nome + dataNasc + telefone)
-    const cli = await aguardarCliente(id, 6000);
+    const cli = await aguardarCliente(id, prazoHB.timeout(4000));
     const tel = celularDoCliente(cli).numero;
     if (cli?.nome && cli?.dataNascimento && tel) {
       const dataIso = String(cli.dataNascimento).includes('-') ? cli.dataNascimento : ddMmYyToIso(cli.dataNascimento);
       const autzR = await callApi('/api/handbank', {
         action: 'autorizarUY3',
         cpf, nome: cli.nome, dataNascimento: dataIso, telefone: tel
-      }, auth, secret).catch(() => ({ ok: false }));
+      }, auth, secret, prazoHB.timeout(8000)).catch(() => ({ ok: false }));
 
       if (autzR.ok && autzR.data?.success) {
         // Re-consulta apos autorizacao — agora pode vir 201 (autorizado)
         await new Promise(r => setTimeout(r, 1500));
-        r = await callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret);
+        r = await callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret, prazoHB.timeout(10000));
         d = r.data || {};
         // continua pro cenario 3 abaixo se virou autorizado
       } else {
@@ -925,9 +935,10 @@ async function processarJoinBank(id, cpf, auth, secret) {
   const manut = await _bancoEmManutencao('joinbank');
   if (manut) { await _marcarEmManutencao(id, 'joinbank', manut); return; }
   await patchBanco(id, 'joinbank', { status: 'processando' });
+  const prazoJB = criarPrazo(22000); // espera + criar + termo + assinar + recriar cabem nos ~25s da Edge
 
   // Espera dados basicos do cliente (nome + dataNasc) — JoinBank exige borrower completo
-  const cli = await aguardarCliente(id, 8000);
+  const cli = await aguardarCliente(id, prazoJB.timeout(6000));
   if (!cli) {
     await patchBanco(id, 'joinbank', {
       status: 'falha',
@@ -955,7 +966,7 @@ async function processarJoinBank(id, cpf, auth, secret) {
     action: 'cltCreateSimulation',
     borrower,
     providerCode: '950002' // QITech
-  }, auth, secret);
+  }, auth, secret, prazoJB.timeout(10000));
   const jb = r.data || {};
 
   if (!r.ok || !jb.simulationId) {
@@ -1004,12 +1015,12 @@ async function processarJoinBank(id, cpf, auth, secret) {
   // vem vazio e marcariamos 'sem vinculo' incorretamente)
   const termoR = await callApi('/api/joinbank', {
     action: 'cltAuthTerm', simulationId: jb.simulationId
-  }, auth, secret);
+  }, auth, secret, prazoJB.timeout(5000));
   const termo = termoR.data || {};
   if (termo.authTermKey && !termo.signed) {
     await callApi('/api/joinbank', {
       action: 'cltSignTerm', authTermKey: termo.authTermKey
-    }, auth, secret).catch(() => {});
+    }, auth, secret, prazoJB.timeout(4000)).catch(() => {});
   }
 
   // 3) Re-cria simulacao apos assinatura — agora os vinculos vem populados
@@ -1017,7 +1028,7 @@ async function processarJoinBank(id, cpf, auth, secret) {
   // o status. Tentamos um GET primeiro pra economizar)
   const refresh = await callApi('/api/joinbank', {
     action: 'cltCreateSimulation', borrower, providerCode: '950002'
-  }, auth, secret);
+  }, auth, secret, prazoJB.timeout(10000));
   // Se a RE-criação falhou (erro de API), NÃO é "sem vínculo": usa a 1ª
   // simulação e, sem vínculo nela, marca erro re-tentável com o motivo.
   const refreshFalhou = !refresh.ok || refresh.data?.success === false;
@@ -2611,7 +2622,9 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     {
       for (const slugNf of ['nossa_fintech', 'nossa_fintech_uy3']) {
         const nf = row.bancos?.[slugNf];
-        if (nf && nf.status === 'bloqueado' && nf.statusAutorizacao === 'PENDING') {
+        // bloqueado+PENDING (DataPrev) OU manual_aguardando (PROCESSANDO_VINCULOS —
+        // enrollment Spixii assíncrono): ambos precisam de re-check periódico
+        if (nf && ((nf.status === 'bloqueado' && nf.statusAutorizacao === 'PENDING') || (nf.status === 'manual_aguardando' && nf.manual === false))) {
           const idadeMs = nf.atualizado_em
             ? Date.now() - new Date(nf.atualizado_em).getTime()
             : Infinity;
@@ -2629,6 +2642,22 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     // um banco volta pra 'processando', o status_geral volta a 'processando' e
     // o polling do frontend continua ate resolver (ou esgotar as tentativas).
 
+    // ─── AUTO-RE-CHECK SOMA/HAPPY "EM ANÁLISE" ─────────────────
+    // A análise termina do lado deles sem avisar e o card ficava parado em
+    // "⏳ Consulta em processamento" pra sempre (manual_aguardando é terminal e
+    // o auto-retry só olha 'falha'). Re-roda a consulta a cada ~2min.
+    {
+      for (const slugAn of ['soma_celcoin', 'soma_uy3', 'happy_clt']) {
+        const bAn = row.bancos?.[slugAn];
+        if (!bAn || bAn.status !== 'manual_aguardando' || bAn.manual !== false) continue;
+        const idadeAn = bAn.atualizado_em ? Date.now() - new Date(bAn.atualizado_em).getTime() : Infinity;
+        if (idadeAn > 120000 && (bAn.rechecks || 0) < 30) {
+          await patchBanco(id, slugAn, { rechecks: (bAn.rechecks || 0) + 1 });
+          dispararProcessar(id, slugAn, secret, true, slugAn === 'soma_uy3' ? 1500 : 0);
+        }
+      }
+    }
+
     // ─── RESGATE DE BANCO TRAVADO ───────────────────────────────
     // 'pending' há >45s = o 'processar' nunca chegou (disparo perdido).
     // 'processando' parado há >2min sem ser assíncrono = a função morreu no
@@ -2636,10 +2665,14 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     if (row.status_geral === 'processando') {
       const agoraR = Date.now();
       const idadeFila = row.iniciado_em ? agoraR - new Date(row.iniciado_em).getTime() : 0;
-      const ASSINCRONOS = new Set(['v8_qi', 'v8_celcoin', 'facta_clt_offline']);
+      // facta_clt_offline fica 'pending' por desenho (drainer serial). V8 só é
+      // assíncrono quando JÁ está 'processando' com processando:true (termo
+      // aguardando DataPrev) — e isso o `travadoProc` abaixo já exclui.
+      // 'pending' no V8 = disparo perdido igual aos outros → resgata.
+      const SO_PENDING_LEGITIMO = new Set(['facta_clt_offline']);
       let resgatou = false;
       for (const [slug, b] of Object.entries(row.bancos || {})) {
-        if (!b || ASSINCRONOS.has(slug) || (b.resgates || 0) >= 3) continue;
+        if (!b || SO_PENDING_LEGITIMO.has(slug) || (b.resgates || 0) >= 3) continue;
         const ultimo = b.atualizado_em ? agoraR - new Date(b.atualizado_em).getTime() : idadeFila;
         const travadoPending = b.status === 'pending' && idadeFila > 45000 && ultimo > 45000;
         const travadoProc = b.status === 'processando' && b.processando !== true && ultimo > 120000;
@@ -2752,7 +2785,7 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       if (!b) return false;
       const idadeFila = f.iniciado_em ? agoraP - new Date(f.iniciado_em).getTime() : 0;
       const ultimo = b.atualizado_em ? agoraP - new Date(b.atualizado_em).getTime() : idadeFila;
-      if (b.status === 'pending') return idadeFila > 180000;
+      if (b.status === 'pending') return idadeFila > 180000 && ultimo > 180000; // editarCliente seta pending+atualizado_em e já dispara
       if (b.status === 'processando' && b.processando !== true) return ultimo > 180000;
       if (b.status === 'falha') return /Timeout \d+min|disparo perdido|Não processado|fila travada|rate limit excedido/i.test(b.mensagem || '');
       return false;
@@ -2764,12 +2797,13 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     }
     let feitas = 0, disparos = 0;
     for (const { f, bancos } of alvo.slice(0, limite)) {
-      const novos = { ...(f.bancos || {}) };
+      // Reabre ANTES de mexer nos bancos (senão o patchBanco pode re-concluir) e
+      // grava banco a banco pelo patchBanco (RPC atômico) — nunca o jsonb inteiro.
+      await dbUpdate('clt_consultas_fila', { id: f.id }, { status_geral: 'processando', concluido_em: null });
       for (const k of bancos) {
-        novos[k] = { ...novos[k], status: 'processando', processando: false, tentativas: 0, resgates: 0, retryable: false,
-          proximaTentativaEm: null, mensagem: '🔄 Reprocessando (consulta estava travada)...', atualizado_em: new Date().toISOString() };
+        await patchBanco(f.id, k, { status: 'processando', processando: false, tentativas: 0, resgates: 0, retryable: false,
+          proximaTentativaEm: null, mensagem: '🔄 Reprocessando (consulta estava travada)...' });
       }
-      await dbUpdate('clt_consultas_fila', { id: f.id }, { bancos: novos, status_geral: 'processando', concluido_em: null });
       for (const k of bancos) { dispararProcessar(f.id, k, secret, true, disparos * 350); disparos++; }
       feitas++;
     }

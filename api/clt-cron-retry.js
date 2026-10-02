@@ -30,6 +30,9 @@ function temTrabalhoPendente(bancos) {
     // Banco assíncrono ainda rodando (V8/C6/Unno aguardando confirmação):
     // cutuca o status pra ele re-checar em background (sem a aba aberta).
     if (b.status === 'processando' || b.status === 'pending') return true;
+    // "Em análise" no banco (SOMA/HAPPY EM_ANALISE, Nossa Fintech PROCESSANDO_VINCULOS,
+    // Unno): o status re-checa periodicamente — precisa da cutucada mesmo com a aba fechada
+    if (b.status === 'manual_aguardando' && b.manual === false) return true;
     // Falha transitória (timeout/banco lento) com re-tentativas restantes.
     if (b.status === 'falha' && b.retryable === true && (b.tentativas || 0) < MAX_AUTO_RETRY) return true;
     return false;
