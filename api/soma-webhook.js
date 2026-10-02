@@ -22,6 +22,10 @@ export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions } from './_lib/auth.js';
 import { dbSelect, dbUpdate } from './_lib/supabase.js';
+import { waitUntil } from '@vercel/functions';
+// Disparo em background que NÃO se perde (Edge descarta fetch sem await ao responder)
+const emBg = (p) => { const q = Promise.resolve(p).catch(() => {}); try { waitUntil(q); } catch { /* fora da Vercel */ } return q; };
+
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
 const onlyDigits = (s) => String(s || '').replace(/\D/g, '');
@@ -67,11 +71,11 @@ export default async function handler(req) {
 
       // Re-dispara o processador SOMA — re-consulta e (assinado) traz a margem.
       // Reusa TODA a lógica de processarSoma (card vira ok/aguardando/etc).
-      fetch(APP_URL() + '/api/clt-fila', {
+      emBg(fetch(APP_URL() + '/api/clt-fila', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-secret': internal },
         body: JSON.stringify({ action: 'processar', id: alvo.id, banco: slug, force: true }),
-      }).catch(() => {});
+      }).catch(() => {}));
 
       return jsonResp({ received: true, tipo, cpf, slug, filaId: alvo.id, reprocessado: true }, 200, req);
     }

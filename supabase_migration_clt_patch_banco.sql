@@ -27,15 +27,18 @@ as $$
                        p_banco,
                        coalesce(bancos -> p_banco, '{}'::jsonb) || coalesce(p_payload, '{}'::jsonb)
                      )
-   where id::text = p_id
+   where id = p_id::uuid   -- usa o índice da PK (id é uuid)
   returning *;
 $$;
 
 comment on function public.clt_patch_banco(text, text, jsonb)
   is 'FlowForce CLT: merge atômico do resultado de um banco em clt_consultas_fila.bancos (evita lost update entre bancos em paralelo)';
 
+-- SECURITY DEFINER: só o motor (chave service_role) pode chamar. Postgres dá
+-- EXECUTE a PUBLIC por padrão em função nova — revoga, senão a chave anon
+-- (pública por desenho) conseguiria sobrescrever/ler qualquer consulta.
+revoke all on function public.clt_patch_banco(text, text, jsonb) from public, anon, authenticated;
 grant execute on function public.clt_patch_banco(text, text, jsonb) to service_role;
-grant execute on function public.clt_patch_banco(text, text, jsonb) to authenticated;
 
 -- Conferência rápida (deve retornar 1 linha com a função):
 -- select proname, pg_get_function_arguments(oid) from pg_proc where proname = 'clt_patch_banco';

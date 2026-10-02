@@ -27,6 +27,10 @@ export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 import { dbSelect, dbUpdate, dbQuery } from './_lib/supabase.js';
+import { waitUntil } from '@vercel/functions';
+// Disparo em background que NÃO se perde (Edge descarta fetch sem await ao responder)
+const emBg = (p) => { const q = Promise.resolve(p).catch(() => {}); try { waitUntil(q); } catch { /* fora da Vercel */ } return q; };
+
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
 
@@ -65,10 +69,10 @@ async function enviarResumoRodada(req, hop, cutoff) {
 
   if (hop < 3) {
     await new Promise((r) => setTimeout(r, 20000)); // deixa os bancos assentarem
-    fetch(baseUrl + `/api/clt-cron-reconsulta?resumo=${hop + 1}&cutoff=${encodeURIComponent(cutoff || '')}`, {
+    emBg(fetch(baseUrl + `/api/clt-cron-reconsulta?resumo=${hop + 1}&cutoff=${encodeURIComponent(cutoff || '')}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret },
-    }).catch(() => {});
+    }).catch(() => {}));
     return jsonResp({ success: true, resumoHop: hop, mensagem: `Aguardando bancos assentarem (hop ${hop}/3)` }, 200, req);
   }
 
@@ -232,11 +236,11 @@ export default async function handler(req) {
       // Marca como processando ANTES (evita re-disparo se cron rodar de novo)
       await dbUpdate('clt_consultas_fila', { id: f.id }, { status_geral: 'processando' }).catch(() => {});
       for (const banco of bancos) {
-        fetch(baseUrlEarly + '/api/clt-fila', {
+        emBg(fetch(baseUrlEarly + '/api/clt-fila', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-internal-secret': secretEarly },
           body: JSON.stringify({ action: 'processar', id: f.id, banco }),
-        }).catch(() => {});
+        }).catch(() => {}));
       }
       standbyDisparadas++;
     }
@@ -257,18 +261,18 @@ export default async function handler(req) {
     // pra drenar o resto das filas paradas antes de encerrar.
     let encadeouStandby = false;
     if (standbyCheio && pass < MAX_PASS) {
-      fetch(baseUrlEarly + `/api/clt-cron-reconsulta?limit=${limit}&pass=${pass + 1}${bancosQS}`, {
+      emBg(fetch(baseUrlEarly + `/api/clt-cron-reconsulta?limit=${limit}&pass=${pass + 1}${bancosQS}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-secret': secretEarly },
-      }).catch(() => {});
+      }).catch(() => {}));
       encadeouStandby = true;
     }
     // Fim da cadeia (histórico vazio): agenda o resumo WhatsApp da rodada.
     if (!encadeouStandby && pass > 1) {
-      fetch(baseUrlEarly + `/api/clt-cron-reconsulta?resumo=1&cutoff=${encodeURIComponent(cutoff)}`, {
+      emBg(fetch(baseUrlEarly + `/api/clt-cron-reconsulta?resumo=1&cutoff=${encodeURIComponent(cutoff)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-secret': secretEarly },
-      }).catch(() => {});
+      }).catch(() => {}));
     }
     return jsonResp({
       success: true, pass, standbyDisparadas, disparados: 0,
@@ -305,7 +309,7 @@ export default async function handler(req) {
 
     // Re-dispara consulta (fire-and-forget, interna). origem=lote, bancos sem-SMS.
     try {
-      fetch(baseUrl + '/api/clt-fila', {
+      emBg(fetch(baseUrl + '/api/clt-fila', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-secret': webhookSecret },
         body: JSON.stringify({
@@ -322,7 +326,7 @@ export default async function handler(req) {
           // preserva o vendedor dono
           comoUserId, comoUserNome, comoParceiroId,
         }),
-      }).catch(() => {});
+      }).catch(() => {}));
       disparados++;
     } catch { erros++; }
 
@@ -344,17 +348,17 @@ export default async function handler(req) {
   // Se veio incompleto, esvaziou → para (a cadeia termina sozinha).
   let encadeou = false;
   if ((clientes.length >= limit || standbyCheio) && pass < MAX_PASS) {
-    fetch(baseUrl + `/api/clt-cron-reconsulta?limit=${limit}&pass=${pass + 1}${bancosQS}`, {
+    emBg(fetch(baseUrl + `/api/clt-cron-reconsulta?limit=${limit}&pass=${pass + 1}${bancosQS}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-secret': webhookSecret },
-    }).catch(() => {});
+    }).catch(() => {}));
     encadeou = true;
   } else {
     // Fim da cadeia (lote incompleto = base drenada): agenda o resumo WhatsApp.
-    fetch(baseUrl + `/api/clt-cron-reconsulta?resumo=1&cutoff=${encodeURIComponent(cutoff)}`, {
+    emBg(fetch(baseUrl + `/api/clt-cron-reconsulta?resumo=1&cutoff=${encodeURIComponent(cutoff)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-secret': webhookSecret },
-    }).catch(() => {});
+    }).catch(() => {}));
   }
 
   return jsonResp({

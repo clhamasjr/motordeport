@@ -68,11 +68,12 @@ function erroApiBanco(nomeBanco, status, msgApi) {
   const st = Number(status) || 0;
   const msg = msgApi ? String(msgApi).substring(0, 160) : '';
   const low = msg.toLowerCase();
-  const bloqueado = /blocked|bloquead/.test(low);
+  // só o que fala do LOGIN/usuário da Lhamas — não do cliente ("CPF bloqueado para consulta")
+  const bloqueado = /user is blocked|usu[aá]rio (est[aá] )?bloquead|login bloquead|conta bloquead|access blocked/.test(low);
   // credencial = HTTP 401/403 OU mensagem de LOGIN ("Falha auth/login X (HTTP 401)" dos api/<banco>.js);
   // texto livre de negócio ("vínculo inativo", "telefone incorreto") NÃO conta
   const credencial = st === 401 || st === 403
-    || /falha (auth|login) [^(]*\(http (401|403)\)|invalid credentials|credenciais? (inv[aá]lid|recusad)|usu[aá]rio (inativ|bloquead)|senha incorret|unauthorized/.test(low);
+    || /falha (auth|login) [^(]*\(http (401|403)\)|invalid credentials|invalid_grant|credenciais? (inv[aá]lid|recusad)|usu[aá]rio (inativ|bloquead|inv[aá]lid)|senha incorret|login inv[aá]lid|unauthorized/.test(low);
   const tipo = bloqueado ? 'usuário bloqueado no banco — pedir desbloqueio ao banco (login parado)'
     : credencial ? 'credencial recusada — conferir login/senha no portal do banco e no Vercel'
     : st === 429 ? 'limite de requisições — re-tenta sozinho'
@@ -111,21 +112,31 @@ function celularDoCliente(cli) {
 // bancos disparados no 'criar', vários nunca recebiam o 'processar' e ficavam
 // 'pending' pra sempre (02/10: ~30 de cada 200 cards, em todos os bancos).
 // waitUntil segura a invocação viva até o fetch terminar.
+let _edgeCtx = null; // context nativo do handler Edge (2º argumento) — fallback do waitUntil
 function emBackground(promise) {
   const p = Promise.resolve(promise).catch((e) => console.error('[clt-fila] background:', e?.message || e));
-  try { waitUntil(p); } catch { /* fora da Vercel (teste local): segue sem segurar */ }
+  try {
+    // @vercel/functions lê globalThis[Symbol.for('@vercel/request-context')]; se o
+    // runtime não injetar, vira no-op SILENCIOSO → usa o context nativo do handler.
+    const temCtxPkg = !!globalThis[Symbol.for('@vercel/request-context')]?.get?.()?.waitUntil;
+    if (temCtxPkg) waitUntil(p);
+    else if (typeof _edgeCtx?.waitUntil === 'function') _edgeCtx.waitUntil(p);
+    else console.warn('[clt-fila] sem waitUntil disponível — disparo pode se perder');
+  } catch { /* fora da Vercel (teste local): segue sem segurar */ }
   return p;
 }
 // delayMs: escalona disparos (a SOMA aceita 1 req/s por rota — soma_uy3 e
 // soma_celcoin disparados juntos derrubavam um deles com "Rate limit excedido";
 // no reprocesso em lote, 10 consultas × 2 SOMA no mesmo segundo = pior ainda).
 function dispararProcessar(id, banco, secret, force = false, delayMs = 0) {
-  const envia = () => fetch(APP_URL() + '/api/clt-fila', {
+  // A requisição SAI NA HORA; o atraso vai no body e quem espera é o próprio
+  // `processar` (até 9s, dentro do orçamento dele). Esperar aqui com setTimeout
+  // perdia a cauda do lote: o waitUntil não segura a invocação por 15s+.
+  return emBackground(fetch(APP_URL() + '/api/clt-fila', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret || '' },
-    body: JSON.stringify({ action: 'processar', id, banco, ...(force ? { force: true } : {}) }),
-  });
-  return emBackground(delayMs > 0 ? new Promise((res) => setTimeout(res, delayMs)).then(envia) : envia());
+    body: JSON.stringify({ action: 'processar', id, banco, ...(force ? { force: true } : {}), ...(delayMs > 0 ? { atrasoMs: Math.min(delayMs, 9000) } : {}) }),
+  }));
 }
 // Atraso padrão por banco no disparo de UMA consulta (só a SOMA precisa)
 const ATRASO_DISPARO_MS = { soma_uy3: 1500, soma_celcoin: 0 };
@@ -248,12 +259,17 @@ async function patchBanco(id, banco, payload) {
   // 2) Fallback com VERIFICAÇÃO: grava e confere se a nossa gravação ficou;
   //    se outro banco sobrescreveu (stale), re-lê e re-aplica (até 4x)
   if (!row) {
-    for (let tent = 0; tent < 2 && !row; tent++) {   // 2 brigas bastam — mais que isso estoura o orçamento Edge após um callApi de 22s
+    // Verifica SÓ gravação terminal (resultado do banco). Patch transitório
+    // ('processando') não paga 2 round-trips extras — se perder, o processar
+    // regrava em seguida. 2 tentativas: pior caso ~1s, cabe nos 25s.
+    const verificar = terminal.includes(merged0.status);
+    for (let tent = 0; tent < 2 && !row; tent++) {
       const { data: atual } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
       if (!atual) return { error: 'fila nao encontrada' };
       const bancosF = { ...(atual.bancos || {}) };
       bancosF[banco] = { ...(bancosF[banco] || {}), ...merged0 };
       await dbUpdate('clt_consultas_fila', { id }, { bancos: bancosF });
+      if (!verificar) { row = { ...atual, bancos: bancosF }; break; }
       const { data: check } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
       if (check?.bancos?.[banco]?.atualizado_em === agoraIso) { row = check; break; }
       await new Promise((res) => setTimeout(res, 120));
@@ -1236,6 +1252,7 @@ async function processarUnno(id, cpf, auth, secret) {
   void estadoUnno;
 
   await patchBanco(id, 'unno', { status: 'processando' });
+  const prazo = criarPrazo(); // orçamento ÚNICO da invocação (~21s): espera do cliente + chamada ao banco
 
   // Se ja tem termo — so verifica status da proposta (nao cria novo)
   if (termUuidExistente) {
@@ -1319,7 +1336,7 @@ async function processarUnno(id, cpf, auth, secret) {
 
   // ── Fluxo REAL por passos (START_DRAFT → TERMS → GET_BALANCE=margem) ──
   // Só precisa telefone; nome/nascimento/gênero vêm do próprio GET_BALANCE.
-  const cli = await aguardarCliente(id, 6000);
+  const cli = await aguardarCliente(id, prazo.timeout(6000));
   const telefone = celularDoCliente(cli).numero;
   if (!telefone) {
     await patchBanco(id, 'unno', {
@@ -1336,7 +1353,7 @@ async function processarUnno(id, cpf, auth, secret) {
     telefone,
     email: cli?.emails?.[0] || null,
     provedor: 'CELCOIN',
-  }, auth, secret, 22000);   // limite Edge ~25s
+  }, auth, secret, prazo.timeout(22000));   // limite Edge ~25s
 
   const u = r.data || {};
   if (u.etapa === 'SEM_VINCULO') {
@@ -1439,8 +1456,9 @@ async function processarSoma(id, cpf, slug, bancarizadora, auth, secret) {
   const manut = await _bancoEmManutencao(slug);
   if (manut) { await _marcarEmManutencao(id, slug, manut); return; }
   await patchBanco(id, slug, { status: 'processando' });
+  const prazo = criarPrazo(); // orçamento ÚNICO da invocação (~21s): espera do cliente + chamada ao banco
 
-  const cli = await aguardarCliente(id, 6000);
+  const cli = await aguardarCliente(id, prazo.timeout(6000));
   const nome = cli?.nome || null;
   const telefone = celularDoCliente(cli).numero;
   const dataNascimento = cli?.dataNascimento || null;
@@ -1451,7 +1469,7 @@ async function processarSoma(id, cpf, slug, bancarizadora, auth, secret) {
     // o robô confirma o aceite e re-consulta sozinho → volta APROVADO com margem.
     // Sem sessão, o confirmarAceite falha gracioso e cai no fallback (envia link).
     autoAutorizar: true,
-  }, auth, secret, 22000);   // limite Edge ~25s
+  }, auth, secret, prazo.timeout(22000));   // limite Edge ~25s
   const u = r.data || {};
 
   if ((!r.ok || u.success === false) && !u.etapa) {
@@ -1584,12 +1602,13 @@ async function processarHappy(id, cpf, auth, secret) {
   const manut = await _bancoEmManutencao(slug);
   if (manut) { await _marcarEmManutencao(id, slug, manut); return; }
   await patchBanco(id, slug, { status: 'processando' });
+  const prazo = criarPrazo(); // orçamento ÚNICO da invocação (~21s): espera do cliente + chamada ao banco
 
-  const cli = await aguardarCliente(id, 6000);
+  const cli = await aguardarCliente(id, prazo.timeout(6000));
   const nome = cli?.nome || null;
   const telefone = celularDoCliente(cli).numero;
 
-  const r = await callApi('/api/happy', { action: 'consultarMargem', cpf, nome, telefone }, auth, secret, 22000);   // limite Edge ~25s
+  const r = await callApi('/api/happy', { action: 'consultarMargem', cpf, nome, telefone }, auth, secret, prazo.timeout(22000));   // limite Edge ~25s
   const u = r.data || {};
 
   if ((!r.ok || u.success === false) && !u.etapa) {
@@ -1662,9 +1681,10 @@ async function processarNossaFintech(id, cpf, slug, serviceType, auth, secret) {
   const manut = await _bancoEmManutencao(slug);
   if (manut) { await _marcarEmManutencao(id, slug, manut); return; }
   await patchBanco(id, slug, { status: 'processando' });
+  const prazo = criarPrazo(); // orçamento ÚNICO da invocação (~21s): espera do cliente + chamada ao banco
 
   // Espera dados do cliente — precisa nome+telefone pra disparar autz
-  const cli = await aguardarCliente(id, 6000);
+  const cli = await aguardarCliente(id, prazo.timeout(6000));
   const telefone = celularDoCliente(cli).numero;
   const nome = cli?.nome || null;
 
@@ -1674,7 +1694,7 @@ async function processarNossaFintech(id, cpf, slug, serviceType, auth, secret) {
     nome,
     telefone,
     serviceType, // 'QITECH' | 'UY3'
-  }, auth, secret, 20000);
+  }, auth, secret, prazo.timeout(20000));
 
   const u = r.data || {};
   if (!r.ok) {
@@ -1797,15 +1817,16 @@ async function processarFacta(id, cpf, auth, secret) {
   const manut = await _bancoEmManutencao('facta_clt');
   if (manut) { await _marcarEmManutencao(id, 'facta_clt', manut); return; }
   await patchBanco(id, 'facta_clt', { status: 'processando' });
+  const prazo = criarPrazo(); // orçamento ÚNICO da invocação (~21s): espera do cliente + chamada ao banco
 
-  const cli = await aguardarCliente(id, 6000);
+  const cli = await aguardarCliente(id, prazo.timeout(6000));
   const telefone = celularDoCliente(cli).numero;
   const nome = cli?.nome || null;
 
   const r = await callApi('/api/facta', {
     action: 'cltConsultarAprovacao',
     cpf, nome, telefone,
-  }, auth, secret, 20000);
+  }, auth, secret, prazo.timeout(20000));
 
   const u = r.data || {};
   if (!r.ok) {
@@ -2041,8 +2062,10 @@ async function processarC6(id, cpf, incluirC6, auth, secret) {
     } else {
       await patchBanco(id, 'c6', {
         status: 'falha',
-        retryable: true,
-        mensagem: c6.mensagem || msgDeErro(c6) || `C6 não retornou oferta (HTTP ${ofertaR.status})`
+        retryable: c6.retryable === true,   // c6.js já diz: infra (true) ou negativa 404/422 (false)
+        mensagem: (c6.success === true && !c6.temOferta)
+          ? 'C6: sem autorização confirmada e sem oferta — gerar link de selfie e re-consultar'
+          : (c6.mensagem || msgDeErro(c6) || `C6 não retornou oferta (HTTP ${ofertaR.status})`)
       });
     }
   } else {
@@ -2062,7 +2085,8 @@ async function processarC6(id, cpf, incluirC6, auth, secret) {
 // ═══════════════════════════════════════════════════════════════════
 // HANDLER
 // ═══════════════════════════════════════════════════════════════════
-export default async function handler(req) {
+export default async function handler(req, ctx) {
+  _edgeCtx = ctx || null; // waitUntil nativo (fallback do emBackground)
   if (req.method === 'OPTIONS') return handleOptions(req);
 
   const user = await requireAuth(req);
@@ -2498,6 +2522,11 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       }
     }
 
+    // Atraso pedido pelo disparador (escalonar SOMA: 1 req/s por rota) — espera
+    // AQUI, com a requisição já recebida (nunca se perde)
+    const atrasoMs = Math.min(Number(body.atrasoMs) || 0, 9000);
+    if (atrasoMs > 0) await new Promise((res) => setTimeout(res, atrasoMs));
+
     try {
       if (banco === 'presencabank') await processarPresencaBank(id, row.cpf, auth, secret);
       else if (banco === 'multicorban') await processarMulticorban(id, row.cpf, auth, secret);
@@ -2674,8 +2703,9 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       // aguardando DataPrev) — e isso o `travadoProc` abaixo já exclui.
       // 'pending' no V8 = disparo perdido igual aos outros → resgata.
       const SO_PENDING_LEGITIMO = new Set(['facta_clt_offline']);
-      let resgatou = false;
+      let resgatou = false, nResg = 0;
       for (const [slug, b] of Object.entries(row.bancos || {})) {
+        if (nResg >= 6) break; // teto por poll — o próximo poll pega o resto; status não chega perto dos 25s
         if (!b || SO_PENDING_LEGITIMO.has(slug) || (b.resgates || 0) >= 3) continue;
         const ultimo = b.atualizado_em ? agoraR - new Date(b.atualizado_em).getTime() : idadeFila;
         const travadoPending = b.status === 'pending' && idadeFila > 45000 && ultimo > 45000;
@@ -2686,7 +2716,7 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
           mensagem: '🔄 Reprocessando (o disparo anterior se perdeu)...',
         });
         dispararProcessar(id, slug, secret, true);
-        resgatou = true;
+        resgatou = true; nResg++;
       }
       if (resgatou) {
         const { data: refreshed } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
@@ -2695,8 +2725,9 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     }
     {
       const baseUrl = APP_URL();
-      let mexeu = false;
+      let mexeu = false, nRetry = 0;
       for (const [slug, b] of Object.entries(row.bancos || {})) {
+        if (nRetry >= 6) break; // teto por poll
         if (!b || b.status !== 'falha' || b.retryable !== true) continue;
         const tent = b.tentativas || 0;
         if (tent >= MAX_AUTO_RETRY) continue;
@@ -2713,7 +2744,7 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
           mensagem: `🔄 Re-tentando automaticamente (${tent + 1}/${MAX_AUTO_RETRY})...`,
         });
         dispararProcessar(id, slug, secret, true);
-        mexeu = true;
+        mexeu = true; nRetry++;
       }
       if (mexeu) {
         const { data: refreshed } = await dbSelect('clt_consultas_fila', { filters: { id }, single: true });
@@ -2779,9 +2810,14 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     const dias = Math.min(parseInt(body.dias || 7), 60);
     const limite = Math.min(parseInt(body.limite || 5), 8); // >8 estourava os 25s da Edge (504)
     const desde = new Date(Date.now() - dias * 86400000).toISOString();
+    // Paginado por offset (iniciado_em não muda → ordem estável). O chamador repassa
+    // `proximoOffset` até vir null — assim a varredura cobre TODO o período.
+    const PAG = 200;
+    const offset = Math.max(0, parseInt(body.offset || 0) || 0);
     const { data: filas } = await dbQuery('clt_consultas_fila',
-      `select=id,cpf,bancos,status_geral,iniciado_em&iniciado_em=gte.${encodeURIComponent(desde)}&status_geral=neq.standby&order=iniciado_em.desc&limit=400`
+      `select=id,cpf,bancos,status_geral,iniciado_em&iniciado_em=gte.${encodeURIComponent(desde)}&status_geral=neq.standby&order=iniciado_em.desc&limit=${PAG}&offset=${offset}`
     ).catch(() => ({ data: [] }));
+    const proximoOffset = (Array.isArray(filas) && filas.length === PAG) ? offset + PAG : null;
     // Só mexe no que está PARADO há tempo (3min sem atualizar) — nunca numa
     // consulta recém-criada que ainda está rodando de verdade.
     const agoraP = Date.now();
@@ -2813,13 +2849,20 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
           proximaTentativaEm: null, mensagem: '🔄 Reprocessando (consulta estava travada)...', atualizado_em: agoraIsoR };
       }
       await dbUpdate('clt_consultas_fila', { id: f.id }, { bancos: novos, status_geral: 'processando', concluido_em: null });
-      for (const k of bancos) { dispararProcessar(f.id, k, secret, true, disparos * 350); disparos++; }
+      for (const k of bancos) {
+        // só a SOMA tem limite de 1 req/s por rota: escalona por consulta (1,1s cada)
+        const atraso = k === 'soma_celcoin' ? feitas * 1100 : (k === 'soma_uy3' ? feitas * 1100 + 600 : 0);
+        dispararProcessar(f.id, k, secret, true, atraso); disparos++;
+      }
       feitas++;
     }
+    const restantes = Math.max(0, alvo.length - feitas);
     return jsonResp({
-      success: true, dias, filasPresas: alvo.length, filasReprocessadas: feitas, disparos,
-      restantes: Math.max(0, alvo.length - feitas),
-      mensagem: feitas ? `${feitas} consulta(s) reabertas, ${disparos} banco(s) re-disparados. Restam ${Math.max(0, alvo.length - feitas)}.` : 'Nenhuma consulta presa.',
+      success: true, dias, offset, proximoOffset, filasPresas: alvo.length, filasReprocessadas: feitas, disparos,
+      restantes,
+      mensagem: feitas
+        ? `${feitas} consulta(s) reabertas, ${disparos} banco(s) re-disparados. Restam ${restantes} nesta página${proximoOffset != null ? ` (+ próxima página offset ${proximoOffset})` : ''}.`
+        : (proximoOffset != null ? `Nenhuma presa nesta página — continue com offset ${proximoOffset}.` : 'Nenhuma consulta presa.'),
     }, 200, req);
   }
 
@@ -2895,7 +2938,7 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
           const msg = String(st.mensagem || '');
           // 🔧 Falha de INFRA (credencial/timeout/5xx/disparo perdido) não diz
           // nada sobre o cliente — conta à parte pra não virar "inapto".
-          if (st.retryable === true || /HTTP (0|408|429|5\d\d)\b|Timeout|credencial|fora\/inst|disparo perdido|Não processado|Reprocessando|re-tenta sozinho|não confirmou|bloqueado no banco|Sessão do Mercantil|login pausado/i.test(msg)) nErroApi++;
+          if (st.retryable === true || /HTTP (0|rede|401|403|408|429|5\d\d)\b|Timeout|credencial|fora\/inst|limite de requisi|disparo perdido|Não processado|Reprocessando|re-tenta sozinho|não confirmou|bloqueado no banco|Sessão do Mercantil|login pausado/i.test(msg)) nErroApi++;
           else nNegativa++;
           // 🔴 CNPJ / empregador / vínculo inválido (problema de cadastro)
           if (/(cnpj|empregador|v[ií]nculo|raz[aã]o social).{0,40}(inv[aá]lid|inexist|n[aã]o (foi )?(encontrad|localizad|conveni))/i.test(msg)) {
