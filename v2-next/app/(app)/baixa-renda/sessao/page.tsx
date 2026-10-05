@@ -9,19 +9,31 @@
 // Vale o dia todo.
 // ════════════════════════════════════════════════════════════════════
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { useCrefisaSessao, useCrefisaColarSessao } from '@/hooks/use-crefisa-br';
-import { KeyRound, Copy, CheckCircle2, AlertCircle, Loader2, ExternalLink } from 'lucide-react';
+import { KeyRound, Copy, CheckCircle2, AlertCircle, Loader2, ExternalLink, MousePointerClick } from 'lucide-react';
 import { toast } from 'sonner';
 
 const PORTAL = 'https://app1.gerencialcredito.com.br/CREFISA/simuladorCrefisa.asp';
 
-// Snippet que o dono cola no console do portal. Lê o token do
-// localStorage + o cookie da sessão e devolve tudo num JSON só.
+// Botão de favorito (bookmarklet): o dono arrasta pra barra uma vez e, com o
+// portal logado, 1 clique copia a sessão pra área de transferência — sem F12.
+// Lê o token do localStorage + o cookie + o código do usuário digitador.
+const BOOKMARKLET =
+  "javascript:(async()=>{try{" +
+  "var b='/CREFISA/ajax_crefisa.asp?combo=';" +
+  "var v=await fetch(b+'GetVendedorId').then(function(r){return r.json()});" +
+  "var u=await fetch(b+'GetUsuarios&nomeUsuario=&vendedorId='+v.vendedorId).then(function(r){return r.json()});" +
+  "var j=JSON.stringify({bearer:localStorage.getItem(btoa('accessToken-'+_SEGURANCA.cod+'-'+_SEGURANCA.uId))||'',cookie:document.cookie,versaoSistema:String(_SEGURANCA.versaoSistema||''),cod:String(_SEGURANCA.cod||''),vendedorId:v.vendedorId||null,codigoUsuarioParceiro:(u.usuarios&&u.usuarios[0]&&u.usuarios[0].codigo)||''});" +
+  "await navigator.clipboard.writeText(j);" +
+  "alert('Sessao Crefisa copiada! Volte ao FlowForce e cole (Ctrl+V).');" +
+  "}catch(e){alert('Abra o portal logado e clique de novo. '+e.message);}})()";
+
+// Fallback: mesmo capturador pra quem prefere colar no console (F12).
 const CAPTURADOR = `const _vid = await fetch('ajax_crefisa.asp?combo=GetVendedorId').then(r => r.json());
 const _us = await fetch('ajax_crefisa.asp?combo=GetUsuarios&nomeUsuario=&vendedorId=' + _vid.vendedorId).then(r => r.json());
 copy(JSON.stringify({
@@ -37,6 +49,13 @@ export default function BaixaRendaSessaoPage() {
   const sessao = useCrefisaSessao();
   const colar = useCrefisaColarSessao();
   const [texto, setTexto] = useState('');
+  const [verConsole, setVerConsole] = useState(false);
+
+  // React sanitiza href="javascript:" — então setamos via ref depois do mount.
+  const botaoFavorito = useRef<HTMLAnchorElement>(null);
+  useEffect(() => {
+    if (botaoFavorito.current) botaoFavorito.current.setAttribute('href', BOOKMARKLET);
+  }, []);
 
   const copiarCapturador = () => {
     navigator.clipboard.writeText(CAPTURADOR).then(
@@ -125,11 +144,24 @@ export default function BaixaRendaSessaoPage() {
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-sm font-medium">
               <span className="flex items-center justify-center size-5 rounded-full bg-primary/15 text-primary text-[11px] font-bold">2</span>
-              Aperte F12, vá em &quot;Console&quot;, cole isto e dê Enter
+              Uma vez só: arraste o botão abaixo pra barra de favoritos
             </div>
-            <Button size="sm" variant="outline" onClick={copiarCapturador} className="ml-7">
-              <Copy className="w-3.5 h-3.5" /> Copiar capturador
-            </Button>
+            <div className="ml-7 space-y-1.5">
+              {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
+              <a
+                ref={botaoFavorito}
+                href="#"
+                onClick={(e) => { e.preventDefault(); toast.info('Não clique aqui — ARRASTE este botão pra barra de favoritos do navegador'); }}
+                draggable
+                className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/40 font-medium text-sm cursor-grab active:cursor-grabbing select-none"
+              >
+                <MousePointerClick className="w-4 h-4" /> Capturar Sessão Crefisa
+              </a>
+              <p className="text-[11px] text-muted-foreground">
+                Segure e arraste pra barra de favoritos (onde ficam seus atalhos). Depois,
+                com o portal aberto e logado, é só <b>clicar nele</b> — a sessão é copiada sozinha.
+              </p>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -154,6 +186,30 @@ export default function BaixaRendaSessaoPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Modo avançado: console (fallback) */}
+      <div className="space-y-2">
+        <button
+          onClick={() => setVerConsole((v) => !v)}
+          className="text-[11px] text-muted-foreground underline hover:text-foreground"
+        >
+          {verConsole ? 'esconder' : 'o botão não funcionou? usar o console (F12)'}
+        </button>
+        {verConsole && (
+          <Card>
+            <CardContent className="p-4 space-y-2">
+              <p className="text-[11px] text-muted-foreground">
+                No portal logado, aperte <b>F12</b>, vá em <b>Console</b>, copie o código abaixo,
+                cole lá e dê Enter (se o Chrome pedir, digite <b>allow pasting</b> antes). Depois
+                cole aqui em cima.
+              </p>
+              <Button size="sm" variant="outline" onClick={copiarCapturador}>
+                <Copy className="w-3.5 h-3.5" /> Copiar código do console
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+      </div>
 
       <p className="text-[11px] text-muted-foreground">
         A sessão fica guardada só no banco do FlowForce e nunca aparece em tela — o painel
