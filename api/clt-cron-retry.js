@@ -59,7 +59,9 @@ export default async function handler(req) {
   }
 
   // Janela: consultas das últimas 6h, fora de standby.
-  const desde = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+  // 24h (era 6h): consultas reprocessadas/re-consultadas em lote também precisam
+  // das re-tentativas automáticas (429 da V8, rate limit SOMA, timeouts)
+  const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const q =
     `select=id,bancos,status_geral,iniciado_em` +
     `&iniciado_em=gte.${encodeURIComponent(desde)}` +
@@ -91,7 +93,7 @@ export default async function handler(req) {
     success: true,
     filasAnalisadas: filas.length,
     filasCutucadas,
-    janela: '6h',
+    janela: '24h',
     mensagem: `${filasCutucadas} consulta(s) com falha re-tentável foram re-disparadas.`,
   }, 200, req);
 }

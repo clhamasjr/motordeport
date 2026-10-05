@@ -705,7 +705,11 @@ async function processarV8(id, provider, cpf, auth, secret) {
     }
 
     const sexoPadrao = (cli.sexo || 'M').toUpperCase().startsWith('F') ? 'F' : 'M';
-    const telefonePadrao = celularDoCliente(cli).numero || '11900000000';
+    // V8 exige CELULAR (9 dígitos começando com 9); fixo do cadastro dava 422.
+    // Sem celular válido usa placeholder: o termo é auto-autorizado pela Lhamas
+    // (correspondente), o telefone não recebe SMS.
+    const celV8 = celularDoCliente(cli);
+    const telefonePadrao = celV8.valido ? celV8.numero : '11900000000';
     const emailPadrao = (cli.emails?.[0]) || `${cpf}@lead.lhamascred.com.br`;
     const dataIso = cli.dataNascimento.includes('-') ? cli.dataNascimento : ddMmYyToIso(cli.dataNascimento);
 
@@ -718,13 +722,40 @@ async function processarV8(id, provider, cpf, auth, secret) {
       telefone: telefonePadrao,
       sexo: sexoPadrao
     }, auth, secret, prazo.timeout(10000)).catch(() => ({ ok: false, status: 0, data: {} }));
-    // Se já há veredito REJECTED/FAILED no passo 1, a falha ao gerar termo NOVO não apaga a negativa: segue pro passo 3
-    if (ehErroV8(termoR) && !termoR.data?.consultId && !['REJECTED', 'FAILED'].includes(v8.status)) { await falhaV8(termoR); return; }
-
-    if (termoR.data?.consultId) {
+    const tipoErroTermo = String(termoR.data?._raw?.type || '');
+    if (/consult_already_exists/i.test(tipoErroTermo)) {
+      // A V8 já tem consulta ativa pra este CPF (1 por usuário+CPF) que a busca
+      // padrão (30 dias, só este provedor) não achou → busca ampla: 1 ano, e também
+      // no OUTRO provedor (a consulta pode estar lá; aí este card não pode criar outra).
+      const amplo = { startDate: new Date(Date.now() - 365 * 86400000).toISOString() };
+      consulta = await callApi('/api/v8', { action: 'consultarPorCPF', cpf, provider, ...amplo }, auth, secret, prazo.timeout(8000)).catch(() => ({ ok: false }));
+      v8 = consulta.data || {};
+      if (!v8.encontrado) {
+        const outro = provider === 'QI' ? 'CELCOIN' : 'QI';
+        const cOutro = await callApi('/api/v8', { action: 'consultarPorCPF', cpf, provider: outro, ...amplo }, auth, secret, prazo.timeout(8000)).catch(() => ({ ok: false }));
+        if (cOutro.data?.encontrado) {
+          await patchBanco(id, banco, {
+            status: 'falha', disponivel: false, retryable: false,
+            mensagem: `V8 permite 1 consulta ativa por CPF — já existe no provedor ${outro} (status ${cOutro.data.status || '?'}); veja o card V8 ${outro === 'QI' ? 'QI' : 'Celcoin'}`,
+            _raw_response: termoR.data,
+          });
+          return;
+        }
+        await patchBanco(id, banco, {
+          status: 'falha', disponivel: false, retryable: false,
+          mensagem: 'V8: "já existe uma consulta ativa para este CPF", mas ela não aparece na listagem (nem em 1 ano, nem no outro provedor) — conferir no painel da V8',
+          _raw_response: termoR.data,
+        });
+        return;
+      }
+    } else if (ehErroV8(termoR) && !termoR.data?.consultId && !['REJECTED', 'FAILED'].includes(v8.status)) {
+      // Se já há veredito REJECTED/FAILED no passo 1, a falha ao gerar termo NOVO não apaga a negativa: segue pro passo 3
+      await falhaV8(termoR); return;
+    } else if (termoR.data?.consultId) {
       // Auto-autoriza (Lhamas como correspondente)
       await callApi('/api/v8', { action: 'autorizarTermo', consultId: termoR.data.consultId, provider }, auth, secret, prazo.timeout(8000)).catch(() => {});
-      // Re-consulta status
+      // Re-consulta status (pequena espera: a listagem da V8 demora a refletir o termo novo)
+      await new Promise((res) => setTimeout(res, 1500));
       consulta = await callApi('/api/v8', { action: 'consultarPorCPF', cpf, provider }, auth, secret, prazo.timeout(8000)).catch(() => ({ ok: false }));
       v8 = consulta.data || {};
     }
