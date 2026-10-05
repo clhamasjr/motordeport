@@ -498,11 +498,15 @@ api('/api/mercantil', { action: 'setJwt', jwt: 'eyJhbGciOiJIUzI1NiIsInR5cCI6...'
 - ✅ Sempre `cd` pro projeto antes de `vercel deploy --prod --yes`
 - ❌ Bash cwd às vezes reseta pra `C:\Program Files\Git`
 
-### 6.8 Supabase — projeto `rirsmtyuyqxsoxqbgtpu`
+### 6.8 Supabase — projeto `xtyvnocvckbvhwvdwdpo` (motordeport)
 
-- Dashboard: https://supabase.com/dashboard/project/rirsmtyuyqxsoxqbgtpu
-- SQL Editor: https://supabase.com/dashboard/project/rirsmtyuyqxsoxqbgtpu/sql
-- Migrations versionadas no repo: `supabase_migration_*.sql`
+⚠️ CORRIGIDO 05/10/2026: esta seção apontava pro `rirsmtyuyqxsoxqbgtpu`,
+que é o banco do **OpsManager** (outro projeto) — não tem `users`,
+`clt_fila` nem `soma_portal_session`. O banco do FlowForce é este:
+
+- Dashboard: https://supabase.com/dashboard/project/xtyvnocvckbvhwvdwdpo
+- SQL Editor: https://supabase.com/dashboard/project/xtyvnocvckbvhwvdwdpo/sql
+- Migrations versionadas no repo: `supabase_migration_*.sql` e `supabase_*.sql`
 
 ---
 
