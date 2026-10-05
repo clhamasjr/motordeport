@@ -85,10 +85,24 @@ function erroApiBanco(nomeBanco, status, msgApi) {
     retryable: !bloqueado && !credencial && (st === 0 || st === 408 || st === 429 || st >= 500),
   };
 }
-function msgDeErro(d) {
-  if (!d || typeof d !== 'object') return null;
-  return d.mensagem || d.message || d.error || d.title || d.detail
+function msgDeErro(d, _prof = 0) {
+  if (!d || typeof d !== 'object' || _prof > 2) return null;
+  const direto = d.mensagem || d.message || d.error_description || d.title || d.detail
+    || (typeof d.error === 'string' ? d.error : null)
     || (typeof d.raw === 'string' ? d.raw.substring(0, 160) : null);
+  if (direto && typeof direto === 'string' && !/^Erro interno$/i.test(direto)) return direto;
+  // listas de erro (JoinBank messages[], V8/QI errors[]/details[])
+  for (const k of ['errors', 'messages', 'details', 'violations']) {
+    if (Array.isArray(d[k]) && d[k].length) {
+      const txt = d[k].map((e) => (typeof e === 'string' ? e : (e?.message || e?.text || e?.description || e?.msg || e?.title || JSON.stringify(e)))).join('; ');
+      if (txt) return txt.substring(0, 200);
+    }
+  }
+  // o detalhe costuma vir aninhado (_raw / raw / error objeto / data)
+  for (const k of ['_raw', 'raw', 'error', 'data', 'response']) {
+    if (d[k] && typeof d[k] === 'object') { const m = msgDeErro(d[k], _prof + 1); if (m) return m; }
+  }
+  return direto || null;
 }
 
 // ─── Melhor CELULAR do cadastro ──────────────────────────────────────
