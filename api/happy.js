@@ -110,7 +110,9 @@ async function getToken(forcar = false) {
   const t = r.text;
   let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 400) }; }
   if (!r.ok || !d.token_opaco) {
-    throw new Error(`Falha auth HAPPY (HTTP ${r.status}): ${d.detail?.[0]?.msg || d.message || d.raw || 'sem token_opaco'}`);
+    const motivo = d.detail?.[0]?.msg || d.message || d.error || d.raw || 'sem token_opaco';
+    // 400 "baseUrl nao permitida" = o PROXY do escritorio ainda nao tem a HAPPY na lista (atualizar C:\facta-proxy\server.js + pm2 restart)
+    throw new Error(`Falha auth HAPPY (HTTP ${r.status})${r.viaProxy ? ' via proxy do escritório' : ''}: ${motivo}${/baseUrl nao permitida/i.test(String(motivo)) ? ' — atualizar o facta-proxy no PC do escritório (lista ALLOWED_BASES) e reiniciar o pm2' : ''}`);
   }
   // cacheia 10min (ou menos, se expira_em vier como TTL curto em segundos)
   let ttlMs = 10 * 60 * 1000;
