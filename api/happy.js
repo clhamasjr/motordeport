@@ -51,6 +51,18 @@ const j = (data, status = 200, req = null) => jsonResp(data, status, req);
 // ── Token cache (token_opaco) ──────────────────────────────────
 // expira_em vem da API mas formato não é 100% garantido — cacheamos por uma
 // janela conservadora (10min) e re-autenticamos no 401 (happyCall).
+// Cabeçalhos "cara de navegador": o Cloudflare da byx devolve 403 "Just a
+// moment..." (desafio de bot) pra cliente sem User-Agent de browser. Se mesmo
+// assim barrar, é bloqueio por IP → precisa de relay com IP liberado pela byx.
+const NAV_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+  'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+  'sec-ch-ua': '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors', 'sec-fetch-site': 'same-site',
+  'Origin': 'https://app.byxcapital.com.br', 'Referer': 'https://app.byxcapital.com.br/',
+};
 let _tk = { token: null, exp: 0 };
 
 async function getToken(forcar = false) {
@@ -65,7 +77,7 @@ async function getToken(forcar = false) {
 
   const r = await fetch(cfg.BASE + '/api/v1/consignado-privado/auth', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'accept': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'accept': 'application/json', ...NAV_HEADERS },
     body: JSON.stringify({ client_id: cfg.CLIENT_ID, secret: cfg.CLIENT_SECRET, usuario: cfg.USUARIO, senha: cfg.SENHA }),
   });
   const t = await r.text();
@@ -90,6 +102,7 @@ async function happyCall(path, method = 'POST', body = null, _jaRelogou = false)
   }
   const token = await getToken();
   const headers = {
+    ...NAV_HEADERS,
     'Authorization': 'Bearer ' + token,
     'Content-Type': 'application/json',
     'accept': 'application/json',
