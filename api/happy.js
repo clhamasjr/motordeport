@@ -84,12 +84,14 @@ async function happyFetch(path, { method = 'GET', headers = {}, body = null } = 
       method: 'POST', headers: reqHeaders,
       body: JSON.stringify({ method, path, baseUrl: cfg.BASE, headers, contentType: body != null ? 'application/json' : null, body: body != null ? JSON.stringify(body) : null }),
     });
-    return { status: r.status, ok: r.ok, text: await r.text(), viaProxy: true };
+    // diagnostico do bloqueio Cloudflare da byx (Ray ID = municao pro suporte deles)
+    const cf = { ray: r.headers.get('x-upstream-cf-ray') || r.headers.get('cf-ray') || null, server: r.headers.get('x-upstream-server') || null, mitigated: r.headers.get('x-upstream-cf-mitigated') || null, ipSaida: r.headers.get('x-proxy-ip') || r.headers.get('x-upstream-x-proxy-ip') || null };
+    return { status: r.status, ok: r.ok, text: await r.text(), viaProxy: true, cf };
   }
   const opts = { method, headers: { ...headers, ...(body != null ? { 'Content-Type': 'application/json' } : {}) } };
   if (body != null && method !== 'GET') opts.body = JSON.stringify(body);
   const r = await fetch(cfg.BASE + path, opts);
-  return { status: r.status, ok: r.ok, text: await r.text(), viaProxy: false };
+  return { status: r.status, ok: r.ok, text: await r.text(), viaProxy: false, cf: { ray: r.headers.get('cf-ray') || null, server: r.headers.get('server') || null, mitigated: r.headers.get('cf-mitigated') || null } };
 }
 
 async function getToken(forcar = false) {
@@ -110,7 +112,10 @@ async function getToken(forcar = false) {
   const t = r.text;
   let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 400) }; }
   if (!r.ok || !d.token_opaco) {
-    const motivo = d.detail?.[0]?.msg || d.message || d.error || d.raw || 'sem token_opaco';
+    const htmlCf = /Attention Required|Just a moment|cloudflare/i.test(String(d.raw || ''));
+    const motivo = htmlCf
+      ? `bloqueado pelo Cloudflare da byx (${/Attention Required/i.test(String(d.raw)) ? 'regra de firewall/WAF — IP não liberado' : 'desafio de robô'})${r.cf?.ray ? ` · Ray ID ${r.cf.ray}` : ''}${r.cf?.mitigated ? ` · cf-mitigated ${r.cf.mitigated}` : ''}`
+      : (d.detail?.[0]?.msg || d.message || d.error || d.raw || 'sem token_opaco');
     // 400 "baseUrl nao permitida" = o PROXY do escritorio ainda nao tem a HAPPY na lista (atualizar C:\facta-proxy\server.js + pm2 restart)
     throw new Error(`Falha auth HAPPY (HTTP ${r.status})${r.viaProxy ? ' via proxy do escritório' : ''}: ${motivo}${/baseUrl nao permitida/i.test(String(motivo)) ? ' — atualizar o facta-proxy no PC do escritório (lista ALLOWED_BASES) e reiniciar o pm2' : ''}`);
   }
