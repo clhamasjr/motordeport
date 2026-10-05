@@ -49,7 +49,11 @@ const ALLOWED_BASES = [
   'https://webservice-homol.facta.com.br',
   'https://cltoff.facta.com.br',        // FACTA CLT BASE OFFLINE (host dedicado)
   'https://fintechdocorban.nossafintech.com.br',
+  'https://vhagar-backend-prod.byxcapital.com.br',   // HAPPY (byx) — Cloudflare deles so aceita o IP cadastrado (escritorio)
+  'https://vhagar-staging.byxcapital.com.br',        // HAPPY homolog
   FACTA_BASE,
+  // extras sem mexer no codigo: RELAY_EXTRA_BASES="https://a.com,https://b.com" no .env
+  ...String(process.env.RELAY_EXTRA_BASES || '').split(',').map((s) => s.trim()).filter(Boolean),
 ];
 
 if (!SECRET) {

@@ -65,6 +65,33 @@ const NAV_HEADERS = {
 };
 let _tk = { token: null, exp: 0 };
 
+// ── Saida pelo PROXY do escritorio (IP residencial cadastrado na byx) ───────
+// O Cloudflare da byx devolve 403 "Just a moment" pra IP de data-center (Vercel).
+// Mesmo relay da FACTA/Fintech (facta-proxy /relay): HAPPY_PROXY_URL/SECRET ou,
+// na falta, FACTA_PROXY_URL/SECRET. Sem proxy configurado: fetch direto.
+async function happyFetch(path, { method = 'GET', headers = {}, body = null } = {}) {
+  const cfg = getConfig();
+  const proxyUrl = (process.env.HAPPY_PROXY_URL || process.env.FACTA_PROXY_URL || '').replace(/\/$/, '');
+  const proxySecret = process.env.HAPPY_PROXY_SECRET || process.env.FACTA_PROXY_SECRET || '';
+  if (proxyUrl && proxySecret) {
+    const reqHeaders = { 'Content-Type': 'application/json', 'X-Proxy-Key': proxySecret, 'Accept': 'application/json' };
+    // Cloudflare Access do tunel do proxy (se configurado — mesmo da FACTA)
+    if (process.env.FACTA_CF_ACCESS_CLIENT_ID && process.env.FACTA_CF_ACCESS_CLIENT_SECRET) {
+      reqHeaders['CF-Access-Client-Id'] = process.env.FACTA_CF_ACCESS_CLIENT_ID;
+      reqHeaders['CF-Access-Client-Secret'] = process.env.FACTA_CF_ACCESS_CLIENT_SECRET;
+    }
+    const r = await fetch(proxyUrl + '/relay', {
+      method: 'POST', headers: reqHeaders,
+      body: JSON.stringify({ method, path, baseUrl: cfg.BASE, headers, contentType: body != null ? 'application/json' : null, body: body != null ? JSON.stringify(body) : null }),
+    });
+    return { status: r.status, ok: r.ok, text: await r.text(), viaProxy: true };
+  }
+  const opts = { method, headers: { ...headers, ...(body != null ? { 'Content-Type': 'application/json' } : {}) } };
+  if (body != null && method !== 'GET') opts.body = JSON.stringify(body);
+  const r = await fetch(cfg.BASE + path, opts);
+  return { status: r.status, ok: r.ok, text: await r.text(), viaProxy: false };
+}
+
 async function getToken(forcar = false) {
   if (!forcar && _tk.token && Date.now() < _tk.exp) return _tk.token;
   const cfg = getConfig();
@@ -75,12 +102,12 @@ async function getToken(forcar = false) {
   if (!cfg.SENHA) faltando.push('HAPPY_SENHA');
   if (faltando.length) throw new Error(`Config HAPPY faltando (Vercel env): ${faltando.join(', ')}`);
 
-  const r = await fetch(cfg.BASE + '/api/v1/consignado-privado/auth', {
+  const r = await happyFetch('/api/v1/consignado-privado/auth', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'accept': 'application/json', ...NAV_HEADERS },
-    body: JSON.stringify({ client_id: cfg.CLIENT_ID, secret: cfg.CLIENT_SECRET, usuario: cfg.USUARIO, senha: cfg.SENHA }),
+    headers: { 'accept': 'application/json', ...NAV_HEADERS },
+    body: { client_id: cfg.CLIENT_ID, secret: cfg.CLIENT_SECRET, usuario: cfg.USUARIO, senha: cfg.SENHA },
   });
-  const t = await r.text();
+  const t = r.text;
   let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 400) }; }
   if (!r.ok || !d.token_opaco) {
     throw new Error(`Falha auth HAPPY (HTTP ${r.status}): ${d.detail?.[0]?.msg || d.message || d.raw || 'sem token_opaco'}`);
@@ -104,19 +131,16 @@ async function happyCall(path, method = 'POST', body = null, _jaRelogou = false)
   const headers = {
     ...NAV_HEADERS,
     'Authorization': 'Bearer ' + token,
-    'Content-Type': 'application/json',
     'accept': 'application/json',
     'cpf-digitador': cfg.CPF_DIGITADOR,
     'x-correspondente-banqueiro': cfg.CORRESPONDENTE,
   };
-  const opts = { method, headers };
-  if (body !== null && method !== 'GET') opts.body = JSON.stringify(body);
-  const r = await fetch(cfg.BASE + path, opts);
+  const r = await happyFetch(path, { method, headers, body: (body !== null && method !== 'GET') ? body : null });
   if (r.status === 401 && !_jaRelogou) {
     await getToken(true).catch(() => {});
     return happyCall(path, method, body, true);
   }
-  const t = await r.text();
+  const t = r.text;
   let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 2000) }; }
   return { ok: r.ok, status: r.status, data: d };
 }
@@ -184,7 +208,7 @@ export default async function handler(req) {
       try {
         const tk = await getToken(true);
         const cfg = getConfig();
-        return j({ success: true, mensagem: 'Auth HAPPY OK', tokenPreview: tk.substring(0, 12) + '...', temHeaders: !!(cfg.CPF_DIGITADOR && cfg.CORRESPONDENTE) }, 200, req);
+        return j({ success: true, mensagem: 'Auth HAPPY OK', tokenPreview: tk.substring(0, 12) + '...', temHeaders: !!(cfg.CPF_DIGITADOR && cfg.CORRESPONDENTE), viaProxy: !!((process.env.HAPPY_PROXY_URL || process.env.FACTA_PROXY_URL) && (process.env.HAPPY_PROXY_SECRET || process.env.FACTA_PROXY_SECRET)) }, 200, req);
       } catch (e) { return j({ success: false, mensagem: e.message }, 200, req); }
     }
 
