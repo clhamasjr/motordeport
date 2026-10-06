@@ -281,21 +281,37 @@ export default async function handler(req) {
     }
 
     // ── Ciclo de vida da sessão ────────────────────────────────
+    // Recebe a sessão (do robô via x-internal-secret, ou do botão de favorito
+    // via usuário logado). Aceita tanto camelCase quanto os nomes crus que o
+    // robô pode mandar. Já testa na hora se a sessão está viva e rearma o
+    // alerta de queda do heartbeat.
     if (action === 'setPortalSession') {
-      const bearer = String(body.bearer || body.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      const bearer = String(body.bearer || body.authorization || body.accessToken || '').replace(/^Bearer\s+/i, '').trim();
       const cookie = String(body.cookie || '').trim();
-      if (!bearer) return jsonError('bearer obrigatorio (o JWT do localStorage, sem "Bearer ")', 400, req);
-      if (!cookie) return jsonError('cookie obrigatorio (o ASPSESSIONID do portal)', 400, req);
+      if (!bearer) return jsonError('bearer obrigatorio (o token do localStorage accessToken-{cod}-{uId}, sem "Bearer ")', 400, req);
+      if (!cookie) return jsonError('cookie obrigatorio (o document.cookie do portal, com ASPSESSIONID)', 400, req);
       await savePortalSession({
         bearer,
         cookie,
-        versao_sistema: String(body.versaoSistema || '').trim() || null,
-        cod_cliente: String(body.cod || cfg.COD).trim(),
-        vendedor_id: body.vendedorId ? parseInt(body.vendedorId) : null,
-        codigo_parceiro: String(body.codigoParceiro || cfg.CODIGO_PARCEIRO).trim(),
-        codigo_usuario_parceiro: String(body.codigoUsuarioParceiro || '').trim() || null,
+        versao_sistema: String(body.versaoSistema || body.versao_sistema || '').trim() || null,
+        cod_cliente: String(body.cod || body.codCliente || cfg.COD).trim(),
+        vendedor_id: (body.vendedorId ?? body.vendedor_id) ? parseInt(body.vendedorId ?? body.vendedor_id) : null,
+        codigo_parceiro: String(body.codigoParceiro || body.codigo_parceiro || cfg.CODIGO_PARCEIRO).trim(),
+        codigo_usuario_parceiro: String(body.codigoUsuarioParceiro || body.codigo_usuario_parceiro || '').trim() || null,
+        alerta_enviado: false, // sessão fresca → rearma o aviso de queda no WhatsApp
       });
-      return j({ success: true, mensagem: 'Sessão Crefisa salva — motor Baixa Renda ativo' }, 200, req);
+      // Confirma na mesma chamada se a sessão realmente funciona
+      const teste = await apiCall('/captura/operacao-cliente/11144477735?tipo=0', 'GET');
+      const viva = !teste._semSessao;
+      return j({
+        success: true,
+        viva,
+        salva: true,
+        mensagem: viva
+          ? '✅ Sessão Crefisa salva e ativa — motor Baixa Renda operando'
+          : '⚠️ Sessão salva, mas o portal não aceitou (token/cookie podem estar errados ou o IP do servidor bloqueado)',
+        quem: user._internal ? 'robo' : 'usuario',
+      }, 200, req);
     }
 
     if (action === 'statusPortalSession') {
