@@ -37,6 +37,10 @@
     {
       "path": "/api/crefisa-br-heartbeat",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/crefisa-fila",
+      "schedule": "*/2 10-23,0-1 * * *"
     }
   ]
 }
