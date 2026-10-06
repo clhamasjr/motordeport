@@ -18,7 +18,8 @@ import {
 } from '@/components/ui/dialog';
 import { formatBRL, formatCpf } from '@/lib/utils';
 import { montarPdfBase64 } from '@/lib/pdf-montar';
-import { useCrefisaCep, useCrefisaDigitar, useCrefisaUploadDocumento } from '@/hooks/use-crefisa-br';
+import { useCrefisaCep, useCrefisaUploadDocumento } from '@/hooks/use-crefisa-br';
+import { useEnfileirarDigitacao } from '@/hooks/use-crefisa-fila';
 import type { DocumentoBR, FluxoBR, RegrasBR, SimulacaoBR } from '@/lib/crefisa-br-types';
 import { Loader2, Search, Paperclip, Send, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -53,7 +54,7 @@ function Campo({ label, children, className = '' }: { label: string; children: R
 export function DigitacaoForm({ cpf, telefone, tipoSimulacao, dados, regras, oferta, onCancelar, onDigitada }: Props) {
   const cep = useCrefisaCep();
   const upload = useCrefisaUploadDocumento();
-  const digitar = useCrefisaDigitar();
+  const enfileirar = useEnfileirarDigitacao();
 
   // ── Cliente ──
   const [nome, setNome] = useState('');
@@ -154,9 +155,10 @@ export function DigitacaoForm({ cpf, telefone, tipoSimulacao, dados, regras, ofe
         documentos.push(r.documento);
       }
 
-      // 2) proposta
-      setEtapaEnvio('Digitando a proposta na Crefisa…');
-      const r = await digitar.mutateAsync({
+      // 2) proposta entra na FILA — a Crefisa tem uma sessão só, então a
+      //    digitação é serial: o worker tira da fila e digita uma de cada vez.
+      setEtapaEnvio('Colocando a proposta na fila de digitação…');
+      const proposta = {
         cpf,
         guid,
         tipoSimulacao,
@@ -181,10 +183,20 @@ export function DigitacaoForm({ cpf, telefone, tipoSimulacao, dados, regras, ofe
         dataPrimeiraParcela: oferta.dataPrimeiroVencimento,
         docsObrigatorios: docsObrig.join(';'),
         documentos,
+      };
+      const r = await enfileirar.mutateAsync({
+        cpf,
+        telefone,
+        nomeCliente: nome,
+        payload: proposta,
       });
-      if (!r.success) throw new Error(r.mensagem || 'A Crefisa recusou a proposta');
+      if (!r.success) throw new Error(r.mensagem || 'Não consegui colocar na fila');
       setConfirmar(false);
-      onDigitada(r.mensagem);
+      onDigitada(
+        r.posicao && r.posicao > 1
+          ? `✅ Na fila de digitação — posição ${r.posicao}`
+          : '✅ Na fila de digitação — já é a próxima',
+      );
     } catch (e) {
       setErroEnvio((e as Error).message);
     } finally {
@@ -332,15 +344,15 @@ export function DigitacaoForm({ cpf, telefone, tipoSimulacao, dados, regras, ofe
 
       <div className="flex items-center justify-end gap-2">
         <Button variant="ghost" onClick={onCancelar}>Cancelar</Button>
-        <Button onClick={abrirConfirmacao}><Send className="w-4 h-4" /> Revisar e digitar</Button>
+        <Button onClick={abrirConfirmacao}><Send className="w-4 h-4" /> Revisar e enviar</Button>
       </div>
 
       {/* ── Confirmação (cria proposta de verdade) ── */}
       <Dialog open={confirmar} onOpenChange={(v) => { if (!enviando) setConfirmar(v); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Confirmar digitação na Crefisa</DialogTitle>
-            <DialogDescription>Isso cria a proposta de verdade no banco.</DialogDescription>
+            <DialogTitle>Enviar proposta pra fila de digitação</DialogTitle>
+            <DialogDescription>A proposta entra na fila e é digitada de verdade na Crefisa, uma de cada vez.</DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5 text-sm">
             <div><span className="text-muted-foreground">Cliente:</span> {nome} — {formatCpf(cpf)}</div>
@@ -360,7 +372,7 @@ export function DigitacaoForm({ cpf, telefone, tipoSimulacao, dados, regras, ofe
             <Button variant="ghost" onClick={() => setConfirmar(false)} disabled={enviando}>Voltar</Button>
             <Button onClick={enviar} disabled={enviando}>
               {enviando ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              Confirmar e digitar
+              Confirmar e enviar pra fila
             </Button>
           </DialogFooter>
         </DialogContent>

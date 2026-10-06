@@ -26,6 +26,7 @@ import {
 } from '@/hooks/use-crefisa-br';
 import { ETAPA_BR_LABEL, type EtapaBR, type FluxoBR, type SimulacaoBR } from '@/lib/crefisa-br-types';
 import { DigitacaoForm } from '@/components/baixa-renda/digitacao-form';
+import { FilaPainel } from '@/components/baixa-renda/fila-painel';
 import {
   HandCoins, Search, Loader2, AlertCircle, CheckCircle2, X, Send,
   RefreshCw, ArrowRight, ShieldCheck,
@@ -301,7 +302,7 @@ function CardBaixaRenda({ item, onClose }: { item: ItemFila; onClose: () => void
         )}
         {digitada && (
           <div className="p-4 text-xs text-green-400 flex items-center gap-1.5">
-            <CheckCircle2 className="size-3.5" /> {digitada} — acompanhe na Esteira de Análise do portal.
+            <CheckCircle2 className="size-3.5" /> {digitada} — acompanhe na fila de digitação acima.
           </div>
         )}
 
@@ -430,6 +431,9 @@ export default function BaixaRendaConsultarPage() {
           </form>
         </CardContent>
       </Card>
+
+      {/* Fila de digitação no servidor — vendedor vê a dele, gestor vê a loja */}
+      <FilaPainel />
 
       {fila.length > 0 ? (
         <div className="space-y-4">
