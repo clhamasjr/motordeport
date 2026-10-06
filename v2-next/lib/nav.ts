@@ -1,5 +1,6 @@
 import {
   Activity,
+  BarChart3,
   BookOpen,
   Briefcase,
   Building2,
@@ -143,6 +144,7 @@ export const NAV: NavGroup[] = [
     cardClass: 'hover:border-emerald-500/50 hover:shadow-emerald-500/10',
     items: [
       { href: '/baixa-renda/consultar', label: 'Consultar e Digitar', description: 'Verifique o benefício, acompanhe o Open Finance e simule a operação.', icon: Search, section: 'consultar', featured: true },
+      { href: '/baixa-renda/gestao', label: 'Produção da Loja', description: 'Acompanhe o que cada vendedor mandou pra digitação.', icon: BarChart3, needsRole: ['admin', 'gestor'], section: 'esteira' },
       { href: '/baixa-renda/sessao', label: 'Sessão do Portal', description: 'Cole a sessão do portal Crefisa pra manter o motor operante.', icon: KeyRound, section: 'config' },
     ],
   },

@@ -10,7 +10,8 @@ export const config = { runtime: 'edge' };
 //
 // Actions:
 //   enfileirar      - vendedor joga uma proposta pronta na fila (status NA_FILA)
-//   minhaFila       - lista a fila do vendedor logado (admin vê tudo)
+//   minhaFila       - lista a fila conforme o papel (vendedor/gestor/admin)
+//   producao        - produção por vendedor (visão do gestor da loja)
 //   cancelar        - cancela um item ainda não processado
 //   processar       - WORKER: pega o próximo, digita na sessão única, atualiza
 //   status          - contadores por status (painel)
@@ -156,6 +157,72 @@ export default async function handler(req) {
       return j({ success: true, mensagem: 'Cancelado' }, 200, req);
     }
 
+    // ── Produção por vendedor (visão do gestor da loja) ──────────
+    // Gestor vê a loja dele; admin vê tudo (ou filtra por loja).
+    // Vendedor comum não acessa — é visão de gestão.
+    if (action === 'producao') {
+      const escopo = escopoDoUsuario(user);
+      if (escopo.tipo === 'proprio') {
+        return jsonError('Visão de produção é do gestor da loja', 403, req);
+      }
+      const dias = Math.min(Math.max(parseInt(body.dias || 30), 1), 180);
+      const desde = new Date(Date.now() - dias * 86400000).toISOString();
+
+      let q = `criado_em=gte.${encodeURIComponent(desde)}&select=user_id,vendedor_nome,parceiro_id,status,payload,criado_em&order=criado_em.desc&limit=3000`;
+      if (escopo.tipo === 'loja') q += `&parceiro_id=eq.${escopo.parceiroId}`;
+      else if (body.parceiroId) q += `&parceiro_id=eq.${parseInt(body.parceiroId)}`;
+
+      const { data, error } = await dbQuery('crefisa_fila', q);
+      if (error) return jsonError('Erro ao ler produção: ' + error, 500, req);
+      const linhas = Array.isArray(data) ? data : [];
+
+      const valorDe = (p) => Number(p?.operacao?.valorPrincipal) || 0;
+      const porVendedor = new Map();
+      const total = { propostas: 0, digitadas: 0, naFila: 0, erros: 0, canceladas: 0, valorDigitado: 0 };
+
+      for (const r of linhas) {
+        const chave = r.user_id ?? `nome:${r.vendedor_nome || '—'}`;
+        if (!porVendedor.has(chave)) {
+          porVendedor.set(chave, {
+            userId: r.user_id ?? null,
+            vendedor: r.vendedor_nome || 'Sem nome',
+            propostas: 0, digitadas: 0, naFila: 0, erros: 0, canceladas: 0, valorDigitado: 0,
+          });
+        }
+        const v = porVendedor.get(chave);
+        v.propostas++; total.propostas++;
+        if (r.status === 'DIGITADA') {
+          v.digitadas++; total.digitadas++;
+          const val = valorDe(r.payload);
+          v.valorDigitado += val; total.valorDigitado += val;
+        } else if (r.status === 'ERRO') { v.erros++; total.erros++; }
+        else if (r.status === 'CANCELADA') { v.canceladas++; total.canceladas++; }
+        else { v.naFila++; total.naFila++; } // NA_FILA ou PROCESSANDO
+      }
+
+      // Taxa de êxito = digitadas / (digitadas + erros) — ignora o que ainda
+      // está na fila, senão o número oscila só por causa do tempo de espera.
+      const comTaxa = [...porVendedor.values()].map((v) => ({
+        ...v,
+        taxaExito: (v.digitadas + v.erros) > 0 ? Math.round((v.digitadas / (v.digitadas + v.erros)) * 100) : null,
+        ticketMedio: v.digitadas > 0 ? Math.round((v.valorDigitado / v.digitadas) * 100) / 100 : 0,
+      })).sort((a, b) => b.digitadas - a.digitadas || b.propostas - a.propostas);
+
+      return j({
+        success: true,
+        escopo: escopo.tipo,
+        dias,
+        desde,
+        total: {
+          ...total,
+          taxaExito: (total.digitadas + total.erros) > 0
+            ? Math.round((total.digitadas / (total.digitadas + total.erros)) * 100) : null,
+          ticketMedio: total.digitadas > 0 ? Math.round((total.valorDigitado / total.digitadas) * 100) / 100 : 0,
+        },
+        vendedores: comTaxa,
+      }, 200, req);
+    }
+
     // ── Contadores (painel) ──────────────────────────────────────
     if (action === 'status') {
       const { data } = await dbQuery('crefisa_fila', 'select=status');
@@ -211,7 +278,7 @@ export default async function handler(req) {
       }
     }
 
-    return jsonError('Action invalida. Validas: enfileirar, minhaFila, cancelar, status, processar', 400, req);
+    return jsonError('Action invalida. Validas: enfileirar, minhaFila, producao, cancelar, status, processar', 400, req);
   } catch (e) {
     return jsonError('Erro fila Crefisa: ' + e.message, 500, req);
   }

@@ -89,3 +89,36 @@ export function useCancelarFila() {
     onError: (err: Error) => toast.error(err.message || 'Erro ao cancelar'),
   });
 }
+
+// ── Produção por vendedor (visão do gestor da loja) ───────────────
+
+export interface ProducaoVendedor {
+  userId: number | null;
+  vendedor: string;
+  propostas: number;
+  digitadas: number;
+  naFila: number;
+  erros: number;
+  canceladas: number;
+  valorDigitado: number;
+  /** digitadas / (digitadas + erros) — null se ainda não houve desfecho */
+  taxaExito: number | null;
+  ticketMedio: number;
+}
+
+export interface ProducaoLoja {
+  success: boolean;
+  escopo: EscopoFila;
+  dias: number;
+  total: Omit<ProducaoVendedor, 'userId' | 'vendedor'>;
+  vendedores: ProducaoVendedor[];
+}
+
+/** Produção agregada. Só gestor e admin — vendedor comum recebe 403. */
+export function useProducaoCrefisa(dias: number) {
+  return useQuery({
+    queryKey: ['crefisa-fila', 'producao', dias],
+    queryFn: async () => await api<ProducaoLoja>(FILA, { action: 'producao', dias }),
+    staleTime: 60_000,
+  });
+}
