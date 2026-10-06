@@ -336,7 +336,21 @@ export default function BaixaRendaConsultarPage() {
   const [hidratada, setHidratada] = useState(false);
   const sessao = useCrefisaSessao();
 
-  useEffect(() => { setFila(lerFila()); setHidratada(true); }, []);
+  useEffect(() => {
+    const inicial = lerFila();
+    // Link pré-preenchido: /baixa-renda/consultar?cpf=...&tel=... entra na fila sozinho
+    try {
+      const q = new URLSearchParams(window.location.search);
+      const qCpf = (q.get('cpf') || '').replace(/\D/g, '');
+      const qTel = (q.get('tel') || q.get('telefone') || '').replace(/\D/g, '');
+      if (qCpf.length === 11 && !inicial.some((f) => f.cpf === qCpf)) {
+        inicial.unshift({ id: `${qCpf}-${Date.now()}`, cpf: qCpf, telefone: qTel, quando: new Date().toISOString() });
+        window.history.replaceState(null, '', window.location.pathname); // limpa a URL
+      }
+    } catch { /* ignore */ }
+    setFila(inicial);
+    setHidratada(true);
+  }, []);
   useEffect(() => {
     if (!hidratada) return;
     try { localStorage.setItem(FILA_KEY, JSON.stringify(fila)); } catch { /* ignore */ }
