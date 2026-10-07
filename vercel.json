@@ -41,6 +41,10 @@
     {
       "path": "/api/crefisa-fila",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/crefisa-esteira",
+      "schedule": "0 */3 * * *"
     }
   ]
 }
