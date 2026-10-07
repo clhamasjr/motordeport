@@ -174,8 +174,12 @@ async function apiCallRaiz(path, method = 'GET', body = null) {
   if (r.status === 401 || r.status === 403) return SESSAO_EXPIRADA;
 
   const t = await r.text();
-  // HTTP 500 com HTML do IIS = quase sempre sessão/credencial faltando
-  if (r.status === 500 && /n[ãa]o pode ser exibida|erro interno do servidor/i.test(t)) {
+  // HTTP 500 com HTML do IIS = quase sempre sessão expirada. O portal responde
+  // tanto em PT ("não pode ser exibida") quanto em EN ("The page cannot be
+  // displayed because an internal server error"). Qualquer 500 com texto de
+  // erro de página (não-JSON) tratamos como sessão caída — senão o motor
+  // reporta "cliente sem benefício" quando na real a sessão morreu.
+  if (r.status === 500 && /n[ãa]o pode ser exibida|erro interno do servidor|page cannot be displayed|internal server error/i.test(t)) {
     return SESSAO_EXPIRADA;
   }
   let d;
@@ -204,11 +208,39 @@ async function aspCall(params) {
     },
   });
   const t = await r.text();
-  // Se voltou a tela de login, a sessão morreu
+  // Cookie morto: o ASP redireciona pra tela de login. Duas formas vistas ao
+  // vivo — o <script>location.href='default.asp?EX=S'</script> e o HTML com
+  // campo de senha/recaptcha.
+  if (/default\.asp\?EX=S|location\.href\s*=\s*['"]default\.asp/i.test(t)) return SESSAO_EXPIRADA;
   if (/<html/i.test(t) && /senha|recaptcha/i.test(t)) return SESSAO_EXPIRADA;
   let d;
   try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 800) }; }
   return { ok: r.ok, status: r.status, data: d };
+}
+
+// ── Saúde da sessão: testa OS DOIS tokens separadamente ───────────
+// bearer (REST) → digitação/consulta REST funcionam.
+// cookie (ASP)  → telas .asp e ajax (esteira, datas) funcionam.
+// Só é "operante" de verdade quando os dois estão vivos.
+async function checarSaudeSessao() {
+  const sess = await getPortalSession();
+  if (!sess || !sess.bearer) {
+    return { bearerVivo: false, cookieVivo: false, operante: false, mensagem: '⚠️ Sem sessão — o robô precisa logar e empurrar (setPortalSession)' };
+  }
+  // bearer: consulta REST leve (não cria nada)
+  const rest = await apiCall('/captura/operacao-cliente/11144477735?tipo=0', 'GET');
+  const bearerVivo = !rest._semSessao;
+  // cookie: combo ajax leve
+  const asp = await aspCall({ combo: 'GetVendedorId' });
+  const cookieVivo = !asp._semSessao && asp.data && asp.data.vendedorId != null;
+
+  const operante = bearerVivo && cookieVivo;
+  let mensagem;
+  if (operante) mensagem = '✅ Sessão operante — digitação e esteira liberadas';
+  else if (bearerVivo && !cookieVivo) mensagem = '⚠️ Cookie expirado — digitação REST ainda roda, mas esteira/ajax não. O robô precisa re-empurrar a sessão (cookie fresco).';
+  else if (!bearerVivo && cookieVivo) mensagem = '⚠️ Token (bearer) expirado — o robô precisa re-empurrar a sessão.';
+  else mensagem = '⚠️ Sessão expirada (token e cookie) — o robô precisa logar e empurrar de novo.';
+  return { bearerVivo, cookieVivo, operante, mensagem };
 }
 
 // ── Traduz a resposta da consulta de benefício numa etapa do funil ──
@@ -304,16 +336,16 @@ export default async function handler(req) {
         codigo_usuario_parceiro: String(body.codigoUsuarioParceiro || body.codigo_usuario_parceiro || '').trim() || null,
         alerta_enviado: false, // sessão fresca → rearma o aviso de queda no WhatsApp
       });
-      // Confirma na mesma chamada se a sessão realmente funciona
-      const teste = await apiCall('/captura/operacao-cliente/11144477735?tipo=0', 'GET');
-      const viva = !teste._semSessao;
+      // Confirma na mesma chamada se a sessão funciona — testa OS DOIS tokens
+      const saude = await checarSaudeSessao();
       return j({
         success: true,
-        viva,
+        viva: saude.bearerVivo,          // compat: "viva" = bearer (REST)
+        bearerVivo: saude.bearerVivo,
+        cookieVivo: saude.cookieVivo,
+        operante: saude.operante,        // precisa dos dois pra digitar E acompanhar esteira
         salva: true,
-        mensagem: viva
-          ? '✅ Sessão Crefisa salva e ativa — motor Baixa Renda operando'
-          : '⚠️ Sessão salva, mas o portal não aceitou (token/cookie podem estar errados ou o IP do servidor bloqueado)',
+        mensagem: saude.mensagem,
         quem: user._internal ? 'robo' : 'usuario',
       }, 200, req);
     }
@@ -321,19 +353,20 @@ export default async function handler(req) {
     if (action === 'statusPortalSession') {
       const s = (await getPortalSession()) || {};
       if (!s.bearer) {
-        return j({ success: false, sessao: 'sem-sessao', viva: false, mensagem: 'Nenhuma sessão colada ainda' }, 200, req);
+        return j({ success: false, sessao: 'sem-sessao', viva: false, operante: false, mensagem: 'Nenhuma sessão colada ainda' }, 200, req);
       }
-      // testa vivacidade com um CPF sintético (consulta leve, não cria nada)
-      const teste = await apiCall('/captura/operacao-cliente/11144477735?tipo=0', 'GET');
-      const viva = !teste._semSessao;
+      const saude = await checarSaudeSessao();
       return j({
         success: true,
-        sessao: viva ? 'ativa' : 'expirada',
-        viva,
+        sessao: saude.operante ? 'ativa' : (saude.bearerVivo ? 'parcial' : 'expirada'),
+        viva: saude.bearerVivo,          // compat
+        bearerVivo: saude.bearerVivo,
+        cookieVivo: saude.cookieVivo,
+        operante: saude.operante,
         bearerPreview: String(s.bearer).substring(0, 10) + '...',
         temCookie: !!s.cookie,
         atualizadoEm: s.atualizado_em || null,
-        mensagem: viva ? '✅ Sessão viva' : '⚠️ Sessão expirada — recole',
+        mensagem: saude.mensagem,
       }, 200, req);
     }
 

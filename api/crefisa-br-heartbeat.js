@@ -50,23 +50,29 @@ export default async function handler(req) {
     return jsonResp({ success: false, erro: e.message }, 200, req);
   }
 
-  const viva = !!r?.viva;
+  // "operante" = bearer E cookie vivos. O cookie morre antes do bearer, então
+  // o alerta tem que olhar os dois — senão a esteira para em silêncio.
+  const operante = !!r?.operante;
 
-  // Avisa no WhatsApp na TRANSIÇÃO viva → caída (não repete a cada 10min)
+  // Avisa no WhatsApp na TRANSIÇÃO operante → caída (não repete a cada 10min)
   let avisou = false;
   const { data: sess } = await dbSelect('crefisa_portal_session', { filters: { id: 1 }, single: true });
   const jaAvisado = !!sess?.alerta_enviado;
 
-  if (!viva && !jaAvisado && sess) {
+  if (!operante && !jaAvisado && sess) {
     const telefone = (process.env.CREFISA_BR_ALERTA_WHATSAPP || '').trim();
     if (telefone) {
+      // mensagem precisa dependendo do que caiu
+      const detalhe = r?.cookieVivo === false && r?.bearerVivo
+        ? 'O cookie expirou (a esteira/ajax pararam; a digitação REST ainda roda).'
+        : 'A sessão expirou.';
       await fetch(APP_URL() + '/api/evolution', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-internal-secret': webhookSecret },
         body: JSON.stringify({
           action: 'send',
           number: telefone,
-          text: '⚠️ FlowForce — a sessão do portal Crefisa (Baixa Renda) caiu.\n\nAs consultas de Bolsa Família estão paradas até recolar.\n\nAbre o FlowForce em Baixa Renda → Sessão do Portal e cola de novo (leva 1 min).',
+          text: `⚠️ FlowForce — sessão Crefisa (Baixa Renda) precisa renovar.\n\n${detalhe}\n\nO robô deve logar e re-empurrar a sessão (bearer + cookie fresco) pra voltar a operar 100%.`,
         }),
       }).catch(() => {});
       avisou = true;
@@ -74,17 +80,19 @@ export default async function handler(req) {
     await dbUpsert('crefisa_portal_session', { ...sess, alerta_enviado: true }, 'id').catch(() => {});
   }
 
-  // Voltou a ficar viva → rearma o alerta pra próxima queda
-  if (viva && jaAvisado && sess) {
+  // Voltou a ficar operante → rearma o alerta pra próxima queda
+  if (operante && jaAvisado && sess) {
     await dbUpsert('crefisa_portal_session', { ...sess, alerta_enviado: false }, 'id').catch(() => {});
   }
 
   return jsonResp({
     success: true,
-    sessaoViva: viva,
+    operante,
+    bearerVivo: r?.bearerVivo ?? null,
+    cookieVivo: r?.cookieVivo ?? null,
     avisouWhatsapp: avisou,
-    mensagem: viva
-      ? 'Sessão Crefisa renovada (heartbeat) ✅'
-      : (r?.mensagem || 'Sessão Crefisa não está viva — recolar em /baixa-renda/sessao'),
+    mensagem: operante
+      ? 'Sessão Crefisa operante (heartbeat) ✅'
+      : (r?.mensagem || 'Sessão Crefisa precisa renovar — robô deve re-empurrar'),
   }, 200, req);
 }
