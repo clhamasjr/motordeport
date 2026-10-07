@@ -44,7 +44,8 @@ export interface RegrasBR {
   convenioId2tech: number;
   codigoConvenioCrefisa: number;
   operacoes: RegraOperacaoBR[];
-  bancos: { codigo: number; nome: string }[];
+  /** Atalhos no formulário — NÃO é lista fechada; a Crefisa é quem valida */
+  bancosSugeridos: { codigo: number; nome: string }[];
   escolaridades: OpcaoId[];
   estadosCivis: OpcaoId[];
 }

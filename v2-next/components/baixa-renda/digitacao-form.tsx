@@ -297,17 +297,30 @@ export function DigitacaoForm({ cpf, telefone, tipoSimulacao, dados, regras, ofe
       <div className="space-y-2">
         <div className="text-[11px] uppercase text-muted-foreground font-medium">Conta pra receber</div>
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-          <Campo label="Banco" className="col-span-2">
-            <select className={selectCls} value={banco} onChange={(e) => setBanco(e.target.value)}>
-              {regras.bancos.map((b) => <option key={b.codigo} value={b.codigo}>{String(b.codigo).padStart(3, '0')} – {b.nome}</option>)}
-            </select>
+          <Campo label="Banco (código)" className="col-span-2">
+            <Input
+              list="bancos-br"
+              value={banco}
+              onChange={(e) => setBanco(e.target.value.replace(/\D/g, '').slice(0, 3))}
+              inputMode="numeric"
+              placeholder="104"
+              className="h-10 font-mono"
+            />
+            <datalist id="bancos-br">
+              {regras.bancosSugeridos?.map((b) => (
+                <option key={b.codigo} value={b.codigo}>{String(b.codigo).padStart(3, '0')} – {b.nome}</option>
+              ))}
+            </datalist>
           </Campo>
           <Campo label="Agência"><Input value={agencia} onChange={(e) => setAgencia(e.target.value.replace(/\D/g, '').slice(0, 5))} inputMode="numeric" className="h-10 font-mono" /></Campo>
           <Campo label="Díg. ag."><Input value={digitoAgencia} onChange={(e) => setDigitoAgencia(e.target.value.slice(0, 1))} className="h-10 font-mono" /></Campo>
           <Campo label="Conta"><Input value={conta} onChange={(e) => setConta(e.target.value.replace(/\D/g, '').slice(0, 13))} inputMode="numeric" className="h-10 font-mono" /></Campo>
           <Campo label="Díg. conta"><Input value={digitoConta} onChange={(e) => setDigitoConta(e.target.value.slice(0, 2))} className="h-10 font-mono" /></Campo>
         </div>
-        <p className="text-[10px] text-muted-foreground">A Crefisa só aceita Banco do Brasil, Santander, Caixa ou Bradesco no Baixa Renda.</p>
+        <p className="text-[10px] text-muted-foreground">
+          Informe o código do banco (ex: 104 = Caixa). Quem valida a conta é a Crefisa, na hora de enviar.
+          Conta Caixa Tem vai <b>sem</b> a operação 1288.
+        </p>
       </div>
 
       {/* ── Documentos ── */}
@@ -357,7 +370,7 @@ export function DigitacaoForm({ cpf, telefone, tipoSimulacao, dados, regras, ofe
           <div className="space-y-1.5 text-sm">
             <div><span className="text-muted-foreground">Cliente:</span> {nome} — {formatCpf(cpf)}</div>
             <div><span className="text-muted-foreground">Operação:</span> {tipoSimulacao === 1 ? 'NOVO' : 'REFIN'} · {formatBRL(oferta.valorSolicitado)} em {oferta.quantidadeParcelas}x de {formatBRL(oferta.valorParcela)}</div>
-            <div><span className="text-muted-foreground">Crédito em:</span> {regras.bancos.find((b) => String(b.codigo) === banco)?.nome} · ag {agencia}{digitoAgencia ? `-${digitoAgencia}` : ''} · cc {conta}-{digitoConta}</div>
+            <div><span className="text-muted-foreground">Crédito em:</span> banco {banco}{regras.bancosSugeridos?.find((b) => String(b.codigo) === banco) ? ` (${regras.bancosSugeridos.find((b) => String(b.codigo) === banco)!.nome})` : ''} · ag {agencia}{digitoAgencia ? `-${digitoAgencia}` : ''} · cc {conta}-{digitoConta}</div>
             <div><span className="text-muted-foreground">Documentos:</span> {tiposAnexo.filter((t) => (arquivos[t] || []).length).join(', ')}</div>
           </div>
           {etapaEnvio && (

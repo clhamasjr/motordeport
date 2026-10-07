@@ -59,10 +59,14 @@ const REGRAS_BR = {
     { tipoSimulacao: 2, nome: 'REFIN', valorMin: 61, valorMax: 750, parcelaMin: 25, parcelaMax: 159, prazoMin: 1, prazoMax: 12 },
   ],
   // Bancos aceitos pra conta do cliente no Baixa Renda (Crefisa 069 é só INSS)
-  bancos: [
+  // ⚠️ NÃO é lista fechada: quem aceita ou recusa a conta é a própria Crefisa,
+  // via /captura/validacao-dados-bancarios (o motor sempre chama antes de digitar).
+  // Estes são só atalhos no formulário — Bolsa Família costuma cair na Caixa
+  // (conta Caixa Tem, informada SEM a operação 1288).
+  bancosSugeridos: [
+    { codigo: 104, nome: 'Caixa Econômica Federal' },
     { codigo: 1, nome: 'Banco do Brasil' },
     { codigo: 33, nome: 'Santander' },
-    { codigo: 104, nome: 'Caixa Econômica Federal' },
     { codigo: 237, nome: 'Bradesco' },
   ],
   escolaridades: [
@@ -641,9 +645,6 @@ export default async function handler(req) {
       if (tel.length < 10) faltando.push('telefone com DDD');
       if (faltando.length) return jsonError(`Faltou preencher: ${faltando.join(', ')}`, 400, req);
 
-      if (!REGRAS_BR.bancos.some((b) => b.codigo === parseInt(db.codigoBanco))) {
-        return jsonError('Banco não aceito no Baixa Renda — só Banco do Brasil, Santander, Caixa ou Bradesco', 400, req);
-      }
       const parcela = parseFloat(op.valorParcela);
       if (parcela < 25 || parcela > 159) return jsonError('Parcela fora da faixa R$ 25 a R$ 159', 400, req);
 
