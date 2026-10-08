@@ -12,6 +12,7 @@ export const config = { runtime: 'edge' };
 //   enfileirar      - vendedor joga uma proposta pronta na fila (status NA_FILA)
 //   minhaFila       - lista a fila conforme o papel (vendedor/gestor/admin)
 //   producao        - produção por vendedor (visão do gestor da loja)
+//   minhasPropostas - carteira do próprio vendedor (fila + esteira + totais)
 //   cancelar        - cancela um item ainda não processado
 //   processar       - WORKER: pega o próximo, digita na sessão única, atualiza
 //   status          - contadores por status (painel)
@@ -25,6 +26,7 @@ export const config = { runtime: 'edge' };
 
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 import { dbInsert, dbUpdate, dbQuery } from './_lib/supabase.js';
+import { classificarSituacao } from './_lib/crefisa-situacao.js';
 
 const j = (data, status = 200, req = null) => jsonResp(data, status, req);
 const onlyDigits = (s) => String(s || '').replace(/\D/g, '');
@@ -223,6 +225,60 @@ export default async function handler(req) {
       }, 200, req);
     }
 
+    // ── Carteira do vendedor: só o que ELE lançou, qualquer papel ─
+    // Diferente de minhaFila (que abre a loja pro gestor): aqui é sempre
+    // a produção pessoal, com valor/parcela e onde cada uma está na esteira.
+    if (action === 'minhasPropostas') {
+      if (!user?.id) return jsonError('Só pra usuário logado', 403, req);
+      const dias = Math.min(Math.max(parseInt(body.dias || 30), 1), 180);
+      const desde = new Date(Date.now() - dias * 86400000).toISOString();
+
+      const q = `user_id=eq.${user.id}&criado_em=gte.${encodeURIComponent(desde)}`
+        + '&select=id,cpf,nome_cliente,telefone,status,mensagem,payload,guid,criado_em,processado_em,'
+        + 'esteira_situacao,esteira_situacao_em,esteira_pendencia,esteira_contrato,esteira_finalizada'
+        + '&order=criado_em.desc&limit=500';
+      const { data, error } = await dbQuery('crefisa_fila', q);
+      if (error) return jsonError('Erro ao ler suas propostas: ' + error, 500, req);
+
+      const total = {
+        propostas: 0, naFila: 0, digitadas: 0, erros: 0, canceladas: 0,
+        pendentes: 0, pagas: 0, valorDigitado: 0, valorPago: 0,
+      };
+      const itens = (Array.isArray(data) ? data : []).map((r) => {
+        const op = r.payload?.operacao || {};
+        const valor = Number(op.valorPrincipal) || 0;
+        const est = r.esteira_situacao ? classificarSituacao(r.esteira_situacao) : null;
+
+        total.propostas++;
+        if (r.status === 'DIGITADA') {
+          total.digitadas++; total.valorDigitado += valor;
+          if (est?.estagio === 'PENDENTE') total.pendentes++;
+          if (est?.estagio === 'PAGA') { total.pagas++; total.valorPago += valor; }
+        } else if (r.status === 'ERRO') total.erros++;
+        else if (r.status === 'CANCELADA') total.canceladas++;
+        else total.naFila++;
+
+        return {
+          id: r.id, cpf: r.cpf, nome_cliente: r.nome_cliente, telefone: r.telefone,
+          status: r.status, mensagem: r.mensagem, guid: r.guid,
+          criado_em: r.criado_em, processado_em: r.processado_em,
+          valor, valorParcela: Number(op.valorParcela) || 0, prazo: Number(op.quantidadeParcelas) || 0,
+          esteira: r.esteira_situacao ? {
+            situacao: r.esteira_situacao, estagio: est.estagio, rotulo: est.rotulo,
+            pendencia: r.esteira_pendencia, contrato: r.esteira_contrato,
+            em: r.esteira_situacao_em, finalizada: !!r.esteira_finalizada,
+          } : null,
+        };
+      });
+
+      // Posição de quem está esperando — o vendedor quer saber "quando sai a minha"
+      for (const it of itens) {
+        if (it.status === 'NA_FILA') it.posicao = await posicaoNaFila(it.id);
+      }
+
+      return j({ success: true, dias, desde, total, itens }, 200, req);
+    }
+
     // ── Contadores (painel) ──────────────────────────────────────
     if (action === 'status') {
       const { data } = await dbQuery('crefisa_fila', 'select=status');
@@ -278,7 +334,7 @@ export default async function handler(req) {
       }
     }
 
-    return jsonError('Action invalida. Validas: enfileirar, minhaFila, producao, cancelar, status, processar', 400, req);
+    return jsonError('Action invalida. Validas: enfileirar, minhaFila, producao, minhasPropostas, cancelar, status, processar', 400, req);
   } catch (e) {
     return jsonError('Erro fila Crefisa: ' + e.message, 500, req);
   }

@@ -122,3 +122,56 @@ export function useProducaoCrefisa(dias: number) {
     staleTime: 60_000,
   });
 }
+
+// ── Carteira do vendedor (só o que ele mesmo lançou) ──────────────
+
+export type EstagioEsteira = 'PAGA' | 'FORMALIZADA' | 'APROVADA' | 'PENDENTE' | 'CANCELADA' | 'EM_ANALISE' | 'OUTRO';
+
+export interface MinhaProposta {
+  id: string;
+  cpf: string;
+  nome_cliente: string | null;
+  telefone: string | null;
+  status: StatusFila;
+  mensagem: string | null;
+  guid: string | null;
+  criado_em: string;
+  processado_em: string | null;
+  valor: number;
+  valorParcela: number;
+  prazo: number;
+  /** posição na fila — só quando status = NA_FILA */
+  posicao?: number | null;
+  esteira: {
+    situacao: string;
+    estagio: EstagioEsteira;
+    rotulo: string;
+    pendencia: string | null;
+    contrato: string | null;
+    em: string | null;
+    finalizada: boolean;
+  } | null;
+}
+
+export interface MinhasPropostas {
+  success: boolean;
+  dias: number;
+  total: {
+    propostas: number; naFila: number; digitadas: number; erros: number; canceladas: number;
+    pendentes: number; pagas: number; valorDigitado: number; valorPago: number;
+  };
+  itens: MinhaProposta[];
+}
+
+/** Produção pessoal do vendedor. Atualiza mais rápido enquanto algo anda na fila. */
+export function useMinhasPropostas(dias: number) {
+  return useQuery({
+    queryKey: ['crefisa-fila', 'minhas', dias],
+    queryFn: async () => await api<MinhasPropostas>(FILA, { action: 'minhasPropostas', dias }),
+    refetchInterval: (query) => {
+      const itens = query.state.data?.itens || [];
+      const emAndamento = itens.some((i) => i.status === 'NA_FILA' || i.status === 'PROCESSANDO');
+      return emAndamento ? 10_000 : 60_000;
+    },
+  });
+}
