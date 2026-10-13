@@ -380,6 +380,16 @@ export default async function handler(req) {
         loginInfo.erro = auth.token ? null : (auth.error || null);
         // Diagnóstico do PERFIL: claims do JWT (roles/perfil/scope) — sem dados
         // sensíveis (nome/e-mail mascarados). Rotas 401 com login OK = falta role.
+        const partes = String(auth.token || '').split('.');
+        loginInfo.tokenFormato = partes.length === 3 ? 'jwt' : 'opaco';
+        loginInfo.tokenTamanho = String(auth.token || '').length;
+        if (auth.raw && typeof auth.raw === 'object') {
+          const maskV = (v) => { const t = String(v); return t.length <= 4 ? t[0] + '***' : t.slice(0, 3) + '***' + t.slice(-2); };
+          loginInfo.rawLogin = Object.fromEntries(Object.entries(auth.raw).map(([k, v]) => [k,
+            /token|senha|password|key|secret/i.test(k) ? `<${typeof v}:${String(v ?? '').length}>`
+              : /name|email|login|usuario|cpf|nome/i.test(k) ? maskV(v)
+              : (typeof v === 'object' ? JSON.stringify(v).slice(0, 200) : v)]));
+        }
         try {
           const payloadB64 = String(auth.token).split('.')[1] || '';
           const json = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')));
