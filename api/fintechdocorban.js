@@ -378,6 +378,22 @@ export default async function handler(req) {
         loginInfo.ok = !!auth.token;
         loginInfo.httpStatus = auth.status;
         loginInfo.erro = auth.token ? null : (auth.error || null);
+        // Diagnóstico do PERFIL: claims do JWT (roles/perfil/scope) — sem dados
+        // sensíveis (nome/e-mail mascarados). Rotas 401 com login OK = falta role.
+        try {
+          const payloadB64 = String(auth.token).split('.')[1] || '';
+          const json = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')));
+          const mask = (v) => { const t = String(v); return t.length <= 4 ? t[0] + '***' : t.slice(0, 3) + '***' + t.slice(-2); };
+          const claims = {};
+          for (const [k, v] of Object.entries(json)) {
+            if (/name|email|unique_name|nameid|sub|cpf|login|usuario/i.test(k)) claims[k] = mask(v);
+            else if (/exp|iat|nbf/i.test(k)) claims[k] = new Date(Number(v) * 1000).toISOString();
+            else claims[k] = v;
+          }
+          loginInfo.claims = claims;
+          loginInfo.rawLoginCampos = auth.raw && typeof auth.raw === 'object' ? Object.keys(auth.raw) : null;
+          loginInfo.requiresPasswordUpdate = auth.raw?.requires_password_update ?? null;
+        } catch { /* token opaco ou sem payload JSON */ }
       }
       // ETAPA 2: pinga endpoint barato com os headers hibridos
       const r = await fc('/Api/V1/CommissionTableCorban/Get-All-To-Partner', 'GET'); // Bank/Get-All saiu do ar (404)
