@@ -162,6 +162,16 @@ function erroFintech(etapa, r, cpf, provider) {
 
 const j = (data, status = 200, req = null) => jsonResp(data, status, req);
 
+// Usuário MASCARADO pro teste de conexão (o dono confere QUAL conta está no
+// Vercel sem o valor inteiro aparecer em tela/log).
+function mascararUsuario(u) {
+  const s = String(u || '');
+  if (!s) return '(vazio)';
+  const [local, dom] = s.includes('@') ? s.split('@') : [s, null];
+  const vis = local.length <= 4 ? local[0] + '***' : local.slice(0, 3) + '***' + local.slice(-2);
+  return (dom ? `${vis}@${dom}` : vis) + ` (${s.length} caracteres)`;
+}
+
 // ══════════════════════════════════════════════════════════════════
 // NEMESYS — API interna do PORTAL (fintechdocorban.nossafintech.com.br).
 // É onde a simulação de CLT-Celcoin realmente funciona (a API de parceiro
@@ -371,6 +381,7 @@ export default async function handler(req) {
         ambiente: cfg.ambiente,
         baseUrl: cfg.baseUrl,
         temSubscriptionKey: !!cfg.apiKey,
+        credencial: { usuario: mascararUsuario(cfg.login), senhaConfigurada: !!cfg.password, tamanhoSenha: (cfg.password || '').length, tamanhoChave: (cfg.apiKey || '').length, envs: [`FINTECH_LOGIN_${cfg.ambiente}`, `FINTECH_PASSWORD_${cfg.ambiente}`, `FINTECH_API_KEY_${cfg.ambiente}`] },
         login: loginInfo,
         httpStatus: r.status,
         mensagem: r.ok ? 'API Fintech do Corban autenticada com sucesso' : `Endpoint HTTP ${r.status}`,
