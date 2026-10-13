@@ -124,9 +124,9 @@ async function fc(path, method = 'GET', body = null, _retry = true) {
     const text = await r.text();
     let data;
     try { data = JSON.parse(text); } catch { data = { raw: text.substring(0, 1000) }; }
-    return { ok: r.ok, status: r.status, data };
+    return { ok: r.ok, status: r.status, data, loginOk: !!auth.token };
   } catch (e) {
-    return { ok: false, status: 0, data: { error: e.message } };
+    return { ok: false, status: 0, data: { error: e.message }, loginOk: !!auth.token };
   }
 }
 
@@ -146,7 +146,12 @@ function erroFintech(etapa, r, cpf, provider) {
   const msgApi = d.message || d.mensagem || d.error || d.title || errs
     || (typeof d.raw === 'string' ? d.raw.substring(0, 160) : null);
   const st = (r && r.status) || 0;
-  const tipo = (st === 401 || st === 403) ? 'credencial recusada — revisar FINTECH_API_KEY/LOGIN no Vercel'
+  // Login (Bearer) passou mas a rota CLT devolve 401/403 = o USUÁRIO não tem o
+  // produto CLT liberado no Fintech ("Acesso não autorizado, entre em contato
+  // com o Administrador") — não adianta mexer em chave/senha no Vercel.
+  const semPermissao = (st === 401 || st === 403) && (r?.loginOk === true || /administrador|n[aã]o autorizado/i.test(String(msgApi || '')));
+  const tipo = semPermissao ? 'login OK, mas o usuário NÃO tem o produto CLT (QI/Celcoin) liberado — pedir ao administrador do Fintech'
+    : (st === 401 || st === 403) ? 'credencial recusada — revisar FINTECH_API_KEY/LOGIN no Vercel'
     : st === 409 ? 'configuração pendente no Fintech (ex: bancarizadora não habilitada)'
     : st === 429 ? 'limite de requisições — re-tenta sozinho'
     : (st === 0 || st === 408 || st >= 500) ? 'API do Fintech fora/instável — re-tenta sozinho'
@@ -375,7 +380,7 @@ export default async function handler(req) {
         loginInfo.erro = auth.token ? null : (auth.error || null);
       }
       // ETAPA 2: pinga endpoint barato com os headers hibridos
-      const r = await fc('/Api/V1/Bank/Get-All', 'GET');
+      const r = await fc('/Api/V1/CommissionTableCorban/Get-All-To-Partner', 'GET'); // Bank/Get-All saiu do ar (404)
       return j({
         success: r.ok,
         ambiente: cfg.ambiente,
