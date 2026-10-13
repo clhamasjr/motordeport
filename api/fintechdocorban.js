@@ -358,6 +358,7 @@ export default async function handler(req) {
       // ETAPA 1: login (se configurado) — reporta sem vazar credencial
       let loginInfo = { configurado: !!(cfg.login && cfg.password), ok: false, httpStatus: null, erro: null };
       if (cfg.login && cfg.password) {
+        await liberarLogin('fintech'); // teste manual = tentativa de verdade (ignora a pausa de 30min do disjuntor)
         const auth = await getAccessToken(cfg, true);
         loginInfo.ok = !!auth.token;
         loginInfo.httpStatus = auth.status;

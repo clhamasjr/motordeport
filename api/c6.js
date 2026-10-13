@@ -104,6 +104,8 @@ export default async function handler(req) {
     // ─── TEST: valida auth + credenciais ─────────────────────
     if (action === 'test') {
       try {
+        await liberarLogin('c6'); // teste manual ignora a pausa do disjuntor
+        TOKEN_CACHE = { token: null, expiresAt: 0 };
         const token = await getToken();
         return j({
           success: true,

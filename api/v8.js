@@ -255,6 +255,8 @@ async function handleAction(body, req) {
     // ─── TEST: valida auth ────────────────────────────────────
     if (action === 'test') {
       try {
+        await liberarLogin('v8'); // teste manual ignora a pausa do disjuntor
+        TOKEN_CACHE = { token: null, expiresAt: 0 };
         const token = await getToken();
         return j({
           success: true, apiActive: true,
