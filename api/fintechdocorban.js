@@ -174,7 +174,7 @@ function erroFintech(etapa, r, cpf, provider) {
   // produto CLT liberado no Fintech ("Acesso não autorizado, entre em contato
   // com o Administrador") — não adianta mexer em chave/senha no Vercel.
   const semPermissao = (st === 401 || st === 403) && (r?.loginOk === true || /administrador|n[aã]o autorizado/i.test(String(msgApi || '')));
-  const tipo = semPermissao ? 'login OK, mas o usuário da API está SEM PERMISSÃO nas rotas de consulta (CLT QI/Celcoin e INSS) — pedir ao administrador do Fintech restaurar o perfil da API'
+  const tipo = semPermissao ? 'login OK, mas o usuário da API está SEM PERMISSÃO na consulta de vínculos CLT (Consult-Employment-Relationship QI/Celcoin) — pedir ao administrador do Fintech liberar'
     : (st === 401 || st === 403) ? 'credencial recusada — revisar FINTECH_API_KEY/LOGIN no Vercel'
     : st === 409 ? 'configuração pendente no Fintech (ex: bancarizadora não habilitada)'
     : st === 429 ? 'limite de requisições — re-tenta sozinho'
