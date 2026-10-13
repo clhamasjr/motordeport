@@ -61,7 +61,7 @@ function getConfig() {
 
 // Cache de token de login (escopo de modulo, reaproveitado entre invocacoes
 // na mesma instancia Edge). TTL conservador de 25min.
-let _tokenCache = { token: null, exp: 0, ambiente: null };
+let _tokenCache = { token: null, exp: 0, ambiente: null, candidatos: [], idx: 0, tipoBom: null };
 
 // Faz login (POST /Api/V1/User/Login) -> access_token. So roda se login/senha
 // estiverem configurados. Retorna { token, status, error, raw }.
@@ -96,12 +96,21 @@ async function getAccessToken(cfg, force = false) {
     // o JWT no Bearer — com o access_token opaco davam 401 vazio em tudo.
     const bearerLimpo = d.token_bearer ? String(d.token_bearer).replace(/^Bearer\s+/i, '').trim() : null;
     const ehJwt = (v) => typeof v === 'string' && v.split('.').length === 3;
-    const tok = [d.jwt_token, bearerLimpo, d.access_token, d.accessToken, d.token, d?.result?.access_token, d?.data?.access_token]
-      .find((v) => ehJwt(v)) || d.jwt_token || bearerLimpo || d.access_token || d.accessToken || d.token || d?.result?.access_token || d?.data?.access_token || null;
+    // Candidatos em ordem de preferência; o fc() avança pro próximo se a rota
+    // responder 401 vazio (o app rejeitou aquele token) e memoriza o que serviu.
+    const candidatos = [
+      ['token_bearer', bearerLimpo], ['jwt_token', d.jwt_token], ['access_token', d.access_token],
+      ['accessToken', d.accessToken], ['token', d.token], ['result.access_token', d?.result?.access_token], ['data.access_token', d?.data?.access_token],
+    ].filter(([, v]) => typeof v === 'string' && v.length > 10)
+     .filter(([, v], i, arr) => arr.findIndex(([, w]) => w === v) === i)
+     .map(([tipo, v]) => ({ tipo, v, jwt: ehJwt(v), len: v.length }));
+    const idxPref = Math.max(0, candidatos.findIndex((c) => c.tipo === _tokenCache.tipoBom));
+    const tok = candidatos[idxPref]?.v || null;
     if (!tok) return { token: null, status: r.status, error: 'Login OK mas sem access_token', raw: d };
+    _tokenCache.candidatos = candidatos; _tokenCache.idx = idxPref;
     await liberarLogin('fintech');
-    _tokenCache = { token: tok, exp: agora + 25 * 60 * 1000, ambiente: cfg.ambiente };
-    return { token: tok, status: r.status, raw: d };
+    _tokenCache = { ..._tokenCache, token: tok, exp: agora + 25 * 60 * 1000, ambiente: cfg.ambiente };
+    return { token: tok, status: r.status, raw: d, candidatos: candidatos.map((c) => ({ tipo: c.tipo, jwt: c.jwt, len: c.len })), tipoUsado: candidatos[idxPref]?.tipo };
   } catch (e) {
     return { token: null, status: 0, error: e.message };
   }
@@ -122,6 +131,15 @@ async function fc(path, method = 'GET', body = null, _retry = true) {
   if (body && method !== 'GET') opts.body = JSON.stringify(body);
   try {
     const r = await fetch(cfg.baseUrl + path, opts);
+    // 401 com Bearer: o login da API nova devolve VÁRIOS tokens (token_bearer,
+    // jwt_token, access_token) — tenta o próximo candidato antes de re-logar.
+    if (r.status === 401 && auth.token && Array.isArray(_tokenCache.candidatos) && _tokenCache.idx < _tokenCache.candidatos.length - 1) {
+      _tokenCache.idx += 1;
+      _tokenCache.token = _tokenCache.candidatos[_tokenCache.idx].v;
+      const r2 = await fc(path, method, body, _retry);
+      if (r2.status !== 401) _tokenCache.tipoBom = _tokenCache.candidatos[_tokenCache.idx].tipo; // memoriza o que serviu
+      return r2;
+    }
     // 401 com Bearer ativo? token pode ter expirado — re-loga 1x e tenta de novo.
     if (r.status === 401 && _retry && cfg.login && cfg.password) {
       await getAccessToken(cfg, true);
@@ -389,6 +407,9 @@ export default async function handler(req) {
         const partes = String(auth.token || '').split('.');
         loginInfo.tokenFormato = partes.length === 3 ? 'jwt' : 'opaco';
         loginInfo.tokenTamanho = String(auth.token || '').length;
+        loginInfo.candidatos = auth.candidatos || null;
+        loginInfo.tipoUsado = auth.tipoUsado || null;
+        loginInfo.tipoBom = _tokenCache.tipoBom || null;
         if (auth.raw && typeof auth.raw === 'object') {
           const maskV = (v) => { const t = String(v); return t.length <= 4 ? t[0] + '***' : t.slice(0, 3) + '***' + t.slice(-2); };
           loginInfo.rawLogin = Object.fromEntries(Object.entries(auth.raw).map(([k, v]) => [k,
