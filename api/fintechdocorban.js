@@ -91,7 +91,13 @@ async function getAccessToken(cfg, force = false) {
       if (r.status === 401 || r.status === 403) await marcarLoginBloqueado('fintech', motivo, 30, r.status);
       return { token: null, status: r.status, error: motivo, raw: d };
     }
-    const tok = d.access_token || d.accessToken || d.token || d?.result?.access_token || d?.data?.access_token || null;
+    // API nova (docs.fintechdocorban.com.br, out/2026): o login devolve
+    // access_token (opaco), jwt_token e token_bearer. As rotas /Api/V1/* exigem
+    // o JWT no Bearer — com o access_token opaco davam 401 vazio em tudo.
+    const bearerLimpo = d.token_bearer ? String(d.token_bearer).replace(/^Bearer\s+/i, '').trim() : null;
+    const ehJwt = (v) => typeof v === 'string' && v.split('.').length === 3;
+    const tok = [d.jwt_token, bearerLimpo, d.access_token, d.accessToken, d.token, d?.result?.access_token, d?.data?.access_token]
+      .find((v) => ehJwt(v)) || d.jwt_token || bearerLimpo || d.access_token || d.accessToken || d.token || d?.result?.access_token || d?.data?.access_token || null;
     if (!tok) return { token: null, status: r.status, error: 'Login OK mas sem access_token', raw: d };
     await liberarLogin('fintech');
     _tokenCache = { token: tok, exp: agora + 25 * 60 * 1000, ambiente: cfg.ambiente };
