@@ -189,7 +189,8 @@ export const BD: Record<string, BancoRegra> = {
   },
   ICRED: {
     sMin: 3000, vcMax: 100000, tMin: 100, pMin: 0, pgMin: 0, faixa: [1.50, 1.85], coefF: null,
-    block: ['329','643','935'],
+    // 012 Inbursa: ICRED NÃO aceita essa origem (dono, 19/10/2026).
+    block: ['329','643','935','012'],
     // PAN (623): aceita com 1 paga. C6 (336/626): só com 12+ pagas (dono, 14/09/2026).
     pgMinMap: { '623': 1, '336': 12, '626': 12 },
     // ICRED aceita port com taxa origem >= 1,10%
@@ -211,7 +212,8 @@ export const BD: Record<string, BancoRegra> = {
 // ORDEM = PRIORIDADE COMERCIAL do dono (set/2026): o destino escolhido é o
 // PRIMEIRO desta lista que aceita o contrato — não o de maior troco.
 // BRB e BRB INCONTA são o mesmo banco (uma entrada só: BRB).
-export const ORDEM = ['QUALI', 'ICRED', 'C6', 'FINTECH_CORBAN', 'DAYCOVAL', 'BRB']; // BRB por último (dono, 14/09)
+// DIGIO religado 19/10/2026 como penúltimo (dono). BRB segue por último.
+export const ORDEM = ['QUALI', 'ICRED', 'C6', 'FINTECH_CORBAN', 'DAYCOVAL', 'DIGIO', 'BRB'];
 
 export const PICPAY_CODE = '380';
 export const B1P: string[] = ['149','422','739','925','380','033','326','290','041','389','121'];

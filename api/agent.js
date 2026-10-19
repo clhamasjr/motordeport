@@ -646,6 +646,11 @@ const _BD = {
     // PARANA(254): 13 pagas. PAN(623): 37 pagas. Demais CIP: sem restricao
     pgMinMap: { '329': 12, '149': 12, '935': 12, '643': 12, '254': 13, '623': 37 },
     taxaOrigemMinDefault: 1.35 },
+  // DIGIO (religado 19/10/2026): saldo min 4500, 12 pagas, 1,50-1,85%,
+  // nao porta Bradesco 237 / BB 001 / Banrisul 041 / BRB Cred 925; BRB 070 so c/ 12 pagas.
+  DIGIO: { sMin: 4500, tMin: 250, pgMin: 12, faixa: [1.50, 1.85], coefF: null,
+    block: ['237','001','041','925'],
+    pgMinMap: { '070': 12 } },
   // BRB (= BRB INCONTA, regras oficiais 07/05/2026): 108m, 1,79-1,85%, 12+ pagas,
   // limite CPF 150k, qualquer taxa origem. Nao porta PicPay/Bradescard/Inbursa/
   // PagBank/C6/Agibank + auto-port BRB.
@@ -653,12 +658,12 @@ const _BD = {
     block: ['070','925','380','063','012','290','336','626','121'],
     taxaOrigemMinDefault: 0 },
   ICRED: { sMin: 3000, tMin: 100, faixa: [1.50, 1.85], coefF: null,
-    block: ['329','643','935'],
+    block: ['329','643','935','012'], // 012 Inbursa: ICRED nao aceita (dono, 19/10)
     pgMinMap: { '623': 1, '336': 12, '626': 12 }, // C6 so com 12+ pagas
     taxaOrigemMinDefault: 1.10 },
 };
 // PRIORIDADE COMERCIAL (dono, set/2026): primeiro que aceita ganha.
-const _ORDEM = ['QUALI', 'ICRED', 'C6', 'BRB'];
+const _ORDEM = ['QUALI', 'ICRED', 'C6', 'DIGIO', 'BRB']; // DIGIO penultimo (19/10)
 const _TROCO_MIN = 250;
 const _TROCO_MIN_ENQUADRADO = 250;
 

@@ -22,7 +22,7 @@ import { EnviarOportunidadesButton } from './enviar-oportunidades';
 const COEF_EMP_185 = 0.02153;
 
 // Rótulo de exibição do banco destino (chave do motor → nome amigável).
-const BANCO_LABEL: Record<string, string> = { FINTECH_CORBAN: 'Fintech do Corban', DAYCOVAL: 'Daycoval' };
+const BANCO_LABEL: Record<string, string> = { FINTECH_CORBAN: 'Fintech do Corban', DAYCOVAL: 'Daycoval', DIGIO: 'Digio' };
 const bl = (k: string) => BANCO_LABEL[k] ?? k;
 
 // Diagnóstico do motivo de bloqueio pra contratos que ninguém aceita.

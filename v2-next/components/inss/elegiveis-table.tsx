@@ -45,7 +45,7 @@ const INITIAL: Filtros = {
   cartao: '', invalidez: '', enquadramento: '', bancoRede: '', direcionar: '', busca: '',
 };
 
-const BANCO_NOME: Record<string, string> = { FINTECH_CORBAN: 'Fintech do Corban', DAYCOVAL: 'Daycoval' };
+const BANCO_NOME: Record<string, string> = { FINTECH_CORBAN: 'Fintech do Corban', DAYCOVAL: 'Daycoval', DIGIO: 'Digio' };
 const nomeBanco = (b: string) => BANCO_NOME[b] || b;
 
 const pN = (v: string) => parseFloat(v.replace(',', '.')) || 0;
