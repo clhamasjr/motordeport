@@ -34,7 +34,11 @@ function temTrabalhoPendente(bancos) {
     // Unno): o status re-checa periodicamente — precisa da cutucada mesmo com a aba fechada
     if (b.status === 'manual_aguardando' && b.manual === false) return true;
     // Falha transitória (timeout/banco lento) com re-tentativas restantes.
-    if (b.status === 'falha' && b.retryable === true && (b.tentativas || 0) < MAX_AUTO_RETRY) return true;
+    // Respeita `proximaTentativaEm` (ex: Handbank 402 = cota, só amanhã cedo).
+    if (b.status === 'falha' && b.retryable === true && (b.tentativas || 0) < MAX_AUTO_RETRY) {
+      if (b.proximaTentativaEm && new Date(b.proximaTentativaEm).getTime() > Date.now()) return false;
+      return true;
+    }
     return false;
   });
 }
@@ -64,7 +68,7 @@ export default async function handler(req) {
   const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const q =
     `select=id,bancos,status_geral,iniciado_em` +
-    `&iniciado_em=gte.${encodeURIComponent(desde)}` +
+    `&or=(iniciado_em.gte.${encodeURIComponent(desde)},atualizado_em.gte.${encodeURIComponent(desde)})` +
     `&status_geral=neq.standby` +
     `&order=iniciado_em.desc&limit=300`;
   const { data: filas } = await dbQuery('clt_consultas_fila', q).catch(() => ({ data: [] }));

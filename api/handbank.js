@@ -294,13 +294,18 @@ export default async function handler(req) {
       }, 200, req);
     }
 
-    // 402: bloqueio comercial da Handbank ("entre em contato com seu gerente comercial")
+    // 402 "Por favor entrar em contato com seu gerente comercial (PD)" = LIMITE
+    // de consultas da conta Handbank (cota). Visto em 20/10/2026: apareceu de
+    // madrugada (19/10 23h→01h) e de novo depois de ~25 consultas seguidas num
+    // reprocesso em lote; CPFs já consultados (cache) continuavam respondendo.
+    // Nao diz nada sobre o cliente → re-tenta no dia seguinte, nunca "inapto".
     if (httpStatus === 402) {
-      const m = limparHtml(d.mensagem || d.message || 'bloqueio comercial — contate o gerente comercial');
+      const m = limparHtml(d.mensagem || d.message || 'contate o gerente comercial');
       return jsonResp({
         success: false, autorizado: false, disponivel: false, bloqueado: false,
         bloqueioComercial: true,
-        mensagem: `Handbank: ${m}`,
+        cotaEsgotada: true,
+        mensagem: `Handbank: limite de consultas atingido (HTTP 402 "${m}") — re-tenta sozinho amanhã cedo`,
         _httpStatus: httpStatus, _raw: d
       }, 200, req);
     }

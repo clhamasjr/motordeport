@@ -153,6 +153,15 @@ function dispararProcessar(id, banco, secret, force = false, delayMs = 0) {
   }));
 }
 // Atraso padrão por banco no disparo de UMA consulta (só a SOMA precisa)
+// Proxima janela "de manha" (06:30 BRT = 09:30 UTC) pelo menos 1h a frente —
+// usada por bancos com COTA diaria (Handbank 402): a cota reseta a meia-noite.
+function proximaManhaIso(minAdianteMs = 3600000) {
+  const alvo = new Date();
+  alvo.setUTCHours(9, 30, 0, 0);
+  while (alvo.getTime() < Date.now() + minAdianteMs) alvo.setUTCDate(alvo.getUTCDate() + 1);
+  return alvo.toISOString();
+}
+
 const ATRASO_DISPARO_MS = { soma_uy3: 1500, soma_celcoin: 0 };
 
 function normalizeCPF(raw) {
@@ -995,9 +1004,9 @@ async function processarHandbank(id, cpf, auth, secret) {
     return;
   }
 
-  // Cenario 2b: sem vinculo CLT na Dataprev (404) ou bloqueio comercial da
-  // Handbank (402) — negativa do banco, NAO erro de API: nao re-tenta.
-  if (d.semVinculo || d.bloqueioComercial) {
+  // Cenario 2b: sem vinculo CLT na Dataprev (404) — negativa do banco, NAO
+  // erro de API: nao re-tenta.
+  if (d.semVinculo) {
     await patchBanco(id, 'handbank', {
       status: 'falha',
       retryable: false,
@@ -1005,9 +1014,30 @@ async function processarHandbank(id, cpf, auth, secret) {
       precisaAutorizacao: false,
       bloqueado: false,
       linkAutorizacao: null,
-      semVinculo: !!d.semVinculo,
-      bloqueioComercial: !!d.bloqueioComercial,
-      mensagem: d.mensagem || (d.semVinculo ? 'Nenhum vínculo CLT encontrado na Dataprev' : 'Handbank: bloqueio comercial'),
+      semVinculo: true,
+      bloqueioComercial: false,
+      mensagem: d.mensagem || 'Nenhum vínculo CLT encontrado na Dataprev',
+      _raw_response: d
+    });
+    return;
+  }
+
+  // Cenario 2c: 402 = COTA de consultas da conta Handbank esgotada (nao e
+  // sobre o cliente). Fica re-tentavel com proximaTentativaEm na manha
+  // seguinte (cota reseta a meia-noite); o status/cron re-dispara sozinho.
+  if (d.bloqueioComercial) {
+    await patchBanco(id, 'handbank', {
+      status: 'falha',
+      retryable: true,
+      proximaTentativaEm: proximaManhaIso(),
+      disponivel: false,
+      precisaAutorizacao: false,
+      bloqueado: false,
+      linkAutorizacao: null,
+      semVinculo: false,
+      bloqueioComercial: true,
+      cotaEsgotada: true,
+      mensagem: d.mensagem || 'Handbank: limite de consultas atingido (HTTP 402) — re-tenta sozinho amanhã cedo',
       _raw_response: d
     });
     return;
@@ -2912,6 +2942,34 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
   // ou concluíram como "⏱ Timeout 25min" sem o banco ter rodado. Zera o banco,
   // reabre a consulta e re-dispara. Em lotes pequenos (limite) pra não estourar
   // o rate limit dos bancos — chamar de novo até `restantes` = 0.
+  // ─── REAGENDAR HANDBANK 402 (admin) ──────────────────────────────
+  // Cards do Handbank gravados com "402 contate seu gerente comercial" como
+  // negativa (antes do fix de 20/10) viram re-tentaveis na manha seguinte.
+  if (action === 'reagendarHandbankCota') {
+    if (!(user.role === 'admin' || user.role === 'gestor' || user._internal)) return jsonError('Sem permissão', 403, req);
+    const dias = Math.min(parseInt(body.dias || 30), 90);
+    const limite = Math.min(parseInt(body.limite || 40), 60);
+    const desde = new Date(Date.now() - dias * 86400000).toISOString();
+    const q = `select=id,bancos,iniciado_em&iniciado_em=gte.${encodeURIComponent(desde)}` +
+      `&bancos->handbank->>bloqueioComercial=eq.true&order=iniciado_em.desc&limit=300`;
+    const { data: filas } = await dbQuery('clt_consultas_fila', q).catch(() => ({ data: [] }));
+    const alvo = (filas || []).filter((f) => {
+      const b = f.bancos?.handbank;
+      return b && b.status === 'falha' && (b.retryable !== true || !b.proximaTentativaEm);
+    });
+    const quando = body.quando || proximaManhaIso();
+    let n = 0;
+    for (const f of alvo.slice(0, limite)) {
+      await patchBanco(f.id, 'handbank', {
+        status: 'falha', retryable: true, tentativas: 0, proximaTentativaEm: quando,
+        cotaEsgotada: true,
+        mensagem: 'Handbank: limite de consultas atingido (HTTP 402 "Por favor entrar em contato com seu gerente comercial (PD)") — re-tenta sozinho amanhã cedo',
+      });
+      n++;
+    }
+    return jsonResp({ success: true, encontrados: alvo.length, reagendados: n, restantes: Math.max(0, alvo.length - n), proximaTentativaEm: quando }, 200, req);
+  }
+
   if (action === 'reprocessarPresas') {
     if (!(user.role === 'admin' || user.role === 'gestor' || user._internal)) return jsonError('Sem permissão', 403, req);
     const dias = Math.min(parseInt(body.dias || 7), 60);
