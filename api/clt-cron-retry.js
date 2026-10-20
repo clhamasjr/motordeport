@@ -79,8 +79,17 @@ export default async function handler(req) {
 
   const baseUrl = APP_URL();
   let filasCutucadas = 0;
+  // Handbank tem cota diaria: re-tentativas "so Handbank" saem no maximo 8 por
+  // rodada (5min) — espalha o backlog em vez de 57 consultas simultaneas.
+  const MAX_SO_HANDBANK = 8;
+  let soHandbank = 0;
   for (const f of filas) {
     if (!temTrabalhoPendente(f.bancos)) continue;
+    const pendentes = Object.entries(f.bancos || {}).filter(([, b]) => temTrabalhoPendente({ x: b })).map(([k]) => k);
+    if (pendentes.length === 1 && pendentes[0] === 'handbank') {
+      if (soHandbank >= MAX_SO_HANDBANK) continue;
+      soHandbank++;
+    }
     // "Cutuca" o status — ele dispara o auto-retry interno (re-dispara o banco
     // que falhou e incrementa tentativas). waitUntil: no Edge, fetch sem await
     // era descartado assim que o cron respondia → cutucada perdida.

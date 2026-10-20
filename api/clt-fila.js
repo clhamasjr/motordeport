@@ -2974,11 +2974,13 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       `&bancos->handbank->>bloqueioComercial=eq.true&order=iniciado_em.desc&limit=300`;
     const { data: filas } = await dbQuery('clt_consultas_fila', q).catch(() => ({ data: [] }));
     const forcar = body.forcar === true;
+    const quando = body.quando || proximaJanelaHandbankIso();
     const alvo = (filas || []).filter((f) => {
       const b = f.bancos?.handbank;
-      return b && b.status === 'falha' && (forcar || b.retryable !== true || !b.proximaTentativaEm);
+      if (!b || b.status !== 'falha') return false;
+      if (b.proximaTentativaEm === quando && b.retryable === true) return false; // ja reagendado pra essa janela
+      return forcar || b.retryable !== true || !b.proximaTentativaEm;
     });
-    const quando = body.quando || proximaJanelaHandbankIso();
     let n = 0;
     for (const f of alvo.slice(0, limite)) {
       await patchBanco(f.id, 'handbank', {
