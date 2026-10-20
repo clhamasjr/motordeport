@@ -65,7 +65,7 @@ export default async function handler(req) {
   // Janela: consultas das últimas 6h, fora de standby.
   // 24h (era 6h): consultas reprocessadas/re-consultadas em lote também precisam
   // das re-tentativas automáticas (429 da V8, rate limit SOMA, timeouts)
-  const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const desde = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString(); // 36h: cabe a janela noturna do dia seguinte (Handbank 402)
   const q =
     `select=id,bancos,status_geral,iniciado_em` +
     `&or=(iniciado_em.gte.${encodeURIComponent(desde)},atualizado_em.gte.${encodeURIComponent(desde)})` +
@@ -97,7 +97,7 @@ export default async function handler(req) {
     success: true,
     filasAnalisadas: filas.length,
     filasCutucadas,
-    janela: '24h',
+    janela: '36h',
     mensagem: `${filasCutucadas} consulta(s) com falha re-tentável foram re-disparadas.`,
   }, 200, req);
 }

@@ -17,6 +17,7 @@ export const config = { runtime: 'edge' };
 import { json as jsonResp, jsonError, handleOptions, requireAuth } from './_lib/auth.js';
 import { dbSelect, dbInsert, dbUpdate, dbUpsert, dbRPC, dbQuery } from './_lib/supabase.js';
 import { waitUntil } from '@vercel/functions';
+import { cotaEsgotada, marcarCotaEsgotada } from './_lib/login-guard.js';
 
 const APP_URL = () => process.env.APP_URL || 'https://flowforce.vercel.app';
 
@@ -153,14 +154,18 @@ function dispararProcessar(id, banco, secret, force = false, delayMs = 0) {
   }));
 }
 // Atraso padrão por banco no disparo de UMA consulta (só a SOMA precisa)
-// Proxima janela "de manha" (06:30 BRT = 09:30 UTC) pelo menos 1h a frente —
-// usada por bancos com COTA diaria (Handbank 402): a cota reseta a meia-noite.
-function proximaManhaIso(minAdianteMs = 3600000) {
+// Proxima ocorrencia de um horario UTC (pelo menos `minAdianteMs` a frente).
+function proximaHoraUtcMs(h, m = 0, minAdianteMs = 1800000) {
   const alvo = new Date();
-  alvo.setUTCHours(9, 30, 0, 0);
+  alvo.setUTCHours(h, m, 0, 0);
   while (alvo.getTime() < Date.now() + minAdianteMs) alvo.setUTCDate(alvo.getUTCDate() + 1);
-  return alvo.toISOString();
+  return alvo.getTime();
 }
+// Handbank tem COTA diaria de consultas (402). O backlog re-tenta a NOITE
+// (19:30 BRT = 22:30 UTC) pra usar a sobra do dia e nao roubar a cota dos
+// operadores de manha; a cota reseta de madrugada (assumido 06:00 BRT).
+const proximaJanelaHandbankIso = () => new Date(proximaHoraUtcMs(22, 30)).toISOString();
+const resetCotaHandbankMs = () => proximaHoraUtcMs(9, 0, 0);
 
 const ATRASO_DISPARO_MS = { soma_uy3: 1500, soma_celcoin: 0 };
 
@@ -902,9 +907,23 @@ async function processarMercantil(id, cpf, auth, secret) {
 //   409 → varios vinculos (lista com margem de cada) → tratado como 201
 //   400 → restricoes do convenio / ja tem contrato / CPF invalido
 //   402 → bloqueio comercial Handbank · 404 → sem vinculo na Dataprev
-async function processarHandbank(id, cpf, auth, secret) {
+async function processarHandbank(id, cpf, auth, secret, force = false) {
   const manut = await _bancoEmManutencao('handbank');
   if (manut) { await _marcarEmManutencao(id, 'handbank', manut); return; }
+  // Cota diaria esgotada (402 hoje): RE-TENTATIVA nem bate na API — vai pra
+  // proxima janela noturna. Consulta nova do operador (force=false) tenta.
+  if (force) {
+    const cota = await cotaEsgotada('handbank');
+    if (cota.bloqueado) {
+      await patchBanco(id, 'handbank', {
+        status: 'falha', retryable: true, proximaTentativaEm: proximaJanelaHandbankIso(),
+        disponivel: false, precisaAutorizacao: false, linkAutorizacao: null,
+        bloqueioComercial: true, cotaEsgotada: true,
+        mensagem: `Handbank: limite de consultas de hoje já atingido (até ${cota.ateStr}) — re-tenta sozinho à noite/amanhã`
+      });
+      return;
+    }
+  }
   await patchBanco(id, 'handbank', { status: 'processando' });
   // Orçamento: consulta + (espera cliente + auto-autz + re-consulta) tem que
   // caber nos ~25s da Edge — antes somava até 60s e a função morria sem gravar.
@@ -1026,10 +1045,11 @@ async function processarHandbank(id, cpf, auth, secret) {
   // sobre o cliente). Fica re-tentavel com proximaTentativaEm na manha
   // seguinte (cota reseta a meia-noite); o status/cron re-dispara sozinho.
   if (d.bloqueioComercial) {
+    await marcarCotaEsgotada('handbank', resetCotaHandbankMs(), d.mensagem).catch(() => {});
     await patchBanco(id, 'handbank', {
       status: 'falha',
       retryable: true,
-      proximaTentativaEm: proximaManhaIso(),
+      proximaTentativaEm: proximaJanelaHandbankIso(),
       disponivel: false,
       precisaAutorizacao: false,
       bloqueado: false,
@@ -1037,7 +1057,7 @@ async function processarHandbank(id, cpf, auth, secret) {
       semVinculo: false,
       bloqueioComercial: true,
       cotaEsgotada: true,
-      mensagem: d.mensagem || 'Handbank: limite de consultas atingido (HTTP 402) — re-tenta sozinho amanhã cedo',
+      mensagem: d.mensagem || 'Handbank: limite de consultas atingido (HTTP 402) — re-tenta sozinho à noite/amanhã',
       _raw_response: d
     });
     return;
@@ -2671,7 +2691,7 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
       else if (banco === 'v8_celcoin') await processarV8(id, 'CELCOIN', row.cpf, auth, secret);
       else if (banco === 'joinbank') await processarJoinBank(id, row.cpf, auth, secret);
       else if (banco === 'mercantil') await processarMercantil(id, row.cpf, auth, secret);
-      else if (banco === 'handbank') await processarHandbank(id, row.cpf, auth, secret);
+      else if (banco === 'handbank') await processarHandbank(id, row.cpf, auth, secret, forceRerun);
       else if (banco === 'c6') await processarC6(id, row.cpf, !!row.incluir_c6, auth, secret);
       else if (banco === 'fintech_qi') await processarFintech(id, 'qi', row.cpf, auth, secret);
       else if (banco === 'fintech_celcoin') await processarFintech(id, 'celcoin', row.cpf, auth, secret);
@@ -2953,17 +2973,18 @@ Retorne APENAS o JSON, sem texto adicional. Se algum dado não estiver visível,
     const q = `select=id,bancos,iniciado_em&iniciado_em=gte.${encodeURIComponent(desde)}` +
       `&bancos->handbank->>bloqueioComercial=eq.true&order=iniciado_em.desc&limit=300`;
     const { data: filas } = await dbQuery('clt_consultas_fila', q).catch(() => ({ data: [] }));
+    const forcar = body.forcar === true;
     const alvo = (filas || []).filter((f) => {
       const b = f.bancos?.handbank;
-      return b && b.status === 'falha' && (b.retryable !== true || !b.proximaTentativaEm);
+      return b && b.status === 'falha' && (forcar || b.retryable !== true || !b.proximaTentativaEm);
     });
-    const quando = body.quando || proximaManhaIso();
+    const quando = body.quando || proximaJanelaHandbankIso();
     let n = 0;
     for (const f of alvo.slice(0, limite)) {
       await patchBanco(f.id, 'handbank', {
         status: 'falha', retryable: true, tentativas: 0, proximaTentativaEm: quando,
         cotaEsgotada: true,
-        mensagem: 'Handbank: limite de consultas atingido (HTTP 402 "Por favor entrar em contato com seu gerente comercial (PD)") — re-tenta sozinho amanhã cedo',
+        mensagem: 'Handbank: limite de consultas atingido (HTTP 402 "Por favor entrar em contato com seu gerente comercial (PD)") — re-tenta sozinho à noite/amanhã',
       });
       n++;
     }

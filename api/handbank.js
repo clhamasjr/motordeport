@@ -305,7 +305,7 @@ export default async function handler(req) {
         success: false, autorizado: false, disponivel: false, bloqueado: false,
         bloqueioComercial: true,
         cotaEsgotada: true,
-        mensagem: `Handbank: limite de consultas atingido (HTTP 402 "${m}") — re-tenta sozinho amanhã cedo`,
+        mensagem: `Handbank: limite de consultas atingido (HTTP 402 "${m}") — re-tenta sozinho à noite/amanhã`,
         _httpStatus: httpStatus, _raw: d
       }, 200, req);
     }
