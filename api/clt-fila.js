@@ -927,7 +927,10 @@ async function processarHandbank(id, cpf, auth, secret) {
           await new Promise(r => setTimeout(r, i === 0 ? 1500 : 2500));
           r = await callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret, prazoHB.timeout(10000));
           d = r.data || {};
-          if (!(d.precisaAutorizacao && d.linkAutorizacao) || prazoHB.esgotado(6000)) break;
+          // Logo apos autorizar a UY3 costuma devolver 400 "Erro não identificado"
+          // (transitorio) antes do resultado real — trata como "ainda nao refletiu".
+          const transitorio = Number(d._httpStatus) === 400 && /erro n[ãa]o identificado/i.test(String(d.mensagem || ''));
+          if ((!(d.precisaAutorizacao && d.linkAutorizacao) && !transitorio) || prazoHB.esgotado(6000)) break;
         }
         if (d.precisaAutorizacao && d.linkAutorizacao) {
           // Autorizacao aceita pelo portal mas a Handbank ainda devolve 202 —
@@ -1041,10 +1044,16 @@ async function processarHandbank(id, cpf, auth, secret) {
   // motivo e re-tenta sozinho quando for rede/5xx.
   const stH = Number(d._httpStatus) || r.status || 0;
   const eH = erroApiBanco('Handbank/UY3', stH, d.mensagem || d.error);
+  // "Erro não identificado" (400) e transitorio do lado da UY3 — vale re-tentar
+  const transitorioUY3 = /erro n[ãa]o identificado/i.test(String(d.mensagem || ''));
   await patchBanco(id, 'handbank', {
     status: 'falha',
-    retryable: eH.retryable,
-    mensagem: eH.retryable ? eH.mensagem : (d.mensagem || d.error || eH.mensagem),
+    retryable: eH.retryable || transitorioUY3,
+    precisaAutorizacao: false,
+    linkAutorizacao: null,
+    mensagem: transitorioUY3
+      ? 'UY3: erro não identificado (transitório) — re-tenta sozinho'
+      : (eH.retryable ? eH.mensagem : (d.mensagem || d.error || eH.mensagem)),
     _raw_response: d
   });
 }
