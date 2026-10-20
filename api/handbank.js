@@ -11,8 +11,14 @@
 // FLUXO CLT/UY3:
 //   1) login                     -> PHPSESSID
 //   2) iniciarConsultaCLT(cpf)   -> 202 + URL de autorizacao
-//      (cliente abre URL e autoriza no UY3 antes de simular)
-//   3) statusConsulta(cpf)       -> apos autorizacao, retorna dados
+//      (cliente abre URL e autoriza antes de simular — portal Hand+
+//       autorizacao-clt.handmais.com desde out/2026; o antigo
+//       autorizacao-clt.uy3.com.br saiu do ar)
+//      -> 201 margem | 400 restricoes/ja tem contrato | 402 bloqueio
+//         comercial | 404 sem vinculo na Dataprev | 409 varios vinculos
+//   2b) autorizarUY3             -> auto-autoriza (Lhamas como correspondente)
+//       via POST /curl.php do Hand+ com hash+cod_verificacao do link
+//   3) iniciarConsultaCLT(cpf)   -> apos autorizacao, retorna dados
 //
 // ENV VARS:
 //   HANDBANK_USER  — email login (ex: carlos@lhamascred.com.br)
@@ -30,6 +36,34 @@ const HB_PASS = () => process.env.HANDBANK_PASS;
 
 // Cache em memoria do Edge (warm) — evita login a cada request
 let cookieCache = { cookie: null, ts: 0, exp: 0 };
+
+const UA_NAV = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
+
+// Link de autorizacao que a Handbank devolve no 202. Formatos vistos:
+//   antigo: https://autorizacao-clt.uy3.com.br/?...            (fora do ar desde out/2026 — 404)
+//   novo:   https://autorizacao-clt.handmais.com/<hash>?cod_verificacao=<uuid>
+// O portal novo (Hand+) manda `hash` (ultimo segmento do path, 16-128 chars
+// [A-Za-z0-9_-]) e `cod_verificacao` (query) junto com o cadastro do cliente.
+function parseLinkAutorizacao(link) {
+  try {
+    const u = new URL(String(link || ''));
+    const seg = decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || '');
+    const hash = /^[A-Za-z0-9_-]{16,128}$/.test(seg) ? seg : '';
+    const cod = u.searchParams.get('cod_verificacao') || '';
+    return { host: u.host, origin: u.origin, hash, cod };
+  } catch { return { host: null, origin: null, hash: '', cod: '' }; }
+}
+
+// A UY3 devolve mensagens com <br> e tags — vira texto " | " pro card.
+function limparHtml(v) {
+  return String(v ?? '')
+    .replace(/<br\s*\/?>/gi, ' | ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s*\|(\s*\|)+\s*/g, ' | ')
+    .replace(/\s+/g, ' ')
+    .replace(/^\s*\|\s*|\s*\|\s*$/g, '')
+    .trim();
+}
 
 // ─── LOGIN AUTOMATICO ─────────────────────────────────────────────
 // POST /usuario/login retorna 200 + Set-Cookie: PHPSESSID=xxx; path=/
@@ -207,13 +241,19 @@ export default async function handler(req) {
 
     // 202 Accepted: precisa autorizacao
     if (httpStatus === 202) {
+      // `mensagem` = link completo (com hash do cliente); `link` = so o cod_verificacao
       const linkAutz = (d.mensagem && typeof d.mensagem === 'string' && d.mensagem.startsWith('http'))
-        ? d.mensagem : null;
+        ? d.mensagem
+        : ((typeof d.link === 'string' && d.link.startsWith('http')) ? d.link : null);
+      const partes = parseLinkAutorizacao(linkAutz);
       return jsonResp({
         success: true,
         precisaAutorizacao: true,
         linkAutorizacao: linkAutz,
-        mensagem: 'Cliente precisa abrir o link de autorização UY3 antes de simular.',
+        hashAutorizacao: partes.hash || null,
+        codVerificacao: partes.cod || null,
+        portalAutorizacao: partes.host || null,
+        mensagem: 'Cliente precisa abrir o link de autorização (Hand+/UY3) antes de simular.',
         _httpStatus: httpStatus,
         _raw: d
       }, 200, req);
@@ -221,16 +261,78 @@ export default async function handler(req) {
 
     // 400 Bad Request: cliente ja tem contrato OU CPF invalido OU outro erro
     if (httpStatus === 400) {
-      const msgErr = d.mensagem || d.message || d.error || 'Cliente já possui contrato ativo na UY3 ou outro impedimento';
-      const jaTemContrato = /contrato|j[áa].*possui|ativ/i.test(String(msgErr));
+      const msgErr = limparHtml(d.mensagem || d.message || d.error || 'UY3 recusou a consulta (HTTP 400)');
+      // "Já possui contrato" SO quando a UY3 diz isso de fato. O regex antigo
+      // (/contrato|j[áa].*possui|ativ/) casava "atividade"/"ADMINISTRATIVO" das
+      // restrições de convênio e dezenas de clientes viravam "já contratado".
+      const ehRestricao = /restri[çc][õo]es encontradas/i.test(msgErr);
+      const jaTemContrato = !ehRestricao && /(j[áa]\s+)?possui\s+(um\s+|uma\s+)?(contrato|opera[çc][ãa]o|proposta|empr[ée]stimo)|contrato\s+(ativo|vigente|em\s+andamento)|j[áa]\s+(tem|contratou)/i.test(msgErr);
+      const semVinculo = !jaTemContrato && /CPF n[ãa]o encontrado na base|n[ãa]o (foi )?encontrad[oa]? (nenhum )?v[ií]nculo|sem v[ií]nculo/i.test(msgErr);
       return jsonResp({
         success: false,
         autorizado: false,
         bloqueado: true,
         jaTemContrato,
+        semVinculo,
+        restricoes: ehRestricao,
         mensagem: jaTemContrato
           ? 'Cliente já possui contrato ativo na UY3 — não é possível simular novo.'
           : `UY3 recusou: ${msgErr}`,
+        _httpStatus: httpStatus,
+        _raw: d
+      }, 200, req);
+    }
+
+    // 404: Dataprev nao achou vinculo CLT = negativa legitima (nao e erro de API)
+    if (httpStatus === 404) {
+      const m = limparHtml(d.mensagem || d.message || 'Nenhum vínculo CLT encontrado na Dataprev para este CPF.');
+      return jsonResp({
+        success: false, autorizado: false, disponivel: false, bloqueado: false,
+        semVinculo: true,
+        mensagem: m,
+        _httpStatus: httpStatus, _raw: d
+      }, 200, req);
+    }
+
+    // 402: bloqueio comercial da Handbank ("entre em contato com seu gerente comercial")
+    if (httpStatus === 402) {
+      const m = limparHtml(d.mensagem || d.message || 'bloqueio comercial — contate o gerente comercial');
+      return jsonResp({
+        success: false, autorizado: false, disponivel: false, bloqueado: false,
+        bloqueioComercial: true,
+        mensagem: `Handbank: ${m}`,
+        _httpStatus: httpStatus, _raw: d
+      }, 200, req);
+    }
+
+    // 409: cliente tem MAIS DE UM vinculo — a UY3 devolve a lista com a margem
+    // de cada um (em REAIS, diferente do 201 que vem em centavos). Antes isso
+    // virava "Handbank HTTP 409" e a margem se perdia.
+    if (httpStatus === 409 && Array.isArray(d.mensagem)) {
+      const vinculos = d.mensagem.map((v) => ({
+        nome: v?.nome || null,
+        elegivel: v?.elegivel !== false,
+        matricula: v?.matricula || null,
+        empregadorCnpj: v?.numeroInscricaoEmpregador || v?.cnpj || null,
+        margem: Number(v?.valorMargemDisponivel ?? v?.valor_margem ?? 0) || 0,
+      }));
+      const elegiveis = vinculos.filter((v) => v.elegivel);
+      const melhor = [...(elegiveis.length ? elegiveis : vinculos)].sort((a, b) => b.margem - a.margem)[0] || null;
+      const margem = melhor ? melhor.margem : 0;
+      return jsonResp({
+        success: true,
+        autorizado: true,
+        disponivel: !!(melhor && melhor.elegivel),
+        margem,
+        empregadorCnpj: melhor?.empregadorCnpj || null,
+        matricula: melhor?.matricula || null,
+        empregador: null,
+        renda: null,
+        vinculos,
+        multiplosVinculos: true,
+        mensagem: melhor
+          ? `${vinculos.length} vínculos — melhor margem R$ ${margem.toFixed(2)} (matrícula ${melhor.matricula || '?'})`
+          : 'Vários vínculos, nenhum elegível',
         _httpStatus: httpStatus,
         _raw: d
       }, 200, req);
@@ -268,10 +370,11 @@ export default async function handler(req) {
       }, 200, req);
     }
 
-    // Outro status (500, etc) — propaga
+    // Outro status (500, etc) — propaga com a mensagem da Handbank quando tem
+    const mOutro = typeof d.mensagem === 'string' ? limparHtml(d.mensagem) : (d.error ? String(d.error) : '');
     return jsonResp({
       success: false,
-      mensagem: `Handbank HTTP ${httpStatus}`,
+      mensagem: mOutro ? `Handbank HTTP ${httpStatus}: ${mOutro}` : `Handbank HTTP ${httpStatus}`,
       _httpStatus: httpStatus,
       _raw: d
     }, 200, req);
@@ -282,7 +385,7 @@ export default async function handler(req) {
   // dados que ja temos (nome, dataNasc, telefone, geo). Replica o que o
   // portal autorizacao-clt.uy3.com.br faz quando o cliente preenche.
   // Apos sucesso, re-chama iniciarConsultaCLT da Handbank pra puxar dados.
-  if (action === 'autorizarUY3') {
+  if (action === 'autorizarUY3' || action === 'autorizarHandmais') {
     const cpf = String(body.cpf || '').replace(/\D/g, '');
     const nome = String(body.nome || '').trim();
     const dataNasc = String(body.dataNascimento || '').trim(); // YYYY-MM-DD
@@ -292,6 +395,91 @@ export default async function handler(req) {
     }
     const lat = body.latitude || -23.52757315971176; // Sorocaba/SP default
     const long = body.longitude || -47.47400538521915;
+
+    // ── Portal NOVO (out/2026): autorizacao-clt.handmais.com ──────────
+    // O link do 202 vem como https://autorizacao-clt.handmais.com/<hash>?cod_verificacao=<uuid>.
+    // A pagina faz: GET api.ipify.org (ip do cliente) → POST /curl.php com
+    // {nome_completo, cpf, telefone, data_nascimento, latitude, longitude,
+    //  device, cod_verificacao, ip_origem, hash}. Resposta: {mensagem}.
+    // O endpoint antigo (api.uy3.com.br ChallengeInfo) hoje responde 400
+    // BIGDATA_CPF_SERVICE_UNAVAILABLE pra qualquer dado — por isso o novo
+    // fluxo e o padrao e o antigo fica so como fallback.
+    const link = String(body.link || body.linkAutorizacao || '');
+    const partes = parseLinkAutorizacao(link);
+    const hash = String(body.hash || body.hashAutorizacao || partes.hash || '');
+    const cod = String(body.codVerificacao || body.cod_verificacao || partes.cod || '');
+    const portalNovo = /handmais\.com$/i.test(partes.host || '') || (!!hash && !!cod);
+    if (portalNovo) {
+      if (!hash || !cod) {
+        return jsonResp({
+          success: false, portal: 'handmais', _httpStatus: 0,
+          mensagem: 'Link de autorização sem hash/cod_verificacao — não dá pra auto-autorizar (use o link manual)'
+        }, 200, req);
+      }
+      const origin = partes.origin || 'https://autorizacao-clt.handmais.com';
+      let ip = null;
+      try {
+        const c1 = new AbortController(); const t1 = setTimeout(() => c1.abort(), 2500);
+        const ri = await fetch('https://api.ipify.org?format=json', { signal: c1.signal });
+        clearTimeout(t1);
+        ip = (await ri.json())?.ip || null;
+      } catch { /* segue sem ip */ }
+      const payload = {
+        nome_completo: nome,
+        cpf,
+        telefone,
+        data_nascimento: dataNasc,
+        latitude: lat,
+        longitude: long,
+        device: UA_NAV,
+        cod_verificacao: cod,
+        ip_origem: ip || '0.0.0.0',
+        hash
+      };
+      let r, t;
+      try {
+        const c2 = new AbortController(); const t2 = setTimeout(() => c2.abort(), 15000);
+        r = await fetch(origin + '/curl.php', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'accept': 'application/json, text/plain, */*',
+            'origin': origin,
+            'referer': `${origin}/${hash}?cod_verificacao=${encodeURIComponent(cod)}`,
+            'user-agent': UA_NAV,
+            'accept-language': 'pt-BR,pt;q=0.9'
+          },
+          body: JSON.stringify(payload),
+          signal: c2.signal
+        });
+        clearTimeout(t2);
+        t = await r.text();
+      } catch (e) {
+        return jsonResp({
+          success: false, portal: 'handmais', _httpStatus: 0,
+          mensagem: `Hand+ não respondeu (${e?.name === 'AbortError' ? 'timeout 15s' : (e?.message || 'rede')})`
+        }, 200, req);
+      }
+      let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 500) }; }
+      const ehHtml = /^\s*<(!DOCTYPE|html)/i.test(t);
+      const msg = limparHtml(d?.mensagem || d?.message || d?.error || (ehHtml ? '' : d?.raw) || '');
+      const cf = { server: r.headers.get('server'), ray: r.headers.get('cf-ray'), mitigated: r.headers.get('cf-mitigated') };
+      return jsonResp({
+        success: r.ok && !ehHtml,
+        portal: 'handmais',
+        _httpStatus: r.status,
+        _raw: d,
+        cf,
+        telefoneUsado: telefone.replace(/\d(?=\d{4})/g, '*'),
+        mensagem: (r.ok && !ehHtml)
+          ? (msg || 'Autorização enviada ao Hand+ — re-consulte pra confirmar.')
+          : (ehHtml
+              ? `Hand+ devolveu página HTML (HTTP ${r.status}${cf.mitigated ? ', Cloudflare ' + cf.mitigated : ''})`
+              : (msg || `Hand+ retornou HTTP ${r.status}`))
+      }, 200, req);
+    }
+
+    // ── Portal ANTIGO: api.uy3.com.br/v1/DataprevEmployee/ChallengeInfo (fallback) ──
     const params = new URLSearchParams({
       phoneNumber: telefone,
       registrationNumber: cpf,
@@ -307,18 +495,19 @@ export default async function handler(req) {
         'accept': 'application/json',
         'origin': 'https://autorizacao-clt.uy3.com.br',
         'referer': 'https://autorizacao-clt.uy3.com.br/',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
+        'user-agent': UA_NAV
       }
     });
     const t = await r.text();
     let d; try { d = JSON.parse(t); } catch { d = { raw: t.substring(0, 500) }; }
     return jsonResp({
       success: r.ok,
+      portal: 'uy3',
       _httpStatus: r.status,
       _raw: d,
       mensagem: r.ok
         ? 'Challenge UY3 disparado — agora chame iniciarConsultaCLT pra ver se autorizou.'
-        : (d.error || d.message || `UY3 retornou HTTP ${r.status}`)
+        : limparHtml(d.message || d.error || d.mensagem || `UY3 retornou HTTP ${r.status}`)
     }, 200, req);
   }
 
@@ -433,5 +622,5 @@ export default async function handler(req) {
     return jsonResp({ success: r.ok, httpStatus: r.status, data: r.data }, 200, req);
   }
 
-  return jsonError('Action invalida. Validas: login, status, iniciarConsultaCLT, autorizarUY3, verificarAutorizacao, raw', 400, req);
+  return jsonError('Action invalida. Validas: login, status, iniciarConsultaCLT, autorizarUY3 (=autorizarHandmais), verificarAutorizacao, simularDetalheUY3, raw', 400, req);
 }

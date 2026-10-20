@@ -400,10 +400,32 @@ export function BancoOfertaCard({ banco, state, onSimularDigitar, cliente, filaI
           </Badge>
         )}
         {state.precisaAutorizacao && state.linkAutorizacao && (
-          <Badge variant="info" className="gap-1 text-[10px]">
-            <FileText className="w-3 h-3" />
-            Link autorização
-          </Badge>
+          <>
+            <a
+              href={state.linkAutorizacao}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title="Abrir o link de autorização (manda pro cliente ou preenche com ele)"
+            >
+              <Badge variant="info" className="gap-1 text-[10px] cursor-pointer hover:underline">
+                <FileText className="w-3 h-3" />
+                Abrir link de autorização
+              </Badge>
+            </a>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 px-1.5 text-[10px]"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigator.clipboard?.writeText(state.linkAutorizacao || '').catch(() => {});
+              }}
+              title="Copiar link de autorização"
+            >
+              Copiar link
+            </Button>
+          </>
         )}
       </div>
 

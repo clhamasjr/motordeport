@@ -887,9 +887,12 @@ async function processarMercantil(id, cpf, auth, secret) {
 
 // Banco HANDBANK / UY3 — bate em /uy3/simulacao_clt:
 //   202 → precisa autorizar. Se temos nome+dataNasc+telefone do cliente,
-//          AUTO-AUTORIZA chamando ChallengeInfo da UY3 e re-consulta.
+//          AUTO-AUTORIZA pelo portal Hand+ (curl.php com hash+cod do link;
+//          o ChallengeInfo antigo da UY3 morreu em out/2026) e re-consulta.
 //   201 → autorizado, retorna { cnpj, matricula, valor_margem, mensagem }
-//   400 → cliente ja tem contrato OU outro impedimento
+//   409 → varios vinculos (lista com margem de cada) → tratado como 201
+//   400 → restricoes do convenio / ja tem contrato / CPF invalido
+//   402 → bloqueio comercial Handbank · 404 → sem vinculo na Dataprev
 async function processarHandbank(id, cpf, auth, secret) {
   const manut = await _bancoEmManutencao('handbank');
   if (manut) { await _marcarEmManutencao(id, 'handbank', manut); return; }
@@ -902,31 +905,58 @@ async function processarHandbank(id, cpf, auth, secret) {
 
   // Cenario 1: precisa autorizacao (202)
   if (d.precisaAutorizacao && d.linkAutorizacao) {
-    // Tenta auto-autorizar se temos os dados necessarios (nome + dataNasc + telefone)
+    // Tenta auto-autorizar se temos os dados necessarios (nome + dataNasc + telefone).
+    // Desde out/2026 o link e do portal Hand+ (autorizacao-clt.handmais.com):
+    // /api/handbank 'autorizarUY3' manda hash+cod_verificacao do link junto.
     const cli = await aguardarCliente(id, prazoHB.timeout(4000));
-    const tel = celularDoCliente(cli).numero;
+    const celInfo = celularDoCliente(cli);
+    const tel = celInfo.numero;
     if (cli?.nome && cli?.dataNascimento && tel) {
       const dataIso = String(cli.dataNascimento).includes('-') ? cli.dataNascimento : ddMmYyToIso(cli.dataNascimento);
       const autzR = await callApi('/api/handbank', {
         action: 'autorizarUY3',
-        cpf, nome: cli.nome, dataNascimento: dataIso, telefone: tel
-      }, auth, secret, prazoHB.timeout(8000)).catch(() => ({ ok: false }));
+        cpf, nome: cli.nome, dataNascimento: dataIso, telefone: tel,
+        link: d.linkAutorizacao, hash: d.hashAutorizacao || null, codVerificacao: d.codVerificacao || null
+      }, auth, secret, prazoHB.timeout(16000)).catch((e) => ({ ok: false, status: 0, data: { error: e?.message || 'erro' } }));
+      const ad = autzR.data || {};
 
-      if (autzR.ok && autzR.data?.success) {
-        // Re-consulta apos autorizacao — agora pode vir 201 (autorizado)
-        await new Promise(r => setTimeout(r, 1500));
-        r = await callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret, prazoHB.timeout(10000));
-        d = r.data || {};
-        // continua pro cenario 3 abaixo se virou autorizado
+      if (autzR.ok && ad.success) {
+        // Re-consulta apos autorizacao (ate 2x) — a autorizacao leva alguns
+        // segundos pra refletir na Handbank; agora pode vir 201 (autorizado)
+        for (let i = 0; i < 2; i++) {
+          await new Promise(r => setTimeout(r, i === 0 ? 1500 : 2500));
+          r = await callApi('/api/handbank', { action: 'iniciarConsultaCLT', cpf }, auth, secret, prazoHB.timeout(10000));
+          d = r.data || {};
+          if (!(d.precisaAutorizacao && d.linkAutorizacao) || prazoHB.esgotado(6000)) break;
+        }
+        if (d.precisaAutorizacao && d.linkAutorizacao) {
+          // Autorizacao aceita pelo portal mas a Handbank ainda devolve 202 —
+          // fica aguardando; o ↻ do card (ou o cron) re-consulta.
+          await patchBanco(id, 'handbank', {
+            status: 'bloqueado',
+            bloqueado: true,
+            precisaAutorizacao: true,
+            autorizacaoEnviada: true,
+            linkAutorizacao: d.linkAutorizacao,
+            mensagem: `Autorização enviada ao Hand+ (${String(ad.mensagem || 'ok').substring(0, 100)}) — ainda não refletiu. Re-consulte em instantes ou use o link.`,
+            _raw_response: d,
+            _raw_autz: ad
+          });
+          return;
+        }
+        // continua pro cenario 2/3 abaixo com a resposta nova
       } else {
-        // Auto-autz falhou — deixa link manual
+        // Auto-autz falhou — mostra o MOTIVO (antes era so "falhou") e deixa o link manual
+        const motivo = String(msgDeErro(ad) || ad.mensagem || ad.error || (autzR.status ? `HTTP ${autzR.status}` : 'sem resposta')).substring(0, 160);
+        const avisoTel = celInfo.valido ? '' : ' Telefone do cadastro não é celular — edite o cliente e re-tente.';
         await patchBanco(id, 'handbank', {
           status: 'bloqueado',
           bloqueado: true,
           precisaAutorizacao: true,
           linkAutorizacao: d.linkAutorizacao,
-          mensagem: 'Auto-autorização UY3 falhou. Use o link manual no card.',
-          _raw_response: d
+          mensagem: `Auto-autorização Hand+/UY3 falhou: ${motivo}.${avisoTel} Use o link manual no card.`,
+          _raw_response: d,
+          _raw_autz: ad
         });
         return;
       }
@@ -955,7 +985,27 @@ async function processarHandbank(id, cpf, auth, secret) {
       bloqueado: true,
       jaTemContrato: true,
       precisaAutorizacao: false,
-      mensagem: d.mensagem || 'Cliente já possui contrato ativo na UY3'
+      linkAutorizacao: null,
+      mensagem: d.mensagem || 'Cliente já possui contrato ativo na UY3',
+      _raw_response: d
+    });
+    return;
+  }
+
+  // Cenario 2b: sem vinculo CLT na Dataprev (404) ou bloqueio comercial da
+  // Handbank (402) — negativa do banco, NAO erro de API: nao re-tenta.
+  if (d.semVinculo || d.bloqueioComercial) {
+    await patchBanco(id, 'handbank', {
+      status: 'falha',
+      retryable: false,
+      disponivel: false,
+      precisaAutorizacao: false,
+      bloqueado: false,
+      linkAutorizacao: null,
+      semVinculo: !!d.semVinculo,
+      bloqueioComercial: !!d.bloqueioComercial,
+      mensagem: d.mensagem || (d.semVinculo ? 'Nenhum vínculo CLT encontrado na Dataprev' : 'Handbank: bloqueio comercial'),
+      _raw_response: d
     });
     return;
   }
@@ -977,7 +1027,8 @@ async function processarHandbank(id, cpf, auth, secret) {
         empregadorCnpj: d.empregadorCnpj || null,
         matricula: d.matricula || null,
         empregador: d.empregador || null,
-        renda: d.renda || null
+        renda: d.renda || null,
+        ...(Array.isArray(d.vinculos) && d.vinculos.length ? { vinculos: d.vinculos, multiplosVinculos: true } : {})
       },
       _raw_response: d
     });
