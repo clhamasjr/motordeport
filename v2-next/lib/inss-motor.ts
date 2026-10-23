@@ -52,6 +52,9 @@ export interface BancoRegra {
   vcMin?: number;
   /** Idade máxima do cliente pra esse destino (motor simula 108x). Sobrescreve IDADE_MAX quando menor. */
   idadeMax?: number;
+  /** Saldo mínimo pra usar a TABELA BAIXA (faixa[0]). Abaixo disso só vale a tabela
+   *  alta (faixa[1]). Ex: BRB 1,79% só com saldo ≥ R$ 4.000 (1,85% a partir de R$ 3.000). */
+  faixaBaixaSaldoMin?: number;
   /** Troco mínimo como % de (parcelas ACRESCENTADAS × parcela), onde acrescentadas = 108 − restantes.
    *  Regra Fintech do Corban (10/09/2026): 5%, mín R$ 100 (tMin). */
   tMinPctAcresc?: number;
@@ -139,6 +142,7 @@ export const BD: Record<string, BancoRegra> = {
   BRB: {
     sMin: 3000, vcMax: 150000, tMin: 250, pMin: 0, pgMin: 12,
     faixa: [1.79, 1.85], coefF: null, coefs: COEFS_108,
+    faixaBaixaSaldoMin: 4000, // 1,79% só com saldo ≥ R$4k (dono, 23/10/2026)
     block: ['070', '925', '380', '063', '012', '290', '336', '626', '121'],
     taxaOrigemMinDefault: 0,
     invRules: { minAge: 60 },
@@ -448,7 +452,10 @@ export function tryBank(b: string, r: BancoRegra, p: number, s: number, age: num
     const tx = COEFS.find((x) => x.c === r.coefF);
     return { banco: b, troco: tr, vc, taxa: tx ? tx.t : 0 };
   }
-  const res = bestR(p, s, tMinEff, r.faixa, r.coefs);
+  // Tabela baixa exige saldo mínimo próprio (ex: BRB 1,79% só ≥ R$4k): abaixo, só a alta.
+  const fx: [number, number] | null = (r.faixa && r.faixaBaixaSaldoMin && s < r.faixaBaixaSaldoMin)
+    ? [r.faixa[1], r.faixa[1]] : r.faixa;
+  const res = bestR(p, s, tMinEff, fx, r.coefs);
   if (res) {
     if (vcExceedsLimit(r, res.vc, age)) return null;
     return { banco: b, troco: res.tr, vc: res.vc, taxa: res.t };
@@ -670,7 +677,8 @@ export function calcPortRefin108(
     taxaBaixa = taxaAlta;
   } else if (r.faixa) {
     taxaAlta = r.faixa[1]; // teto da faixa (= 1.85% normalmente)
-    taxaBaixa = r.faixa[0]; // piso da faixa
+    // Tabela baixa só se o saldo atinge o mínimo dela (ex: BRB 1,79% ≥ R$4k)
+    taxaBaixa = (r.faixaBaixaSaldoMin && saldo < r.faixaBaixaSaldoMin) ? taxaAlta : r.faixa[0];
   } else {
     return null;
   }

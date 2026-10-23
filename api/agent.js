@@ -655,6 +655,7 @@ const _BD = {
   // limite CPF 150k, qualquer taxa origem. Nao porta PicPay/Bradescard/Inbursa/
   // PagBank/C6/Agibank + auto-port BRB.
   BRB: { sMin: 3000, vcMax: 150000, tMin: 250, pgMin: 12, faixa: [1.79, 1.85], coefF: null,
+    faixaBaixaSaldoMin: 4000, // 1,79% so com saldo >= R$4k (dono, 23/10)
     block: ['070','925','380','063','012','290','336','626','121'],
     taxaOrigemMinDefault: 0 },
   ICRED: { sMin: 3000, tMin: 100, faixa: [1.50, 1.85], coefF: null,
@@ -697,7 +698,9 @@ function _tryBank(b, r, p, s) {
     const tx = _COEFS.find((x) => x.c === r.coefF);
     return { banco: b, troco: tr, vc, taxa: tx ? tx.t : 0 };
   }
-  const res = _bestR(p, s, tMinEff, r.faixa);
+  // Tabela baixa exige saldo minimo proprio (BRB 1,79% so >= R$4k): abaixo, so a alta.
+  const fx = (r.faixa && r.faixaBaixaSaldoMin && s < r.faixaBaixaSaldoMin) ? [r.faixa[1], r.faixa[1]] : r.faixa;
+  const res = _bestR(p, s, tMinEff, fx);
   if (res && r.vcMax && res.vc > r.vcMax) return null;
   if (res) return { banco: b, troco: res.tr, vc: res.vc, taxa: res.t };
   return null;
@@ -726,7 +729,7 @@ function _calcPortRefin108(par, sal, destino, taxaOrig, cd) {
   if (r.coefF) {
     const t = _COEFS.find((x) => x.c === r.coefF);
     tAlta = tBaixa = t ? t.t : 1.85;
-  } else if (r.faixa) { tAlta = r.faixa[1]; tBaixa = r.faixa[0]; }
+  } else if (r.faixa) { tAlta = r.faixa[1]; tBaixa = (r.faixaBaixaSaldoMin && sal < r.faixaBaixaSaldoMin) ? tAlta : r.faixa[0]; }
   else return null;
   let minOrigem = 0;
   if (cd && r.taxaOrigemMin && r.taxaOrigemMin[cd] !== undefined) minOrigem = r.taxaOrigemMin[cd];
