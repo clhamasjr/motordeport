@@ -135,6 +135,12 @@ export function EnquadramentoCard({ enquadramento: e }: Props) {
           </div>
         )}
 
+        {e.fonte_totais === 'extrato_impresso' && (
+          <div className="text-[11px] text-yellow-500">
+            ⚠ Totais tirados do quadro de margens impresso no extrato — a soma das parcelas lidas não bateu
+            (veja o aviso no extrato acima).
+          </div>
+        )}
         <div className="text-[10px] text-muted-foreground">
           Regra: {e.regra_descricao || (fatias ? '35% empréstimos + 5% RMC + 5% RCC' : `teto global de ${pct(e.teto_pct)}`)}
         </div>

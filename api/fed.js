@@ -200,6 +200,28 @@ async function analisarHolerite(body, req, auth) {
       dados.extrato_info = contratosExtraidos.ok ? (contratosExtraidos.info || {}) : null;
       dados.contratos_ativos = contratosExtraidos.ok ? (contratosExtraidos.contratos || []) : [];
       dados.extrato_erro = contratosExtraidos.ok ? null : contratosExtraidos.erro;
+
+      // Confere a soma das parcelas lidas com o total UTILIZADO impresso no extrato.
+      // Uma parcela lida com digito a mais (27/10/2026: 33,69 virou 333,69) muda o
+      // enquadramento inteiro — se nao bater, rele o extrato UMA vez com a pista do erro.
+      if (contratosExtraidos.ok) {
+        let conf = conferirExtrato(dados.contratos_ativos, dados.extrato_info);
+        if (conf.inconsistente) {
+          const releitura = await extrairContratosExtrato(extrato_base64, extratoTipo, conf.dica);
+          if (releitura.ok) {
+            const infoRel = { ...(dados.extrato_info || {}), ...(releitura.info || {}) };
+            const conf2 = conferirExtrato(releitura.contratos, infoRel);
+            // fica com a releitura se ela bateu, ou se chegou mais perto do total impresso
+            if (!conf2.inconsistente || conf2.desvio_total < conf.desvio_total) {
+              dados.contratos_ativos = releitura.contratos;
+              dados.extrato_info = infoRel;
+              conf = conf2;
+            }
+          }
+          dados.extrato_releitura = true;
+        }
+        dados.extrato_consistencia = conf.secoes;
+      }
       // Dados pessoais do extrato podem complementar quando o contracheque nao traz
       const inf = dados.extrato_info || {};
       if (!dados.cpf && inf.cpf) dados.cpf = inf.cpf;
@@ -400,7 +422,9 @@ Estrutura esperada:
 // ── Extracao do EXTRATO DE CONSIGNACOES VIGENTES ────────────────
 // Extrato federal/militar lista contratos ativos: empréstimo, RMC (cartão crédito) e RCC (cartão benefício).
 // Cada contrato tem: numero, rubrica (codigo+banco), parcela X/Y, valor parcela, inicio, fim.
-async function extrairContratosExtrato(base64, tipo) {
+// `dica` (opcional): texto de correcao usado na RELEITURA quando a soma das parcelas
+// nao bateu com o total utilizado impresso (ver conferirExtrato).
+async function extrairContratosExtrato(base64, tipo, dica = null) {
   const ehPdf = tipo === 'application/pdf';
   const tipoMidia = ehPdf ? 'document' : 'image';
   const mediaType = ehPdf ? 'application/pdf'
@@ -430,7 +454,13 @@ REGRAS:
 - Datas: formato YYYY-MM-DD (use dia 01 para inicio/fim no formato MM/AAAA)
 - Se nao conseguir extrair um campo, use null
 
-INFO_GERAL: tente extrair tambem (no topo do extrato): cpf (so digitos), matricula, nome (do servidor), orgao (texto completo).
+INFO_GERAL: tente extrair tambem (no topo do extrato): cpf (so digitos), matricula, nome (do servidor), orgao (texto completo),
+data_emissao, e o QUADRO DE MARGENS impresso — uma linha por tipo (Margem consignavel/facultativa = emprestimos;
+Cartao de credito = RMC; Cartao de beneficio = RCC), cada uma com TOTAL (limite), UTILIZADA e DISPONIVEL.
+
+CONFERENCIA OBRIGATORIA (faca antes de responder): some os "Valor da Parcela" de cada secao e compare com a
+UTILIZADA impressa daquele tipo. Se nao bater, releia os valores — o erro mais comum e ler um digito a mais ou
+a menos (ex.: 33,69 lido como 333,69; 432,59 lido como 432,50). Copie cada valor EXATAMENTE como impresso.
 
 RESPONDA APENAS COM JSON VALIDO, SEM TEXTO ADICIONAL, SEM MARKDOWN, SEM \`\`\`.
 
@@ -444,7 +474,13 @@ Estrutura esperada:
     "data_emissao": "YYYY-MM-DD|null",
     "margem_total_facultativa_disponivel": "number|null",
     "margem_total_cartao_disponivel": "number|null",
-    "margem_total_cb_disponivel": "number|null"
+    "margem_total_cb_disponivel": "number|null",
+    "margem_facultativa_total": "number|null (limite de emprestimos no quadro de margens)",
+    "margem_facultativa_utilizada": "number|null (UTILIZADA em emprestimos — deve bater com a soma das parcelas de emprestimo)",
+    "margem_cartao_total": "number|null",
+    "margem_cartao_utilizada": "number|null (UTILIZADA em cartao de credito — soma das parcelas RMC)",
+    "margem_cb_total": "number|null",
+    "margem_cb_utilizada": "number|null (UTILIZADA em cartao de beneficio — soma das parcelas RCC)"
   },
   "contratos": [
     {
@@ -472,6 +508,7 @@ Estrutura esperada:
     {
       type: 'text',
       text: 'Extraia os contratos consignados ativos deste extrato em JSON conforme as instrucoes do system prompt.'
+            + (dica ? '\n\n' + dica : '')
     }
   ];
 
@@ -507,6 +544,35 @@ Estrutura esperada:
   } catch (e) {
     return { ok: false, erro: `Falha de rede (extrato): ${e.message}` };
   }
+}
+
+// ── Conferencia do extrato: soma das parcelas lidas × total UTILIZADO impresso ──
+// Tolerancia de R$ 0,10 por secao. Se o extrato nao traz o total daquela secao, ok = null.
+// Retorna tambem a `dica` que vai pro modelo na releitura.
+function conferirExtrato(contratos, info) {
+  const inf = info || {};
+  const lista = Array.isArray(contratos) ? contratos : [];
+  const soma = (t) => lista.filter(c => c.tipo === t).reduce((s, c) => s + (Number(c.parcela_valor) || 0), 0);
+  const secao = (tipo, informado) => {
+    const s = Number(soma(tipo).toFixed(2));
+    const i = (informado == null || isNaN(Number(informado))) ? null : Number(informado);
+    const dif = i == null ? null : Number((s - i).toFixed(2));
+    return { soma: s, informado: i, diferenca: dif, ok: dif == null ? null : Math.abs(dif) <= 0.10 };
+  };
+  const secoes = {
+    emprestimo: secao('emprestimo', inf.margem_facultativa_utilizada),
+    rmc: secao('rmc', inf.margem_cartao_utilizada),
+    rcc: secao('rcc', inf.margem_cb_utilizada),
+  };
+  const ruins = Object.entries(secoes).filter(([, s]) => s.ok === false);
+  const desvio = ruins.reduce((a, [, s]) => a + Math.abs(s.diferenca || 0), 0);
+  const fmt = (v) => 'R$ ' + Number(v).toFixed(2).replace('.', ',');
+  const dica = ruins.length
+    ? 'ATENCAO — a CONFERENCIA FALHOU na leitura anterior: ' + ruins.map(([t, s]) =>
+        `a soma das parcelas de ${t.toUpperCase()} que voce extraiu deu ${fmt(s.soma)}, mas o extrato informa UTILIZADA ${fmt(s.informado)} (diferenca ${fmt(s.diferenca)})`).join('; ')
+      + '. Releia CADA "Valor da Parcela" digito a digito (erro tipico: 33,69 lido como 333,69; 432,59 lido como 432,50) e garanta que a soma de cada secao bata com a UTILIZADA impressa.'
+    : '';
+  return { secoes, inconsistente: ruins.length > 0, desvio_total: desvio, dica };
 }
 
 // ── Simulacao de PORTABILIDADE com TROCO ───────────────────────
@@ -561,9 +627,22 @@ function calcularEnquadramento(dados, convenio) {
   const rmcContratos = contratos.filter(c => c.tipo === 'rmc');
   const rccContratos = contratos.filter(c => c.tipo === 'rcc');
   const sumPmt = (arr) => arr.reduce((s, c) => s + (Number(c.parcela_valor) || 0), 0);
-  const pmtEmprestimos = sumPmt(empContratos);
-  const pmtRmc = sumPmt(rmcContratos);
-  const pmtRcc = sumPmt(rccContratos);
+  // Totais: soma das parcelas lidas. Se a conferencia com o extrato impresso falhou
+  // (parcela lida errada), usa o total UTILIZADO impresso no quadro de margens — mais
+  // confiavel que a leitura contrato a contrato.
+  const conf = dados.extrato_consistencia || {};
+  const totalDe = (tipo, somaLida) => {
+    const c = conf[tipo];
+    if (c && c.ok === false && c.informado != null) return { v: Number(c.informado), fonte: 'extrato_impresso' };
+    return { v: somaLida, fonte: 'soma_contratos' };
+  };
+  const tEmp = totalDe('emprestimo', sumPmt(empContratos));
+  const tRmc = totalDe('rmc', sumPmt(rmcContratos));
+  const tRcc = totalDe('rcc', sumPmt(rccContratos));
+  const pmtEmprestimos = tEmp.v;
+  const pmtRmc = tRmc.v;
+  const pmtRcc = tRcc.v;
+  const fonteTotais = [tEmp, tRmc, tRcc].some(t => t.fonte === 'extrato_impresso') ? 'extrato_impresso' : 'soma_contratos';
   const totalConsignado = pmtEmprestimos + pmtRmc + pmtRcc;
   const consumoCartoes = pmtRmc + pmtRcc;
   const temRmc = rmcContratos.length > 0;
@@ -613,6 +692,7 @@ function calcularEnquadramento(dados, convenio) {
   return {
     modelo: regra.modelo,
     regra_descricao: regra.descricao,
+    fonte_totais: fonteTotais,                                  // 'soma_contratos' | 'extrato_impresso'
     salario_bruto: salarioBruto,
     // teto TOTAL (0.45 civil / 0.70 militar)
     teto_pct: Number(tetoPct.toFixed(4)),

@@ -129,7 +129,12 @@ export function ResultadoAnalise({ r }: Props) {
            depois as análises de portabilidade (bancos que atendem + simulação). */}
       {r.enquadramento && <EnquadramentoCard enquadramento={r.enquadramento} />}
       {(contratos.length > 0 || d.extrato_erro) && (
-        <TabelaContratos contratos={contratos} erro={d.extrato_erro} />
+        <TabelaContratos
+          contratos={contratos}
+          erro={d.extrato_erro}
+          consistencia={d.extrato_consistencia}
+          releitura={d.extrato_releitura}
+        />
       )}
 
       {/* ── 2) Portabilidade: bancos que atendem ── */}

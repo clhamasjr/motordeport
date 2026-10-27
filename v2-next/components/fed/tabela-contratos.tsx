@@ -4,6 +4,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { formatBRL } from '@/lib/utils';
 import {
   ContratoAtivo,
+  ExtratoConsistencia,
+  SecaoConsistencia,
   tipoContratoIcone,
   tipoContratoLabel,
 } from '@/lib/fed-types';
@@ -11,12 +13,22 @@ import {
 interface Props {
   contratos: ContratoAtivo[];
   erro?: string | null;
+  /** Conferência soma das parcelas lidas × total utilizado impresso no extrato (por seção) */
+  consistencia?: ExtratoConsistencia | null;
+  /** True quando o sistema releu o extrato porque a 1ª leitura não bateu */
+  releitura?: boolean;
 }
 
-export function TabelaContratos({ contratos, erro }: Props) {
+const NOME_SECAO: Record<string, string> = { emprestimo: 'Empréstimos', rmc: 'RMC', rcc: 'RCC' };
+
+export function TabelaContratos({ contratos, erro, consistencia, releitura }: Props) {
   const emp = contratos.filter((c) => c.tipo === 'emprestimo');
   const rmc = contratos.filter((c) => c.tipo === 'rmc');
   const rcc = contratos.filter((c) => c.tipo === 'rcc');
+
+  const secoes = consistencia ? (Object.entries(consistencia) as [string, SecaoConsistencia][]) : [];
+  const divergentes = secoes.filter(([, s]) => s && s.ok === false);
+  const conferidas = secoes.filter(([, s]) => s && s.ok === true);
 
   return (
     <Card className="border-cyan-500/30">
@@ -34,6 +46,30 @@ export function TabelaContratos({ contratos, erro }: Props) {
         {erro && (
           <div className="text-xs text-destructive bg-destructive/10 rounded p-2.5">
             ⚠ Erro ao ler extrato: {erro}
+          </div>
+        )}
+
+        {/* Conferência: soma das parcelas lidas × total utilizado impresso */}
+        {divergentes.length > 0 && (
+          <div className="text-xs text-destructive bg-destructive/10 rounded p-2.5 space-y-1">
+            <div className="font-semibold">⚠ Leitura do extrato não bate com o total impresso</div>
+            {divergentes.map(([tipo, s]) => (
+              <div key={tipo}>
+                {NOME_SECAO[tipo] || tipo}: soma das parcelas lidas <b>{formatBRL(s.soma)}</b> × utilizado no
+                extrato <b>{formatBRL(s.informado ?? 0)}</b> (diferença {formatBRL(Math.abs(s.diferenca ?? 0))})
+              </div>
+            ))}
+            <div className="text-muted-foreground">
+              Provável parcela lida com dígito a mais ou a menos (ex.: 33,69 → 333,69)
+              {releitura ? ' — já houve uma releitura automática e ainda não bateu' : ''}. O enquadramento usa o{' '}
+              <b>total impresso</b>; confira a tabela abaixo antes de digitar.
+            </div>
+          </div>
+        )}
+        {divergentes.length === 0 && conferidas.length > 0 && (
+          <div className="text-[11px] text-green-500">
+            ✓ Soma das parcelas conferida com o total utilizado impresso no extrato
+            {releitura ? ' (corrigida por releitura automática)' : ''}.
           </div>
         )}
 

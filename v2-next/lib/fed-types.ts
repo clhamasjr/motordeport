@@ -128,6 +128,28 @@ export interface ExtratoInfo {
   margem_total_facultativa_disponivel?: number | null;
   margem_total_cartao_disponivel?: number | null;
   margem_total_cb_disponivel?: number | null;
+  /** Quadro de margens impresso no extrato (total = limite; utilizada = soma esperada das parcelas) */
+  margem_facultativa_total?: number | null;
+  margem_facultativa_utilizada?: number | null;
+  margem_cartao_total?: number | null;
+  margem_cartao_utilizada?: number | null;
+  margem_cb_total?: number | null;
+  margem_cb_utilizada?: number | null;
+}
+
+/** Conferência de uma seção do extrato: soma das parcelas lidas × total utilizado impresso */
+export interface SecaoConsistencia {
+  soma: number;
+  informado: number | null;
+  diferenca: number | null;
+  /** null = extrato não traz o total daquela seção */
+  ok: boolean | null;
+}
+
+export interface ExtratoConsistencia {
+  emprestimo: SecaoConsistencia;
+  rmc: SecaoConsistencia;
+  rcc: SecaoConsistencia;
 }
 
 /** Dados extraídos do contracheque (e complementados pelo extrato) */
@@ -158,6 +180,10 @@ export interface DadosExtraidos {
   extrato_info?: ExtratoInfo | null;
   contratos_ativos?: ContratoAtivo[];
   extrato_erro?: string | null;
+  /** Soma das parcelas lidas × total utilizado impresso, por seção (ausente em análises antigas) */
+  extrato_consistencia?: ExtratoConsistencia | null;
+  /** True quando o sistema releu o extrato porque a 1ª leitura não bateu */
+  extrato_releitura?: boolean;
 }
 
 /** 1 banco que atende este servidor (resultado do cruzamento) */
@@ -243,6 +269,8 @@ export interface Enquadramento {
   /** 'fatias' (civil: cada fatia com teto próprio) | 'global' (militar: teto único) */
   modelo?: 'fatias' | 'global';
   regra_descricao?: string;
+  /** De onde vieram os totais: soma das parcelas lidas, ou o quadro impresso quando a leitura não bateu */
+  fonte_totais?: 'soma_contratos' | 'extrato_impresso';
   salario_bruto: number;
   /** Teto TOTAL em fração (0.45 civil / 0.70 militar; análises antigas: 0.40) */
   teto_pct: number;
