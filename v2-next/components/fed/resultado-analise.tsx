@@ -124,7 +124,15 @@ export function ResultadoAnalise({ r }: Props) {
         </Card>
       )}
 
-      {/* ── Bancos que atendem ── */}
+      {/* ── 1) Margem e cartão (enquadramento) + contratos do extrato ──
+           Ordem pedida pelo dono (27/10/2026): primeiro a análise de margem/cartão,
+           depois as análises de portabilidade (bancos que atendem + simulação). */}
+      {r.enquadramento && <EnquadramentoCard enquadramento={r.enquadramento} />}
+      {(contratos.length > 0 || d.extrato_erro) && (
+        <TabelaContratos contratos={contratos} erro={d.extrato_erro} />
+      )}
+
+      {/* ── 2) Portabilidade: bancos que atendem ── */}
       {atendem.length > 0 && (
         <Card className="border-green-500/30">
           <CardContent className="p-4">
@@ -218,11 +226,7 @@ export function ResultadoAnalise({ r }: Props) {
         </Card>
       )}
 
-      {/* ── Extrato (contratos + enquadramento + simulação port) ── */}
-      {(contratos.length > 0 || d.extrato_erro) && (
-        <TabelaContratos contratos={contratos} erro={d.extrato_erro} />
-      )}
-      {r.enquadramento && <EnquadramentoCard enquadramento={r.enquadramento} />}
+      {/* ── 3) Portabilidade: simulação contrato a contrato ── */}
       {simulacao.length > 0 && (
         <SimulacaoPortTable
           simulacao={simulacao}

@@ -233,14 +233,37 @@ export interface SimulacaoContrato {
   qtd_enquadram?: number;
 }
 
-/** Análise de enquadramento da margem total do servidor */
+/**
+ * Análise de enquadramento da margem do servidor.
+ * Regra vigente (desde 02/09/2026, fim da MP 1.355): CIVIL = fatias separadas
+ * 35% empréstimos + 5% RMC + 5% RCC (45% total); MILITAR = teto global 70%.
+ * Campos opcionais não existem em análises antigas (salvas antes desta regra).
+ */
 export interface Enquadramento {
+  /** 'fatias' (civil: cada fatia com teto próprio) | 'global' (militar: teto único) */
+  modelo?: 'fatias' | 'global';
+  regra_descricao?: string;
   salario_bruto: number;
-  /** Teto em fração (ex: 0.40 = 40%) */
+  /** Teto TOTAL em fração (0.45 civil / 0.70 militar; análises antigas: 0.40) */
   teto_pct: number;
   teto_valor: number;
-  /** Margem disponível só pra empréstimo (descontando reserva dos cartões averbados) */
+  /** Fatia dos empréstimos (0.35 civil) */
+  teto_emprestimo_pct?: number;
+  teto_emprestimo_valor?: number;
+  /** Margem disponível só pra empréstimo (= teto da fatia no modelo 'fatias') */
   margem_util_emprestimo_valor: number;
+  /** Sobra pra um NOVO empréstimo (teto da fatia − empréstimos averbados) */
+  margem_livre_emprestimo?: number;
+  limite_rmc_valor?: number;
+  limite_rcc_valor?: number;
+  limite_cartoes_pct?: number;
+  limite_cartoes_valor?: number;
+  consumo_cartoes?: number;
+  valor_estouro_rmc?: number;
+  valor_estouro_rcc?: number;
+  valor_estouro_cartoes?: number;
+  /** Prazo máximo legal (SIAPE 120) usado pra dizer se a port "enquadra" */
+  prazo_max_parcelas?: number;
   pmt_emprestimos: number;
   pmt_rmc: number;
   pmt_rcc: number;
@@ -249,10 +272,11 @@ export interface Enquadramento {
   tem_rcc: boolean;
   tem_ambos_cartoes: boolean;
   estourou: boolean;
-  /** Valor R$ que está acima do teto (maior entre estouro total e estouro de empréstimo) */
+  /** R$ que a port com redução precisa eliminar (= estouro dos empréstimos) */
   valor_estouro: number;
   valor_estouro_emprestimo: number;
-  /** Percentual da margem total já consumido (1.0 = 100%) */
+  valor_estouro_total?: number;
+  /** Percentual do salário já consumido (1.0 = 100%) */
   pct_consumido: number;
   qtd_emprestimos: number;
 }

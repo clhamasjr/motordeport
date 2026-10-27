@@ -523,6 +523,21 @@ Estrutura esperada:
 //     mensal de parcela e economia total.
 const TAXA_ORIGEM_PADRAO = 0.018; // 1,80% a.m. (assumida pra calcular saldo devedor)
 
+// ── Regra de margem consignavel (vigente desde 02/09/2026 — fim da MP 1.355/2026) ──
+// CIVIL (SIAPE/SERPRO): fatias SEPARADAS — 35% emprestimos + 5% RMC + 5% RCC = 45%.
+//   Cartao nao "empresta" margem pro emprestimo nem o contrario: cada fatia tem o seu
+//   teto. Prazo maximo SIAPE: 120 parcelas.
+// MILITAR (Marinha/Exercito/Aeronautica): teto GLOBAL de 70% (cartoes dentro dele,
+//   limitados a 10% juntos) — politica propria de cada Forca; sem fonte de prazo
+//   especifico, usa 120.
+// Pra trocar a regra (ex.: nova MP), basta mexer nesta tabela — o resto deriva dela.
+const REGRA_MARGEM = {
+  civil:   { modelo: 'fatias', emprestimo: 0.35, rmc: 0.05, rcc: 0.05, prazo_max: 120,
+             descricao: '35% empréstimos + 5% RMC + 5% RCC (regra vigente desde 02/09/2026)' },
+  militar: { modelo: 'global', teto: 0.70, limite_cartoes: 0.10, prazo_max: 120,
+             descricao: 'teto global de 70% (Forças Armadas), cartões até 10% dentro dele' },
+};
+
 // Saldo devedor: PV de uma anuidade postecipada. PMT * (1 - (1+i)^-n) / i
 function calcularSaldoDevedor(pmt, n, i) {
   if (!pmt || !n || !i) return null;
@@ -531,69 +546,104 @@ function calcularSaldoDevedor(pmt, n, i) {
 }
 
 // ── Calcula enquadramento de margem do servidor ────────────────
-// Teto SIAPE: 40% emp. (sobe pra 40% inteiro quando nao tem RMC+RCC averbados).
-// Quando TEM ambos cartoes averbados: emp ate 35% + 5% RMC + 5% RCC = 45% total (regra antiga)
-// Hoje, com o novo teto de 40% e ambos cartoes: ele esta "estourando" 5% e precisa
-// portar c/ reducao pra encaixar (35% emp + 5% + 5% = 45%, mas o teto sao 40% → -5%).
-//
-// Para militares (Marinha/Exercito/Aeronautica) o teto e maior (70%) e a regra
-// segue a politica especifica de cada Forca.
+// Deriva tudo de REGRA_MARGEM (por categoria). Saida compativel com o card do V2
+// (enquadramento-card.tsx): campos legados mantidos + campos por fatia.
 function calcularEnquadramento(dados, convenio) {
   const salarioBruto = Number(dados.salario_bruto) || null;
   const contratos = Array.isArray(dados.contratos_ativos) ? dados.contratos_ativos : [];
   if (!salarioBruto || contratos.length === 0) return null;
 
-  // Determina teto e margens reservadas por categoria
   const isMilitar = convenio?.categoria === 'militar';
-  const tetoMargem = isMilitar ? 0.70 : 0.40; // SIAPE = 40%, militar = 70%
-  // No SIAPE com ambos cartoes averbados, eles "guardam" 5%+5% = 10% (regra)
-  const reservaCartoesPct = 0.05; // cada cartao reserva 5%
+  const regra = isMilitar ? REGRA_MARGEM.militar : REGRA_MARGEM.civil;
 
   // Separa contratos por tipo
   const empContratos = contratos.filter(c => c.tipo === 'emprestimo');
   const rmcContratos = contratos.filter(c => c.tipo === 'rmc');
   const rccContratos = contratos.filter(c => c.tipo === 'rcc');
-
   const sumPmt = (arr) => arr.reduce((s, c) => s + (Number(c.parcela_valor) || 0), 0);
   const pmtEmprestimos = sumPmt(empContratos);
   const pmtRmc = sumPmt(rmcContratos);
   const pmtRcc = sumPmt(rccContratos);
   const totalConsignado = pmtEmprestimos + pmtRmc + pmtRcc;
-
+  const consumoCartoes = pmtRmc + pmtRcc;
   const temRmc = rmcContratos.length > 0;
   const temRcc = rccContratos.length > 0;
-  const temAmbosCartoes = temRmc && temRcc;
 
-  const margemTeto = salarioBruto * tetoMargem;
-  // Margem util pra EMPRESTIMO = teto total - reserva dos cartoes averbados
-  const margemReservadaCartoes = (temRmc ? reservaCartoesPct : 0) * salarioBruto
-                               + (temRcc ? reservaCartoesPct : 0) * salarioBruto;
-  const margemUtilEmprestimo = Math.max(0, margemTeto - margemReservadaCartoes);
+  let tetoPct, tetoValor, tetoEmpPct, tetoEmpValor, limiteRmc, limiteRcc, limiteCartoesPct, limiteCartoes;
+  let estouroEmp, estouroRmc, estouroRcc, estouroCartoes, estouroTotal;
+  if (regra.modelo === 'fatias') {
+    // CIVIL: cada fatia tem o seu teto; o cartao nao consome a margem de emprestimo
+    tetoEmpPct = regra.emprestimo;
+    tetoEmpValor = salarioBruto * tetoEmpPct;
+    limiteRmc = salarioBruto * regra.rmc;
+    limiteRcc = salarioBruto * regra.rcc;
+    limiteCartoesPct = regra.rmc + regra.rcc;
+    limiteCartoes = limiteRmc + limiteRcc;
+    tetoPct = regra.emprestimo + regra.rmc + regra.rcc;          // 0.45
+    tetoValor = salarioBruto * tetoPct;
+    estouroEmp = Math.max(0, pmtEmprestimos - tetoEmpValor);
+    estouroRmc = Math.max(0, pmtRmc - limiteRmc);
+    estouroRcc = Math.max(0, pmtRcc - limiteRcc);
+    estouroCartoes = estouroRmc + estouroRcc;
+    estouroTotal = Math.max(0, totalConsignado - tetoValor);
+  } else {
+    // MILITAR (global): cartoes consomem o teto; limite conjunto pros cartoes
+    tetoPct = regra.teto;
+    tetoValor = salarioBruto * tetoPct;
+    limiteCartoesPct = regra.limite_cartoes;
+    limiteCartoes = salarioBruto * limiteCartoesPct;
+    limiteRmc = limiteCartoes;
+    limiteRcc = limiteCartoes;
+    tetoEmpValor = Math.max(0, tetoValor - consumoCartoes);
+    tetoEmpPct = tetoEmpValor / salarioBruto;
+    estouroEmp = Math.max(0, pmtEmprestimos - tetoEmpValor);
+    estouroCartoes = Math.max(0, consumoCartoes - limiteCartoes);
+    estouroRmc = 0;
+    estouroRcc = 0;                                               // limite e conjunto
+    estouroTotal = Math.max(0, totalConsignado - tetoValor);
+  }
 
-  // Estouro: total consignado > teto OU emprestimos > margem util de emp
-  const valorEstouroTotal = Math.max(0, totalConsignado - margemTeto);
-  const valorEstouroEmprestimo = Math.max(0, pmtEmprestimos - margemUtilEmprestimo);
-  // Considera o maior estouro como o problema a resolver
-  const valorEstouro = Math.max(valorEstouroTotal, valorEstouroEmprestimo);
-  const estourou = valorEstouro > 0.01;
-
-  const pctConsumido = salarioBruto > 0 ? (totalConsignado / salarioBruto) : 0;
+  // O que a PORT COM REDUCAO precisa resolver e o estouro dos EMPRESTIMOS (cartao nao se porta)
+  const valorEstouro = estouroEmp;
+  const estourou = estouroEmp > 0.01 || estouroCartoes > 0.01;
+  const margemLivreEmprestimo = Math.max(0, tetoEmpValor - pmtEmprestimos);
+  const pctConsumido = totalConsignado / salarioBruto;
+  const r2 = (v) => Number(v.toFixed(2));
 
   return {
+    modelo: regra.modelo,
+    regra_descricao: regra.descricao,
     salario_bruto: salarioBruto,
-    teto_pct: tetoMargem,                              // 0.40 SIAPE / 0.70 militar
-    teto_valor: Number(margemTeto.toFixed(2)),
-    margem_util_emprestimo_valor: Number(margemUtilEmprestimo.toFixed(2)),
-    pmt_emprestimos: Number(pmtEmprestimos.toFixed(2)),
-    pmt_rmc: Number(pmtRmc.toFixed(2)),
-    pmt_rcc: Number(pmtRcc.toFixed(2)),
-    total_consignado: Number(totalConsignado.toFixed(2)),
+    // teto TOTAL (0.45 civil / 0.70 militar)
+    teto_pct: Number(tetoPct.toFixed(4)),
+    teto_valor: r2(tetoValor),
+    // fatia dos EMPRESTIMOS
+    teto_emprestimo_pct: Number(tetoEmpPct.toFixed(4)),
+    teto_emprestimo_valor: r2(tetoEmpValor),
+    margem_util_emprestimo_valor: r2(tetoEmpValor),             // legado (= teto da fatia)
+    margem_livre_emprestimo: r2(margemLivreEmprestimo),         // sobra pra NOVO emprestimo
+    // cartoes
+    limite_rmc_valor: r2(limiteRmc),
+    limite_rcc_valor: r2(limiteRcc),
+    limite_cartoes_pct: Number(limiteCartoesPct.toFixed(4)),
+    limite_cartoes_valor: r2(limiteCartoes),
+    consumo_cartoes: r2(consumoCartoes),
+    valor_estouro_rmc: r2(estouroRmc),
+    valor_estouro_rcc: r2(estouroRcc),
+    valor_estouro_cartoes: r2(estouroCartoes),
+    prazo_max_parcelas: regra.prazo_max,
+    // consignados
+    pmt_emprestimos: r2(pmtEmprestimos),
+    pmt_rmc: r2(pmtRmc),
+    pmt_rcc: r2(pmtRcc),
+    total_consignado: r2(totalConsignado),
     tem_rmc: temRmc,
     tem_rcc: temRcc,
-    tem_ambos_cartoes: temAmbosCartoes,
+    tem_ambos_cartoes: temRmc && temRcc,
     estourou,
-    valor_estouro: Number(valorEstouro.toFixed(2)),
-    valor_estouro_emprestimo: Number(valorEstouroEmprestimo.toFixed(2)),
+    valor_estouro: r2(valorEstouro),                            // = estouro dos emprestimos
+    valor_estouro_emprestimo: r2(estouroEmp),
+    valor_estouro_total: r2(estouroTotal),
     pct_consumido: Number(pctConsumido.toFixed(4)),
     qtd_emprestimos: empContratos.length,
   };
@@ -683,9 +733,11 @@ async function simularPortabilidade(convenioId, contratos, enquadramento) {
         const ratio = saldoDevedor * taxa / parcelaAlvo;
         if (ratio < 1) {
           prazoEnquadrar = -Math.log(1 - ratio) / Math.log(1 + taxa);
-          // Considera que "enquadra" quando o prazo necessario nao excede o
-          // prazo total original do contrato (banco geralmente nao estende +)
-          enquadra = totais > 0 ? prazoEnquadrar <= totais + 0.5 : true;
+          // "Enquadra" quando o prazo necessario cabe no prazo maximo legal do
+          // convenio (SIAPE: 120 parcelas) — o banco pode estender ate la pra
+          // reduzir a parcela e encaixar na fatia de emprestimos.
+          const prazoMax = Number(enquadramento?.prazo_max_parcelas) || 120;
+          enquadra = prazoEnquadrar <= prazoMax + 0.5;
         }
       }
 
